@@ -30,6 +30,8 @@ function gameFiles(): Plugin {
 }
 
 export default defineConfig({
+  // Відносні шляхи: збірка працює з будь-якої теки хостингу (GitHub Pages тощо).
+  base: './',
   plugins: [gameFiles()],
   server: { host: true, port: 5173 },
   test: {

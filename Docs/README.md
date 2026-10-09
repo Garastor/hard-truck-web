@@ -17,6 +17,7 @@
 | 4 | [04-roadmap.md](04-roadmap.md) | **План робіт** — фази, задачі, критерії готовності |
 | 5 | [05-claude-code-workflow.md](05-claude-code-workflow.md) | Як вести розробку з Claude Code (CLAUDE.md, сабагенти, превʼю, мобільні тести) |
 | 6 | [06-legal-and-risks.md](06-legal-and-risks.md) | Авторські права, розповсюдження, ризики проєкту |
+| — | [play-on-phone.md](play-on-phone.md) | **Як пограти на телефоні** (через ПК або офлайн-PWA) |
 | — | [gameplay.md](gameplay.md) | Ігровий процес оригіналу (з довідки `HTruck.hlp`) |
 | — | [formats/b3d.md](formats/b3d.md) | Формат сцен B3D |
 | — | [progress.md](progress.md) | Журнал прогресу |

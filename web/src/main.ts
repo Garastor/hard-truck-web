@@ -367,4 +367,9 @@ async function boot(): Promise<void> {
   await open();
 }
 
+// PWA: офлайн-кеш коду (лише у збірці й у захищеному контексті — HTTPS/localhost).
+if (import.meta.env.PROD && 'serviceWorker' in navigator && isSecureContext) {
+  void navigator.serviceWorker.register('./sw.js');
+}
+
 void boot();

@@ -1,0 +1,16 @@
+{
+  "name": "Hard Truck Web",
+  "short_name": "Hard Truck",
+  "description": "Порт «Дальнобійників» (1998) у браузер. Потрібні файли оригінальної гри.",
+  "start_url": "./?tab=drive",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#1b1d22",
+  "theme_color": "#1b1d22",
+  "lang": "uk",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
