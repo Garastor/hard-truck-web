@@ -126,6 +126,9 @@ export class SceneAssembler {
   private readonly topByName = new Map<string, Block>();
   private readonly templateCache = new Map<string, THREE.Group>();
   private readonly switchGroup: number;
+  /** Перемикачі стану (тип 21) у кімнатах світу: імʼя → групи (видима лише одна). */
+  readonly switches = new Map<string, THREE.Group[][]>();
+  private inRooms = false;
 
   constructor(
     readonly b3d: B3d,
@@ -147,6 +150,11 @@ export class SceneAssembler {
     return b && b.data.t === 24 ? spaceMatrix(b) : null;
   }
 
+  /** Встановлює стан перемикача (усі екземпляри з цим імʼям). */
+  setSwitch(name: string, state: number): void {
+    for (const objs of this.switches.get(name) ?? []) objs.forEach((o, i) => (o.visible = i === state));
+  }
+
   /** Шаблон обʼєкта верхнього рівня (кешований; повертається спільний екземпляр — клонуйте для розміщення). */
   template(name: string): THREE.Group | null {
     const key = name.toLowerCase();
@@ -165,6 +173,7 @@ export class SceneAssembler {
   /** Усі кімнати (тип 19) — геометрія світу. */
   buildRooms(): THREE.Group[] {
     const rooms: THREE.Group[] = [];
+    this.inRooms = true;
     for (const b of this.b3d.blocks) {
       if (b.data.t !== 19) continue;
       const grp = new THREE.Group();
@@ -175,6 +184,7 @@ export class SceneAssembler {
       rooms.push(grp);
       this.stats.rooms++;
     }
+    this.inRooms = false;
     return rooms;
   }
 
@@ -236,6 +246,23 @@ export class SceneAssembler {
     }
     if (!block.groups) return;
     let groups = block.groups;
+    if (d.t === 21 && this.inRooms && block.name) {
+      // Динамічний перемикач: кожна група — окремий обʼєкт, видимість змінює гра (світлофори тощо).
+      const objs: THREE.Group[] = block.groups.map((g, gi) => {
+        const go = new THREE.Group();
+        go.name = `${block.name}#${gi}`;
+        const b: Batches = new Map();
+        for (const child of g) this.visit(child, cur, b, go, depth + 1);
+        this.flush(b, go);
+        go.visible = gi === d.i1;
+        into.add(go);
+        return go;
+      });
+      const list = this.switches.get(block.name) ?? [];
+      list.push(objs);
+      this.switches.set(block.name, list);
+      return;
+    }
     if (d.t === 21) {
       // Перемикач стану: i1 — початковий стан; якщо він порожній (напр. SkyDomeKey) — перший непорожній.
       const start = block.groups[d.i1] ?? [];

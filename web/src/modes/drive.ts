@@ -45,6 +45,11 @@ export class DriveSession {
   private laps = 0;
   /** Сектор, з якого почався відлік кола. */
   private lapRoom: string | null = null;
+  /** Суперники (aicar у truck.ini): вантажівки під керуванням автопілота. */
+  readonly opponents: { truck: TruckVehicle; pilot: AutoPilot; odo: Odometer }[] = [];
+  private readonly playerOdo = new Odometer();
+  /** Відлік до старту, с (як світлофор над стартом: червоний → жовтий → зелений). */
+  private countdown = 3;
   /** Автопілот (клавіша P): їде по лініях way_* — для тестів і як основа суперників. */
   autopilot: AutoPilot | null = null;
   private wayNet: WayNet | null = null;
@@ -63,6 +68,7 @@ export class DriveSession {
     def: TruckDef,
     overlay: HTMLElement,
     rmp?: RmpArchive,
+    rivals: TruckDef[] = [],
   ): Promise<DriveSession> {
     await initRapier();
     const s = new DriveSession(scene, camera, built, def);
@@ -86,6 +92,7 @@ export class DriveSession {
     s.prevPos.copy(s.spawn.position);
     s.truck = new TruckVehicle(s.world, def, model, s.spawn);
     scene.add(s.truck.visual);
+    s.spawnOpponents(rivals);
 
     const booth = built.assembler.space(def.cockpitSpace);
     if (booth) s.cockpit = g2t(new THREE.Vector3().setFromMatrixPosition(booth)).add(new THREE.Vector3(0, 0.6, 0));
@@ -164,6 +171,48 @@ export class DriveSession {
     return { position: this.groundAt(new THREE.Vector3(t.x, t.y, t.z)), forward: this.truck.forward() };
   }
 
+  /** Суперники на стартовій решітці попереду гравця, з різною крейсерською швидкістю. */
+  private spawnOpponents(defs: TruckDef[]): void {
+    if (!defs.length) return;
+    this.wayNet ??= new WayNet(this.built.assembler.b3d);
+    const start = this.wayNet.nearest(this.spawn.position, this.spawn.forward);
+    if (!start) return;
+    defs.forEach((def, i) => {
+      const model = buildTruckModel(this.built.assembler, def);
+      if (!model) return;
+      const along = this.wayNet!.advance(start.line, start.seg, start.t, 14 * (i + 1));
+      const ahead = this.wayNet!.advance(start.line, start.seg, start.t, 14 * (i + 1) + 3);
+      const fwd = ahead.clone().sub(along).setY(0).normalize();
+      const side = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).multiplyScalar(i % 2 ? 2.5 : -2.5);
+      const truck = new TruckVehicle(this.world, def, model, { position: this.groundAt(along.add(side)), forward: fwd });
+      this.scene.add(truck.visual);
+      const pilot = new AutoPilot(this.wayNet!);
+      pilot.cruise = 58 + ((i * 7) % 18);
+      this.opponents.push({ truck, pilot, odo: new Odometer() });
+    });
+  }
+
+  private stepOpponents(dt: number): void {
+    const go = this.countdown <= 0;
+    for (const o of this.opponents) {
+      const tp = o.truck.body.translation();
+      const pos = new THREE.Vector3(tp.x, tp.y, tp.z);
+      const st = o.pilot.update(pos, o.truck.forward(), o.truck.speedKmh, dt);
+      if (!go) {
+        st.throttle = 0;
+        st.brake = 0;
+      }
+      o.truck.update(dt, st);
+      o.odo.update(pos, this.wayNet);
+      if (tp.y < -200) o.truck.reset(this.spawn);
+    }
+  }
+
+  /** Місце гравця в гонці (1 — лідер) за пройденою вздовж дороги відстанню. */
+  racePosition(): number {
+    return 1 + this.opponents.filter((o) => o.odo.distance > this.playerOdo.distance).length;
+  }
+
   toggleAutopilot(on = !this.autopilot): void {
     if (on) {
       this.wayNet ??= new WayNet(this.built.assembler.b3d);
@@ -173,9 +222,30 @@ export class DriveSession {
 
   private controls(dt: number) {
     const manual = this.input.update(dt);
-    if (!this.autopilot) return manual;
     const tp = this.truck.body.translation();
-    return this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt);
+    const st = this.autopilot ? this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt) : manual;
+    if (this.countdown > 0) return { ...st, throttle: 0 };
+    return st;
+  }
+
+  /** Спільний облік кроку: відлік, одометр гравця. */
+  private tick(dt: number): void {
+    const before = this.countdown;
+    this.countdown -= dt;
+    // Стартовий світлофор: 3–2 с червоний, 2–1 жовтий, далі зелений (перемикачі *SvetKey, стан 1 = увімкнено).
+    const phase = (c: number) => (c > 2 ? 'r' : c > 1 ? 'y' : c > -6 ? 'g' : 'off');
+    if (phase(before) !== phase(this.countdown) || before === 3) {
+      const ph = phase(this.countdown);
+      const asm = this.built.assembler;
+      asm.setSwitch('RedSvetKey', ph === 'r' ? 1 : 0);
+      asm.setSwitch('YellowSvetKey', ph === 'y' ? 1 : 0);
+      asm.setSwitch('GreenSvetKey', ph === 'g' ? 1 : 0);
+      if (ph === 'g') this.audio?.play('start', 0.5);
+    }
+    if (this.opponents.length) {
+      const tp = this.truck.body.translation();
+      this.playerOdo.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.wayNet);
+    }
   }
 
   /** Детермінований крок для тестів: n кроків фізики без залежності від requestAnimationFrame. */
@@ -183,9 +253,12 @@ export class DriveSession {
     for (let i = 0; i < steps; i++) {
       const state = this.controls(this.world.timestep);
       this.truck.update(this.world.timestep, state);
+      this.stepOpponents(this.world.timestep);
       this.world.step();
+      this.tick(this.world.timestep);
       this.clock += this.world.timestep;
       this.truck.syncVisual();
+      for (const o of this.opponents) o.truck.syncVisual();
       this.updateTrack();
     }
   }
@@ -196,11 +269,14 @@ export class DriveSession {
     const step = this.world.timestep;
     while (this.acc >= step) {
       this.truck.update(step, state);
+      this.stepOpponents(step);
       this.world.step();
+      this.tick(step);
       this.clock += step;
       this.acc -= step;
     }
     this.truck.syncVisual();
+    for (const o of this.opponents) o.truck.syncVisual();
     // Впав зі світу — на точку рестарту.
     if (this.truck.body.translation().y < -200) this.truck.reset(this.restartPoint());
     this.updateTrack();
@@ -220,10 +296,13 @@ export class DriveSession {
     }
     const lap = this.lapStart !== null ? fmtTime(this.clock - this.lapStart) : '—';
     const best = this.bestLap !== null ? `   кращий ${fmtTime(this.bestLap)}` : '';
+    const place = this.opponents.length ? `   місце ${this.racePosition()}/${this.opponents.length + 1}` : '';
+    const start = this.countdown > 0 ? `
+${['ЗЕЛЕНИЙ', 'ЖОВТИЙ', 'ЧЕРВОНИЙ'][Math.min(2, Math.floor(this.countdown))]}  ${Math.ceil(this.countdown)}` : '';
     this.hud.textContent =
       `${t.speedKmh.toFixed(0)} км/год   ${t.gear < 0 ? 'R' : t.gear}   ${t.rpm.toFixed(0)} об/хв
 ` +
-      `${(this.room ?? '?').replace('room_', 'сектор ')}   коло ${this.laps + 1}: ${lap}${best}`;
+      `${(this.room ?? '?').replace('room_', 'сектор ')}   коло ${this.laps + 1}: ${lap}${best}${place}${start}`;
   }
 
   /** Кімнати й коло: перетин порталів, старт таймера, фініш (подія 666). */
@@ -280,6 +359,7 @@ export class DriveSession {
 
   dispose(): void {
     this.scene.remove(this.truck.visual);
+    for (const o of this.opponents) this.scene.remove(o.truck.visual);
     this.input.dispose();
     this.touchUi?.remove();
     this.hud?.remove();
@@ -292,4 +372,22 @@ function fmtTime(t: number): string {
   const m = Math.floor(t / 60);
   const sec = t - m * 60;
   return `${m}:${sec.toFixed(1).padStart(4, '0')}`;
+}
+
+/** Пройдена вздовж мережі доріг відстань (для визначення місця в гонці). */
+class Odometer {
+  distance = 0;
+  private prev: THREE.Vector3 | null = null;
+  private dir = new THREE.Vector3();
+  private n = 0;
+
+  update(pos: THREE.Vector3, net: WayNet | null): void {
+    if (!net) return;
+    if (this.n++ % 15 === 0) {
+      const near = net.nearest(pos);
+      if (near) this.dir.subVectors(near.line.pts[near.seg + 1], near.line.pts[near.seg]).setY(0).normalize();
+    }
+    if (this.prev) this.distance += pos.clone().sub(this.prev).dot(this.dir);
+    this.prev = pos.clone();
+  }
 }
