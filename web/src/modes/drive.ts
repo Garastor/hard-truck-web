@@ -148,6 +148,10 @@ export class DriveSession {
       if (bestDir.dot(fwd) < 0) bestDir.negate();
       return { position: this.groundAt(bestPos), forward: bestDir };
     }
+    // Немає доріг (напр. полігон TRIAL) — найближча точка рестарту.
+    const room = this.track.guessRoom(pos);
+    const r = room ? this.track.rooms.get(room)?.restart : null;
+    if (r) return { position: this.groundAt(r.position), forward: r.forward.clone() };
     return { position: this.groundAt(pos), forward: fwd };
   }
 
@@ -259,6 +263,7 @@ export class DriveSession {
       this.clock += this.world.timestep;
       this.truck.syncVisual();
       for (const o of this.opponents) o.truck.syncVisual();
+      if (this.truck.body.translation().y < -200) this.truck.reset(this.restartPoint());
       this.updateTrack();
     }
   }
