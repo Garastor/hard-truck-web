@@ -271,6 +271,7 @@ export class SceneAssembler {
           grp.matrixAutoUpdate = false;
           grp.matrix.copy(m);
           grp.userData.baseMatrix = m.clone();
+          grp.userData.space = d.name1.toLowerCase();
           const b: Batches = new Map();
           const vsrc = { positions: d.positions, uvs: d.uvs };
           if (block.groups) for (const g of block.groups) for (const child of g) this.visit(child, vsrc, b, grp, depth + 1);

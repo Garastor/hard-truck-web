@@ -10,7 +10,7 @@ export interface TruckDef {
   wheelSpaces: [string, string, string, string];
   wheelNodes: [string, string, string, string];
   cockpitSpace: string;
-  /** Шкали приладів: [макс. значення/100 для тахометра або км/год для спідометра, кут, °]. */
+  /** Екранні координати (x, y) 2D-приладів панелі для зовнішньої камери (TachScale/SpeedScale у TCH). */
   tachScale: [number, number];
   speedScale: [number, number];
   tech: TruckTech;

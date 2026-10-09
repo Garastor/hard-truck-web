@@ -206,8 +206,15 @@ export class DriveSession {
     this.cab = new THREE.Group();
     this.cab.add(inner);
     this.overlayScene.add(this.cab);
-    const find = (n: string) => inner.getObjectByName(n) ?? undefined;
-    this.cabParts = { rule: find(`${this.def.prefix}Rule`), tacho: find(`${this.def.prefix}Str1`), speed: find(`${this.def.prefix}Str2`) };
+    // Деталі шукаємо за простором (імена стрілок у різних кабінах різняться: ZilStr1, FreiCabStr1…).
+    const bySpace = (sp: string) => {
+      let found: THREE.Object3D | undefined;
+      inner.traverse((o) => {
+        if (!found && o.userData.space === `${this.def.prefix}${sp}`.toLowerCase()) found = o;
+      });
+      return found;
+    };
+    this.cabParts = { rule: bySpace('RuleSpace'), tacho: bySpace('TachoSpace'), speed: bySpace('SpeedSpace') };
   }
 
   private updateCab(state: { steer: number }): void {
@@ -224,10 +231,9 @@ export class DriveSession {
     };
     const deg = Math.PI / 180;
     rot(this.cabParts.rule, new THREE.Vector3(0, 0, 1), -state.steer * 2.4);
-    const [tMax, tAng] = this.def.tachScale;
-    const [sMax, sAng] = this.def.speedScale;
-    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), Math.min(1, this.truck.rpm / (tMax * 100)) * tAng * deg);
-    rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), Math.min(1, this.truck.speedKmh / sMax) * sAng * deg);
+    // Наближене калібрування стрілок (точні коефіцієнти — з HTruck.exe, R7): 270° на 3000 об/хв і на 160 км/год.
+    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), Math.min(1, this.truck.rpm / 3000) * 270 * deg);
+    rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), Math.min(1, this.truck.speedKmh / 160) * 270 * deg);
     // Табло: A — автоматична КПП, P — ручник, передача; одометр — 5 розрядів (KMeter0Key — молодший).
     const sw = this.cabSwitch;
     if (sw) {
