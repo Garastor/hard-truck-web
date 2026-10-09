@@ -30,6 +30,10 @@ export class DriveSession {
   private readonly camLook = new THREE.Vector3();
   private spawn!: { position: THREE.Vector3; forward: THREE.Vector3 };
   private cockpit = new THREE.Vector3(-0.4, 2.2, -1.2);
+  /** Сцена кабіни: малюється поверх світу (після очищення глибини), як в оригіналі. */
+  readonly overlayScene = new THREE.Scene();
+  private cab: THREE.Group | null = null;
+  private cabParts: { rule?: THREE.Object3D; tacho?: THREE.Object3D; speed?: THREE.Object3D } = {};
   private audio: EngineAudio | null = null;
   private lastGear = 1;
   private brakeSqueal = 0;
@@ -104,8 +108,10 @@ export class DriveSession {
     scene.add(s.truck.visual);
     s.spawnOpponents(rivals);
 
-    const booth = built.assembler.space(def.cockpitSpace);
-    if (booth) s.cockpit = g2t(new THREE.Vector3().setFromMatrixPosition(booth)).add(new THREE.Vector3(0, 0.6, 0));
+    // Очі водія: OV з [TECHn] (система вантажівки), як в оригіналі; вид з кабіни — за замовчуванням.
+    s.cockpit = g2t(def.tech.viewer);
+    s.buildCab();
+    s.camMode = 'cockpit';
 
     if (rmp) s.audio = await EngineAudio.create(rmp).catch(() => null);
     s.input.onCommand = (cmd) => {
@@ -185,6 +191,39 @@ export class DriveSession {
   private spawnAtTruck() {
     const t = this.truck.body.translation();
     return { position: this.groundAt(new THREE.Vector3(t.x, t.y, t.z)), forward: this.truck.forward() };
+  }
+
+  /** Кабіна `<Prefix>Cab` у системі «очей водія» (y — уперед, z — угору) з кермом і стрілками. */
+  private buildCab(): void {
+    const tpl = this.built.assembler.template(`${this.def.prefix}Cab`);
+    if (!tpl) return;
+    const inner = tpl.clone();
+    inner.rotation.x = -Math.PI / 2;
+    this.cab = new THREE.Group();
+    this.cab.add(inner);
+    this.overlayScene.add(this.cab);
+    const find = (n: string) => inner.getObjectByName(n) ?? undefined;
+    this.cabParts = { rule: find(`${this.def.prefix}Rule`), tacho: find(`${this.def.prefix}Str1`), speed: find(`${this.def.prefix}Str2`) };
+  }
+
+  private updateCab(state: { steer: number }): void {
+    // З кабіни зовнішній корпус власної вантажівки не малюємо (як в оригіналі).
+    this.truck.visual.visible = this.camMode !== 'cockpit' || !this.cab;
+    if (!this.cab) return;
+    this.cab.visible = this.camMode === 'cockpit';
+    if (!this.cab.visible) return;
+    this.cab.position.copy(this.camera.position);
+    this.cab.quaternion.copy(this.camera.quaternion);
+    const rot = (o: THREE.Object3D | undefined, axis: THREE.Vector3, angle: number) => {
+      if (!o) return;
+      o.matrix.copy(o.userData.baseMatrix as THREE.Matrix4).multiply(new THREE.Matrix4().makeRotationAxis(axis, angle));
+    };
+    const deg = Math.PI / 180;
+    rot(this.cabParts.rule, new THREE.Vector3(0, 0, 1), -state.steer * 2.4);
+    const [tMax, tAng] = this.def.tachScale;
+    const [sMax, sAng] = this.def.speedScale;
+    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), Math.min(1, this.truck.rpm / (tMax * 100)) * tAng * deg);
+    rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), Math.min(1, this.truck.speedKmh / sMax) * sAng * deg);
   }
 
   /** Суперники на стартовій решітці попереду гравця, з різною крейсерською швидкістю. */
@@ -299,6 +338,7 @@ export class DriveSession {
     if (this.truck.body.translation().y < -200) this.truck.reset(this.restartPoint());
     this.updateTrack();
     this.updateCamera(dt);
+    this.updateCab(state);
     const t = this.truck;
     if (this.audio) {
       this.audio.update(t.rpm, state.throttle);
@@ -371,11 +411,10 @@ ${raceLine}`;
     const fwd = this.truck.forward();
     const up = new THREE.Vector3(0, 1, 0);
     if (this.camMode === 'cockpit') {
+      // Камера жорстко в кабіні: орієнтація вантажівки + нахил погляду tangViewer.
       const eye = this.cockpit.clone().applyQuaternion(v.quaternion).add(v.position);
       this.camera.position.copy(eye);
-      this.camera.up.copy(up.clone().applyQuaternion(v.quaternion));
-      this.camera.lookAt(eye.clone().add(fwd.clone().multiplyScalar(20)).addScaledVector(up, -1.5));
-      this.camera.up.set(0, 1, 0);
+      this.camera.quaternion.copy(v.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (this.def.tech.viewerTilt * Math.PI) / 180));
       return;
     }
     const dist = this.camMode === 'far' ? 28 : 13;

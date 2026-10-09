@@ -10,6 +10,9 @@ export interface TruckDef {
   wheelSpaces: [string, string, string, string];
   wheelNodes: [string, string, string, string];
   cockpitSpace: string;
+  /** Шкали приладів: [макс. значення/100 для тахометра або км/год для спідометра, кут, °]. */
+  tachScale: [number, number];
+  speedScale: [number, number];
   tech: TruckTech;
 }
 
@@ -30,6 +33,9 @@ export interface TruckTech {
   price: number;
   frictionCoeff: number;
   centerMass: [number, number, number];
+  /** Точка очей водія (OV) у системі вантажівки та нахил погляду (tangViewer, градуси). */
+  viewer: [number, number, number];
+  viewerTilt: number;
 }
 
 export function parseTrucks(tchText: string): TruckDef[] {
@@ -45,6 +51,8 @@ export function parseTrucks(tchText: string): TruckDef[] {
       wheelSpaces: [g('wheel_space0'), g('wheel_space1'), g('wheel_space2'), g('wheel_space3')],
       wheelNodes: [g('wheel_node_fl'), g('wheel_node_fr'), g('wheel_node_bl'), g('wheel_node_br')],
       cockpitSpace: g('cockpit_space'),
+      tachScale: ((v) => [v[0] ?? 50, v[1] ?? 240] as [number, number])(iniNums(ini, n, 'TachScale') ?? []),
+      speedScale: ((v) => [v[0] ?? 160, v[1] ?? 240] as [number, number])(iniNums(ini, n, 'SpeedScale') ?? []),
       tech: readTech(ini, `TECH${i}`),
     });
   }
@@ -75,6 +83,8 @@ function readTech(ini: Ini, s: string): TruckTech {
     price: iniNum(ini, s, 'price', 10000),
     frictionCoeff: iniNum(ini, s, 'friction_coeff', 1.4),
     centerMass: [cm[0] ?? 0, cm[1] ?? 0, cm[2] ?? 0],
+    viewer: ((v) => [v[0] ?? -0.4, v[1] ?? 0.4, v[2] ?? 1.4] as [number, number, number])(iniNums(ini, s, 'OV') ?? []),
+    viewerTilt: iniNum(ini, s, 'tangViewer', -7.16),
   };
 }
 

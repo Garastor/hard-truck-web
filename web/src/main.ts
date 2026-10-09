@@ -288,6 +288,13 @@ renderer.setAnimationLoop(() => {
     built.sky.position.copy(camera.position);
   }
   renderer.render(scene, camera);
+  if (drive && tab === 'drive') {
+    // Кабіна поверх світу: очищаємо лише глибину.
+    renderer.autoClear = false;
+    renderer.clearDepth();
+    renderer.render(drive.overlayScene, camera);
+    renderer.autoClear = true;
+  }
 });
 
 if (import.meta.env.DEV)

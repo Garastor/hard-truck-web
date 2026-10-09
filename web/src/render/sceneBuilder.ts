@@ -124,6 +124,8 @@ export class SceneAssembler {
   readonly lib: MaterialLibrary;
   readonly stats = { rooms: 0, meshes: 0, triangles: 0, instances: 0, missingTextures: 0 };
   private readonly topByName = new Map<string, Block>();
+  /** Усі простори (24), включно з вкладеними, з композицією матриць батьків. */
+  private readonly spaces = new Map<string, THREE.Matrix4>();
   private readonly templateCache = new Map<string, THREE.Group>();
   private readonly switchGroup: number;
   /** Перемикачі стану (тип 21) у кімнатах світу: імʼя → групи (видима лише одна). */
@@ -138,16 +140,24 @@ export class SceneAssembler {
     this.switchGroup = opts.switchGroup ?? 0;
     this.lib = new MaterialLibrary(b3d, rmp);
     for (const b of b3d.blocks) if (b.name) this.topByName.set(b.name.toLowerCase(), b);
+    const collect = (b: Block, parent: THREE.Matrix4) => {
+      let m = parent;
+      if (b.data.t === 24) {
+        m = parent.clone().multiply(spaceMatrix(b));
+        if (b.name) this.spaces.set(b.name.toLowerCase(), m);
+      }
+      if (b.groups) for (const g of b.groups) for (const c of g) collect(c, m);
+    };
+    for (const b of b3d.blocks) if (b.data.t === 24) collect(b, new THREE.Matrix4());
   }
 
   block(name: string): Block | undefined {
     return this.topByName.get(name.toLowerCase());
   }
 
-  /** Матриця простору (блок 24) за імʼям, або null. */
+  /** Матриця простору (блок 24, зокрема вкладеного) за імʼям, або null. */
   space(name: string): THREE.Matrix4 | null {
-    const b = this.block(name);
-    return b && b.data.t === 24 ? spaceMatrix(b) : null;
+    return this.spaces.get(name.toLowerCase())?.clone() ?? null;
   }
 
   /** Встановлює стан перемикача (усі екземпляри з цим імʼям). */
@@ -226,8 +236,26 @@ export class SceneAssembler {
     let cur = vs;
     switch (d.t) {
       case 6:
+      case 36: {
+        // Вершини в локальному просторі name1 (напр. кермо в ZilRuleSpace): окрема група з матрицею простору.
+        const m = d.name1 ? this.space(d.name1) : null;
+        if (m) {
+          const grp = new THREE.Group();
+          grp.name = block.name;
+          grp.matrixAutoUpdate = false;
+          grp.matrix.copy(m);
+          grp.userData.baseMatrix = m.clone();
+          const b: Batches = new Map();
+          const vsrc = { positions: d.positions, uvs: d.uvs };
+          if (block.groups) for (const g of block.groups) for (const child of g) this.visit(child, vsrc, b, grp, depth + 1);
+          this.flush(b, grp);
+          into.add(grp);
+          return;
+        }
+        cur = { positions: d.positions, uvs: d.uvs };
+        break;
+      }
       case 7:
-      case 36:
       case 37:
         cur = { positions: d.positions, uvs: d.uvs };
         break;
@@ -264,9 +292,10 @@ export class SceneAssembler {
       return;
     }
     if (d.t === 21) {
-      // Перемикач стану: i1 — початковий стан; якщо він порожній (напр. SkyDomeKey) — перший непорожній.
+      // Перемикач стану: i1 — початковий стан. Виняток — купол неба, який рушій вмикає сам (група 1).
       const start = block.groups[d.i1] ?? [];
-      groups = [start.length ? start : (block.groups.find((g) => g.length) ?? [])];
+      const sky = block.name === 'SkyDomeKey';
+      groups = [sky && !start.length ? (block.groups.find((g) => g.length) ?? []) : start];
     } else if (d.t === 9 || d.t === 10 || d.t === 11 || d.t === 22 || d.t === 29) {
       groups = [block.groups[Math.min(this.switchGroup, block.groups.length - 1)] ?? []];
     }
