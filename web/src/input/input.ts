@@ -10,6 +10,7 @@ export interface ControlState {
 }
 
 type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake';
+type Command = 'camera' | 'reset' | 'horn';
 
 export class Input {
   readonly state: ControlState = { steer: 0, throttle: 0, brake: 0, handbrake: false };
@@ -17,7 +18,7 @@ export class Input {
   private steerSmooth = 0;
   private readonly onKey = (e: KeyboardEvent) => this.key(e);
   /** Одноразові події (перемкнути камеру, скинути вантажівку). */
-  onCommand: ((cmd: 'camera' | 'reset') => void) | null = null;
+  onCommand: ((cmd: Command) => void) | null = null;
 
   constructor() {
     window.addEventListener('keydown', this.onKey);
@@ -41,6 +42,7 @@ export class Input {
     } else if (e.type === 'keydown' && !e.repeat) {
       if (e.code === 'KeyC') this.onCommand?.('camera');
       if (e.code === 'KeyR') this.onCommand?.('reset');
+      if (e.code === 'KeyH') this.onCommand?.('horn');
     }
   }
 
@@ -76,7 +78,7 @@ export class Input {
   mountTouch(parent: HTMLElement): HTMLElement {
     const ui = document.createElement('div');
     ui.className = 'touch-ui';
-    const btn = (cls: string, label: string, action?: Action, cmd?: 'camera' | 'reset') => {
+    const btn = (cls: string, label: string, action?: Action, cmd?: Command) => {
       const b = document.createElement('button');
       b.className = `touch-btn ${cls}`;
       b.textContent = label;
@@ -105,6 +107,7 @@ export class Input {
     btn('gas', 'ГАЗ', 'gas');
     btn('cam', '👁', undefined, 'camera');
     btn('reset', '↺', undefined, 'reset');
+    btn('horn', '📯', undefined, 'horn');
     parent.append(ui);
     return ui;
   }

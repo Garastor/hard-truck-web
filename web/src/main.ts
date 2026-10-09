@@ -154,7 +154,7 @@ async function startDrive(): Promise<void> {
     scene.fog = new THREE.Fog(0x8fb4d8, 150, 900);
     // Rapier (WASM ~2 МБ) вантажимо лише при вході в режим їзди.
     const { DriveSession } = await import('./modes/drive');
-    drive = await DriveSession.start(scene, camera, built, def, overlay);
+    drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp);
     setStatus(null);
   } catch (e) {
     console.error(e);

@@ -6,6 +6,8 @@ import { TruckVehicle } from '../game/truckVehicle';
 import { buildTruckModel, type TruckDef } from '../game/trucks';
 import type { BuiltScene } from '../render/sceneBuilder';
 import { walk } from '../formats/b3d';
+import type { RmpArchive } from '../formats/rmp';
+import { EngineAudio } from '../audio/engineAudio';
 
 type CamMode = 'chase' | 'cockpit' | 'far';
 
@@ -26,6 +28,9 @@ export class DriveSession {
   private readonly camLook = new THREE.Vector3();
   private spawn!: { position: THREE.Vector3; forward: THREE.Vector3 };
   private cockpit = new THREE.Vector3(-0.4, 2.2, -1.2);
+  private audio: EngineAudio | null = null;
+  private lastGear = 1;
+  private brakeSqueal = 0;
 
   private constructor(
     private readonly scene: THREE.Scene,
@@ -34,7 +39,14 @@ export class DriveSession {
     readonly def: TruckDef,
   ) {}
 
-  static async start(scene: THREE.Scene, camera: THREE.PerspectiveCamera, built: BuiltScene, def: TruckDef, overlay: HTMLElement): Promise<DriveSession> {
+  static async start(
+    scene: THREE.Scene,
+    camera: THREE.PerspectiveCamera,
+    built: BuiltScene,
+    def: TruckDef,
+    overlay: HTMLElement,
+    rmp?: RmpArchive,
+  ): Promise<DriveSession> {
     await initRapier();
     const s = new DriveSession(scene, camera, built, def);
     s.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
@@ -51,7 +63,9 @@ export class DriveSession {
     const booth = built.assembler.space(def.cockpitSpace);
     if (booth) s.cockpit = g2t(new THREE.Vector3().setFromMatrixPosition(booth)).add(new THREE.Vector3(0, 0.6, 0));
 
+    if (rmp) s.audio = await EngineAudio.create(rmp).catch(() => null);
     s.input.onCommand = (cmd) => {
+      if (cmd === 'horn') s.audio?.play('horn');
       if (cmd === 'reset') s.truck.reset(s.spawnAtTruck());
       if (cmd === 'camera') s.camMode = s.camMode === 'chase' ? 'cockpit' : s.camMode === 'cockpit' ? 'far' : 'chase';
     };
@@ -139,6 +153,18 @@ export class DriveSession {
     if (this.truck.body.translation().y < -200) this.truck.reset(this.spawn);
     this.updateCamera(dt);
     const t = this.truck;
+    if (this.audio) {
+      this.audio.update(t.rpm, state.throttle);
+      if (t.gear !== this.lastGear) {
+        this.audio.play('gear', 0.6);
+        this.lastGear = t.gear;
+      }
+      this.brakeSqueal -= dt;
+      if (state.brake > 0 && t.gear > 0 && t.speedKmh > 25 && this.brakeSqueal <= 0) {
+        this.audio.play('break', 0.5);
+        this.brakeSqueal = 3;
+      }
+    }
     this.hud.textContent = `${t.speedKmh.toFixed(0)} км/год   ${t.gear < 0 ? 'R' : t.gear}   ${t.rpm.toFixed(0)} об/хв`;
   }
 
@@ -170,6 +196,7 @@ export class DriveSession {
     this.input.dispose();
     this.touchUi?.remove();
     this.hud?.remove();
+    this.audio?.dispose();
     this.world.free();
   }
 }

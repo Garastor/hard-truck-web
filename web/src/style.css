@@ -236,7 +236,8 @@ button.active {
 }
 
 .touch-btn.cam,
-.touch-btn.reset {
+.touch-btn.reset,
+.touch-btn.horn {
   width: 48px;
   height: 48px;
   font-size: 18px;
@@ -249,6 +250,12 @@ button.active {
 
 .touch-btn.reset {
   right: calc(max(16px, env(safe-area-inset-right)) + 60px);
+}
+
+.touch-btn.horn {
+  right: max(16px, env(safe-area-inset-right));
+  top: auto;
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 120px);
 }
 
 body.driving #bar {
