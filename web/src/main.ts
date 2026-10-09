@@ -8,6 +8,8 @@ import { parsePlm } from './formats/plm';
 import type { RgbaImage } from './formats/binary';
 import { decodeCp1251 } from './formats/binary';
 import { buildTruckModel, parseTrucks, type TruckDef } from './game/trucks';
+import { DriveSession } from './modes/drive';
+import RAPIER from '@dimforge/rapier3d-compat';
 
 /**
  * Переглядач ресурсів (Фази 1–2): обліт локацій, галерея текстур і масок.
@@ -22,6 +24,7 @@ const stats = $('stats');
 const gallery = $('gallery');
 const status = $('status');
 const truckSel = $<HTMLSelectElement>('truck');
+const overlay = $('overlay');
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -38,6 +41,8 @@ let built: BuiltScene | null = null;
 let level: LoadedLevel | null = null;
 let tab = 'scene';
 let trucks: TruckDef[] = [];
+let drive: DriveSession | null = null;
+let driveStarting = false;
 const truckRoot = new THREE.Group();
 truckRoot.rotation.x = -Math.PI / 2;
 scene.add(truckRoot);
@@ -64,12 +69,13 @@ function setStatus(text: string | null): void {
 
 function syncUrl(): void {
   const p = new URLSearchParams({ level: levelSel.value, mode: modeSel.value, tab });
-  if (tab === 'trucks') p.set('truck', truckSel.value);
+  if (tab === 'trucks' || tab === 'drive') p.set('truck', truckSel.value);
   history.replaceState(null, '', `?${p}`);
 }
 
 async function open(): Promise<void> {
   syncUrl();
+  stopDrive();
   setStatus(`Завантаження ${levelSel.value}…`);
   try {
     if (built) {
@@ -131,13 +137,43 @@ function showTruck(): void {
   syncUrl();
 }
 
+function stopDrive(): void {
+  drive?.dispose();
+  drive = null;
+  controls.enabled = true;
+}
+
+async function startDrive(): Promise<void> {
+  if (!built || driveStarting) return;
+  stopDrive();
+  driveStarting = true;
+  setStatus('Підготовка фізики…');
+  try {
+    await ensureTrucks();
+    const def = trucks.find((t) => String(t.index) === truckSel.value) ?? trucks[0];
+    controls.enabled = false;
+    scene.fog = new THREE.Fog(0x8fb4d8, 150, 900);
+    drive = await DriveSession.start(scene, camera, built, def, overlay);
+    setStatus(null);
+  } catch (e) {
+    console.error(e);
+    setStatus(`Помилка: ${(e as Error).message}`);
+  } finally {
+    driveStarting = false;
+  }
+}
+
 /** Показує/ховає обʼєкти відповідно до вкладки. */
 function applyTab(): void {
-  gallery.hidden = tab === 'scene' || tab === 'trucks';
+  gallery.hidden = tab === 'scene' || tab === 'trucks' || tab === 'drive';
   stats.hidden = !(tab === 'scene' || tab === 'trucks');
-  truckSel.hidden = tab !== 'trucks';
-  if (built) built.root.visible = tab === 'scene';
+  truckSel.hidden = tab !== 'trucks' && tab !== 'drive';
+  if (built) built.root.visible = tab === 'scene' || tab === 'drive';
   truckRoot.visible = tab === 'trucks';
+  document.body.classList.toggle('driving', tab === 'drive');
+  $('menu').hidden = tab !== 'drive';
+  if (tab !== 'drive') stopDrive();
+  else void startDrive();
   if (tab === 'trucks') void ensureTrucks().then(showTruck);
   else if (tab === 'scene' && built) {
     camera.near = 0.5;
@@ -214,7 +250,9 @@ const initialTab = params.get('tab');
 if (initialTab && initialTab !== 'scene') document.querySelector<HTMLButtonElement>(`[data-tab="${initialTab}"]`)?.click();
 
 levelSel.addEventListener('change', open);
-truckSel.addEventListener('change', showTruck);
+// У режимі їзди панель згорнута; кнопка ☰ тимчасово її показує.
+$('menu').addEventListener('click', () => document.body.classList.toggle('bar-open'));
+truckSel.addEventListener('change', () => (tab === 'drive' ? void startDrive() : showTruck()));
 modeSel.addEventListener('change', open);
 $('fullscreen').addEventListener('click', async () => {
   try {
@@ -228,12 +266,18 @@ $('fullscreen').addEventListener('click', async () => {
   }
 });
 
+const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
-  if (tab !== 'scene' && tab !== 'trucks') return;
-  controls.update();
+  const dt = clock.getDelta();
+  if (tab === 'drive') {
+    drive?.update(dt);
+  } else if (tab === 'scene' || tab === 'trucks') {
+    controls.update();
+  } else return;
   renderer.render(scene, camera);
 });
 
-if (import.meta.env.DEV) Object.assign(window, { ht: { THREE, scene, camera, controls, get built() { return built; }, get level() { return level; } } });
+if (import.meta.env.DEV)
+  Object.assign(window, { ht: { THREE, RAPIER, scene, camera, controls, get built() { return built; }, get level() { return level; }, get drive() { return drive; } } });
 
 void open();

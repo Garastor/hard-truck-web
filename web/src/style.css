@@ -153,3 +153,126 @@ button.active {
 #status[hidden] {
   display: none;
 }
+
+/* --- Режим їзди --- */
+#overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.drive-hud {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 64px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  background: var(--panel);
+  border-radius: 8px;
+  font: 600 16px/1.3 ui-monospace, 'Cascadia Mono', monospace;
+  color: var(--accent);
+  white-space: pre;
+}
+
+.touch-ui {
+  position: absolute;
+  inset: 0;
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .touch-ui {
+    display: block;
+  }
+}
+
+.touch-btn {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  border-radius: 50%;
+  width: 76px;
+  height: 76px;
+  padding: 0;
+  font-size: 22px;
+  background: rgba(30, 32, 38, 0.55);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.touch-btn.pressed {
+  background: rgba(224, 165, 38, 0.6);
+  border-color: var(--accent);
+}
+
+.touch-btn.left {
+  left: max(16px, env(safe-area-inset-left));
+  bottom: max(20px, env(safe-area-inset-bottom));
+}
+
+.touch-btn.right {
+  left: calc(max(16px, env(safe-area-inset-left)) + 92px);
+  bottom: max(20px, env(safe-area-inset-bottom));
+}
+
+.touch-btn.gas,
+.touch-btn.brake {
+  border-radius: 14px;
+  width: 72px;
+  height: 104px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.touch-btn.gas {
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(20px, env(safe-area-inset-bottom));
+}
+
+.touch-btn.brake {
+  right: calc(max(16px, env(safe-area-inset-right)) + 88px);
+  bottom: max(20px, env(safe-area-inset-bottom));
+}
+
+.touch-btn.cam,
+.touch-btn.reset {
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
+  top: calc(env(safe-area-inset-top, 0px) + 64px);
+}
+
+.touch-btn.cam {
+  right: max(16px, env(safe-area-inset-right));
+}
+
+.touch-btn.reset {
+  right: calc(max(16px, env(safe-area-inset-right)) + 60px);
+}
+
+body.driving #bar {
+  display: none;
+}
+
+body.driving.bar-open #bar {
+  display: flex;
+}
+
+#menu {
+  position: fixed;
+  top: max(8px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+  z-index: 3;
+  min-width: 44px;
+  background: var(--panel);
+}
+
+body.driving .drive-hud {
+  top: max(8px, env(safe-area-inset-top));
+}
+
+body.driving .touch-btn.cam,
+body.driving .touch-btn.reset {
+  top: max(8px, env(safe-area-inset-top));
+}
