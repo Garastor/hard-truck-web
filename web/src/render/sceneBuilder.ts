@@ -130,7 +130,8 @@ export class SceneAssembler {
   private readonly switchGroup: number;
   /** Перемикачі стану (тип 21) у кімнатах світу: імʼя → групи (видима лише одна). */
   readonly switches = new Map<string, THREE.Group[][]>();
-  private inRooms = false;
+  /** Куди реєструвати динамічні перемикачі при побудові (світ або окремий обʼєкт, напр. кабіна). */
+  private switchTarget: Map<string, THREE.Group[][]> | null = null;
 
   constructor(
     readonly b3d: B3d,
@@ -180,10 +181,35 @@ export class SceneAssembler {
     return grp;
   }
 
+  /**
+   * Окремий (не кешований) екземпляр обʼєкта з динамічними перемикачами (21) — напр. кабіна з табло.
+   * Повертає групу і функцію встановлення стану перемикача за імʼям.
+   */
+  dynamicObject(name: string): { root: THREE.Group; setSwitch: (n: string, state: number) => void; names: string[] } | null {
+    const blk = this.topByName.get(name.toLowerCase());
+    if (!blk) return null;
+    const switches = new Map<string, THREE.Group[][]>();
+    const prev = this.switchTarget;
+    this.switchTarget = switches;
+    const root = new THREE.Group();
+    root.name = blk.name;
+    const batches: Batches = new Map();
+    this.visit(blk, null, batches, root, 0);
+    this.flush(batches, root);
+    this.switchTarget = prev;
+    return {
+      root,
+      names: [...switches.keys()],
+      setSwitch: (n, state) => {
+        for (const objs of switches.get(n) ?? []) objs.forEach((o, i) => (o.visible = i === state));
+      },
+    };
+  }
+
   /** Усі кімнати (тип 19) — геометрія світу. */
   buildRooms(): THREE.Group[] {
     const rooms: THREE.Group[] = [];
-    this.inRooms = true;
+    this.switchTarget = this.switches;
     for (const b of this.b3d.blocks) {
       if (b.data.t !== 19) continue;
       const grp = new THREE.Group();
@@ -194,7 +220,7 @@ export class SceneAssembler {
       rooms.push(grp);
       this.stats.rooms++;
     }
-    this.inRooms = false;
+    this.switchTarget = null;
     return rooms;
   }
 
@@ -274,7 +300,7 @@ export class SceneAssembler {
     }
     if (!block.groups) return;
     let groups = block.groups;
-    if (d.t === 21 && this.inRooms && block.name) {
+    if (d.t === 21 && this.switchTarget && block.name) {
       // Динамічний перемикач: кожна група — окремий обʼєкт, видимість змінює гра (світлофори тощо).
       const objs: THREE.Group[] = block.groups.map((g, gi) => {
         const go = new THREE.Group();
@@ -286,9 +312,9 @@ export class SceneAssembler {
         into.add(go);
         return go;
       });
-      const list = this.switches.get(block.name) ?? [];
+      const list = this.switchTarget.get(block.name) ?? [];
       list.push(objs);
-      this.switches.set(block.name, list);
+      this.switchTarget.set(block.name, list);
       return;
     }
     if (d.t === 21) {

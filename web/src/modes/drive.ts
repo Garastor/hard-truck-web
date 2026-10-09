@@ -34,6 +34,9 @@ export class DriveSession {
   readonly overlayScene = new THREE.Scene();
   private cab: THREE.Group | null = null;
   private cabParts: { rule?: THREE.Object3D; tacho?: THREE.Object3D; speed?: THREE.Object3D } = {};
+  private cabSwitch: ((n: string, state: number) => void) | null = null;
+  /** Пробіг, м (одометр на панелі: блакитні — км, червоні — десятки метрів). */
+  private odometer = 0;
   private audio: EngineAudio | null = null;
   private lastGear = 1;
   private brakeSqueal = 0;
@@ -195,9 +198,10 @@ export class DriveSession {
 
   /** Кабіна `<Prefix>Cab` у системі «очей водія» (y — уперед, z — угору) з кермом і стрілками. */
   private buildCab(): void {
-    const tpl = this.built.assembler.template(`${this.def.prefix}Cab`);
-    if (!tpl) return;
-    const inner = tpl.clone();
+    const dyn = this.built.assembler.dynamicObject(`${this.def.prefix}Cab`);
+    if (!dyn) return;
+    this.cabSwitch = dyn.setSwitch;
+    const inner = dyn.root;
     inner.rotation.x = -Math.PI / 2;
     this.cab = new THREE.Group();
     this.cab.add(inner);
@@ -224,7 +228,18 @@ export class DriveSession {
     const [sMax, sAng] = this.def.speedScale;
     rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), Math.min(1, this.truck.rpm / (tMax * 100)) * tAng * deg);
     rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), Math.min(1, this.truck.speedKmh / sMax) * sAng * deg);
+    // Табло: A — автоматична КПП, P — ручник, передача; одометр — 5 розрядів (KMeter0Key — молодший).
+    const sw = this.cabSwitch;
+    if (sw) {
+      sw('AvtoKey', 1);
+      sw('ParkKey', this.handbrakeOn ? 1 : 0);
+      sw('GearKey', this.truck.gear < 0 ? 0 : this.truck.speedKmh < 0.5 ? 1 : 2);
+      const tens = Math.floor(this.odometer / 10);
+      for (let i = 0; i < 5; i++) sw(`KMeter${i}Key`, Math.floor(tens / 10 ** i) % 10);
+    }
   }
+
+  private handbrakeOn = false;
 
   /** Суперники на стартовій решітці попереду гравця, з різною крейсерською швидкістю. */
   private spawnOpponents(defs: TruckDef[]): void {
@@ -338,6 +353,8 @@ export class DriveSession {
     if (this.truck.body.translation().y < -200) this.truck.reset(this.restartPoint());
     this.updateTrack();
     this.updateCamera(dt);
+    this.handbrakeOn = state.handbrake;
+    this.odometer += (this.truck.speedKmh / 3.6) * dt;
     this.updateCab(state);
     const t = this.truck;
     if (this.audio) {
