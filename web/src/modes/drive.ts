@@ -50,6 +50,12 @@ export class DriveSession {
   private readonly playerOdo = new Odometer();
   /** Відлік до старту, с (як світлофор над стартом: червоний → жовтий → зелений). */
   private countdown = 3;
+  /** Кількість кіл гонки (Кольцо — 3, за довідкою оригіналу); 0 — без фінішу. */
+  lapsToFinish = 3;
+  /** Тип заїзду: кільцева гонка, маршрут до фінішу, вільна їзда (база). */
+  raceKind: 'laps' | 'route' | 'free' = 'laps';
+  private finished: { place: number; time: number } | null = null;
+  private raceStart: number | null = null;
   /** Автопілот (клавіша P): їде по лініях way_* — для тестів і як основа суперників. */
   autopilot: AutoPilot | null = null;
   private wayNet: WayNet | null = null;
@@ -69,9 +75,13 @@ export class DriveSession {
     overlay: HTMLElement,
     rmp?: RmpArchive,
     rivals: TruckDef[] = [],
+    raceKind: 'laps' | 'route' | 'free' = 'laps',
   ): Promise<DriveSession> {
     await initRapier();
     const s = new DriveSession(scene, camera, built, def);
+    s.raceKind = raceKind;
+    s.lapsToFinish = raceKind === 'laps' ? 3 : raceKind === 'route' ? 1 : 0;
+    if (raceKind === 'free') s.countdown = 0;
     s.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     s.world.timestep = 1 / 60;
     addStaticMeshes(s.world, built.root);
@@ -155,11 +165,13 @@ export class DriveSession {
     return { position: this.groundAt(pos), forward: fwd };
   }
 
+  /** Поверхня під точкою: спершу трохи вище точки (закриті приміщення — база), потім згори. */
   private groundAt(p: THREE.Vector3): THREE.Vector3 {
-    const ray = new RAPIER.Ray({ x: p.x, y: p.y + 200, z: p.z }, { x: 0, y: -1, z: 0 });
-    const hit = this.world.castRay(ray, 1000, true);
-    const y = hit ? p.y + 200 - hit.timeOfImpact : p.y;
-    return new THREE.Vector3(p.x, y + 2.5, p.z);
+    for (const up of [4, 200]) {
+      const hit = this.world.castRay(new RAPIER.Ray({ x: p.x, y: p.y + up, z: p.z }, { x: 0, y: -1, z: 0 }), 1000, true);
+      if (hit) return new THREE.Vector3(p.x, p.y + up - hit.timeOfImpact + 2.5, p.z);
+    }
+    return new THREE.Vector3(p.x, p.y + 2.5, p.z);
   }
 
   /** Рестарт як в оригіналі: точка рестарту поточної кімнати (подія 11), інакше — на місці. */
@@ -236,6 +248,7 @@ export class DriveSession {
   private tick(dt: number): void {
     const before = this.countdown;
     this.countdown -= dt;
+    if (before > 0 && this.countdown <= 0) this.raceStart = this.clock;
     // Стартовий світлофор: 3–2 с червоний, 2–1 жовтий, далі зелений (перемикачі *SvetKey, стан 1 = увімкнено).
     const phase = (c: number) => (c > 2 ? 'r' : c > 1 ? 'y' : c > -6 ? 'g' : 'off');
     if (phase(before) !== phase(this.countdown) || before === 3) {
@@ -304,10 +317,16 @@ export class DriveSession {
     const place = this.opponents.length ? `   місце ${this.racePosition()}/${this.opponents.length + 1}` : '';
     const start = this.countdown > 0 ? `
 ${['ЗЕЛЕНИЙ', 'ЖОВТИЙ', 'ЧЕРВОНИЙ'][Math.min(2, Math.floor(this.countdown))]}  ${Math.ceil(this.countdown)}` : '';
-    this.hud.textContent =
-      `${t.speedKmh.toFixed(0)} км/год   ${t.gear < 0 ? 'R' : t.gear}   ${t.rpm.toFixed(0)} об/хв
-` +
-      `${(this.room ?? '?').replace('room_', 'сектор ')}   коло ${this.laps + 1}: ${lap}${best}${place}${start}`;
+    const fin = this.finished ? `
+ФІНІШ!  місце ${this.finished.place}, час ${fmtTime(this.finished.time)}` : '';
+    const speedLine = `${t.speedKmh.toFixed(0)} км/год   ${t.gear < 0 ? 'R' : t.gear}   ${t.rpm.toFixed(0)} об/хв`;
+    const raceLine =
+      this.raceKind === 'free'
+        ? 'вільна їзда'
+        : `${(this.room ?? '?').replace('room_', 'сектор ')}   коло ${Math.min(this.laps + 1, this.lapsToFinish || Infinity)}` +
+          `${this.lapsToFinish ? '/' + this.lapsToFinish : ''}: ${lap}${best}${place}${start}${fin}`;
+    this.hud.textContent = `${speedLine}
+${raceLine}`;
   }
 
   /** Кімнати й коло: перетин порталів, старт таймера, фініш (подія 666). */
@@ -324,15 +343,23 @@ ${['ЗЕЛЕНИЙ', 'ЖОВТИЙ', 'ЧЕРВОНИЙ'][Math.min(2, Math.floor(
         }
         this.room = next;
         this.visited.add(next);
-        // Коло: фініш (подія 666) або повернення в сектор старту відліку, пройшовши більшість траси.
-        const finish = this.track.hasEvent(next, EVENT_FINISH) || next === this.lapRoom;
-        if (finish && this.visited.size >= this.track.rooms.size * 0.6) {
+        // Кільце: фініш (подія 666) або повернення в сектор старту, пройшовши більшість траси.
+        // Маршрут (комерційні траси, полігон): достатньо доїхати до сектора з подією фінішу.
+        const atFinish = this.track.hasEvent(next, EVENT_FINISH);
+        const lapDone =
+          this.raceKind === 'laps'
+            ? (atFinish || next === this.lapRoom) && this.visited.size >= this.track.rooms.size * 0.6
+            : this.raceKind === 'route' && atFinish;
+        if (lapDone) {
           this.lapTime = now - this.lapStart;
           this.bestLap = this.bestLap === null ? this.lapTime : Math.min(this.bestLap, this.lapTime);
           this.laps++;
           this.lapStart = now;
           this.visited.clear();
           this.audio?.play('alarm', 0.6);
+          if (this.lapsToFinish && this.laps >= this.lapsToFinish && !this.finished) {
+            this.finished = { place: this.racePosition(), time: now - (this.raceStart ?? 0) };
+          }
         }
       }
     }

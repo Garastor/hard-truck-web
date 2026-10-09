@@ -158,8 +158,11 @@ async function startDrive(): Promise<void> {
     const { DriveSession } = await import('./modes/drive');
     // Суперники: кількість з ?ai= (за замовчуванням 3, як aicar у truck.ini), інші моделі вантажівок.
     const nAi = Number(params.get('ai') ?? 3);
-    const rivals = trucks.filter((t) => t !== def).slice(0, nAi);
-    drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals);
+    // Правила з довідки: Кольцо — 3 кола; Полигон — поодинці; комерційні — до фінішу; база — вільна їзда.
+    const id = levelSel.value as LevelId;
+    const kind = id === 'CIRCUIT' ? 'laps' : id === 'MENU3D' ? 'free' : 'route';
+    const rivals = id === 'TRIAL' || id === 'MENU3D' ? [] : trucks.filter((t) => t !== def).slice(0, nAi);
+    drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind);
     setStatus(null);
   } catch (e) {
     console.error(e);
