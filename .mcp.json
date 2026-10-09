@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "pyghidra-mcp": {
+      "type": "stdio",
+      "command": ".venv/Scripts/pyghidra-mcp.exe",
+      "args": ["--project-path", "re/htruck/htruck.gpr", "-t", "stdio"],
+      "env": {
+        "GHIDRA_INSTALL_DIR": "tools/ghidra_12.1.4_PUBLIC",
+        "JAVA_HOME": "C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot"
+      }
+    }
+  }
+}
