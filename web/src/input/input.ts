@@ -10,7 +10,7 @@ export interface ControlState {
 }
 
 type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake';
-type Command = 'camera' | 'reset' | 'horn';
+type Command = 'camera' | 'reset' | 'horn' | 'autopilot';
 
 export class Input {
   readonly state: ControlState = { steer: 0, throttle: 0, brake: 0, handbrake: false };
@@ -43,6 +43,7 @@ export class Input {
       if (e.code === 'KeyC') this.onCommand?.('camera');
       if (e.code === 'KeyR') this.onCommand?.('reset');
       if (e.code === 'KeyH') this.onCommand?.('horn');
+      if (e.code === 'KeyP') this.onCommand?.('autopilot');
     }
   }
 

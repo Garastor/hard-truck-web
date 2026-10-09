@@ -62,7 +62,7 @@ export class TruckVehicle {
         .setRotation(rot)
         .setLinearDamping(0.05)
         .setAngularDamping(0.5)
-        .setCcdEnabled(true),
+        .setCanSleep(false), // контролер транспорту не будить тіло — сон «заморожує» вантажівку
     );
     const mass = tech.mass + tech.bodyMass;
     // Центр мас трохи нижче геометричного центру — стійкість, як у важкого тягача.

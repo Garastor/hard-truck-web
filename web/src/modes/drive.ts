@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { addStaticMeshes, g2t, initRapier } from '../physics/world';
+import { addCollisionPolys, addStaticMeshes, g2t, initRapier } from '../physics/world';
 import { Input } from '../input/input';
 import { TruckVehicle } from '../game/truckVehicle';
 import { buildTruckModel, type TruckDef } from '../game/trucks';
@@ -8,6 +8,8 @@ import type { BuiltScene } from '../render/sceneBuilder';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
 import { EngineAudio } from '../audio/engineAudio';
+import { EVENT_FINISH, Track } from '../game/track';
+import { AutoPilot, WayNet } from '../game/autopilot';
 
 type CamMode = 'chase' | 'cockpit' | 'far';
 
@@ -31,6 +33,21 @@ export class DriveSession {
   private audio: EngineAudio | null = null;
   private lastGear = 1;
   private brakeSqueal = 0;
+  private track!: Track;
+  private room: string | null = null;
+  private readonly prevPos = new THREE.Vector3();
+  private readonly visited = new Set<string>();
+  private lapStart: number | null = null;
+  /** Ігровий час, с (накопичується кроками фізики). */
+  private clock = 0;
+  private lapTime = 0;
+  private bestLap: number | null = null;
+  private laps = 0;
+  /** Сектор, з якого почався відлік кола. */
+  private lapRoom: string | null = null;
+  /** Автопілот (клавіша P): їде по лініях way_* — для тестів і як основа суперників. */
+  autopilot: AutoPilot | null = null;
+  private wayNet: WayNet | null = null;
 
   private constructor(
     private readonly scene: THREE.Scene,
@@ -52,11 +69,21 @@ export class DriveSession {
     s.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     s.world.timestep = 1 / 60;
     addStaticMeshes(s.world, built.root);
+    // Стіни: колізійні полігони блоків 23 у кімнатах (шаблони обʼєктів не враховуємо).
+    const walls: number[][][] = [];
+    for (const b of built.assembler.b3d.blocks) {
+      if (b.data.t !== 19) continue;
+      for (const [blk] of walk([b])) if (blk.data.t === 23 && blk.data.shape.kind === 6) walls.push(...blk.data.shape.polys);
+    }
+    addCollisionPolys(s.world, walls);
     s.world.step(); // колайдери потрапляють у структури запитів (castRay) лише після кроку
 
     const model = buildTruckModel(built.assembler, def);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня в цій локації`);
+    s.track = new Track(built.assembler.b3d);
     s.spawn = s.findSpawn();
+    s.room = s.track.guessRoom(s.spawn.position);
+    s.prevPos.copy(s.spawn.position);
     s.truck = new TruckVehicle(s.world, def, model, s.spawn);
     scene.add(s.truck.visual);
 
@@ -66,7 +93,8 @@ export class DriveSession {
     if (rmp) s.audio = await EngineAudio.create(rmp).catch(() => null);
     s.input.onCommand = (cmd) => {
       if (cmd === 'horn') s.audio?.play('horn');
-      if (cmd === 'reset') s.truck.reset(s.spawnAtTruck());
+      if (cmd === 'autopilot') s.toggleAutopilot();
+      if (cmd === 'reset') s.truck.reset(s.restartPoint());
       if (cmd === 'camera') s.camMode = s.camMode === 'chase' ? 'cockpit' : s.camMode === 'cockpit' ? 'far' : 'chase';
     };
     s.touchUi = s.input.mountTouch(overlay);
@@ -123,34 +151,59 @@ export class DriveSession {
     return new THREE.Vector3(p.x, y + 2.5, p.z);
   }
 
+  /** Рестарт як в оригіналі: точка рестарту поточної кімнати (подія 11), інакше — на місці. */
+  private restartPoint() {
+    const r = this.room ? this.track.rooms.get(this.room)?.restart : null;
+    if (r) return { position: this.groundAt(r.position), forward: r.forward.clone() };
+    return this.spawnAtTruck();
+  }
+
   /** Скидання на місці (поставити на колеса). */
   private spawnAtTruck() {
     const t = this.truck.body.translation();
     return { position: this.groundAt(new THREE.Vector3(t.x, t.y, t.z)), forward: this.truck.forward() };
   }
 
+  toggleAutopilot(on = !this.autopilot): void {
+    if (on) {
+      this.wayNet ??= new WayNet(this.built.assembler.b3d);
+      this.autopilot = new AutoPilot(this.wayNet);
+    } else this.autopilot = null;
+  }
+
+  private controls(dt: number) {
+    const manual = this.input.update(dt);
+    if (!this.autopilot) return manual;
+    const tp = this.truck.body.translation();
+    return this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt);
+  }
+
   /** Детермінований крок для тестів: n кроків фізики без залежності від requestAnimationFrame. */
   simulate(steps: number): void {
     for (let i = 0; i < steps; i++) {
-      const state = this.input.update(this.world.timestep);
+      const state = this.controls(this.world.timestep);
       this.truck.update(this.world.timestep, state);
       this.world.step();
+      this.clock += this.world.timestep;
+      this.truck.syncVisual();
+      this.updateTrack();
     }
-    this.truck.syncVisual();
   }
 
   update(dt: number): void {
-    const state = this.input.update(dt);
+    const state = this.controls(dt);
     this.acc += Math.min(dt, 0.1);
     const step = this.world.timestep;
     while (this.acc >= step) {
       this.truck.update(step, state);
       this.world.step();
+      this.clock += step;
       this.acc -= step;
     }
     this.truck.syncVisual();
-    // Впав зі світу — повертаємо.
-    if (this.truck.body.translation().y < -200) this.truck.reset(this.spawn);
+    // Впав зі світу — на точку рестарту.
+    if (this.truck.body.translation().y < -200) this.truck.reset(this.restartPoint());
+    this.updateTrack();
     this.updateCamera(dt);
     const t = this.truck;
     if (this.audio) {
@@ -165,7 +218,41 @@ export class DriveSession {
         this.brakeSqueal = 3;
       }
     }
-    this.hud.textContent = `${t.speedKmh.toFixed(0)} км/год   ${t.gear < 0 ? 'R' : t.gear}   ${t.rpm.toFixed(0)} об/хв`;
+    const lap = this.lapStart !== null ? fmtTime(this.clock - this.lapStart) : '—';
+    const best = this.bestLap !== null ? `   кращий ${fmtTime(this.bestLap)}` : '';
+    this.hud.textContent =
+      `${t.speedKmh.toFixed(0)} км/год   ${t.gear < 0 ? 'R' : t.gear}   ${t.rpm.toFixed(0)} об/хв
+` +
+      `${(this.room ?? '?').replace('room_', 'сектор ')}   коло ${this.laps + 1}: ${lap}${best}`;
+  }
+
+  /** Кімнати й коло: перетин порталів, старт таймера, фініш (подія 666). */
+  private updateTrack(): void {
+    const tp = this.truck.body.translation();
+    const cur = new THREE.Vector3(tp.x, tp.y, tp.z);
+    if (this.room) {
+      const next = this.track.crossPortal(this.room, this.prevPos, cur);
+      if (next && this.track.rooms.has(next)) {
+        const now = this.clock;
+        if (this.lapStart === null) {
+          this.lapStart = now;
+          this.lapRoom = next;
+        }
+        this.room = next;
+        this.visited.add(next);
+        // Коло: фініш (подія 666) або повернення в сектор старту відліку, пройшовши більшість траси.
+        const finish = this.track.hasEvent(next, EVENT_FINISH) || next === this.lapRoom;
+        if (finish && this.visited.size >= this.track.rooms.size * 0.6) {
+          this.lapTime = now - this.lapStart;
+          this.bestLap = this.bestLap === null ? this.lapTime : Math.min(this.bestLap, this.lapTime);
+          this.laps++;
+          this.lapStart = now;
+          this.visited.clear();
+          this.audio?.play('alarm', 0.6);
+        }
+      }
+    }
+    this.prevPos.copy(cur);
   }
 
   private updateCamera(dt: number): void {
@@ -199,4 +286,10 @@ export class DriveSession {
     this.audio?.dispose();
     this.world.free();
   }
+}
+
+function fmtTime(t: number): string {
+  const m = Math.floor(t / 60);
+  const sec = t - m * 60;
+  return `${m}:${sec.toFixed(1).padStart(4, '0')}`;
 }

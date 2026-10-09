@@ -86,7 +86,7 @@ async function open(): Promise<void> {
     const t0 = performance.now();
     level = await loadLevel(devServerSource, levelSel.value as LevelId, modeSel.value as 'hw' | 'sw');
     const t1 = performance.now();
-    built = buildScene(level.b3d, level.rmp);
+    built = buildScene(level.b3d, level.rmp, { switchGroup: Number(params.get('lod') ?? 0) });
     const t2 = performance.now();
     scene.add(built.root);
     if (built.sky) scene.add(built.sky);
