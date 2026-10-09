@@ -260,6 +260,34 @@ def cmd_exportall(c, outdir="re/decomp"):
     print(f"експортовано {len(index)} функцій у {out}")
 
 
+def cmd_mkfunc(c, *targets):
+    """Створює функції за адресами (напр. методи, на які посилаються лише vtable)."""
+    from ghidra.app.cmd.function import CreateFunctionCmd
+    from ghidra.app.cmd.disassemble import DisassembleCommand
+    from ghidra.util.task import ConsoleTaskMonitor
+
+    with c.tx("mkfunc"):
+        for t in targets:
+            a = c.addr(t)
+            if c.fm.getFunctionAt(a):
+                continue
+            DisassembleCommand(a, None, True).applyTo(c.program, ConsoleTaskMonitor())
+            ok = CreateFunctionCmd(a).applyTo(c.program, ConsoleTaskMonitor())
+            f = c.fm.getFunctionAt(a)
+            if f:
+                f.setCallingConvention("__watcall")
+            print(t, "OK" if ok and f else "FAIL")
+
+
+def cmd_vtable(c, target, n="16"):
+    """Друкує n вказівників vtable за адресою."""
+    a = c.addr(target)
+    for i in range(int(n)):
+        p = c.api.getInt(a.add(i * 4)) & 0xFFFFFFFF
+        f = c.fm.getFunctionAt(c.api.toAddr(p))
+        print(f"+0x{i * 4:02x}  {p:08x}  {f.getName() if f else '-'}")
+
+
 def cmd_funcs(c, pattern="."):
     rx = re.compile(pattern)
     for f in c.fm.getFunctions(True):
