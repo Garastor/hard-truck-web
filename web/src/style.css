@@ -1,0 +1,155 @@
+:root {
+  --bg: #1b1d22;
+  --panel: rgba(20, 22, 27, 0.82);
+  --text: #e8e6e1;
+  --muted: #9a9890;
+  --accent: #e0a526;
+  --gutter: 12px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#view {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#bar {
+  position: fixed;
+  top: env(safe-area-inset-top, 0);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px max(var(--gutter), env(safe-area-inset-left)) 8px max(var(--gutter), env(safe-area-inset-right));
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+  z-index: 2;
+}
+
+select,
+button {
+  font: inherit;
+  color: var(--text);
+  background: #2a2d34;
+  border: 1px solid #3a3e47;
+  border-radius: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+#fullscreen {
+  margin-left: auto;
+  min-width: 44px;
+}
+
+#stats {
+  position: fixed;
+  left: max(var(--gutter), env(safe-area-inset-left));
+  bottom: max(var(--gutter), env(safe-area-inset-bottom));
+  padding: 6px 10px;
+  background: var(--panel);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre;
+  z-index: 2;
+  pointer-events: none;
+}
+
+#gallery {
+  position: fixed;
+  inset: 0;
+  padding: 72px var(--gutter) var(--gutter);
+  overflow-y: auto;
+  touch-action: pan-y;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  grid-auto-rows: max-content;
+  align-content: start;
+  background: var(--bg);
+  z-index: 1;
+}
+
+#gallery[hidden] {
+  display: none;
+}
+
+#gallery figure {
+  margin: 0;
+  background: repeating-conic-gradient(#2c2f36 0 25%, #24272d 0 50%) 0 0 / 16px 16px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+#gallery .thumb {
+  position: relative;
+  aspect-ratio: 1;
+}
+
+#gallery canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+#gallery figcaption {
+  font-size: 10px;
+  color: var(--muted);
+  padding: 2px 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--bg);
+}
+
+#status {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  font-size: 16px;
+  z-index: 3;
+  padding: var(--gutter);
+  text-align: center;
+}
+
+#status[hidden] {
+  display: none;
+}

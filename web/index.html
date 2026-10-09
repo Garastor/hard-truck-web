@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#1b1d22" />
+    <title>Hard Truck Web</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <header id="bar">
+      <select id="level" aria-label="Локація"></select>
+      <select id="mode" aria-label="Набір ресурсів">
+        <option value="hw">3D-прискорювач</option>
+        <option value="sw">програмний</option>
+      </select>
+      <div class="tabs" role="tablist">
+        <button data-tab="scene" class="active" role="tab">Сцена</button>
+        <button data-tab="textures" role="tab">Текстури</button>
+        <button data-tab="masks" role="tab">Маски</button>
+      </div>
+      <button id="fullscreen" aria-label="На весь екран">⛶</button>
+    </header>
+    <div id="stats"></div>
+    <div id="gallery" hidden></div>
+    <div id="status" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
