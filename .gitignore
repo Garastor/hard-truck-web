@@ -1,0 +1,46 @@
+# --- Оригінальна гра: авторські ресурси, НІКОЛИ не комітити ---
+/Game/
+*.zip
+*.avi
+*.b3d
+*.B3D
+*.rmp
+*.RMP
+*.res
+*.RES
+*.exe
+
+# --- Сторонні інструменти (встановлюються окремо) ---
+/tools/ghidra_*/
+
+# --- Реверс: проєкт Ghidra не комітимо, лише нотатки ---
+/re/*
+!/re/notes/
+
+# --- Згенеровані ресурси та збірка ---
+/build/
+dist/
+node_modules/
+.vite/
+coverage/
+playwright-report/
+test-results/
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+
+# --- Локальні налаштування ---
+.claude/settings.local.json
+.env
+.env.*
+*.log
+
+# --- ОС / редактори ---
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
