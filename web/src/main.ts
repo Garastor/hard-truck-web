@@ -79,6 +79,7 @@ async function open(): Promise<void> {
   try {
     if (built) {
       scene.remove(built.root);
+      if (built.sky) scene.remove(built.sky);
       built.dispose();
       built = null;
     }
@@ -88,6 +89,7 @@ async function open(): Promise<void> {
     built = buildScene(level.b3d, level.rmp);
     const t2 = performance.now();
     scene.add(built.root);
+    if (built.sky) scene.add(built.sky);
     const s = built.stats;
     stats.textContent =
       `${level.id}: кімнат ${s.rooms}, мешів ${s.meshes}, трикутників ${s.triangles}\n` +
@@ -275,6 +277,10 @@ renderer.setAnimationLoop(() => {
   } else if (tab === 'scene' || tab === 'trucks') {
     controls.update();
   } else return;
+  if (built?.sky) {
+    built.sky.visible = tab === 'scene' || tab === 'drive';
+    built.sky.position.copy(camera.position);
+  }
   renderer.render(scene, camera);
 });
 

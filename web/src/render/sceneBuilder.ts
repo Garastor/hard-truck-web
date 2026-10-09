@@ -20,6 +20,8 @@ export interface BuiltScene {
   rooms: THREE.Group[];
   stats: { rooms: number; meshes: number; triangles: number; instances: number; missingTextures: number };
   assembler: SceneAssembler;
+  /** Купол неба (Background_object): ставити в позицію камери кожен кадр. */
+  sky: THREE.Group | null;
   dispose(): void;
 }
 
@@ -233,8 +235,14 @@ export class SceneAssembler {
         return; // логіка/колізії — не рендеримо
     }
     if (!block.groups) return;
-    const isSwitch = d.t === 9 || d.t === 10 || d.t === 11 || d.t === 21 || d.t === 22 || d.t === 29;
-    const groups = isSwitch ? [block.groups[Math.min(this.switchGroup, block.groups.length - 1)] ?? []] : block.groups;
+    let groups = block.groups;
+    if (d.t === 21) {
+      // Перемикач стану: i1 — початковий стан; якщо він порожній (напр. SkyDomeKey) — перший непорожній.
+      const start = block.groups[d.i1] ?? [];
+      groups = [start.length ? start : (block.groups.find((g) => g.length) ?? [])];
+    } else if (d.t === 9 || d.t === 10 || d.t === 11 || d.t === 22 || d.t === 29) {
+      groups = [block.groups[Math.min(this.switchGroup, block.groups.length - 1)] ?? []];
+    }
     for (const g of groups) for (const child of g) this.visit(child, cur, batches, into, depth + 1);
   }
 
@@ -265,12 +273,14 @@ export function buildScene(b3d: B3d, rmp: RmpArchive, opts: BuildOptions = {}): 
   const rooms = asm.buildRooms();
   for (const r of rooms) root.add(r);
   root.updateMatrixWorld(true);
+  const sky = buildSky(asm);
   asm.stats.missingTextures = asm.lib.missingTextures;
   return {
     root,
     rooms,
     stats: asm.stats,
     assembler: asm,
+    sky,
     dispose() {
       root.traverse((o) => {
         if (o instanceof THREE.Mesh) o.geometry.dispose();
@@ -278,6 +288,29 @@ export function buildScene(b3d: B3d, rmp: RmpArchive, opts: BuildOptions = {}): 
       asm.dispose();
     },
   };
+}
+
+/** Небо: шаблон Background_object (купол noz_sky) без глибини й туману, малюється першим. */
+function buildSky(asm: SceneAssembler): THREE.Group | null {
+  const tpl = asm.template('Background_object');
+  if (!tpl) return null;
+  const inner = tpl.clone();
+  inner.rotation.x = -Math.PI / 2;
+  inner.matrixAutoUpdate = true;
+  const sky = new THREE.Group();
+  sky.name = 'sky';
+  sky.add(inner);
+  inner.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    const m = (o.material as THREE.MeshBasicMaterial).clone();
+    m.depthWrite = false;
+    m.depthTest = false;
+    m.fog = false;
+    o.material = m;
+    o.renderOrder = -1000;
+    o.frustumCulled = false;
+  });
+  return sky;
 }
 
 /** Матриця з блоку 24: три осі + позиція (у системі гри). */
