@@ -9,6 +9,8 @@ import { walk } from '../formats/b3d';
 
 type CamMode = 'chase' | 'cockpit' | 'far';
 
+if (import.meta.env.DEV) Object.assign(window, { RAPIER });
+
 /**
  * Режим їзди (Фаза 3): фізичний світ з геометрії локації, вантажівка, камера, HUD.
  */

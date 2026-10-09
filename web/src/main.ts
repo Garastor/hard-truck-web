@@ -8,8 +8,7 @@ import { parsePlm } from './formats/plm';
 import type { RgbaImage } from './formats/binary';
 import { decodeCp1251 } from './formats/binary';
 import { buildTruckModel, parseTrucks, type TruckDef } from './game/trucks';
-import { DriveSession } from './modes/drive';
-import RAPIER from '@dimforge/rapier3d-compat';
+import type { DriveSession } from './modes/drive';
 
 /**
  * Переглядач ресурсів (Фази 1–2): обліт локацій, галерея текстур і масок.
@@ -153,6 +152,8 @@ async function startDrive(): Promise<void> {
     const def = trucks.find((t) => String(t.index) === truckSel.value) ?? trucks[0];
     controls.enabled = false;
     scene.fog = new THREE.Fog(0x8fb4d8, 150, 900);
+    // Rapier (WASM ~2 МБ) вантажимо лише при вході в режим їзди.
+    const { DriveSession } = await import('./modes/drive');
     drive = await DriveSession.start(scene, camera, built, def, overlay);
     setStatus(null);
   } catch (e) {
@@ -278,6 +279,6 @@ renderer.setAnimationLoop(() => {
 });
 
 if (import.meta.env.DEV)
-  Object.assign(window, { ht: { THREE, RAPIER, scene, camera, controls, get built() { return built; }, get level() { return level; }, get drive() { return drive; } } });
+  Object.assign(window, { ht: { THREE, scene, camera, controls, get built() { return built; }, get level() { return level; }, get drive() { return drive; } } });
 
 void open();
