@@ -270,10 +270,16 @@ export class DriveSession {
 
   private stepOpponents(dt: number): void {
     const go = this.countdown <= 0;
-    for (const o of this.opponents) {
-      const tp = o.truck.body.translation();
-      const pos = new THREE.Vector3(tp.x, tp.y, tp.z);
-      const st = o.pilot.update(pos, o.truck.forward(), o.truck.speedKmh, dt);
+    const vec = (t: TruckVehicle) => {
+      const p = t.body.translation();
+      return new THREE.Vector3(p.x, p.y, p.z);
+    };
+    const all = [this.truck, ...this.opponents.map((o) => o.truck)].map(vec);
+    for (const [i, o] of this.opponents.entries()) {
+      const pos = all[i + 1];
+      const tp = pos;
+      const others = all.filter((_, k) => k !== i + 1);
+      const st = o.pilot.update(pos, o.truck.forward(), o.truck.speedKmh, dt, others);
       if (!go) {
         st.throttle = 0;
         st.brake = 0;

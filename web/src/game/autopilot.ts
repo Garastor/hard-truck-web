@@ -79,10 +79,18 @@ export class AutoPilot {
   cruise = 60;
   private stuck = 0;
   private reversing = 0;
+  /** Бічний зсув для обгону (м), плавно змінюється. */
+  private offset = 0;
 
   constructor(private readonly net: WayNet) {}
 
-  update(pos: THREE.Vector3, forward: THREE.Vector3, speedKmh: number, dt = 1 / 60): ControlState {
+  update(
+    pos: THREE.Vector3,
+    forward: THREE.Vector3,
+    speedKmh: number,
+    dt = 1 / 60,
+    others: readonly THREE.Vector3[] = [],
+  ): ControlState {
     const s = this.state;
     // Застряг (газ є, швидкості немає) → здати назад з протилежним кермом.
     if (this.reversing > 0) {
@@ -106,10 +114,27 @@ export class AutoPilot {
     }
     const look = 5 + speedKmh * 0.18;
     const target = this.net.advance(n.line, n.seg, n.t, look);
+    // Машини попереду в «коридорі» → обгін зсувом убік, а якщо дуже близько — гальмуємо.
+    const rightV = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+    let blockDist = Infinity;
+    let blockSide = 0;
+    for (const o of others) {
+      const rel = o.clone().sub(pos);
+      const ahead = rel.dot(forward);
+      const lateral = rel.dot(rightV) - this.offset;
+      if (ahead > 0 && ahead < 25 && Math.abs(lateral) < 3) {
+        if (ahead < blockDist) {
+          blockDist = ahead;
+          blockSide = lateral >= 0 ? -1 : 1;
+        }
+      }
+    }
+    const wantOffset = blockDist < 25 ? blockSide * 3.2 : 0;
+    this.offset += THREE.MathUtils.clamp(wantOffset - this.offset, -2 * dt, 2 * dt);
+    target.addScaledVector(rightV, this.offset);
     const far = this.net.advance(n.line, n.seg, n.t, 12 + speedKmh * 0.6);
-    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
     const to = target.clone().sub(pos).setY(0);
-    const angle = Math.atan2(to.dot(right), to.dot(forward));
+    const angle = Math.atan2(to.dot(rightV), to.dot(forward));
     s.steer = THREE.MathUtils.clamp(angle * 2.2, -1, 1);
     // Кривизна попереду → зниження швидкості.
     const toFar = far.clone().sub(pos).setY(0).normalize();
@@ -117,6 +142,10 @@ export class AutoPilot {
     const want = this.cruise * (1 - Math.min(0.7, bend * 2.2));
     s.throttle = speedKmh < want ? Math.min(1, (want - speedKmh) / 10 + 0.3) : 0;
     s.brake = speedKmh > want + 8 ? Math.min(1, (speedKmh - want) / 20) : 0;
+    if (blockDist < 9 && speedKmh > 8) {
+      s.throttle = 0;
+      s.brake = 0.6;
+    }
     s.handbrake = false;
     return s;
   }
