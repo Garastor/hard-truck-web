@@ -74,6 +74,10 @@ button.active {
   min-width: 44px;
 }
 
+#stats:empty {
+  display: none;
+}
+
 #stats {
   position: fixed;
   left: max(var(--gutter), env(safe-area-inset-left));
@@ -282,4 +286,37 @@ body.driving .drive-hud {
 body.driving .touch-btn.cam,
 body.driving .touch-btn.reset {
   top: max(8px, env(safe-area-inset-top));
+}
+
+/* --- Імпорт файлів гри --- */
+.import-box {
+  max-width: 440px;
+  background: var(--bg);
+  border: 1px solid #3a3e47;
+  border-radius: 12px;
+  padding: 16px 20px;
+  text-align: left;
+  user-select: text;
+}
+
+.import-box h2 {
+  margin: 0 0 8px;
+  color: var(--accent);
+}
+
+.import-box .btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 16px;
+  margin: 8px 8px 0 0;
+  border-radius: 8px;
+  background: #2a2d34;
+  border: 1px solid var(--accent);
+  cursor: pointer;
+}
+
+.import-box progress {
+  width: 100%;
+  margin-top: 12px;
 }

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.20.0",
+    "fflate": "0.8.2",
     "three": "0.186.1"
   },
   "devDependencies": {

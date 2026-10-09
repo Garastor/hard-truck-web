@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { LEVELS, devServerSource, loadLevel, type LevelId, type LoadedLevel } from './assets/loader';
+import { LEVELS, devServerSource, loadLevel, type FileSource, type LevelId, type LoadedLevel } from './assets/loader';
+import { idbSource, importFiles, importZip, missingFiles } from './assets/gameFiles';
 import { buildScene, type BuiltScene } from './render/sceneBuilder';
 import { parseTxr } from './formats/txr';
 import { parseMsk } from './formats/msk';
@@ -84,7 +85,7 @@ async function open(): Promise<void> {
       built = null;
     }
     const t0 = performance.now();
-    level = await loadLevel(devServerSource, levelSel.value as LevelId, modeSel.value as 'hw' | 'sw');
+    level = await loadLevel(source, levelSel.value as LevelId, modeSel.value as 'hw' | 'sw');
     const t1 = performance.now();
     built = buildScene(level.b3d, level.rmp, { switchGroup: Number(params.get('lod') ?? 0) });
     const t2 = performance.now();
@@ -106,7 +107,7 @@ async function open(): Promise<void> {
 
 async function ensureTrucks(): Promise<void> {
   if (trucks.length) return;
-  trucks = parseTrucks(decodeCp1251(await devServerSource.read('TRUCK.TCH')));
+  trucks = parseTrucks(decodeCp1251(await source.read('TRUCK.TCH')));
   for (const t of trucks) truckSel.add(new Option(`${t.carNode} (${t.tech.horsePower} к.с., $${t.tech.price})`, String(t.index)));
   truckSel.value = params.get('truck') ?? '1';
 }
@@ -298,6 +299,72 @@ renderer.setAnimationLoop(() => {
 });
 
 if (import.meta.env.DEV)
-  Object.assign(window, { ht: { THREE, scene, camera, controls, get built() { return built; }, get level() { return level; }, get drive() { return drive; } } });
+  Object.assign(window, { ht: { THREE, scene, camera, controls, get built() { return built; }, get level() { return level; }, get drive() { return drive; }, importZip, missingFiles, idbSource } });
 
-void open();
+// --- Джерело файлів гри: dev-сервер (розробка на ПК) або імпортовані в браузер (телефон, офлайн). ---
+let source: FileSource = devServerSource;
+
+async function devServerAvailable(): Promise<boolean> {
+  try {
+    const r = await fetch('/game/TRUCK.TCH', { method: 'HEAD' });
+    return r.ok && !(r.headers.get('content-type') ?? '').includes('html');
+  } catch {
+    return false;
+  }
+}
+
+/** Екран першого запуску: оберіть HardTruck.zip або теку гри. */
+function showImport(missing: string[]): Promise<void> {
+  return new Promise((resolve) => {
+    status.hidden = false;
+    status.innerHTML = '';
+    const box = document.createElement('div');
+    box.className = 'import-box';
+    box.innerHTML = `
+      <h2>Файли гри</h2>
+      <p>Для гри потрібні файли оригінальних «Дальнобійників» (≈ 66 МБ, файлів: ${missing.length}).
+      Оберіть архів <b>HardTruck.zip</b> або теку встановленої гри — файли залишаться лише на цьому пристрої.</p>
+      <label class="btn">Обрати ZIP<input type="file" accept=".zip,application/zip" hidden></label>
+      <label class="btn">Обрати теку гри<input type="file" webkitdirectory multiple hidden></label>
+      <progress max="1" value="0" hidden></progress>
+      <p class="msg"></p>`;
+    status.append(box);
+    const [zipIn, dirIn] = box.querySelectorAll('input');
+    const bar = box.querySelector('progress')!;
+    const msg = box.querySelector('.msg')!;
+    const progress = (m: string, f: number) => {
+      bar.hidden = false;
+      bar.value = f;
+      msg.textContent = m;
+    };
+    const finish = async () => {
+      const left = await missingFiles();
+      if (left.length) msg.textContent = `Бракує файлів: ${left.join(', ')}`;
+      else {
+        status.innerHTML = '';
+        resolve();
+      }
+    };
+    zipIn.addEventListener('change', async () => {
+      if (zipIn.files?.[0]) await importZip(zipIn.files[0], progress).catch((e) => (msg.textContent = String(e)));
+      await finish();
+    });
+    dirIn.addEventListener('change', async () => {
+      if (dirIn.files) await importFiles(dirIn.files, progress).catch((e) => (msg.textContent = String(e)));
+      await finish();
+    });
+  });
+}
+
+async function boot(): Promise<void> {
+  if (params.get('source') !== 'local' && (await devServerAvailable())) source = devServerSource;
+  else {
+    void navigator.storage?.persist?.();
+    const missing = await missingFiles();
+    if (missing.length) await showImport(missing);
+    source = idbSource;
+  }
+  await open();
+}
+
+void boot();
