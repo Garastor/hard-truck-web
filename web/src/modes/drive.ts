@@ -21,7 +21,8 @@ if (import.meta.env.DEV) Object.assign(window, { RAPIER });
 export class DriveSession {
   private world!: RAPIER.World;
   private truck!: TruckVehicle;
-  private readonly input = new Input();
+  readonly input = new Input();
+  private wakeLock: { release(): Promise<void> } | null = null;
   private touchUi: HTMLElement | null = null;
   private hud!: HTMLElement;
   private acc = 0;
@@ -120,10 +121,15 @@ export class DriveSession {
     s.input.onCommand = (cmd) => {
       if (cmd === 'horn') s.audio?.play('horn');
       if (cmd === 'autopilot') s.toggleAutopilot();
+      if (cmd === 'tilt')
+        void s.input.toggleTilt().then((on) => s.touchUi?.querySelector('.tilt')?.classList.toggle('pressed', on));
       if (cmd === 'reset') s.truck.reset(s.restartPoint());
       if (cmd === 'camera') s.camMode = s.camMode === 'chase' ? 'cockpit' : s.camMode === 'cockpit' ? 'far' : 'chase';
     };
     s.touchUi = s.input.mountTouch(overlay);
+    // Не гасити екран під час їзди (Screen Wake Lock, де підтримується).
+    const wl = (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock;
+    wl?.request('screen').then((l) => (s.wakeLock = l)).catch(() => {});
     s.hud = document.createElement('div');
     s.hud.className = 'drive-hud';
     overlay.append(s.hud);
@@ -464,6 +470,7 @@ ${raceLine}`;
     this.touchUi?.remove();
     this.hud?.remove();
     this.audio?.dispose();
+    void this.wakeLock?.release().catch(() => {});
     this.world.free();
   }
 }

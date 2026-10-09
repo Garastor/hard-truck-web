@@ -240,8 +240,7 @@ button.active {
 }
 
 .touch-btn.cam,
-.touch-btn.reset,
-.touch-btn.horn {
+.touch-btn.reset {
   width: 48px;
   height: 48px;
   font-size: 18px;
@@ -256,10 +255,18 @@ button.active {
   right: calc(max(16px, env(safe-area-inset-right)) + 60px);
 }
 
-.touch-btn.horn {
+.touch-btn.horn,
+.touch-btn.tilt {
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
   right: max(16px, env(safe-area-inset-right));
   top: auto;
   bottom: calc(max(20px, env(safe-area-inset-bottom)) + 120px);
+}
+
+.touch-btn.tilt {
+  right: calc(max(16px, env(safe-area-inset-right)) + 60px);
 }
 
 body.driving #bar {

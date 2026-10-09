@@ -277,7 +277,15 @@ $('fullscreen').addEventListener('click', async () => {
 });
 
 const clock = new THREE.Clock();
-renderer.setAnimationLoop(() => {
+// Пауза, коли вкладку згорнуто (економія батареї); після повернення не «надолужуємо» час.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) renderer.setAnimationLoop(null);
+  else {
+    clock.getDelta();
+    renderer.setAnimationLoop(loop);
+  }
+});
+function loop(): void {
   const dt = clock.getDelta();
   if (tab === 'drive') {
     drive?.update(dt);
@@ -296,7 +304,8 @@ renderer.setAnimationLoop(() => {
     renderer.render(drive.overlayScene, camera);
     renderer.autoClear = true;
   }
-});
+}
+renderer.setAnimationLoop(loop);
 
 if (import.meta.env.DEV)
   Object.assign(window, { ht: { THREE, scene, camera, controls, get built() { return built; }, get level() { return level; }, get drive() { return drive; }, importZip, missingFiles, idbSource } });

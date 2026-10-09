@@ -10,12 +10,20 @@ export interface ControlState {
 }
 
 type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake';
-type Command = 'camera' | 'reset' | 'horn' | 'autopilot';
+type Command = 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt';
 
 export class Input {
   readonly state: ControlState = { steer: 0, throttle: 0, brake: 0, handbrake: false };
   private readonly held = new Set<Action>();
   private steerSmooth = 0;
+  /** Кермування нахилом телефона (DeviceOrientation), −1..1 або null, якщо вимкнено. */
+  private tilt: number | null = null;
+  private readonly onOrient = (e: DeviceOrientationEvent) => {
+    // У ландшафті кермо — нахил уздовж довгої осі (beta), знак залежить від повороту екрана.
+    const angle = (screen.orientation?.angle ?? 0) === 270 ? -(e.beta ?? 0) : (e.beta ?? 0);
+    this.tilt = Math.max(-1, Math.min(1, angle / 25));
+  };
+  tiltEnabled = false;
   private readonly onKey = (e: KeyboardEvent) => this.key(e);
   /** Одноразові події (перемкнути камеру, скинути вантажівку). */
   onCommand: ((cmd: Command) => void) | null = null;
@@ -68,11 +76,26 @@ export class Input {
     }
     const rate = target === 0 ? 4 : 2.5;
     this.steerSmooth += Math.sign(target - this.steerSmooth) * Math.min(Math.abs(target - this.steerSmooth), rate * dt);
-    this.state.steer = padSteer || this.steerSmooth;
+    this.state.steer = padSteer || (this.tiltEnabled && this.tilt !== null && target === 0 ? this.tilt : this.steerSmooth);
     this.state.throttle = Math.max(this.held.has('gas') ? 1 : 0, padGas);
     this.state.brake = Math.max(this.held.has('brake') ? 1 : 0, padBrake);
     this.state.handbrake = this.held.has('handbrake');
     return this.state;
+  }
+
+  /** Вмикає/вимикає кермування нахилом (iOS вимагає дозволу на жест користувача). */
+  async toggleTilt(): Promise<boolean> {
+    if (this.tiltEnabled) {
+      window.removeEventListener('deviceorientation', this.onOrient);
+      this.tiltEnabled = false;
+      this.tilt = null;
+      return false;
+    }
+    const DOE = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> };
+    if (DOE.requestPermission && (await DOE.requestPermission().catch(() => 'denied')) !== 'granted') return false;
+    window.addEventListener('deviceorientation', this.onOrient);
+    this.tiltEnabled = true;
+    return true;
   }
 
   /** Сенсорні кнопки поверх гри (мультитач через Pointer Events). */
@@ -109,11 +132,13 @@ export class Input {
     btn('cam', '👁', undefined, 'camera');
     btn('reset', '↺', undefined, 'reset');
     btn('horn', '📯', undefined, 'horn');
+    btn('tilt', '📱', undefined, 'tilt');
     parent.append(ui);
     return ui;
   }
 
   dispose(): void {
+    window.removeEventListener('deviceorientation', this.onOrient);
     window.removeEventListener('keydown', this.onKey);
     window.removeEventListener('keyup', this.onKey);
   }
