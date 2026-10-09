@@ -6,6 +6,8 @@ import { parseTxr } from './formats/txr';
 import { parseMsk } from './formats/msk';
 import { parsePlm } from './formats/plm';
 import type { RgbaImage } from './formats/binary';
+import { decodeCp1251 } from './formats/binary';
+import { buildTruckModel, parseTrucks, type TruckDef } from './game/trucks';
 
 /**
  * Переглядач ресурсів (Фази 1–2): обліт локацій, галерея текстур і масок.
@@ -19,6 +21,7 @@ const modeSel = $<HTMLSelectElement>('mode');
 const stats = $('stats');
 const gallery = $('gallery');
 const status = $('status');
+const truckSel = $<HTMLSelectElement>('truck');
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -34,6 +37,10 @@ controls.maxPolarAngle = Math.PI * 0.495;
 let built: BuiltScene | null = null;
 let level: LoadedLevel | null = null;
 let tab = 'scene';
+let trucks: TruckDef[] = [];
+const truckRoot = new THREE.Group();
+truckRoot.rotation.x = -Math.PI / 2;
+scene.add(truckRoot);
 
 const params = new URLSearchParams(location.search);
 for (const id of Object.keys(LEVELS)) levelSel.add(new Option(id, id));
@@ -57,6 +64,7 @@ function setStatus(text: string | null): void {
 
 function syncUrl(): void {
   const p = new URLSearchParams({ level: levelSel.value, mode: modeSel.value, tab });
+  if (tab === 'trucks') p.set('truck', truckSel.value);
   history.replaceState(null, '', `?${p}`);
 }
 
@@ -75,17 +83,65 @@ async function open(): Promise<void> {
     built = buildScene(level.b3d, level.rmp);
     const t2 = performance.now();
     scene.add(built.root);
-    frame(built);
     const s = built.stats;
     stats.textContent =
       `${level.id}: кімнат ${s.rooms}, мешів ${s.meshes}, трикутників ${s.triangles}\n` +
       `інстансів ${s.instances}, без текстур ${s.missingTextures}\n` +
       `розбір ${(t1 - t0).toFixed(0)} мс, побудова ${(t2 - t1).toFixed(0)} мс`;
-    if (tab !== 'scene') showGallery();
+    if (tab === 'textures' || tab === 'masks') showGallery();
+    applyTab();
     setStatus(null);
   } catch (e) {
     console.error(e);
     setStatus(`Помилка: ${(e as Error).message}`);
+  }
+}
+
+async function ensureTrucks(): Promise<void> {
+  if (trucks.length) return;
+  trucks = parseTrucks(decodeCp1251(await devServerSource.read('TRUCK.TCH')));
+  for (const t of trucks) truckSel.add(new Option(`${t.carNode} (${t.tech.horsePower} к.с., $${t.tech.price})`, String(t.index)));
+  truckSel.value = params.get('truck') ?? '1';
+}
+
+function showTruck(): void {
+  truckRoot.clear();
+  if (!built) return;
+  const def = trucks.find((t) => String(t.index) === truckSel.value);
+  const model = def && buildTruckModel(built.assembler, def);
+  if (!model) {
+    stats.textContent = `Модель ${def?.carNode ?? '?'} відсутня в цій локації`;
+    return;
+  }
+  truckRoot.add(model.root);
+  truckRoot.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(truckRoot);
+  const c = box.getCenter(new THREE.Vector3());
+  const r = box.getSize(new THREE.Vector3()).length();
+  controls.target.copy(c);
+  camera.position.copy(c).add(new THREE.Vector3(r * 0.7, r * 0.35, r * 0.7));
+  camera.near = 0.05;
+  camera.updateProjectionMatrix();
+  scene.fog = null;
+  const t = def.tech;
+  stats.textContent =
+    `${def.carNode}: маса ${t.mass} кг, ${t.horsePower} к.с., момент ${t.maxRotMomentum}
+` +
+    `передачі ${t.gears.join(' / ')}, головна ${t.rearAxleCoeff}, колесо r=${t.wheelRadius} м`;
+  syncUrl();
+}
+
+/** Показує/ховає обʼєкти відповідно до вкладки. */
+function applyTab(): void {
+  gallery.hidden = tab === 'scene' || tab === 'trucks';
+  stats.hidden = !(tab === 'scene' || tab === 'trucks');
+  truckSel.hidden = tab !== 'trucks';
+  if (built) built.root.visible = tab === 'scene';
+  truckRoot.visible = tab === 'trucks';
+  if (tab === 'trucks') void ensureTrucks().then(showTruck);
+  else if (tab === 'scene' && built) {
+    camera.near = 0.5;
+    frame(built);
   }
 }
 
@@ -140,7 +196,7 @@ function showGallery(): void {
       fig.append(cap);
       gallery.append(fig);
     }
-    if (i < items.length && tab !== 'scene') requestAnimationFrame(step);
+    if (i < items.length && (tab === 'textures' || tab === 'masks')) requestAnimationFrame(step);
   };
   step();
 }
@@ -149,16 +205,16 @@ for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-tab]')) {
   btn.addEventListener('click', () => {
     tab = btn.dataset.tab!;
     for (const b of document.querySelectorAll('[data-tab]')) b.classList.toggle('active', b === btn);
-    gallery.hidden = tab === 'scene';
-    stats.hidden = tab !== 'scene';
     syncUrl();
-    if (tab !== 'scene') showGallery();
+    applyTab();
+    if (tab === 'textures' || tab === 'masks') showGallery();
   });
 }
 const initialTab = params.get('tab');
 if (initialTab && initialTab !== 'scene') document.querySelector<HTMLButtonElement>(`[data-tab="${initialTab}"]`)?.click();
 
 levelSel.addEventListener('change', open);
+truckSel.addEventListener('change', showTruck);
 modeSel.addEventListener('change', open);
 $('fullscreen').addEventListener('click', async () => {
   try {
@@ -173,7 +229,7 @@ $('fullscreen').addEventListener('click', async () => {
 });
 
 renderer.setAnimationLoop(() => {
-  if (tab !== 'scene') return;
+  if (tab !== 'scene' && tab !== 'trucks') return;
   controls.update();
   renderer.render(scene, camera);
 });

@@ -19,6 +19,7 @@ export interface BuiltScene {
   root: THREE.Group;
   rooms: THREE.Group[];
   stats: { rooms: number; meshes: number; triangles: number; instances: number; missingTextures: number };
+  assembler: SceneAssembler;
   dispose(): void;
 }
 
@@ -113,31 +114,84 @@ export class MaterialLibrary {
   }
 }
 
-export function buildScene(b3d: B3d, rmp: RmpArchive, opts: BuildOptions = {}): BuiltScene {
-  const switchGroup = opts.switchGroup ?? 0;
-  const lib = new MaterialLibrary(b3d, rmp);
-  const topByName = new Map<string, Block>();
-  for (const b of b3d.blocks) if (b.name) topByName.set(b.name.toLowerCase(), b);
+/**
+ * Збирач обʼєктів сцени: кімнати світу, шаблони верхнього рівня (вантажівки, колеса, анімовані обʼєкти),
+ * простори (24). Геометрія шаблонів кешується; інстанси — клони з матрицею простору.
+ */
+export class SceneAssembler {
+  readonly lib: MaterialLibrary;
+  readonly stats = { rooms: 0, meshes: 0, triangles: 0, instances: 0, missingTextures: 0 };
+  private readonly topByName = new Map<string, Block>();
+  private readonly templateCache = new Map<string, THREE.Group>();
+  private readonly switchGroup: number;
 
-  const stats = { rooms: 0, meshes: 0, triangles: 0, instances: 0, missingTextures: 0 };
-  const templateCache = new Map<string, THREE.Group>();
+  constructor(
+    readonly b3d: B3d,
+    rmp: RmpArchive,
+    opts: BuildOptions = {},
+  ) {
+    this.switchGroup = opts.switchGroup ?? 0;
+    this.lib = new MaterialLibrary(b3d, rmp);
+    for (const b of b3d.blocks) if (b.name) this.topByName.set(b.name.toLowerCase(), b);
+  }
 
-  function flush(batches: Batches, into: THREE.Object3D): void {
+  block(name: string): Block | undefined {
+    return this.topByName.get(name.toLowerCase());
+  }
+
+  /** Матриця простору (блок 24) за імʼям, або null. */
+  space(name: string): THREE.Matrix4 | null {
+    const b = this.block(name);
+    return b && b.data.t === 24 ? spaceMatrix(b) : null;
+  }
+
+  /** Шаблон обʼєкта верхнього рівня (кешований; повертається спільний екземпляр — клонуйте для розміщення). */
+  template(name: string): THREE.Group | null {
+    const key = name.toLowerCase();
+    if (this.templateCache.has(key)) return this.templateCache.get(key)!;
+    const blk = this.topByName.get(key);
+    if (!blk) return null;
+    const grp = new THREE.Group();
+    grp.name = blk.name;
+    const batches: Batches = new Map();
+    this.visit(blk, null, batches, grp, 0);
+    this.flush(batches, grp);
+    this.templateCache.set(key, grp);
+    return grp;
+  }
+
+  /** Усі кімнати (тип 19) — геометрія світу. */
+  buildRooms(): THREE.Group[] {
+    const rooms: THREE.Group[] = [];
+    for (const b of this.b3d.blocks) {
+      if (b.data.t !== 19) continue;
+      const grp = new THREE.Group();
+      grp.name = b.name;
+      const batches: Batches = new Map();
+      this.visit(b, null, batches, grp, 0);
+      this.flush(batches, grp);
+      rooms.push(grp);
+      this.stats.rooms++;
+    }
+    return rooms;
+  }
+
+  private flush(batches: Batches, into: THREE.Object3D): void {
     for (const [matIndex, b] of batches) {
       if (!b.pos.length) continue;
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
       g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
       g.computeBoundingSphere();
-      const mesh = new THREE.Mesh(g, lib.material(matIndex));
+      const mesh = new THREE.Mesh(g, this.lib.material(matIndex));
       mesh.matrixAutoUpdate = false;
       into.add(mesh);
-      stats.meshes++;
-      stats.triangles += b.pos.length / 9;
+      this.stats.meshes++;
+      this.stats.triangles += b.pos.length / 9;
     }
   }
 
-  function addPolys(polys: Polygon[], vs: VertexSource, batches: Batches): void {
+  private addPolys(polys: Polygon[], vs: VertexSource, batches: Batches): void {
     for (const p of polys) {
       let b = batches.get(p.material);
       if (!b) batches.set(p.material, (b = { pos: [], uv: [] }));
@@ -154,7 +208,7 @@ export function buildScene(b3d: B3d, rmp: RmpArchive, opts: BuildOptions = {}): 
   }
 
   /** Обходить піддерево, збираючи полігони в batches; посилання (18) додає як дочірні обʼєкти в `into`. */
-  function visit(block: Block, vs: VertexSource | null, batches: Batches, into: THREE.Object3D, depth: number): void {
+  private visit(block: Block, vs: VertexSource | null, batches: Batches, into: THREE.Object3D, depth: number): void {
     if (depth > 64) return;
     const d = block.data;
     let cur = vs;
@@ -167,10 +221,10 @@ export function buildScene(b3d: B3d, rmp: RmpArchive, opts: BuildOptions = {}): 
         break;
       case 8:
       case 35:
-        if (vs) addPolys(d.polys, vs, batches);
+        if (vs) this.addPolys(d.polys, vs, batches);
         return;
       case 18:
-        addInstance(d.space, d.object, into);
+        this.addInstance(d.space, d.object, into);
         return;
       case 20:
       case 23:
@@ -180,62 +234,48 @@ export function buildScene(b3d: B3d, rmp: RmpArchive, opts: BuildOptions = {}): 
     }
     if (!block.groups) return;
     const isSwitch = d.t === 9 || d.t === 10 || d.t === 11 || d.t === 21 || d.t === 22 || d.t === 29;
-    const groups = isSwitch ? [block.groups[Math.min(switchGroup, block.groups.length - 1)] ?? []] : block.groups;
-    for (const g of groups) for (const child of g) visit(child, cur, batches, into, depth + 1);
+    const groups = isSwitch ? [block.groups[Math.min(this.switchGroup, block.groups.length - 1)] ?? []] : block.groups;
+    for (const g of groups) for (const child of g) this.visit(child, cur, batches, into, depth + 1);
   }
 
-  function buildTemplate(name: string): THREE.Group | null {
-    const key = name.toLowerCase();
-    if (templateCache.has(key)) return templateCache.get(key)!;
-    const blk = topByName.get(key);
-    if (!blk) return null;
-    const grp = new THREE.Group();
-    grp.name = blk.name;
-    const batches: Batches = new Map();
-    visit(blk, null, batches, grp, 0);
-    flush(batches, grp);
-    templateCache.set(key, grp);
-    return grp;
-  }
-
-  function addInstance(spaceName: string, objectName: string, into: THREE.Object3D): void {
+  private addInstance(spaceName: string, objectName: string, into: THREE.Object3D): void {
     if (!spaceName) return; // привʼязка до спостерігача (сонце, лінзи) — пізніше
-    const space = topByName.get(spaceName.toLowerCase());
-    const tpl = buildTemplate(objectName);
-    if (!space || space.data.t !== 24 || !tpl) return;
+    const m = this.space(spaceName);
+    const tpl = this.template(objectName);
+    if (!m || !tpl) return;
     const inst = tpl.clone();
     inst.matrixAutoUpdate = false;
-    inst.matrix.copy(spaceMatrix(space));
+    inst.matrix.copy(m);
     into.add(inst);
-    stats.instances++;
+    this.stats.instances++;
   }
 
+  dispose(): void {
+    const geos = new Set<THREE.BufferGeometry>();
+    for (const t of this.templateCache.values()) t.traverse((o) => o instanceof THREE.Mesh && geos.add(o.geometry));
+    for (const g of geos) g.dispose();
+    this.lib.dispose();
+  }
+}
+
+export function buildScene(b3d: B3d, rmp: RmpArchive, opts: BuildOptions = {}): BuiltScene {
+  const asm = new SceneAssembler(b3d, rmp, opts);
   const root = new THREE.Group();
   root.rotation.x = -Math.PI / 2;
-  const rooms: THREE.Group[] = [];
-  for (const b of b3d.blocks) {
-    if (b.data.t !== 19) continue;
-    const grp = new THREE.Group();
-    grp.name = b.name;
-    const batches: Batches = new Map();
-    visit(b, null, batches, grp, 0);
-    flush(batches, grp);
-    root.add(grp);
-    rooms.push(grp);
-    stats.rooms++;
-  }
+  const rooms = asm.buildRooms();
+  for (const r of rooms) root.add(r);
   root.updateMatrixWorld(true);
-  stats.missingTextures = lib.missingTextures;
-
+  asm.stats.missingTextures = asm.lib.missingTextures;
   return {
     root,
     rooms,
-    stats,
+    stats: asm.stats,
+    assembler: asm,
     dispose() {
       root.traverse((o) => {
         if (o instanceof THREE.Mesh) o.geometry.dispose();
       });
-      lib.dispose();
+      asm.dispose();
     },
   };
 }

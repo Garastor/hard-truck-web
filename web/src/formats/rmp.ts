@@ -50,7 +50,8 @@ export function parseRmp(bytes: Uint8Array): RmpArchive {
       const key = section as FileSection;
       const map = a[FILE_SECTIONS[key]];
       for (let i = 0; i < count; i++) {
-        const name = normName(r.cstr());
+        // Після імені можуть іти прапорці через пробіл (напр. "sky1.txr noload").
+        const name = normName(r.cstr().split(' ')[0]);
         const size = r.u32();
         map.set(name, r.bytesN(size));
         a.order[key].push(name);
@@ -83,7 +84,7 @@ export interface Material {
 }
 
 const ARGC: Record<string, number> = {
-  reflect: 1, power: 1, col: 1, transp: 1, tex: 1, ttx: 1, itx: 1, rot: 1, att: 1, coord: 1,
+  reflect: 1, power: 1, col: 1, msk: 1, transp: 1, tex: 1, ttx: 1, itx: 1, rot: 1, att: 1, coord: 1,
   bumpcoord: 1, alphamirr: 1, specular: 2, RotPoint: 2, move: 2, env: 2,
 };
 
