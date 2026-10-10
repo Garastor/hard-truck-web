@@ -162,8 +162,7 @@ function boxPlanes(box: Box): Plane[] {
 }
 
 /**
- * Бічна поверхня циліндра (центр осі a, напрям b, пів-довжина h, радіус r): по колу — хорди ≈ 2 м;
- * уздовж осі — смуги по 4 м, а для вертикальних (стіни) — одна смуга на всю висоту.
+ * Бічна поверхня циліндра (центр осі a, напрям b, пів-довжина h, радіус r) — смуги вздовж осі.
  * Для горизонтальних лишаємо половину, по якій їздять: у суцільного (16) — верх (горб),
  * у порожнистого (17) — низ (западина).
  */
@@ -174,8 +173,11 @@ function cylinder(a: number[], bRaw: number[], h: number, r: number, half: 'uppe
   let v = cross(b, u);
   if (!vertical && v[2] < 0) v = v.map((x) => -x); // φ ∈ [0, π] — верхня половина
   const [from, span] = vertical ? [0, 2 * Math.PI] : half === 'upper' ? [0, Math.PI] : [Math.PI, Math.PI];
-  const around = Math.min(1024, Math.max(8, Math.ceil((span * r) / 2)));
-  const along = vertical ? 1 : Math.max(1, Math.ceil((2 * h) / 4));
+  // Хорда з прогином ≤ 2 см (для R = 293 м — ≈ 7 м, для R = 10 м — ≈ 1,3 м); уздовж осі поверхня пряма —
+  // одна смуга (обрізання площинами працює з плоскими смугами точно).
+  const chord = Math.min(8, Math.max(0.5, Math.sqrt(8 * r * 0.02)));
+  const around = Math.min(512, Math.max(8, Math.ceil((span * r) / chord)));
+  const along = 1;
   const at = (i: number, j: number) => {
     const phi = from + (span * i) / around;
     const t = -h + (2 * h * j) / along;

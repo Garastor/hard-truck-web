@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LEVELS, devServerSource, loadLevel, type FileSource, type LevelId, type LoadedLevel } from './assets/loader';
-import { idbSource, importFiles, importZip, missingFiles } from './assets/gameFiles';
+import { REQUIRED, cachedSource, idbSource, importFiles, importZip, missingFiles, prefetchMissing } from './assets/gameFiles';
 import { FpsMeter, FrameLimiter, QUALITY, loadQuality, loadShowFps, saveQuality, saveShowFps, type QualityId } from './ui/quality';
 import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from './ui/mobile';
 import { buildScene, type BuiltScene } from './render/sceneBuilder';
@@ -396,10 +396,18 @@ function showImport(missing: string[]): Promise<void> {
 }
 
 async function boot(): Promise<void> {
-  if (params.get('source') !== 'local' && (await devServerAvailable())) source = devServerSource;
-  else {
-    void navigator.storage?.persist?.();
-    const missing = await missingFiles();
+  void navigator.storage?.persist?.();
+  const missing = await missingFiles().catch(() => REQUIRED);
+  if (!missing.length && params.get('source') !== 'pc') {
+    // Усі файли вже на пристрої — читаємо локально, навіть якщо ПК доступний (без Wi-Fi — швидше).
+    source = idbSource;
+  } else if (params.get('source') !== 'local' && (await devServerAvailable())) {
+    // Файли з ПК, але кожен збережений на пристрої; решту докачуємо у фоні після першої локації.
+    source = cachedSource(devServerSource);
+    await open();
+    void prefetchMissing(devServerSource);
+    return;
+  } else {
     if (missing.length) await showImport(missing);
     source = idbSource;
   }

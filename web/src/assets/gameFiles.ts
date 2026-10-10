@@ -123,12 +123,47 @@ export async function clearFiles(): Promise<void> {
   await tx('readwrite', (s) => s.clear());
 }
 
+async function getBlob(name: string): Promise<Blob | undefined> {
+  return (await tx('readonly', (s) => s.get(name))) as Blob | undefined;
+}
+
 /** Джерело файлів з IndexedDB. */
 export const idbSource: FileSource = {
   async read(path) {
     const c = canonical(path) ?? path;
-    const blob = (await tx('readonly', (s) => s.get(c))) as Blob | undefined;
+    const blob = await getBlob(c);
     if (!blob) throw new Error(`Файл гри ${c} не імпортовано`);
     return new Uint8Array(await blob.arrayBuffer());
   },
 };
+
+/**
+ * Джерело з кешем на пристрої: спершу IndexedDB, інакше — `inner` (dev-сервер ПК) із записом у IndexedDB.
+ * Файли гри незмінні, тож перевіряти свіжість не потрібно.
+ */
+export function cachedSource(inner: FileSource): FileSource {
+  return {
+    async read(path) {
+      const c = canonical(path);
+      const blob = c ? await getBlob(c).catch(() => undefined) : undefined;
+      if (blob) return new Uint8Array(await blob.arrayBuffer());
+      const data = await inner.read(path);
+      if (c) await put(c, data).catch(() => {});
+      return data;
+    },
+  };
+}
+
+/** У фоні докачує в IndexedDB решту потрібних файлів — після цього гра працює на пристрої без ПК. */
+export async function prefetchMissing(inner: FileSource): Promise<number> {
+  let n = 0;
+  for (const f of await missingFiles()) {
+    try {
+      await put(f, await inner.read(f));
+      n++;
+    } catch {
+      /* спробуємо наступного запуску */
+    }
+  }
+  return n;
+}

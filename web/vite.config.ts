@@ -21,8 +21,18 @@ function gameFiles(): Plugin {
           res.end('not found');
           return;
         }
+        // Файли гри незмінні: дозволяємо браузеру кешувати (ETag — розмір і час зміни).
+        const st = statSync(full);
+        const etag = `"${st.size.toString(16)}-${st.mtimeMs.toString(16)}"`;
+        res.setHeader('ETag', etag);
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        if (req.headers['if-none-match'] === etag) {
+          res.statusCode = 304;
+          res.end();
+          return;
+        }
         res.setHeader('Content-Type', 'application/octet-stream');
-        res.setHeader('Content-Length', String(statSync(full).size));
+        res.setHeader('Content-Length', String(st.size));
         createReadStream(full).pipe(res);
       });
     },
