@@ -16,7 +16,7 @@ import type { TruckSetup } from '../game/truckVehicle';
 import type { Room } from '../game/track';
 import type { DriveSession } from '../modes/drive';
 import type { BuiltScene } from '../render/sceneBuilder';
-import { HUD_CYAN, PixelFont, panel, pixelCanvas } from './pixelFont';
+import { HUD_CYAN, PixelFont, frame, inset, panel, pixelCanvas } from './pixelFont';
 
 export type LevelKind = 'laps' | 'route' | 'free';
 
@@ -401,18 +401,23 @@ export class CareerGame {
     const RED = '#e00000';
     const MAG = '#e000e0';
     const WHITE = '#f0f0f0';
-    const W = 214;
+    // Розмітка виміряна зі скріншота оригіналу: одна рамка на все табло, усередині дві втиснуті панелі
+    // (смуги й «За кермом»), підписи смуг — праворуч від панелі; «гроші» лежать на верхній лінії рамки.
+    const W = 262;
     const cargoLine = c.cargo.length ? this.wrap(c.cargo.map((i) => i.good.name).join(', '), W)[0] : '';
-    const top = cargoLine ? 11 : 0;
-    const boxH = 74;
-    const H = top + boxH + 3 + 18;
+    const o = (cargoLine ? 11 : 0) + 5;
+    const H = o + 114;
     const { canvas, ctx } = pixelCanvas(W, H);
+    frame(ctx, 0, o, W, H - o);
     if (cargoLine) this.text(ctx, cargoLine, 2, 0, CYAN);
-    panel(ctx, 0, top, W, boxH);
-    this.text(ctx, `гроші ${Math.round(c.money)}`, 10, top + 8, CYAN);
-    this.text(ctx, `машина ${Math.round(truck)}`, 112, top + 8, CYAN);
-    const barX = 10;
-    const barW = 150;
+    const boxX = 10;
+    const boxW = 200;
+    inset(ctx, boxX, o + 2, boxW, 74);
+    this.text(ctx, `гроші ${Math.round(c.money)}`, 10, o - 5, CYAN);
+    const truckText = `машина ${Math.round(truck)}`;
+    this.text(ctx, truckText, boxX + boxW - 3 - this.measure(truckText), o + 6, CYAN);
+    const barX = boxX + 1;
+    const barW = boxW - 2;
     const total = Math.max(1, c.money + cargo + truck);
     const rows: [string, [number, string][]][] = [
       ['$', [[cargo / total, MAG], [c.money / total, RED], [truck / total, WHITE]]],
@@ -423,18 +428,18 @@ export class CareerGame {
       ['гальма', [[c.condition.brakes, RED]]],
     ];
     rows.forEach(([label, segs], i) => {
-      const y = top + 21 + i * 8;
+      const y = o + 17 + Math.round(i * 9.6);
       let x = barX;
       for (const [f, color] of segs) {
         const w = Math.round(Math.max(0, Math.min(1, f)) * barW);
         ctx.fillStyle = color;
-        ctx.fillRect(x, y, w, 4);
+        ctx.fillRect(x, y, w, 5);
         x += w;
       }
-      this.text(ctx, label, barX + barW + 6, y - 2, CYAN);
+      this.text(ctx, label, boxX + boxW + 4, y - 2, CYAN);
     });
-    panel(ctx, 0, top + boxH + 3, W, 18);
-    this.text(ctx, `За кермом ${c.name}${c.parts.length ? '  ' + c.parts.join(' ') : ''}`, 10, top + boxH + 10, CYAN);
+    inset(ctx, boxX, o + 80, boxW, 30);
+    this.text(ctx, `За кермом ${c.name}${c.parts.length ? '  ' + c.parts.join(' ') : ''}`, boxX + 6, o + 91, CYAN);
     this.player.replaceChildren(canvas);
   }
 

@@ -108,23 +108,39 @@ export function pixelCanvas(w: number, h: number): { canvas: HTMLCanvasElement; 
 /** Колір тексту табло оригіналу (виміряно зі скріншота). */
 export const HUD_CYAN = 'rgb(123,255,255)';
 
+/** Світла лінія рамок табло (виміряно зі скріншотів оригіналу). */
+const LIGHT = 'rgb(118, 120, 118)';
+
 /**
- * Рамка табличок оригіналу (виміряно зі скріншота): світла лінія 1 px по краю; усередині — «втиснута»
- * панель: зверху й зліва смуга 4 px, що затемнює фон наполовину, темна лінія 1 px, далі фон темніший
- * (≈ 80 %); справа й знизу смуги немає.
+ * Зовнішня рамка табло оригіналу: світла лінія 1 px лише зверху й зліва, усе поле — напівпрозоре
+ * затемнення (фон ≈ 57 %); справа й знизу лінії немає.
  */
-export function panel(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+export function frame(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
   ctx.clearRect(x, y, w, h);
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.56)';
-  ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-  ctx.fillRect(x + 5, y + 5, w - 6, h - 6);
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-  ctx.fillRect(x + 5, y + 5, w - 6, 1);
-  ctx.fillRect(x + 5, y + 5, 1, h - 6);
-  ctx.fillStyle = 'rgb(122, 124, 122)';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.43)';
+  ctx.fillRect(x + 1, y + 1, w - 1, h - 1);
+  ctx.fillStyle = LIGHT;
   ctx.fillRect(x, y, w, 1);
-  ctx.fillRect(x, y + h - 1, w, 1);
   ctx.fillRect(x, y, 1, h);
+}
+
+/**
+ * «Втиснута» панель усередині рамки: фон ще темніший (≈ 60 % від рамки), темна лінія зверху й зліва,
+ * світла — справа й знизу.
+ */
+export function inset(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+  ctx.fillRect(x, y, w - 1, 1);
+  ctx.fillRect(x, y, 1, h - 1);
+  ctx.fillStyle = LIGHT;
   ctx.fillRect(x + w - 1, y, 1, h);
+  ctx.fillRect(x, y + h - 1, w, 1);
+}
+
+/** Табличка оригіналу: рамка + втиснута панель із полем 4 px з усіх боків. */
+export function panel(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+  frame(ctx, x, y, w, h);
+  inset(ctx, x + 5, y + 5, w - 9, h - 9);
 }
