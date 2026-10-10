@@ -178,7 +178,10 @@ export class DriveSession {
     s.hud = document.createElement('div');
     s.hud.className = 'drive-hud';
     overlay.append(s.hud);
-    camera.near = 0.1;
+    // Світ: ближня площина 1 м — точніший буфер глибини (з 0,1 м далекі поверхні мерехтіли, «бʼючись»
+    // одна з одною). Кабіна малюється окремим проходом зі своєю ближньою площиною (renderOverlay).
+    camera.near = 1;
+    camera.far = 3000;
     camera.updateProjectionMatrix();
     s.camPos.copy(s.spawn.position).addScaledVector(s.spawn.forward, -14).add(new THREE.Vector3(0, 6, 0));
     return s;
@@ -286,6 +289,10 @@ export class DriveSession {
   renderOverlay(renderer: THREE.WebGLRenderer, camera: THREE.Camera): void {
     const autoClear = renderer.autoClear;
     const mask = camera.layers.mask;
+    const cam = camera as THREE.PerspectiveCamera;
+    const near = cam.near;
+    cam.near = 0.05;
+    cam.updateProjectionMatrix();
     renderer.autoClear = false;
     renderer.clearDepth();
     renderer.render(this.overlayScene, camera);
@@ -296,6 +303,8 @@ export class DriveSession {
       camera.layers.mask = mask;
     }
     renderer.autoClear = autoClear;
+    cam.near = near;
+    cam.updateProjectionMatrix();
   }
 
   private updateCab(state: { steer: number }): void {

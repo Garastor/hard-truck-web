@@ -34,7 +34,7 @@ type Batches = Map<number, { pos: number[]; uv: number[] }>;
 
 export class MaterialLibrary {
   private readonly cache = new Map<number, THREE.Material>();
-  private readonly texCache = new Map<number, THREE.Texture | null>();
+  private readonly texCache = new Map<string, THREE.Texture | null>();
   private readonly rmpByName = new Map<string, Material>();
   private readonly palette: Uint8Array | null;
   missingTextures = 0;
@@ -58,7 +58,7 @@ export class MaterialLibrary {
     const def = this.rmpByName.get(name) ?? (this.rmp.materials[index] ? parseMaterial(this.rmp.materials[index]) : null);
     const params: THREE.MeshBasicMaterialParameters = { side: THREE.DoubleSide };
     if (def && def.tex > 0) {
-      const tex = this.texture(def.tex, def.flags.has('notile'));
+      const tex = this.texture(def.tex, def.flags.has('notile'), def.transparentTex);
       if (tex) {
         params.map = tex;
         if (def.transparentTex || (tex.userData.hasAlpha as boolean)) {
@@ -66,9 +66,13 @@ export class MaterialLibrary {
           params.transparent = false;
         }
       } else params.color = 0xff00ff;
+    } else if (def && def.col !== null && Number.isFinite(Number(this.rmp.colors[def.col - 1]))) {
+      // col N — N-й запис секції COLORS архіву (з 1): яскравість 0…1 (black col 1 = 0, white col 5 = 1;
+      // шини «*_black col 10» = 0,016 на всіх трасах). Палітра траси тут ні до чого — з неї шини були кремові/сині.
+      const v = Number(this.rmp.colors[def.col - 1]);
+      params.color = new THREE.Color().setRGB(v, v, v, THREE.SRGBColorSpace);
     } else if (def && def.col !== null && this.palette) {
       const c = def.col;
-      // Палітра — у sRGB, як і текстури (без цього колір світлішає: «чорні» шини ставали світло-сірими).
       params.color = new THREE.Color().setRGB(
         this.palette[c * 3] / 255,
         this.palette[c * 3 + 1] / 255,
@@ -87,8 +91,12 @@ export class MaterialLibrary {
     return mat;
   }
 
-  private texture(oneBased: number, clamp: boolean): THREE.Texture | null {
-    const key = oneBased * (clamp ? -1 : 1);
+  /**
+   * Текстура з архіву. keyBlack — матеріал ttx: у 16-бітних текстурах оригіналу альфа-каналу немає,
+   * прозорість задає чорний колір (знаки, дерева, диски коліс) — робимо його прозорим.
+   */
+  private texture(oneBased: number, clamp: boolean, keyBlack = false): THREE.Texture | null {
+    const key = `${oneBased}/${clamp ? 'c' : 'r'}/${keyBlack ? 'k' : ''}`;
     if (this.texCache.has(key)) return this.texCache.get(key)!;
     const file = this.rmp.order.TEXTUREFILES[oneBased - 1];
     const bytes = file ? this.rmp.textures.get(file) : undefined;
@@ -96,6 +104,11 @@ export class MaterialLibrary {
     if (bytes) {
       try {
         const img = parseTxr(bytes);
+        if (keyBlack && !img.hasAlpha) {
+          const d = img.data;
+          for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] <= 12) d[i + 3] = 0;
+          img.hasAlpha = true;
+        }
         const t = new THREE.DataTexture(img.data, img.width, img.height, THREE.RGBAFormat);
         t.colorSpace = THREE.SRGBColorSpace;
         t.wrapS = t.wrapT = clamp ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
