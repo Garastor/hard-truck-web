@@ -25,6 +25,9 @@ export interface Room {
 export const EVENT_RESTART = 11;
 export const EVENT_FINISH = 666;
 export const EVENT_RAIN = 4;
+export const EVENT_CHECKPOINT = 7;
+/** Загибель (вода, прірва): лише рестарт. */
+export const EVENT_DEATH = 3264;
 
 export class Track {
   readonly rooms = new Map<string, Room>();

@@ -1,15 +1,15 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { addCollisionPolys, addStaticMeshes, g2t, initRapier } from '../physics/world';
-import { levelCollision } from '../game/collision';
+import { levelCollision, roomAt, type LevelCollision } from '../game/collision';
 import { Input } from '../input/input';
-import { TruckVehicle } from '../game/truckVehicle';
+import { TruckVehicle, type TruckSetup } from '../game/truckVehicle';
 import { buildTruckModel, type TruckDef } from '../game/trucks';
 import type { BuiltScene } from '../render/sceneBuilder';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
 import { EngineAudio } from '../audio/engineAudio';
-import { EVENT_FINISH, Track } from '../game/track';
+import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, Track, type Room } from '../game/track';
 import { AutoPilot, WayNet } from '../game/autopilot';
 
 type CamMode = 'chase' | 'cockpit' | 'far';
@@ -21,9 +21,6 @@ if (import.meta.env.DEV) Object.assign(window, { RAPIER });
  */
 /** Шар Three.js для деталей кабіни, що малюються поверх решти кабіни (кермо). */
 const CAB_TOP_LAYER = 1;
-/** Шкали стрілок кабіни, градусів на одиницю. */
-const SPEED_DEG_PER_KMH = 246 / 150;
-const TACHO_DEG_PER_RPM = 270 / 3000;
 
 export class DriveSession {
   private world!: RAPIER.World;
@@ -82,6 +79,29 @@ export class DriveSession {
   /** Тип заїзду: кільцева гонка, маршрут до фінішу, вільна їзда (база). */
   raceKind: 'laps' | 'route' | 'free' = 'laps';
   private finished: { place: number; time: number } | null = null;
+  /** Результат заїзду (місце, час) — після фінішу. */
+  get result(): { place: number; time: number; racers: number } | null {
+    return this.finished ? { ...this.finished, racers: this.opponents.length + 1 } : null;
+  }
+  /** Сумарна сила ударів (м/с різкої зміни швидкості за крок) — пошкодження машини й вантажу. */
+  hits = 0;
+  /** Пройдено, м. */
+  get distance(): number {
+    return this.odometer;
+  }
+  /** Поточна кімната (room_NNN) і її події. */
+  get currentRoom(): Room | null {
+    return this.room ? (this.track.rooms.get(this.room) ?? null) : null;
+  }
+  /** Вʼїзд у нову кімнату (події залів бази, тунелі) і фініш — для кар'єри. */
+  onRoomEnter: ((room: Room) => void) | null = null;
+  onFinish: ((r: { place: number; time: number; racers: number }) => void) | null = null;
+  /** Контрольні точки (подія 7, параметр — номер), які треба проїхати до фінішу маршруту. */
+  private checkpoints = new Set<number>();
+  private passed = new Set<number>();
+  private col!: LevelCollision;
+  private locateTimer = 0;
+  private readonly prevVel = new THREE.Vector3();
   private raceStart: number | null = null;
   /** Автопілот (клавіша P): їде по лініях way_* — для тестів і як основа суперників. */
   autopilot: AutoPilot | null = null;
@@ -103,6 +123,7 @@ export class DriveSession {
     rmp?: RmpArchive,
     rivals: TruckDef[] = [],
     raceKind: 'laps' | 'route' | 'free' = 'laps',
+    setup: TruckSetup = {},
   ): Promise<DriveSession> {
     await initRapier();
     const s = new DriveSession(scene, camera, built, def);
@@ -113,6 +134,7 @@ export class DriveSession {
     s.world.timestep = 1 / 60;
     // Колізії як в оригіналі — з обʼєктів hit_road/hit_obj; видима геометрія — лише запасний варіант.
     const col = levelCollision(built.assembler.b3d);
+    s.col = col;
     if (col.hasFloor) addCollisionPolys(s.world, col.floors, 1.0);
     else addStaticMeshes(s.world, built.root);
     addCollisionPolys(s.world, col.walls, 0.4);
@@ -128,9 +150,10 @@ export class DriveSession {
     if (!model) throw new Error(`Модель ${def.carNode} відсутня в цій локації`);
     s.track = new Track(built.assembler.b3d);
     s.spawn = s.findSpawn();
-    s.room = s.track.guessRoom(s.spawn.position);
+    s.room = s.locate(s.spawn.position) ?? s.track.guessRoom(s.spawn.position);
     s.prevPos.copy(s.spawn.position);
-    s.truck = new TruckVehicle(s.world, def, model, s.spawn);
+    for (const r of s.track.rooms.values()) for (const e of r.events) if (e.type === EVENT_CHECKPOINT) s.checkpoints.add(e.param);
+    s.truck = new TruckVehicle(s.world, def, model, s.spawn, setup);
     scene.add(s.truck.visual);
     s.spawnOpponents(rivals);
 
@@ -289,10 +312,11 @@ export class DriveSession {
     };
     const deg = Math.PI / 180;
     rot(this.cabParts.rule, new THREE.Vector3(0, 0, 1), -state.steer * 2.4);
-    // Кут стрілки = значення × коефіцієнт (0x48f950; коефіцієнти кабін у файлах гри не знайдено).
-    // Відкалібровано за шкалами ЗіЛа: спідометр 150 км/год ≈ 246°, тахометр 0–3000 об/хв на 270° (гіпотеза).
-    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), Math.min(this.truck.rpm, 3000) * TACHO_DEG_PER_RPM * deg);
-    rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), Math.min(this.truck.speedKmh, 165) * SPEED_DEG_PER_KMH * deg);
+    // Кут стрілки = значення × коефіцієнт (0x48f950). Шкали — TachScale/SpeedScale з [NODESn] TRUCK.TCH:
+    // «значення кінця шкали, кут» (ЗіЛ: 50 об/с і 160 км/год → 240°).
+    const needle = (v: number, [max, angle]: [number, number]) => (Math.min(Math.max(v, 0), max * 1.05) / max) * angle * deg;
+    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle(this.truck.rpm / 60, this.def.tachScale));
+    rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), needle(this.truck.speedKmh, this.def.speedScale));
     // Табло: A — автоматична КПП, P — ручник, передача; одометр — 5 розрядів (KMeter0Key — молодший).
     const sw = this.cabSwitch;
     if (sw) {
@@ -398,6 +422,7 @@ export class DriveSession {
       this.truck.update(this.world.timestep, state);
       this.stepOpponents(this.world.timestep);
       this.world.step();
+      this.afterStep();
       this.tick(this.world.timestep);
       this.clock += this.world.timestep;
       this.truck.syncVisual();
@@ -415,6 +440,7 @@ export class DriveSession {
       this.truck.update(step, state);
       this.stepOpponents(step);
       this.world.step();
+      this.afterStep();
       this.tick(step);
       this.clock += step;
       this.acc -= step;
@@ -463,23 +489,58 @@ ${raceLine}`;
     if (this.hud.textContent !== text) this.hud.textContent = text;
   }
 
+  /** Удар: різка зміна швидкості за один крок (≫ гальмування чи розгону) — накопичуємо силу. */
+  private afterStep(): void {
+    const v = this.truck.body.linvel();
+    const dv = Math.hypot(v.x - this.prevVel.x, v.y - this.prevVel.y, v.z - this.prevVel.z);
+    if (dv > 0.8) this.hits += dv;
+    this.prevVel.set(v.x, v.y, v.z);
+  }
+
+  /** Кімната під точкою (Three.js) — за підлогою hit_road/hit_obj. */
+  private locate(p: THREE.Vector3): string | null {
+    const r = roomAt(this.col, p.x, -p.z, p.y);
+    return r && this.track.rooms.has(r) ? r : null;
+  }
+
   /** Кімнати й коло: перетин порталів, старт таймера, фініш (подія 666). */
   private updateTrack(): void {
     const tp = this.truck.body.translation();
     const cur = new THREE.Vector3(tp.x, tp.y, tp.z);
-    if (this.room) {
-      const next = this.track.crossPortal(this.room, this.prevPos, cur);
+    // Перетин порталу, а раз на 0,25 с — ще й кімната за підлогою (база без порталів між залами,
+    // пропущений перетин, рестарт).
+    // Стрибок (рестарт, телепорт) — не перетин порталів: кімнату визначаємо лише за підлогою.
+    const jumped = this.prevPos.distanceTo(cur) > 15;
+    let next = this.room && !jumped ? this.track.crossPortal(this.room, this.prevPos, cur) : null;
+    if (jumped) this.locateTimer = 0;
+    if (!next && (this.locateTimer -= 1 / 60) <= 0) {
+      this.locateTimer = 0.25;
+      const at = this.locate(cur);
+      if (at && at !== this.room) next = at;
+    }
+    {
       if (next && this.track.rooms.has(next)) {
         const now = this.clock;
         if (this.lapStart === null) {
           this.lapStart = now;
           this.lapRoom = next;
         }
+        const room = this.track.rooms.get(next)!;
+        // Вода, прірва (подія 3264) — лише рестарт на точці кімнати, з якої впали.
+        if (room.events.some((e) => e.type === EVENT_DEATH)) {
+          this.hits += 10;
+          this.truck.reset(this.restartPoint());
+          this.prevPos.copy(cur);
+          return;
+        }
         this.room = next;
         this.visited.add(next);
+        for (const e of room.events) if (e.type === EVENT_CHECKPOINT) this.passed.add(e.param);
+        this.onRoomEnter?.(room);
         // Кільце: фініш (подія 666) або повернення в сектор старту, пройшовши більшість траси.
-        // Маршрут (комерційні траси, полігон): достатньо доїхати до сектора з подією фінішу.
-        const atFinish = this.track.hasEvent(next, EVENT_FINISH);
+        // Маршрут (комерційні траси, полігон): доїхати до сектора з подією фінішу; зараховується, лише якщо пройдено всі контрольні точки (полігон: прапорці за порядком).
+        const allChecks = [...this.checkpoints].every((c) => this.passed.has(c));
+        const atFinish = this.track.hasEvent(next, EVENT_FINISH) && (this.raceKind !== 'route' || allChecks);
         const lapDone =
           this.raceKind === 'laps'
             ? (atFinish || next === this.lapRoom) && this.visited.size >= this.track.rooms.size * 0.6
@@ -493,6 +554,7 @@ ${raceLine}`;
           this.audio?.play('alarm', 0.6);
           if (this.lapsToFinish && this.laps >= this.lapsToFinish && !this.finished) {
             this.finished = { place: this.racePosition(), time: now - (this.raceStart ?? 0) };
+            this.onFinish?.(this.result!);
           }
         }
       }

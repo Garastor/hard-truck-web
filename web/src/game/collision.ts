@@ -17,6 +17,8 @@ export type Poly = number[][];
 export interface LevelCollision {
   /** Полігони, по яких їздять колеса (нормаль переважно вгору). */
   floors: Poly[];
+  /** Кімната кожного полігона підлоги (`hit_road_NNN` → `room_NNN`). */
+  floorRoom: string[];
   /** Стіни й огорожі. */
   walls: Poly[];
   /** Чи описує `hit_*` поверхню для коліс; інакше землю беремо з видимої геометрії. */
@@ -35,15 +37,22 @@ type Plane = [number, number, number, number];
 
 export function levelCollision(b3d: B3d): LevelCollision {
   const floors: Poly[] = [];
+  const floorRoom: string[] = [];
   const walls: Poly[] = [];
   const stats: Record<string, number> = {};
   const roomBoxes = roomBounds(b3d);
-  const add = (p: Poly) => (Math.abs(normalZ(p)) >= FLOOR_MIN_NZ ? floors : walls).push(p);
+  let room = '';
+  const add = (p: Poly) => {
+    if (Math.abs(normalZ(p)) < FLOOR_MIN_NZ) return walls.push(p);
+    floors.push(p);
+    floorRoom.push(room);
+  };
 
   for (const top of b3d.blocks) {
     const m = /^hit_(road|obj)_(.+)$/i.exec(top.name);
     if (!m) continue;
-    const box = roomBoxes.get(`room_${m[2]}`.toLowerCase()) ?? null;
+    room = `room_${m[2]}`;
+    const box = roomBoxes.get(room.toLowerCase()) ?? null;
     const visit = (b: Block, clip: Plane[]): void => {
       const d = b.data;
       let emitted: Poly[] = [];
@@ -89,7 +98,7 @@ export function levelCollision(b3d: B3d): LevelCollision {
     };
     visit(top, []);
   }
-  return { floors, walls, hasFloor: floors.length > walls.length / 4, stats };
+  return { floors, floorRoom, walls, hasFloor: floors.length > walls.length / 4, stats };
 }
 
 /** Вертикальна огорожа вздовж відрізка ламаної. */
@@ -255,4 +264,32 @@ export function floorCovers(floors: Poly[], x: number, y: number, z: number, dz 
       if (Math.abs(u * a[2] + v * b[2] + w * c[2] - z) <= dz) return true;
     }
   return false;
+}
+
+/**
+ * Кімната під точкою (система гри): найвища підлога, що накриває (x, y) і лежить не вище z + 1.
+ * Потрібна там, де немає точок рестарту (база MENU3D), і як страховка, якщо перетин порталу пропущено.
+ */
+export function roomAt(col: Pick<LevelCollision, 'floors' | 'floorRoom'>, x: number, y: number, z: number): string | null {
+  let best: string | null = null;
+  let bestZ = -Infinity;
+  col.floors.forEach((p, i) => {
+    for (let k = 1; k + 1 < p.length; k++) {
+      const a = p[0];
+      const b = p[k];
+      const c = p[k + 1];
+      const det = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+      if (Math.abs(det) < 1e-9) continue;
+      const u = ((b[1] - c[1]) * (x - c[0]) + (c[0] - b[0]) * (y - c[1])) / det;
+      const v = ((c[1] - a[1]) * (x - c[0]) + (a[0] - c[0]) * (y - c[1])) / det;
+      const w = 1 - u - v;
+      if (u < -1e-4 || v < -1e-4 || w < -1e-4) continue;
+      const fz = u * a[2] + v * b[2] + w * c[2];
+      if (fz <= z + 1 && fz > bestZ) {
+        bestZ = fz;
+        best = col.floorRoom[i];
+      }
+    }
+  });
+  return best;
 }

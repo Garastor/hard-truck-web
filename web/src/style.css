@@ -372,3 +372,158 @@ body.driving .touch-btn.reset {
   width: 100%;
   margin-top: 12px;
 }
+
+/* --- Кар'єра --- */
+.career-panel {
+  position: absolute;
+  top: calc(max(8px, env(safe-area-inset-top)) + 52px);
+  left: max(12px, env(safe-area-inset-left));
+  width: min(300px, calc(100vw - 2 * max(12px, env(safe-area-inset-left)) - 140px));
+  min-width: 200px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border-radius: 10px;
+  pointer-events: auto;
+  font: 13px/1.35 system-ui, sans-serif;
+}
+
+.career-status {
+  white-space: pre-line;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.career-zone:not(:empty) {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.career-text {
+  white-space: pre-line;
+  margin: 0 0 6px;
+}
+
+.career-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.career-actions button,
+.career-form input,
+.career-form select {
+  min-height: 40px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font: inherit;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.career-actions button.primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.career-modal {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+  z-index: 5;
+}
+
+.career-box {
+  width: min(520px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 14px 16px;
+  background: var(--bg);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  font: 15px/1.4 system-ui, sans-serif;
+}
+
+.career-box h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  color: var(--accent);
+}
+
+.career-box .career-actions {
+  margin-top: 12px;
+}
+
+.career-box .career-actions button {
+  flex: 1 1 auto;
+}
+
+.career-form {
+  display: grid;
+  gap: 10px;
+}
+
+.career-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.career-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.career-table th,
+.career-table td {
+  padding: 4px 6px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.career-table tr.me td {
+  color: var(--accent);
+}
+
+.career-toast {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 130px);
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 8px 14px;
+  background: var(--panel);
+  border-radius: 10px;
+  font: 14px/1.4 system-ui, sans-serif;
+  text-align: center;
+}
+
+/* Поки відкрите меню ☰ — панель кар'єри не заважає. */
+body.driving.bar-open .career-panel {
+  visibility: hidden;
+}
+
+/* У кар'єрі локацію й вантажівку обирає гра — інструменти переглядача ховаємо. */
+body.career .tabs,
+body.career #level,
+body.career #mode,
+body.career #truck,
+body.career #stats {
+  display: none;
+}
+
+/* Лічильник кадрів у кар'єрі — праворуч від ☰, щоб не перекривав панель. */
+body.career #fps {
+  left: calc(max(12px, env(safe-area-inset-left)) + 52px);
+  top: calc(max(8px, env(safe-area-inset-top)) + 10px);
+}

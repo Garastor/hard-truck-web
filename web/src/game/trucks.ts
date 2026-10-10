@@ -33,6 +33,11 @@ export interface TruckTech {
   price: number;
   frictionCoeff: number;
   centerMass: [number, number, number];
+  /** Центр дна вантажу (center_of_cargo_bottom, система моделі: x, вперед, угору). */
+  cargoBottom: [number, number, number];
+  /** Висота й площа кузова (body_height, body_square): обʼєм кузова ≈ площа × висота — гіпотеза. */
+  bodyHeight: number;
+  bodySquare: number;
   /** Точка очей водія (OV) у системі вантажівки та нахил погляду (tangViewer, градуси). */
   viewer: [number, number, number];
   viewerTilt: number;
@@ -67,6 +72,7 @@ function readTech(ini: Ini, s: string): TruckTech {
     gears.push(v);
   }
   const cm = iniNums(ini, s, 'CenterMassInB3D') ?? [0, 0, 0];
+  const cb = iniNums(ini, s, 'center_of_cargo_bottom') ?? [0, -2, 0];
   return {
     mass: iniNum(ini, s, 'mass', 1000),
     maxRotMomentum: iniNum(ini, s, 'maxrotmomentum', 500),
@@ -83,6 +89,9 @@ function readTech(ini: Ini, s: string): TruckTech {
     price: iniNum(ini, s, 'price', 10000),
     frictionCoeff: iniNum(ini, s, 'friction_coeff', 1.4),
     centerMass: [cm[0] ?? 0, cm[1] ?? 0, cm[2] ?? 0],
+    cargoBottom: [cb[0] ?? 0, cb[1] ?? -2, cb[2] ?? 0],
+    bodyHeight: iniNum(ini, s, 'body_height', 2.5),
+    bodySquare: iniNum(ini, s, 'body_square', 12),
     viewer: ((v) => [v[0] ?? -0.4, v[1] ?? 0.4, v[2] ?? 1.4] as [number, number, number])(iniNums(ini, s, 'OV') ?? []),
     viewerTilt: iniNum(ini, s, 'tangViewer', -7.16),
   };

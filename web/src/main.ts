@@ -12,6 +12,9 @@ import type { RgbaImage } from './formats/binary';
 import { decodeCp1251 } from './formats/binary';
 import { buildTruckModel, parseTrucks, type TruckDef } from './game/trucks';
 import type { DriveSession } from './modes/drive';
+import type { TruckSetup } from './game/truckVehicle';
+import { loadCareer, truckSpec } from './game/career';
+import { CareerGame, mainMenu, newCareerForm, type LevelKind } from './ui/careerUi';
 
 /**
  * Переглядач ресурсів (Фази 1–2): обліт локацій, галерея текстур і масок.
@@ -51,6 +54,9 @@ let tab = 'scene';
 let trucks: TruckDef[] = [];
 let drive: DriveSession | null = null;
 let driveStarting = false;
+/** Параметри заїзду від кар'єри (вантажівка, суперники, тип, стан машини); null — швидкий заїзд. */
+let careerCfg: { truck: number; rivals: TruckDef[]; kind: LevelKind; setup: TruckSetup } | null = null;
+let career: CareerGame | null = null;
 const truckRoot = new THREE.Group();
 truckRoot.rotation.x = -Math.PI / 2;
 scene.add(truckRoot);
@@ -76,6 +82,7 @@ function setStatus(text: string | null): void {
 }
 
 function syncUrl(): void {
+  if (career || careerCfg) return history.replaceState(null, '', '?career=1');
   const p = new URLSearchParams({ level: levelSel.value, mode: modeSel.value, tab });
   if (tab === 'trucks' || tab === 'drive') p.set('truck', truckSel.value);
   history.replaceState(null, '', `?${p}`);
@@ -105,8 +112,8 @@ async function open(): Promise<void> {
       `інстансів ${s.instances}, без текстур ${s.missingTextures}\n` +
       `розбір ${(t1 - t0).toFixed(0)} мс, побудова ${(t2 - t1).toFixed(0)} мс`;
     if (tab === 'textures' || tab === 'masks') showGallery();
-    applyTab();
     setStatus(null);
+    await applyTab();
   } catch (e) {
     console.error(e);
     setStatus(`Помилка: ${(e as Error).message}`);
@@ -160,7 +167,8 @@ async function startDrive(): Promise<void> {
   setStatus('Підготовка фізики…');
   try {
     await ensureTrucks();
-    const def = trucks.find((t) => String(t.index) === truckSel.value) ?? trucks[0];
+    const cfg = careerCfg;
+    const def = trucks.find((t) => String(t.index) === String(cfg?.truck ?? truckSel.value)) ?? trucks[0];
     controls.enabled = false;
     scene.fog = new THREE.Fog(0x8fb4d8, 150, 900);
     // Rapier (WASM ~2 МБ) вантажимо лише при вході в режим їзди.
@@ -169,9 +177,9 @@ async function startDrive(): Promise<void> {
     const nAi = Number(params.get('ai') ?? 3);
     // Правила з довідки: Кольцо — 3 кола; Полигон — поодинці; комерційні — до фінішу; база — вільна їзда.
     const id = levelSel.value as LevelId;
-    const kind = id === 'CIRCUIT' ? 'laps' : id === 'MENU3D' ? 'free' : 'route';
-    const rivals = id === 'TRIAL' || id === 'MENU3D' ? [] : trucks.filter((t) => t !== def).slice(0, nAi);
-    drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind);
+    const kind = cfg?.kind ?? (id === 'CIRCUIT' ? 'laps' : id === 'MENU3D' ? 'free' : 'route');
+    const rivals = cfg?.rivals ?? (id === 'TRIAL' || id === 'MENU3D' ? [] : trucks.filter((t) => t !== def).slice(0, nAi));
+    drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup);
     setStatus(null);
   } catch (e) {
     console.error(e);
@@ -182,7 +190,7 @@ async function startDrive(): Promise<void> {
 }
 
 /** Показує/ховає обʼєкти відповідно до вкладки. */
-function applyTab(): void {
+async function applyTab(): Promise<void> {
   gallery.hidden = tab === 'scene' || tab === 'trucks' || tab === 'drive';
   stats.hidden = !(tab === 'scene' || tab === 'trucks');
   truckSel.hidden = tab !== 'trucks' && tab !== 'drive';
@@ -191,7 +199,7 @@ function applyTab(): void {
   document.body.classList.toggle('driving', tab === 'drive');
   $('menu').hidden = tab !== 'drive';
   if (tab !== 'drive') stopDrive();
-  else void startDrive();
+  else await startDrive();
   if (tab === 'trucks') void ensureTrucks().then(showTruck);
   else if (tab === 'scene' && built) {
     camera.near = 0.5;
@@ -260,7 +268,7 @@ for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-tab]')) {
     tab = btn.dataset.tab!;
     for (const b of document.querySelectorAll('[data-tab]')) b.classList.toggle('active', b === btn);
     syncUrl();
-    applyTab();
+    void applyTab();
     if (tab === 'textures' || tab === 'masks') showGallery();
   });
 }
@@ -404,14 +412,75 @@ async function boot(): Promise<void> {
   } else if (params.get('source') !== 'local' && (await devServerAvailable())) {
     // Файли з ПК, але кожен збережений на пристрої; решту докачуємо у фоні після першої локації.
     source = cachedSource(devServerSource);
-    await open();
     void prefetchMissing(devServerSource);
+    await startup();
     return;
   } else {
     if (missing.length) await showImport(missing);
     source = idbSource;
   }
+  await startup();
+}
+
+// --- Кар'єра й головне меню ---
+
+function selectTab(name: string): void {
+  tab = name;
+  for (const b of document.querySelectorAll('[data-tab]')) b.classList.toggle('active', (b as HTMLElement).dataset.tab === name);
+}
+
+/** Завантажити локацію й почати їзду з параметрами кар'єри. */
+async function play(id: LevelId, cfg: NonNullable<typeof careerCfg>): Promise<DriveSession | null> {
+  careerCfg = cfg;
+  levelSel.value = id;
+  selectTab('drive');
   await open();
+  return drive;
+}
+
+async function startCareer(fresh: boolean): Promise<void> {
+  await ensureTrucks();
+  const specs = trucks.map(truckSpec);
+  const c = fresh ? await newCareerForm(overlay, specs) : loadCareer();
+  if (!c) return void menuLoop();
+  document.body.classList.add('career');
+  career = await CareerGame.start(
+    {
+      overlay,
+      scene,
+      defs: async () => (await ensureTrucks(), trucks),
+      play,
+      built: () => built,
+      exit: () => {
+        career = null;
+        careerCfg = null;
+        document.body.classList.remove('career');
+        stopDrive();
+        selectTab('scene');
+        void menuLoop();
+      },
+    },
+    c,
+    specs,
+  );
+}
+
+async function menuLoop(): Promise<void> {
+  history.replaceState(null, '', location.pathname);
+  const choice = await mainMenu(overlay);
+  if (choice === 'continue' || choice === 'new') return startCareer(choice === 'new');
+  if (choice === 'quick') {
+    levelSel.value = 'CIRCUIT';
+    selectTab('drive');
+  } else selectTab('scene');
+  await open();
+}
+
+/** Запуск: ?career=1 — продовжити кар'єру; ?tab=… — переглядач/швидкий заїзд (розробка); інакше — меню. */
+async function startup(): Promise<void> {
+  if (params.get('career') && loadCareer()) return startCareer(false);
+  if (params.get('tab')) return open();
+  await menuLoop();
 }
 
 // PWA: офлайн-кеш коду (лише у збірці й у захищеному контексті — HTTPS/localhost).

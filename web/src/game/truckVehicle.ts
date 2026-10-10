@@ -55,6 +55,17 @@ const BRAKE_REAR = 0.35;
 /** Коефіцієнт опору кочення (накат на 4-й передачі без газу, s7). */
 const ROLLING_RESISTANCE = 0.015;
 
+/** Стан машини з кар'єри, що впливає на фізику (режим «симулятор»). */
+export interface TruckSetup {
+  /** Маса вантажу, кг, і висота його шару в кузові, м (центр ваги піднімається з обʼємом вантажу). */
+  cargoMass?: number;
+  cargoHeight?: number;
+  /** Множник зчеплення шин (знос, дощ). */
+  grip?: number;
+  /** Множник моменту двигуна (форсований двигун). */
+  torque?: number;
+}
+
 export class TruckVehicle {
   readonly body: RAPIER.RigidBody;
   readonly ctrl: RAPIER.DynamicRayCastVehicleController;
@@ -77,18 +88,21 @@ export class TruckVehicle {
   private reverseMode = false;
   private brakeTime = 0;
   private readonly mass: number;
+  private readonly grip: number;
 
   constructor(
     private readonly world: RAPIER.World,
     readonly def: TruckDef,
     model: TruckModel,
     spawn: { position: THREE.Vector3; forward: THREE.Vector3 },
+    setup: TruckSetup = {},
   ) {
     const tech = def.tech;
+    this.grip = setup.grip ?? 1;
     this.wheelRadius = tech.wheelRadius;
     this.driven = [0, 1, 2, 3].map((i) => (tech.drivingWheels[i] ?? 1) !== 0);
     this.engine = new Engine({
-      maxTorque: tech.maxRotMomentum,
+      maxTorque: tech.maxRotMomentum * (setup.torque ?? 1),
       tachMaxPower: tech.tachMaxPower,
       rearAxle: tech.rearAxleCoeff,
       reverse: tech.reverseCoeff,
@@ -125,14 +139,22 @@ export class TruckVehicle {
         .setAngularDamping(0.5)
         .setCanSleep(false), // контролер транспорту не будить тіло — сон «заморожує» вантажівку
     );
-    const mass = tech.mass + tech.bodyMass;
+    const cargo = Math.max(0, setup.cargoMass ?? 0);
+    const mass = tech.mass + tech.bodyMass + cargo;
     this.mass = mass;
     // Центр мас — CenterMassInB3D з TCH у системі моделі (x, висота, вперед): для ЗіЛа (0; 0,524; −0,3) —
     // 0,3 м позаду початку моделі, ≈ 1,5 м над дорогою; так передня вісь несе ≈ 56 % ваги, як в оригіналі
     // (навантаження коліс у s6: 12 452 / 9 662 Н). Rapier задає центр мас відносно колайдера.
     const [cx, cy, cz] = tech.centerMass;
     const colliderAt = new THREE.Vector3(center.x, center.y + size.y * 0.05, center.z);
-    const com = new THREE.Vector3(cx, cy, -cz).sub(colliderAt);
+    // Вантаж: центр — над дном вантажу (center_of_cargo_bottom) на половині висоти шару.
+    const [bx, by, bz] = tech.cargoBottom;
+    const cargoAt = new THREE.Vector3(bx, bz + (setup.cargoHeight ?? 0) / 2, -by);
+    const com = new THREE.Vector3(cx, cy, -cz)
+      .multiplyScalar(mass - cargo)
+      .addScaledVector(cargoAt, cargo)
+      .divideScalar(mass)
+      .sub(colliderAt);
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2 * 0.8, size.z / 2)
         .setTranslation(colliderAt.x, colliderAt.y, colliderAt.z)
@@ -156,7 +178,7 @@ export class TruckVehicle {
       this.ctrl.setWheelSuspensionRelaxation(i, 2.3);
       this.ctrl.setWheelMaxSuspensionTravel(i, 0.3);
       this.ctrl.setWheelMaxSuspensionForce(i, mass * 40);
-      this.ctrl.setWheelFrictionSlip(i, TIRE_GRIP);
+      this.ctrl.setWheelFrictionSlip(i, TIRE_GRIP * this.grip);
       // Бічні сили шин рахуємо самі (applyTireLateral) — у Rapier вимикаємо.
       this.ctrl.setWheelSideFrictionStiffness(i, 0);
     }
@@ -209,7 +231,7 @@ export class TruckVehicle {
     const engineBrakes = gas === 0 && eng.force * v < 0;
     // Межа зчеплення Rapier спільна для повороту, тяги й гальмування; під час гальмування — вища
     // (оригінал гальмує до ≈ 0,55 g незалежно від бічного зчеплення).
-    const grip = TIRE_GRIP + (TIRE_GRIP_BRAKING - TIRE_GRIP) * brakePedal;
+    const grip = (TIRE_GRIP + (TIRE_GRIP_BRAKING - TIRE_GRIP) * brakePedal) * this.grip;
     for (let i = 0; i < 4; i++) {
       this.ctrl.setWheelFrictionSlip(i, grip);
       const engine = this.driven[i] ? eng.force / nDriven : 0;
@@ -256,14 +278,14 @@ export class TruckVehicle {
       const x = alpha / TIRE.slip_peak;
       const mu = x <= 1 ? x : Math.max(TIRE.slide, 1 - (1 - TIRE.slide) * (x - 1) * 0.5);
       // Бічна сила (перпендикулярно колесу): росте з кутом проковзування до межі, у заносі — TIRE.slide.
-      let force = mu * TIRE.mu * load;
+      let force = mu * TIRE.mu * this.grip * load;
       // Не «перестрибувати» нуль бокової швидкості за один крок (стійкість на малій швидкості).
       force = Math.min(force, (wheelMass * Math.abs(vLat)) / dt);
       const impulse = right.multiplyScalar(-Math.sign(vLat) * force * dt);
       if (x > 1) {
         // Занос: колесо ще й гальмує вздовж руху — тим сильніше, чим глибший занос; вантажівка
         // втрачає швидкість, доки шина знову не зачепиться (тоді — різкий доворот).
-        const drag = Math.min(TIRE.slide_drag_max, TIRE.slide_drag * (x - 1)) * TIRE.mu * load;
+        const drag = Math.min(TIRE.slide_drag_max, TIRE.slide_drag * (x - 1)) * TIRE.mu * this.grip * load;
         const limited = Math.min(drag, (wheelMass * Math.abs(vLong)) / dt);
         impulse.addScaledVector(fwd, -Math.sign(vLong) * limited * dt);
       }
