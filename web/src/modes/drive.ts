@@ -274,7 +274,7 @@ export class DriveSession {
     if (sw) {
       sw('AvtoKey', 1);
       sw('ParkKey', this.handbrakeOn ? 1 : 0);
-      sw('GearKey', this.truck.gear < 0 ? 0 : this.truck.speedKmh < 0.5 ? 1 : 2);
+      sw('GearKey', this.truck.gear < 0 ? 0 : this.truck.gear === 0 ? 1 : 2);
       const tens = Math.floor(this.odometer / 10);
       for (let i = 0; i < 5; i++) sw(`KMeter${i}Key`, Math.floor(tens / 10 ** i) % 10);
     }
@@ -423,7 +423,7 @@ export class DriveSession {
 ${['ЗЕЛЕНИЙ', 'ЖОВТИЙ', 'ЧЕРВОНИЙ'][Math.min(2, Math.floor(this.countdown))]}  ${Math.ceil(this.countdown)}` : '';
     const fin = this.finished ? `
 ФІНІШ!  місце ${this.finished.place}, час ${fmtTime(this.finished.time)}` : '';
-    const speedLine = `${t.speedKmh.toFixed(0)} км/год   ${t.gear < 0 ? 'R' : t.gear}   ${t.rpm.toFixed(0)} об/хв`;
+    const speedLine = `${t.speedKmh.toFixed(0)} км/год   ${t.gear < 0 ? 'R' : t.gear === 0 ? 'N' : t.gear}   ${t.rpm.toFixed(0)} об/хв`;
     const raceLine =
       this.raceKind === 'free'
         ? 'вільна їзда'

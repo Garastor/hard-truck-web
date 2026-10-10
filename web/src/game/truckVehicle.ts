@@ -3,27 +3,31 @@ import * as THREE from 'three';
 import { g2t } from '../physics/world';
 import type { ControlState } from '../input/input';
 import type { TruckDef, TruckModel } from './trucks';
+import { Engine, GEAR_R } from './engine';
 
 /**
  * Вантажівка на DynamicRayCastVehicleController (Rapier).
- * Параметри — з [TECHn] у TRUCK.TCH. Формули двигуна/КПП — ТИМЧАСОВЕ наближення,
- * буде замінене на відтворені з HTruck.exe (_Car_V::run2, доріжка R4).
+ * Параметри — з [TECHn] у TRUCK.TCH. Двигун і коробка — відтворені з HTruck.exe (engine.ts);
+ * шини, підвіска й інтегрування кузова — поки Rapier (доріжка R4 продовжується).
  */
 export class TruckVehicle {
   readonly body: RAPIER.RigidBody;
   readonly ctrl: RAPIER.DynamicRayCastVehicleController;
   /** Візуальна модель у світі Three.js. */
   readonly visual = new THREE.Group();
-  gear = 1;
-  rpm = 800;
+  /** Передача для інтерфейсу: −1 — R, 0 — N, 1 — перша… */
+  gear = 0;
+  rpm = 300;
   speedKmh = 0;
+  readonly engine: Engine;
 
   private readonly wheelRadius: number;
   private readonly driven: boolean[];
   private readonly wheelVisual: { obj: THREE.Object3D; base: THREE.Matrix4 }[];
   private readonly suspRest = 0.35;
   private steerAngle = 0;
-  private shiftTimer = 0;
+  /** Задній хід: гравець утримує гальмо на місці (тоді «гальмо» — це газ назад). */
+  private reverseMode = false;
 
   constructor(
     private readonly world: RAPIER.World,
@@ -34,6 +38,14 @@ export class TruckVehicle {
     const tech = def.tech;
     this.wheelRadius = tech.wheelRadius;
     this.driven = [0, 1, 2, 3].map((i) => (tech.drivingWheels[i] ?? 1) !== 0);
+    this.engine = new Engine({
+      maxTorque: tech.maxRotMomentum,
+      tachMaxPower: tech.tachMaxPower,
+      rearAxle: tech.rearAxleCoeff,
+      reverse: tech.reverseCoeff,
+      gears: tech.gears,
+      wheelRadius: tech.wheelRadius,
+    });
 
     // Модель у системі гри → обгортка, що повертає її у систему Three.js.
     const gameFrame = new THREE.Group();
@@ -112,51 +124,26 @@ export class TruckVehicle {
     this.ctrl.setWheelSteering(0, this.steerAngle);
     this.ctrl.setWheelSteering(1, this.steerAngle);
 
-    // Задній хід: стоїмо й тиснемо гальмо → вмикаємо R; газ на R — гальмування.
-    let throttle = input.throttle;
-    let brake = input.brake;
-    if (this.gear > 0 && brake > 0 && throttle === 0 && v < 0.5) this.gear = -1;
-    if (this.gear < 0) {
-      if (throttle > 0 && v > -0.5) this.gear = 1;
-      else {
-        [throttle, brake] = [brake, throttle];
-      }
-    }
+    // Задній хід: стоїмо й тримаємо гальмо → R, «гальмо» стає газом назад; газ на місці — знову вперед.
+    const stopped = Math.abs(v) < 0.5;
+    if (!this.reverseMode && input.brake > 0 && input.throttle === 0 && stopped) this.reverseMode = true;
+    else if (this.reverseMode && input.throttle > 0 && stopped) this.reverseMode = false;
+    const gas = this.reverseMode ? input.brake : input.throttle;
+    const brake = this.reverseMode ? input.throttle : input.brake;
 
-    // Обороти двигуна від швидкості коліс.
-    const ratio = this.gearRatio() * tech.rearAxleCoeff;
-    const wheelRpm = (Math.abs(v) / this.wheelRadius) * (60 / (2 * Math.PI));
-    this.rpm = Math.max(700, wheelRpm * Math.abs(ratio));
+    const eng = this.engine;
+    eng.update(dt, gas, brake, v, this.reverseMode);
+    this.rpm = eng.rpm;
+    this.gear = eng.displayGear === GEAR_R ? -1 : eng.displayGear - 1;
 
-    // Автоматична КПП.
-    this.shiftTimer -= dt;
-    if (this.gear > 0 && this.shiftTimer <= 0) {
-      if (this.rpm > 2300 && this.gear < tech.gears.length) {
-        this.gear++;
-        this.shiftTimer = 0.6;
-      } else if (this.rpm < 1100 && this.gear > 1) {
-        this.gear--;
-        this.shiftTimer = 0.6;
-      }
-    }
-
-    // Крива моменту: пік біля 1400 об/хв, відсічка 2600.
-    const x = (this.rpm - 1400) / 1400;
-    const torque = this.rpm > 2600 ? 0 : tech.maxRotMomentum * Math.max(0.45, 1 - x * x);
+    // Сила двигуна — порівну на ведучі колеса (у Rapier відʼємна сила — уперед).
     const nDriven = this.driven.filter(Boolean).length || 2;
-    const wheelForce = (throttle * torque * Math.abs(ratio) * 0.85) / this.wheelRadius / nDriven;
-    const dir = this.gear < 0 ? -1 : 1;
     for (let i = 0; i < 4; i++) {
-      this.ctrl.setWheelEngineForce(i, this.driven[i] ? -dir * wheelForce : 0);
+      this.ctrl.setWheelEngineForce(i, this.driven[i] ? -eng.force / nDriven : 0);
       const b = brake * tech.brakePower * 0.004 + (input.handbrake && i >= 2 ? 400 : 0);
-      this.ctrl.setWheelBrake(i, b + (throttle === 0 && brake === 0 ? 3 : 0));
+      this.ctrl.setWheelBrake(i, b + (gas === 0 && brake === 0 ? 3 : 0));
     }
     this.ctrl.updateVehicle(dt);
-  }
-
-  private gearRatio(): number {
-    if (this.gear < 0) return this.def.tech.reverseCoeff;
-    return this.def.tech.gears[this.gear - 1] ?? 1;
   }
 
   /** Синхронізує візуальну модель з фізикою (після world.step). */
@@ -188,7 +175,7 @@ export class TruckVehicle {
     this.body.setRotation(q, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    this.gear = 1;
+    this.reverseMode = false;
   }
 
   /** Поточний напрям «уперед» у світі. */
