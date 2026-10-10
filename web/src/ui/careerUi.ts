@@ -16,7 +16,7 @@ import type { TruckSetup } from '../game/truckVehicle';
 import type { Room } from '../game/track';
 import type { DriveSession } from '../modes/drive';
 import type { BuiltScene } from '../render/sceneBuilder';
-import { HUD_CYAN, PixelFont, frame, inset, panel, pixelCanvas } from './pixelFont';
+import { HUD_CYAN, PixelFont, buttonScale, frame, inset, panel, pixelCanvas } from './pixelFont';
 
 export type LevelKind = 'laps' | 'route' | 'free';
 
@@ -446,7 +446,7 @@ export class CareerGame {
   private button(label: string, onClick: () => void, repeat = false): HTMLButtonElement {
     const b = el('button', 'hud-btn');
     b.setAttribute('aria-label', label);
-    const { canvas, ctx } = pixelCanvas(this.measure(label), this.host.font?.height ?? 8);
+    const { canvas, ctx } = pixelCanvas(this.measure(label), this.host.font?.height ?? 8, buttonScale());
     this.text(ctx, label, 0, 0, HUD_CYAN);
     b.append(canvas);
     if (!repeat) b.addEventListener('click', onClick);

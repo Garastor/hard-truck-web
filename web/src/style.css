@@ -5,7 +5,18 @@
   --muted: #9a9890;
   --accent: #e0a526;
   --gutter: 12px;
+  /* Бокові відступи: у ландшафті на телефоні — з запасом під «острівок» / виріз, навіть якщо браузер
+     не повідомляє safe-area (Safari з панеллю вкладок). */
+  --sl: max(16px, env(safe-area-inset-left));
+  --sr: max(16px, env(safe-area-inset-right));
   color-scheme: dark;
+}
+
+@media (pointer: coarse) and (orientation: landscape) {
+  :root {
+    --sl: max(52px, calc(env(safe-area-inset-left) + 12px));
+    --sr: max(52px, calc(env(safe-area-inset-right) + 12px));
+  }
 }
 
 * {
@@ -43,7 +54,7 @@ body {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  padding: 8px max(var(--gutter), env(safe-area-inset-left)) 8px max(var(--gutter), env(safe-area-inset-right));
+  padding: 8px var(--sl) 8px var(--sr);
   background: var(--panel);
   backdrop-filter: blur(6px);
   z-index: 2;
@@ -81,7 +92,7 @@ button.active {
 
 #stats {
   position: fixed;
-  left: max(var(--gutter), env(safe-area-inset-left));
+  left: var(--sl);
   bottom: max(var(--gutter), env(safe-area-inset-bottom));
   padding: 6px 10px;
   background: var(--panel);
@@ -157,7 +168,7 @@ button.active {
 
 #fps {
   position: fixed;
-  left: max(12px, env(safe-area-inset-left));
+  left: var(--sl);
   top: calc(max(8px, env(safe-area-inset-top)) + 52px);
   z-index: 3;
   padding: 2px 8px;
@@ -233,8 +244,8 @@ body.bar-open #fps {
   pointer-events: auto;
   touch-action: none;
   border-radius: 50%;
-  width: 76px;
-  height: 76px;
+  width: 88px;
+  height: 88px;
   padding: 0;
   font-size: 22px;
   background: rgba(30, 32, 38, 0.55);
@@ -248,62 +259,62 @@ body.bar-open #fps {
 }
 
 .touch-btn.left {
-  left: max(16px, env(safe-area-inset-left));
+  left: var(--sl);
   bottom: max(20px, env(safe-area-inset-bottom));
 }
 
 .touch-btn.right {
-  left: calc(max(16px, env(safe-area-inset-left)) + 92px);
+  left: calc(var(--sl) + 104px);
   bottom: max(20px, env(safe-area-inset-bottom));
 }
 
 .touch-btn.gas,
 .touch-btn.brake {
   border-radius: 14px;
-  width: 72px;
-  height: 104px;
-  font-size: 12px;
+  width: 86px;
+  height: 126px;
+  font-size: 14px;
   font-weight: 700;
 }
 
 .touch-btn.gas {
-  right: max(16px, env(safe-area-inset-right));
+  right: var(--sr);
   bottom: max(20px, env(safe-area-inset-bottom));
 }
 
 .touch-btn.brake {
-  right: calc(max(16px, env(safe-area-inset-right)) + 88px);
+  right: calc(var(--sr) + 100px);
   bottom: max(20px, env(safe-area-inset-bottom));
 }
 
 .touch-btn.cam,
 .touch-btn.reset {
-  width: 48px;
-  height: 48px;
-  font-size: 18px;
+  width: 56px;
+  height: 56px;
+  font-size: 21px;
   top: calc(env(safe-area-inset-top, 0px) + 64px);
 }
 
 .touch-btn.cam {
-  right: max(16px, env(safe-area-inset-right));
+  right: var(--sr);
 }
 
 .touch-btn.reset {
-  right: calc(max(16px, env(safe-area-inset-right)) + 60px);
+  right: calc(var(--sr) + 68px);
 }
 
 .touch-btn.horn,
 .touch-btn.tilt {
-  width: 48px;
-  height: 48px;
-  font-size: 18px;
-  right: max(16px, env(safe-area-inset-right));
+  width: 56px;
+  height: 56px;
+  font-size: 21px;
+  right: var(--sr);
   top: auto;
-  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 120px);
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 144px);
 }
 
 .touch-btn.tilt {
-  right: calc(max(16px, env(safe-area-inset-right)) + 60px);
+  right: calc(var(--sr) + 68px);
 }
 
 
@@ -313,7 +324,7 @@ body.driving #bar {
 
 body.driving.bar-open #bar {
   display: flex;
-  padding-left: calc(max(12px, env(safe-area-inset-left)) + 56px);
+  padding-left: calc(var(--sl) + 56px);
 }
 
 /* Поки меню відкрите, верхні ігрові кнопки й табло не перекривають його (зокрема ⛶). */
@@ -326,7 +337,7 @@ body.driving.bar-open .drive-hud {
 #menu {
   position: fixed;
   top: max(8px, env(safe-area-inset-top));
-  left: max(12px, env(safe-area-inset-left));
+  left: var(--sl);
   z-index: 3;
   min-width: 44px;
   background: var(--panel);
@@ -413,7 +424,7 @@ body.driving .touch-btn.reset {
   inset: 0;
   display: grid;
   place-items: center;
-  padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  padding: max(12px, env(safe-area-inset-top)) var(--sr) max(12px, env(safe-area-inset-bottom)) var(--sl);
   background: rgba(0, 0, 0, 0.45);
   pointer-events: auto;
   z-index: 5;
@@ -589,7 +600,7 @@ body.in-menu #fps {
 .career-hud {
   position: absolute;
   top: calc(max(8px, env(safe-area-inset-top)) + 52px);
-  left: max(12px, env(safe-area-inset-left));
+  left: var(--sl);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -637,6 +648,13 @@ body.in-menu #fps {
   -webkit-user-select: none;
 }
 
+@media (pointer: coarse) {
+  .hud-btn {
+    min-height: 52px;
+    padding: 0 16px;
+  }
+}
+
 .hud-btn:active {
   background: rgba(224, 32, 224, 0.45);
 }
@@ -644,7 +662,7 @@ body.in-menu #fps {
 /* «Інформація гравця» — як в оригіналі знизу ліворуч; на телефоні — по центру між кермом і педалями. */
 .hud-player {
   position: fixed;
-  left: max(12px, env(safe-area-inset-left));
+  left: var(--sl);
   bottom: max(8px, env(safe-area-inset-bottom));
   line-height: 0;
 }
@@ -665,7 +683,7 @@ body.in-menu #fps {
 
 /* Лічильник кадрів у кар'єрі — праворуч від ☰, щоб не перекривав табло. */
 body.career #fps {
-  left: calc(max(12px, env(safe-area-inset-left)) + 52px);
+  left: calc(var(--sl) + 52px);
   top: calc(max(8px, env(safe-area-inset-top)) + 10px);
 }
 

@@ -93,12 +93,20 @@ export function hudScale(): number {
   return Math.max(1, Math.floor(window.innerHeight / 400));
 }
 
+/** Масштаб підписів кнопок: на сенсорному екрані вдвічі більший — щоб у кнопку було легко влучити й прочитати. */
+export function buttonScale(): number {
+  return hudScale() * (matchMedia('(pointer: coarse)').matches ? 2 : 1);
+}
+
 /** Полотно в «пікселях оригіналу», показане з масштабом без згладжування. */
-export function pixelCanvas(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+export function pixelCanvas(
+  w: number,
+  h: number,
+  s = hudScale(),
+): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
   const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(w);
   canvas.height = Math.ceil(h);
-  const s = hudScale();
   canvas.style.width = `${canvas.width * s}px`;
   canvas.style.height = `${canvas.height * s}px`;
   canvas.className = 'pixel';
