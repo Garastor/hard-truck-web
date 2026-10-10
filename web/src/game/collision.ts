@@ -282,10 +282,31 @@ export function roomAt(col: Pick<LevelCollision, 'floors' | 'floorRoom'>, x: num
 }
 
 /** Найвища підлога під (x, y) не вище z + 1: кімната й висота (система гри). */
-export function floorAt(col: Pick<LevelCollision, 'floors' | 'floorRoom'>, x: number, y: number, z: number): { room: string; z: number } | null {
+export function floorAt(
+  col: Pick<LevelCollision, 'floors' | 'floorRoom'>,
+  x: number,
+  y: number,
+  z: number,
+  only?: (room: string) => boolean,
+): { room: string; z: number } | null {
   let best: string | null = null;
   let bestZ = -Infinity;
+  let bestArea = Infinity;
   col.floors.forEach((p, i) => {
+    if (only && !only(col.floorRoom[i])) return;
+    // Площа охоплюючого прямокутника: на однаковій висоті кращий менший полігон (велика площина
+    // головної зали накриває й сусідні кімнати).
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    for (const q of p) {
+      x0 = Math.min(x0, q[0]);
+      x1 = Math.max(x1, q[0]);
+      y0 = Math.min(y0, q[1]);
+      y1 = Math.max(y1, q[1]);
+    }
+    const area = (x1 - x0) * (y1 - y0);
     for (let k = 1; k + 1 < p.length; k++) {
       const a = p[0];
       const b = p[k];
@@ -297,8 +318,10 @@ export function floorAt(col: Pick<LevelCollision, 'floors' | 'floorRoom'>, x: nu
       const w = 1 - u - v;
       if (u < -1e-4 || v < -1e-4 || w < -1e-4) continue;
       const fz = u * a[2] + v * b[2] + w * c[2];
-      if (fz <= z + 1 && fz > bestZ) {
-        bestZ = fz;
+      if (fz > z + 1) continue;
+      if (fz > bestZ + 0.05 || (fz > bestZ - 0.05 && area < bestArea)) {
+        bestZ = Math.max(fz, bestZ);
+        bestArea = area;
         best = col.floorRoom[i];
       }
     }

@@ -588,8 +588,15 @@ ${raceLine}`;
     if (!next && (this.locateTimer -= 1 / 60) <= 0) {
       this.locateTimer = 0.25;
       this.updateOpponentRooms();
-      const at = this.locate(cur);
-      if (at && at !== this.room) next = at;
+      // Кімнату змінює перетин порталу (як в оригіналі). За підлогою — лише якщо під машиною вже немає
+      // підлоги поточної кімнати (рестарт, пропущений портал): підлоги сусідніх кімнат перекриваються
+      // (тунель траси під залом запчастин), і «найвища підлога» вводила в оману.
+      const room = this.room;
+      const inRoom = room !== null && floorAt(this.col, cur.x, -cur.z, cur.y + 1, (r) => this.track.canonical(r) === room) !== null;
+      if (!inRoom) {
+        const at = this.locate(cur);
+        if (at && at !== this.room) next = at;
+      }
     }
     {
       if (next && this.track.rooms.has(next)) {
