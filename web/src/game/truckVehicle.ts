@@ -10,6 +10,12 @@ import { Engine, GEAR_R } from './engine';
  * Параметри — з [TECHn] у TRUCK.TCH. Двигун і коробка — відтворені з HTruck.exe (engine.ts);
  * шини, підвіска й інтегрування кузова — поки Rapier (доріжка R4 продовжується).
  */
+/** Частки breakpower на колесо: передні / задні (телеметрія ЗіЛ, s6) — гіпотеза для інших вантажівок. */
+const BRAKE_FRONT = 0.49;
+const BRAKE_REAR = 0.35;
+/** Коефіцієнт опору кочення (накат на 4-й передачі без газу, s7). */
+const ROLLING_RESISTANCE = 0.015;
+
 export class TruckVehicle {
   readonly body: RAPIER.RigidBody;
   readonly ctrl: RAPIER.DynamicRayCastVehicleController;
@@ -28,6 +34,8 @@ export class TruckVehicle {
   private steerAngle = 0;
   /** Задній хід: гравець утримує гальмо на місці (тоді «гальмо» — це газ назад). */
   private reverseMode = false;
+  private brakeTime = 0;
+  private readonly mass: number;
 
   constructor(
     private readonly world: RAPIER.World,
@@ -72,11 +80,12 @@ export class TruckVehicle {
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(spawn.position.x, spawn.position.y, spawn.position.z)
         .setRotation(rot)
-        .setLinearDamping(0.05)
+        .setLinearDamping(0) // опір руху — кочення й двигун (як в оригіналі), без штучного демпфування
         .setAngularDamping(0.5)
         .setCanSleep(false), // контролер транспорту не будить тіло — сон «заморожує» вантажівку
     );
     const mass = tech.mass + tech.bodyMass;
+    this.mass = mass;
     // Центр мас трохи нижче геометричного центру — стійкість, як у важкого тягача.
     const com = g2t(tech.centerMass);
     world.createCollider(
@@ -136,12 +145,28 @@ export class TruckVehicle {
     this.rpm = eng.rpm;
     this.gear = eng.displayGear === GEAR_R ? -1 : eng.displayGear - 1;
 
+    // Гальмо з клавіатури наростає як t/(t + 1) (поле [0x33a] оригіналу; телеметрія s6).
+    this.brakeTime = brake > 0 ? this.brakeTime + dt : 0;
+    const brakePedal = brake > 0 ? brake * (this.brakeTime / (this.brakeTime + 1)) : 0;
+
     // Сила двигуна — порівну на ведучі колеса (у Rapier відʼємна сила — уперед).
+    // Гальма: сила колеса = педаль × B (передні 0,49·breakpower, задні 0,35·breakpower — ЗіЛ, s6);
+    // опір кочення ≈ 0,015·N (накат s7). Rapier бере гальмо як імпульс за крок — множимо на dt.
     const nDriven = this.driven.filter(Boolean).length || 2;
+    const wheelLoad = (this.mass * 9.81) / 4;
+    // Rapier ігнорує гальмо колеса, на яке діє сила двигуна, тож гальмування двигуном (сила проти руху)
+    // переносимо в гальмо того ж колеса.
+    const engineBrakes = eng.force * v <= 0;
     for (let i = 0; i < 4; i++) {
-      this.ctrl.setWheelEngineForce(i, this.driven[i] ? -eng.force / nDriven : 0);
-      const b = brake * tech.brakePower * 0.004 + (input.handbrake && i >= 2 ? 400 : 0);
-      this.ctrl.setWheelBrake(i, b + (gas === 0 && brake === 0 ? 3 : 0));
+      const engine = this.driven[i] ? eng.force / nDriven : 0;
+      const share = i < 2 ? BRAKE_FRONT : BRAKE_REAR;
+      let force = brakePedal * share * tech.brakePower + ROLLING_RESISTANCE * wheelLoad;
+      if (input.handbrake && i >= 2) force += tech.brakePower;
+      if (engineBrakes) {
+        this.ctrl.setWheelEngineForce(i, 0);
+        force += Math.abs(engine);
+      } else this.ctrl.setWheelEngineForce(i, -engine);
+      this.ctrl.setWheelBrake(i, force * dt);
     }
     this.ctrl.updateVehicle(dt);
   }
