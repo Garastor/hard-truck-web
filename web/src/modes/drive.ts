@@ -4,7 +4,7 @@ import { addCollisionPolys, addStaticMeshes, g2t, initRapier } from '../physics/
 import { floorAt, levelCollision, roomAt, type LevelCollision } from '../game/collision';
 import { Input } from '../input/input';
 import { TruckVehicle, type TruckSetup } from '../game/truckVehicle';
-import { buildTruckModel, type TruckDef } from '../game/trucks';
+import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import type { BuiltScene } from '../render/sceneBuilder';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
@@ -334,17 +334,20 @@ export class DriveSession {
     if (!this.cab.visible) return;
     this.cab.position.copy(this.camera.position);
     this.cab.quaternion.copy(this.cabQuat);
-    const rot = (o: THREE.Object3D | undefined, axis: THREE.Vector3, angle: number) => {
+    const rot = (o: THREE.Object3D | undefined, axis: THREE.Vector3, angle: number, scale = 1) => {
       if (!o) return;
       o.matrix.copy(o.userData.baseMatrix as THREE.Matrix4).multiply(new THREE.Matrix4().makeRotationAxis(axis, angle));
+      // Стрілка лежить уздовж x від осі обертання: довжина — × scale, ширина — помірніше.
+      if (scale !== 1) o.matrix.multiply(new THREE.Matrix4().makeScale(scale, 1, Math.sqrt(scale)));
     };
     const deg = Math.PI / 180;
     rot(this.cabParts.rule, new THREE.Vector3(0, 0, 1), -state.steer * 2.4);
     // Кут стрілки = значення × коефіцієнт (0x48f950). Шкали — TachScale/SpeedScale з [NODESn] TRUCK.TCH:
     // «значення кінця шкали, кут» (ЗіЛ: 50 об/с і 160 км/год → 240°).
     const needle = (v: number, [max, angle]: [number, number]) => (Math.min(Math.max(v, 0), max * 1.05) / max) * angle * deg;
-    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle(this.truck.rpm / 60, this.def.tachScale));
-    rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), needle(this.truck.speedKmh, this.def.speedScale));
+    const [speedSize, tachSize] = NEEDLE_SCALE[this.def.carNode.toLowerCase()] ?? [1, 1];
+    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle(this.truck.rpm / 60, this.def.tachScale), tachSize);
+    rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), needle(this.truck.speedKmh, this.def.speedScale), speedSize);
     // Табло: A — автоматична КПП, P — ручник, передача; одометр — 5 розрядів (KMeter0Key — молодший).
     const sw = this.cabSwitch;
     if (sw) {
