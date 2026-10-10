@@ -10,7 +10,7 @@ import type { BuiltScene } from '../render/sceneBuilder';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
 import { EngineAudio } from '../audio/engineAudio';
-import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, Track, type Room } from '../game/track';
+import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, EVENT_RAIN, Track, type Room } from '../game/track';
 import { AutoPilot, WayNet } from '../game/autopilot';
 import { RoomVisibility } from '../render/roomVisibility';
 
@@ -589,6 +589,12 @@ export class DriveSession {
     this.handbrakeOn = state.handbrake;
     this.odometer += (this.truck.speedKmh / 3.6) * dt;
     this.updateCab(state);
+    // Під дахом (кімнати з подією 4 «tunnel_rain» — тунелі) дощу немає: ні струменів, ні нових крапель.
+    if (this.raining) {
+      const sheltered = this.currentRoom?.events.some((e) => e.type === EVENT_RAIN) ?? false;
+      if (this.rain) this.rain.root.visible = !sheltered;
+      if (this.glassRain) this.glassRain.raining = !sheltered;
+    }
     if (this.cab?.visible) this.glassRain?.update(dt);
     if (this.rain?.root.visible) {
       this.rain.root.position.copy(this.camera.position);
