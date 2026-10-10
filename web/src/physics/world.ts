@@ -16,10 +16,8 @@ export function g2t(v: readonly number[] | THREE.Vector3): THREE.Vector3 {
 }
 
 /**
- * Колізії світу як в оригіналі:
- * - «земля» для коліс — пологі трикутники візуальної геометрії (нормаль угору, |ny| > minUp);
- * - стіни/огорожі — колізійні полігони блоків 23 (див. addCollisionPolys).
- * Вертикальна візуальна геометрія (фасади, арки) колізій не має — так у гри є проїзди крізь будівлі.
+ * Запасна «земля» з видимої геометрії — пологі трикутники (|ny| > minUp), якщо в локації немає `hit_road`.
+ * Основні колізії — з даних гри (обʼєкти `hit_*`), див. game/collision.ts.
  */
 export function addStaticMeshes(world: RAPIER.World, root: THREE.Object3D, minUp = 0.35): number {
   root.updateMatrixWorld(true);
@@ -53,8 +51,8 @@ export function addStaticMeshes(world: RAPIER.World, root: THREE.Object3D, minUp
   return count;
 }
 
-/** Колізійні полігони блоків 23 (форма 6: n полігонів по k вершин, система гри) → один trimesh. */
-export function addCollisionPolys(world: RAPIER.World, polys: number[][][]): number {
+/** Колізійні полігони (система гри) → один trimesh. */
+export function addCollisionPolys(world: RAPIER.World, polys: number[][][], friction = 0.4): number {
   const out: number[] = [];
   for (const poly of polys) {
     const pts = poly.map((p) => g2t(p));
@@ -66,6 +64,6 @@ export function addCollisionPolys(world: RAPIER.World, polys: number[][][]): num
   const verts = new Float32Array(out);
   const idx = new Uint32Array(verts.length / 3);
   for (let i = 0; i < idx.length; i++) idx[i] = i;
-  world.createCollider(RAPIER.ColliderDesc.trimesh(verts, idx).setFriction(0.4));
+  world.createCollider(RAPIER.ColliderDesc.trimesh(verts, idx).setFriction(friction));
   return idx.length / 3;
 }

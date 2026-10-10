@@ -1,6 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { addCollisionPolys, addStaticMeshes, g2t, initRapier } from '../physics/world';
+import { levelCollision } from '../game/collision';
 import { Input } from '../input/input';
 import { TruckVehicle } from '../game/truckVehicle';
 import { buildTruckModel, type TruckDef } from '../game/trucks';
@@ -36,6 +37,8 @@ export class DriveSession {
   private cockpit = new THREE.Vector3(-0.4, 2.2, -1.2);
   /** Сцена кабіни: малюється поверх світу (після очищення глибини), як в оригіналі. */
   readonly overlayScene = new THREE.Scene();
+  /** Висота (Three.js y), нижче якої вантажівка вважається такою, що випала зі світу. */
+  private fallY = -200;
   private cab: THREE.Group | null = null;
   private cabParts: { rule?: THREE.Object3D; tacho?: THREE.Object3D; speed?: THREE.Object3D } = {};
   private cabSwitch: ((n: string, state: number) => void) | null = null;
@@ -95,14 +98,17 @@ export class DriveSession {
     if (raceKind === 'free') s.countdown = 0;
     s.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     s.world.timestep = 1 / 60;
-    addStaticMeshes(s.world, built.root);
-    // Стіни: колізійні полігони блоків 23 у кімнатах (шаблони обʼєктів не враховуємо).
-    const walls: number[][][] = [];
-    for (const b of built.assembler.b3d.blocks) {
-      if (b.data.t !== 19) continue;
-      for (const [blk] of walk([b])) if (blk.data.t === 23 && blk.data.shape.kind === 6) walls.push(...blk.data.shape.polys);
+    // Колізії як в оригіналі — з обʼєктів hit_road/hit_obj; видима геометрія — лише запасний варіант.
+    const col = levelCollision(built.assembler.b3d);
+    if (col.hasFloor) addCollisionPolys(s.world, col.floors, 1.0);
+    else addStaticMeshes(s.world, built.root);
+    addCollisionPolys(s.world, col.walls, 0.4);
+    // Нижче найнижчої підлоги — випали за межі колізій (напр. тунелі бази до трас): рестарт.
+    if (col.hasFloor) {
+      let minZ = Infinity;
+      for (const p of col.floors) for (const q of p) minZ = Math.min(minZ, q[2]);
+      s.fallY = minZ - 15;
     }
-    addCollisionPolys(s.world, walls);
     s.world.step(); // колайдери потрапляють у структури запитів (castRay) лише після кроку
 
     const model = buildTruckModel(built.assembler, def);
@@ -314,7 +320,7 @@ export class DriveSession {
       }
       o.truck.update(dt, st);
       o.odo.update(pos, this.wayNet);
-      if (tp.y < -200) o.truck.reset(this.spawn);
+      if (tp.y < this.fallY) o.truck.reset(this.spawn);
     }
   }
 
@@ -370,7 +376,7 @@ export class DriveSession {
       this.clock += this.world.timestep;
       this.truck.syncVisual();
       for (const o of this.opponents) o.truck.syncVisual();
-      if (this.truck.body.translation().y < -200) this.truck.reset(this.restartPoint());
+      if (this.truck.body.translation().y < this.fallY) this.truck.reset(this.restartPoint());
       this.updateTrack();
     }
   }
@@ -390,7 +396,7 @@ export class DriveSession {
     this.truck.syncVisual();
     for (const o of this.opponents) o.truck.syncVisual();
     // Впав зі світу — на точку рестарту.
-    if (this.truck.body.translation().y < -200) this.truck.reset(this.restartPoint());
+    if (this.truck.body.translation().y < this.fallY) this.truck.reset(this.restartPoint());
     this.updateTrack();
     this.updateCamera(dt);
     this.handbrakeOn = state.handbrake;
