@@ -39,12 +39,25 @@ describe('двигун оригіналу', () => {
     expect(e.gear).toBe(2);
     let shiftAt = 0;
     for (let v = 0.5; v < 8 && !shiftAt; v += 0.01) {
-      const before = e.n;
+      const before = e.lockedN(e.gear, v);
       e.update(0.02, 1, 0, v);
       if (e.shifting) shiftAt = before;
     }
     expect(shiftAt).toBeGreaterThan(43);
     expect(shiftAt).toBeLessThan(50);
+  });
+
+  it('автомат: на підйомі (швидкість падає) з 5-ї на 4-ту — до того, як оберти впадуть нижче n₀', () => {
+    const e = zil();
+    e.gear = e.topGear;
+    let shiftAt = 0;
+    for (let v = 20; v > 4 && !shiftAt; v -= 0.01) {
+      const before = e.lockedN(e.gear, v);
+      e.update(0.02, 1, 0, v);
+      if (e.shifting) shiftAt = before;
+    }
+    expect(shiftAt).toBeGreaterThan(20);
+    expect(shiftAt).toBeLessThan(30);
   });
 
   it('гальмування двигуном: при n₀ — −0,1·M', () => {

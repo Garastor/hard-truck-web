@@ -26,6 +26,8 @@ const SHIFT_NEUTRAL = 0.1;
 const CLUTCH_TIME = 1.0;
 /** Вгору, якщо сила на вищій передачі > поточна × 1,1. */
 const UPSHIFT_GAIN = 1.1;
+/** Вниз, якщо виграш у силі > 0,5 від максимального (константа 0x548832). */
+const DOWNSHIFT_SHARE = 0.5;
 /**
  * Пробуксовка зчеплення (0x4aa1c0): поки оберти, звʼязані з колесами, нижчі за 0,5·n₀ (або колеса
  * крутяться проти передачі), газ — повний (телеметрія s6: [0x339] = 1,0 до ≈ 0,8 м/с), а двигун тримає
@@ -199,11 +201,14 @@ export class Engine {
       }
     }
     if (best) return this.startShift(best, SHIFT_AUTO);
-    // Вниз: якщо на нижчій передачі сила значно більша, а оберти ще в межах.
+    // Вниз (0x4aa76c): якщо виграш у силі на нижчій передачі більший за половину максимально
+    // можливого (різниця сил обох передач при n₀) — інакше на підйомі машина «застрягає» на високій.
     if (this.gear > 2) {
       const g = this.gear - 1;
       const nLow = this.lockedN(g, wheelSpeed);
-      if (nLow < this.n0 * 2 && this.wheelForce(g, nLow, 1) > current * 1.5) this.startShift(g, SHIFT_AUTO);
+      const gain = this.wheelForce(g, nLow, 1) - current;
+      const maxGain = this.wheelForce(g, this.n0, 1) - this.wheelForce(this.gear, this.n0, 1);
+      if (nLow < this.n0 * 2 && gain > DOWNSHIFT_SHARE * maxGain) this.startShift(g, SHIFT_AUTO);
     }
   }
 }
