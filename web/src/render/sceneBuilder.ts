@@ -185,6 +185,8 @@ export class SceneAssembler {
   readonly switches = new Map<string, THREE.Group[][]>();
   /** Куди реєструвати динамічні перемикачі при побудові (світ або окремий обʼєкт, напр. кабіна). */
   private switchTarget: Map<string, THREE.Group[][]> | null = null;
+  /** Будуємо кімнати світу (а не модель): екземпляри з порожнім простором — привʼязка до спостерігача. */
+  private buildingRooms = false;
 
   constructor(
     readonly b3d: B3d,
@@ -238,7 +240,9 @@ export class SceneAssembler {
    * Окремий (не кешований) екземпляр обʼєкта з динамічними перемикачами (21) — напр. кабіна з табло.
    * Повертає групу і функцію встановлення стану перемикача за імʼям.
    */
-  dynamicObject(name: string): { root: THREE.Group; setSwitch: (n: string, state: number) => void; names: string[] } | null {
+  dynamicObject(
+    name: string,
+  ): { root: THREE.Group; setSwitch: (n: string, state: number) => void; names: string[]; states: (n: string) => number } | null {
     const blk = this.topByName.get(name.toLowerCase());
     if (!blk) return null;
     const switches = new Map<string, THREE.Group[][]>();
@@ -253,6 +257,7 @@ export class SceneAssembler {
     return {
       root,
       names: [...switches.keys()],
+      states: (n) => switches.get(n)?.[0]?.length ?? 0,
       setSwitch: (n, state) => {
         for (const objs of switches.get(n) ?? []) objs.forEach((o, i) => (o.visible = i === state));
       },
@@ -263,6 +268,7 @@ export class SceneAssembler {
   buildRooms(): THREE.Group[] {
     const rooms: THREE.Group[] = [];
     this.switchTarget = this.switches;
+    this.buildingRooms = true;
     for (const b of this.b3d.blocks) {
       if (b.data.t !== 19) continue;
       const grp = new THREE.Group();
@@ -274,6 +280,7 @@ export class SceneAssembler {
       this.stats.rooms++;
     }
     this.switchTarget = null;
+    this.buildingRooms = false;
     return rooms;
   }
 
@@ -427,7 +434,7 @@ export class SceneAssembler {
   private addInstance(spaceName: string, objectName: string, into: THREE.Object3D): void {
     // Порожній простір: у моделях (вантажівки) — система координат батька (деталі кабіни, колеса);
     // у кімнатах — привʼязка до спостерігача (сонце, лінзи) — поки не відтворюємо.
-    if (!spaceName && this.switchTarget) return;
+    if (!spaceName && this.buildingRooms) return;
     const m = spaceName ? this.space(spaceName) : new THREE.Matrix4();
     const tpl = this.template(objectName);
     if (!m || !tpl) return;

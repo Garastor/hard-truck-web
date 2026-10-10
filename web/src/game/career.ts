@@ -118,6 +118,8 @@ export interface Career {
   /** Повідомлення про результат останнього заїзду (показується на базі). */
   report: string | null;
   seed: number;
+  /** Вмʼятини кузова за зонами (накопичена сила ударів) — до ремонту на базі. */
+  dents?: Record<string, number>;
 }
 
 /** Підсумок заїзду для розрахунку. */
@@ -132,6 +134,8 @@ export interface TripResult {
   hits: number;
   /** Пройдено, м. */
   distance: number;
+  /** Знос уже нараховано під час заїзду (applyWear) — не рахувати вдруге. */
+  liveWear?: boolean;
 }
 
 export const START_MONEY = 30000;
@@ -265,7 +269,78 @@ export function repair(c: Career, spec: TruckSpec): boolean {
   if (cost <= 0 || cost > c.money) return false;
   c.money -= cost;
   c.condition = { tech: 1, tires: 1, brakes: 1 };
+  c.dents = {};
   return true;
+}
+
+/**
+ * Знос: шини й гальма — від пробігу, техстан — від ударів (аркада теж зношує, але це не впливає на керування).
+ * Нараховується під час заїзду порціями — смуги табло падають одразу.
+ */
+export function applyWear(c: Career, hits: number, meters: number): void {
+  const km = meters / 1000;
+  const k = c.condition;
+  k.tires = clamp01(k.tires - km * 0.02 * (c.parts.includes('ШН') ? 0.5 : 1));
+  k.brakes = clamp01(k.brakes - km * 0.015 * (c.parts.includes('ДТ') ? 0.5 : 1));
+  k.tech = clamp01(k.tech - hits * 0.004);
+}
+
+/** Вплив пошкоджень на машину (лише «симулятор»). */
+export interface DamageEffects {
+  /** Множник моменту двигуна. */
+  power: number;
+  /** Скільки верхніх передач недоступно. */
+  lostGears: number;
+  /** Множник сили гальм. */
+  brakes: number;
+}
+
+/**
+ * Рівні пошкоджень як у HTruck.exe (0x4b0070, `_Car_V::check_damage`): двигун на рівні 2 — момент ÷ 3, на
+ * рівні 3 — ÷ 12; коробка на рівні 1 — без верхньої передачі, на рівні 2 — без трьох; гальма на рівні 1 —
+ * сила ÷ 3, на рівні 2 — × 0,125. Як стан «машина» / «гальма» переходить у рівні — гіпотеза (пороги нижче).
+ */
+export function damageEffects(c: Career): DamageEffects {
+  if (c.difficulty === 'arcade') return { power: 1, lostGears: 0, brakes: 1 };
+  const t = c.condition.tech;
+  const level = t >= 0.6 ? 0 : t >= 0.35 ? 1 : t >= 0.15 ? 2 : 3;
+  const b = c.condition.brakes;
+  return {
+    power: [1, 1, 1 / 3, 1 / 12][level],
+    lostGears: [0, 1, 3, 3][level],
+    brakes: b >= 0.5 ? 1 : b >= 0.2 ? 1 / 3 : 0.125,
+  };
+}
+
+/** «Задовільний стан» — до нього доводить ремонт у дорозі (довідка: тримати клавішу, доки машина не оговтається). */
+export const ROAD_REPAIR_TARGET = { tech: 0.6, tires: 0.5, brakes: 0.5 };
+
+/**
+ * Один «крок» ремонту в дорозі (утримання кнопки): +2 % до кожного показника нижче задовільного; ціна —
+ * як на базі × 1,5 (гіпотеза). Повертає false, якщо ремонтувати нічого або бракує грошей.
+ */
+export function roadRepairStep(c: Career, spec: TruckSpec): boolean {
+  const k = c.condition;
+  const T = ROAD_REPAIR_TARGET;
+  const before = { ...k };
+  const step = 0.02;
+  const next = {
+    tech: k.tech < T.tech ? Math.min(T.tech, k.tech + step) : k.tech,
+    tires: k.tires < T.tires ? Math.min(T.tires, k.tires + step) : k.tires,
+    brakes: k.brakes < T.brakes ? Math.min(T.brakes, k.brakes + step) : k.brakes,
+  };
+  const cost = Math.round(
+    1.5 * (spec.price * 0.25 * (next.tech - before.tech) + 1200 * (next.tires - before.tires) + 900 * (next.brakes - before.brakes)),
+  );
+  if (cost <= 0 || cost > c.money) return false;
+  c.money -= cost;
+  c.condition = next;
+  return true;
+}
+
+/** Ціна «Відновитися» (поставити перевернуту машину на колеса): 5 % вартості вантажівки, не менше 1000 $ (гіпотеза). */
+export function recoverCost(spec: TruckSpec): number {
+  return Math.max(1000, Math.round(spec.price * 0.05));
 }
 
 /** Покупка вантажівки: різниця «нова − стара» має бути меншою за готівку (довідка). */
@@ -345,12 +420,7 @@ export function settleTrip(c: Career, specs: TruckSpec[], res: TripResult): stri
 
   c.money += Math.round(income);
 
-  // Знос: шини й гальма — від пробігу, техстан — від ударів (аркада теж зношує, але це не впливає на керування).
-  const km = res.distance / 1000;
-  const k = c.condition;
-  k.tires = clamp01(k.tires - km * 0.02 * (c.parts.includes('ШН') ? 0.5 : 1));
-  k.brakes = clamp01(k.brakes - km * 0.015 * (c.parts.includes('ДТ') ? 0.5 : 1));
-  k.tech = clamp01(k.tech - res.hits * 0.004);
+  if (!res.liveWear) applyWear(c, res.hits, res.distance);
   const rc = repairCost(c, specs.find((s) => s.index === c.truck)!);
   if (rc > 0) lines.push(`Ремонт обійдеться в ${money(rc)}.`);
 

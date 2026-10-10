@@ -4,8 +4,9 @@ import { readFileSync } from 'node:fs';
 import { decodeCp1251 } from '../src/formats/binary';
 import { parseTrucks } from '../src/game/trucks';
 import {
-  START_MONEY, autoLoad, buyPart, buyTruck, canLoad, cargoValue, cargoWeight, loadGood, newCareer, repair,
-  rollMarket, settleTrip, truckSetup, truckSpec, unloadGood,
+  ROAD_REPAIR_TARGET, START_MONEY, applyWear, autoLoad, buyPart, buyTruck, canLoad, cargoValue, cargoWeight,
+  damageEffects, loadGood, newCareer, recoverCost, repair, roadRepairStep, rollMarket, settleTrip, truckSetup,
+  truckSpec, unloadGood,
 } from '../src/game/career';
 
 const defs = parseTrucks(decodeCp1251(new Uint8Array(readFileSync('../Game/Hard Truck/TRUCK.TCH'))));
@@ -92,5 +93,40 @@ describe('карʼєра', () => {
     expect(c.condition.tech).toBeLessThan(1);
     expect(repair(c, spec(c.truck))).toBe(true);
     expect(c.condition.tech).toBe(1);
+  });
+
+  it('пошкодження: рівні як у check_damage (двигун ÷3/÷12, без верхніх передач, гальма); аркада — без впливу', () => {
+    const c = fresh();
+    expect(damageEffects(c)).toEqual({ power: 1, lostGears: 0, brakes: 1 });
+    c.condition = { tech: 0.2, tires: 1, brakes: 0.1 };
+    expect(damageEffects(c)).toEqual({ power: 1 / 3, lostGears: 3, brakes: 0.125 });
+    c.condition.tech = 0.05;
+    expect(damageEffects(c).power).toBe(1 / 12);
+    c.difficulty = 'arcade';
+    expect(damageEffects(c)).toEqual({ power: 1, lostGears: 0, brakes: 1 });
+  });
+
+  it('знос під час заїзду не нараховується вдруге при розрахунку', () => {
+    const a = fresh();
+    const b = fresh();
+    applyWear(a, 50, 6000);
+    settleTrip(a, specs, { track: 'CIRCUIT', finished: true, place: 2, racers: 4, time: 200, hits: 50, distance: 6000, liveWear: true });
+    settleTrip(b, specs, { track: 'CIRCUIT', finished: true, place: 2, racers: 4, time: 200, hits: 50, distance: 6000 });
+    expect(a.condition).toEqual(b.condition);
+  });
+
+  it('ремонт у дорозі — до задовільного стану, за гроші; відновлення має ціну', () => {
+    const c = fresh();
+    const s = spec(c.truck);
+    c.condition = { tech: 0.3, tires: 0.9, brakes: 0.4 };
+    const money = c.money;
+    let steps = 0;
+    while (roadRepairStep(c, s)) steps++;
+    expect(steps).toBeGreaterThan(0);
+    expect(c.condition.tech).toBeCloseTo(ROAD_REPAIR_TARGET.tech);
+    expect(c.condition.brakes).toBeCloseTo(ROAD_REPAIR_TARGET.brakes);
+    expect(c.condition.tires).toBe(0.9);
+    expect(c.money).toBeLessThan(money);
+    expect(recoverCost(s)).toBeGreaterThanOrEqual(1000);
   });
 });

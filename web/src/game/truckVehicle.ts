@@ -93,6 +93,15 @@ export class TruckVehicle {
   private brakeTime = 0;
   private readonly mass: number;
   private readonly grip: number;
+  /** Пошкодження гальм: множник сили (1 — справні). */
+  private brakeFactor = 1;
+
+  /** Вплив пошкоджень (режим «симулятор»): момент, недоступні верхні передачі, сила гальм. */
+  setDamage(d: { power: number; lostGears: number; brakes: number }): void {
+    this.engine.powerFactor = d.power;
+    this.engine.gearLimit = d.lostGears > 0 ? this.engine.topGear - d.lostGears : Infinity;
+    this.brakeFactor = d.brakes;
+  }
 
   constructor(
     private readonly world: RAPIER.World,
@@ -247,7 +256,7 @@ export class TruckVehicle {
       const engine = this.driven[i] ? eng.force / nDriven : 0;
       const share = i < 2 ? BRAKE_FRONT : BRAKE_REAR;
       const rolling = ROLLING_RESISTANCE * wheelLoad;
-      let force = brakePedal * share * tech.brakePower + rolling;
+      let force = brakePedal * share * tech.brakePower * this.brakeFactor + rolling;
       if (input.handbrake && i >= 2) force += tech.brakePower;
       if (engineBrakes) {
         this.ctrl.setWheelEngineForce(i, 0);

@@ -23,6 +23,12 @@ if (import.meta.env.DEV) Object.assign(window, { RAPIER });
 /** Шар Three.js для деталей кабіни, що малюються поверх решти кабіни (кермо). */
 const CAB_TOP_LAYER = 1;
 
+/** Зони вмʼятин за годинниковою стрілкою від переду — суфікси перемикачів `Damage<зона>Key` у моделях. */
+const DENT_ZONES = ['FC', 'FR', 'R', 'BR', 'BC', 'BL', 'L', 'FL'];
+/** Удари слабші за це (м/с за крок) вмʼятин не лишають; пороги рівнів — за накопиченою силою (гіпотеза). */
+const DENT_MIN_HIT = 2;
+const DENT_STEPS = [5, 14, 28, 50];
+
 export class DriveSession {
   private world!: RAPIER.World;
   private truck!: TruckVehicle;
@@ -93,6 +99,45 @@ export class DriveSession {
   get currentRoom(): Room | null {
     return this.room ? (this.track.rooms.get(this.room) ?? null) : null;
   }
+  /** Вмʼятини кузова: накопичена сила ударів за зонами (FC, FR, R, BR, BC, BL, L, FL). */
+  dents: Record<string, number> = {};
+  private dentSwitch: ((name: string, state: number) => void) | undefined;
+  private dentStates: ((name: string) => number) | undefined;
+  /** Фатальна ситуація (вода, прірва — подія 3264). Без обробника — рестарт на точці кімнати. */
+  onDeath: (() => void) | null = null;
+  /** Кнопка «↺». Без обробника — безкоштовно ставить машину на дорогу (тестовий режим). */
+  onResetRequest: (() => void) | null = null;
+  /** Машина лежить на боці чи догори колесами. */
+  get flipped(): boolean {
+    const q = this.truck.body.rotation();
+    return new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w)).y < 0.5;
+  }
+  /** Швидкість машини гравця, км/год. */
+  get speedKmh(): number {
+    return this.truck.speedKmh;
+  }
+  /** Вплив пошкоджень на машину гравця (див. damageEffects). */
+  setDamage(d: { power: number; lostGears: number; brakes: number }): void {
+    this.truck.setDamage(d);
+  }
+  /** Поставити машину на дорогу (рестарт у поточній кімнаті). */
+  recover(): void {
+    this.truck.reset(this.restartPoint());
+  }
+  /** Вмʼятини з попередніх заїздів (до ремонту). */
+  applyDents(d: Record<string, number> | undefined): void {
+    this.dents = { ...(d ?? {}) };
+    for (const zone of DENT_ZONES) this.updateDent(zone);
+  }
+  private updateDent(zone: string): void {
+    const name = `Damage${zone}Key`;
+    const n = this.dentStates?.(name) ?? 0;
+    if (!n) return;
+    // Остання група деяких перемикачів порожня (деталь відпала) — до неї доходимо лише після дуже сильних ударів.
+    const acc = this.dents[zone] ?? 0;
+    const level = DENT_STEPS.filter((s) => acc >= s).length;
+    this.dentSwitch?.(name, Math.min(n - 1, level));
+  }
   /** Вʼїзд у нову кімнату (події залів бази, тунелі) і фініш — для кар'єри. */
   onRoomEnter: ((room: Room) => void) | null = null;
   onFinish: ((r: { place: number; time: number; racers: number }) => void) | null = null;
@@ -162,8 +207,10 @@ export class DriveSession {
     }
     s.world.step(); // колайдери потрапляють у структури запитів (castRay) лише після кроку
 
-    const model = buildTruckModel(built.assembler, def);
+    const model = buildTruckModel(built.assembler, def, true);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня в цій локації`);
+    s.dentSwitch = model.setSwitch;
+    s.dentStates = model.switchStates;
     s.track = new Track(built.assembler.b3d);
     s.spawn = s.findSpawn();
     s.room = s.locate(s.spawn.position) ?? s.track.guessRoom(s.spawn.position);
@@ -187,7 +234,10 @@ export class DriveSession {
       if (cmd === 'autopilot') s.toggleAutopilot();
       if (cmd === 'tilt')
         void s.input.toggleTilt().then((on) => s.touchUi?.querySelector('.tilt')?.classList.toggle('pressed', on));
-      if (cmd === 'reset') s.truck.reset(s.restartPoint());
+      if (cmd === 'reset') {
+        if (s.onResetRequest) s.onResetRequest();
+        else s.recover();
+      }
       if (cmd === 'camera') s.camMode = s.camMode === 'chase' ? 'cockpit' : s.camMode === 'cockpit' ? 'far' : 'chase';
     };
     s.touchUi = s.input.mountTouch(overlay);
@@ -557,6 +607,16 @@ ${raceLine}`;
     const v = this.truck.body.linvel();
     const dv = Math.hypot(v.x - this.prevVel.x, v.y - this.prevVel.y, v.z - this.prevVel.z);
     if (dv > 0.8) this.hits += dv;
+    // Вмʼятина — у зоні, звідки прийшов удар (протилежно до зміни швидкості), у системі машини.
+    if (dv > DENT_MIN_HIT) {
+      const f = this.truck.forward().setY(0).normalize();
+      const right = new THREE.Vector3().crossVectors(f, new THREE.Vector3(0, 1, 0));
+      const from = new THREE.Vector3(this.prevVel.x - v.x, 0, this.prevVel.z - v.z);
+      const a = Math.atan2(from.dot(right), from.dot(f)) / (Math.PI / 4);
+      const zone = DENT_ZONES[((Math.round(a) % 8) + 8) % 8];
+      this.dents[zone] = (this.dents[zone] ?? 0) + dv;
+      this.updateDent(zone);
+    }
     this.prevVel.set(v.x, v.y, v.z);
   }
 
@@ -607,8 +667,12 @@ ${raceLine}`;
         // Вода, прірва (подія 3264) — лише рестарт на точці кімнати, з якої впали.
         if (room.events.some((e) => e.type === EVENT_DEATH)) {
           this.hits += 10;
-          this.truck.reset(this.restartPoint());
           this.prevPos.copy(cur);
+          if (this.onDeath) {
+            this.onDeath();
+            return;
+          }
+          this.truck.reset(this.restartPoint());
           return;
         }
         this.room = next;

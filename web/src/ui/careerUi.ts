@@ -8,8 +8,8 @@
 import * as THREE from 'three';
 import {
   PARTS, TRACKS, TUNNELS, autoLoad, buyPart, buyTruck, canLoad, cargoVolume, cargoWeight, fmt,
-  formatMoney as money, loadGood, repair, repairCost, saveCareer, settleTrip, truckSetup,
-  truckValue, unloadGood, type Career, type TrackId, type TruckSpec,
+  ROAD_REPAIR_TARGET, applyWear, damageEffects, formatMoney as money, loadGood, recoverCost, repair, repairCost,
+  roadRepairStep, saveCareer, settleTrip, truckSetup, truckValue, unloadGood, type Career, type TrackId, type TruckSpec,
 } from '../game/career';
 import { buildTruckModel, type TruckDef } from '../game/trucks';
 import type { TruckSetup } from '../game/truckVehicle';
@@ -99,6 +99,10 @@ export class CareerGame {
   private showroom: THREE.Object3D[] = [];
   private zoneKey = '';
   private busy = false;
+  /** Удари й пробіг, за які знос уже нараховано (знос рахується під час заїзду). */
+  private wornHits = 0;
+  private wornDist = 0;
+  private damageKey = '';
 
   private constructor(
     private readonly host: CareerHost,
@@ -145,6 +149,7 @@ export class CareerGame {
     this.drive = await this.host.play('MENU3D', { truck: this.c.truck, rivals: [], kind: 'free', setup: {} });
     if (!this.drive) return;
     this.drive.onRoomEnter = (room) => this.onBaseRoom(room);
+    this.drive.applyDents(this.c.dents);
     this.setupBase();
     this.zoneKey = '';
     this.refresh();
@@ -261,6 +266,12 @@ export class CareerGame {
       const asm = this.host.built()?.assembler;
       asm?.setSwitch('RainKey', this.c.weather[track] === 'rain' ? 1 : 0);
       this.drive.onFinish = () => void this.finishTrip(true);
+      this.drive.applyDents(this.c.dents);
+      this.drive.onDeath = () => void this.fatal();
+      this.drive.onResetRequest = () => void this.askRecover();
+      this.wornHits = this.wornDist = 0;
+      this.damageKey = '';
+      this.updateDamage();
       this.zoneKey = '';
       this.refresh();
       const weather = this.c.weather[track] === 'rain' ? ' На трасі дощ — слизько, але винагорода більша.' : '';
@@ -282,6 +293,7 @@ export class CareerGame {
     try {
       const d = this.drive;
       const r = d.result;
+      this.updateDamage();
       const res = {
         track: this.level as TrackId,
         finished: finished && !!r,
@@ -290,6 +302,7 @@ export class CareerGame {
         time: r?.time ?? 0,
         hits: d.hits,
         distance: d.distance,
+        liveWear: true,
       };
       if (finished && r) {
         await modal(this.host.overlay, 'Фініш!', `Місце ${r.place} з ${r.racers}, час ${fmt(r.time)}. Повертаємося на базу.`, ['На базу']);
@@ -310,7 +323,65 @@ export class CareerGame {
   // --- Табло (як в оригіналі): зліва зверху — інформація про товар/вантажівку/запчастину,
   // знизу — «інформація гравця» (гроші, машина, 6 смуг, «За кермом»). Кнопки — для сенсорного екрана. ---
 
+  /** Знос під час заїзду (порціями) і його вплив на машину; вмʼятини — у збереження. */
+  private updateDamage(): void {
+    const d = this.drive;
+    if (!d || this.level === 'MENU3D') return;
+    applyWear(this.c, d.hits - this.wornHits, d.distance - this.wornDist);
+    this.wornHits = d.hits;
+    this.wornDist = d.distance;
+    this.c.dents = { ...d.dents };
+    const fx = damageEffects(this.c);
+    const key = `${fx.power}/${fx.lostGears}/${fx.brakes}`;
+    if (key !== this.damageKey) {
+      this.damageKey = key;
+      d.setDamage(fx);
+    }
+  }
+
+  private needsRoadRepair(): boolean {
+    const k = this.c.condition;
+    const T = ROAD_REPAIR_TARGET;
+    return k.tech < T.tech || k.tires < T.tires || k.brakes < T.brakes;
+  }
+
+  /** Перевернулися — «Відновитися» (платно; довідка: «как и в реальной жизни, эта операция достаточно дорогая»). */
+  private async askRecover(): Promise<void> {
+    if (this.busy || !this.drive || this.level === 'MENU3D') return;
+    const cost = recoverCost(this.spec);
+    if (this.c.money < cost) return this.fatal(`На відновлення (${money(cost)}) бракує грошей.`);
+    const i = await modal(this.host.overlay, 'Відновитися', `Поставити машину на дорогу за ${money(cost)}?`, ['Відновитися', 'Скасувати']);
+    if (i !== 0 || !this.drive) return;
+    this.c.money -= cost;
+    this.drive.recover();
+    this.save();
+    this.zoneKey = '';
+  }
+
+  /** Фатальна ситуація (утонули, впали в прірву) чи нема грошей на відновлення — вибір, як в оригіналі. */
+  private async fatal(reason = 'Машину вже не врятувати.'): Promise<void> {
+    if (this.busy || !this.drive || this.level === 'MENU3D') return;
+    this.busy = true;
+    const track = this.level;
+    let i: number;
+    try {
+      i = await modal(this.host.overlay, 'Аварія', reason, ['Почати заїзд заново', 'На базу', 'Головне меню']);
+    } finally {
+      this.busy = false;
+    }
+    if (i === 0) return this.goTrack(track);
+    if (i === 1) return this.finishTrip(false);
+    // Перервати ігровий цикл: рейс не зараховано, гра збережена.
+    const d = this.drive;
+    this.updateDamage();
+    settleTrip(this.c, this.specs, { track, finished: false, place: 0, racers: 1, time: 0, hits: d.hits, distance: d.distance, liveWear: true });
+    this.save();
+    this.dispose();
+    this.host.exit();
+  }
+
   private refresh(): void {
+    this.updateDamage();
     this.renderPlayer();
     const room = this.drive?.currentRoom;
     const ev = room?.events.find((e) => e.type === EV_GOOD || e.type === EV_TRUCK || e.type === EV_PART);
@@ -320,7 +391,7 @@ export class CareerGame {
         ? ev
           ? `${ev.type}/${ev.param}/${c.money}/${c.truck}/${c.parts.join()}/${c.cargo.map((i) => i.qty).join()}`
           : `base/${repairCost(c, this.spec)}`
-        : `track/${this.level}`;
+        : `track/${this.level}/${this.drive?.flipped ? 1 : 0}/${this.needsRoadRepair() ? 1 : 0}`;
     if (key === this.zoneKey) return;
     this.zoneKey = key;
     this.info.replaceChildren();
@@ -482,6 +553,23 @@ export class CareerGame {
   private trackZone(): void {
     this.button('НА БАЗУ', () => void this.leaveTrack());
     this.button('РЕЙТИНГ', () => void this.rating());
+    // Ремонт у дорозі: утримувати кнопку, доки машина не прийде в задовільний стан (лише на місці).
+    if (this.needsRoadRepair())
+      this.button(
+        'РЕМОНТ',
+        () => {
+          if ((this.drive?.speedKmh ?? 99) > 2) return toastIn(this.host.overlay, 'Ремонт — лише на місці: зупиніться.', 2000);
+          if (!roadRepairStep(this.c, this.spec)) return;
+          this.renderPlayer();
+          if (!this.needsRoadRepair()) {
+            this.save();
+            this.zoneKey = '';
+            this.refresh();
+          }
+        },
+        true,
+      );
+    if (this.drive?.flipped) this.button(`ВІДНОВИТИСЯ ${money(recoverCost(this.spec))}`, () => void this.askRecover());
   }
 
   /** Завантаження/повернення товару: утримання кнопки, як утримання клавіші в оригіналі; з клавіатури — + і −. */

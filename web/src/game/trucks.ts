@@ -123,17 +123,22 @@ export interface TruckModel {
   /** Колеса FL, FR, BL, BR; кожне — група з початковою матрицею простору колеса. */
   wheels: THREE.Object3D[];
   wheelBase: THREE.Matrix4[];
+  /** Перемикачі моделі (лише для dynamic: вмʼятини `Damage*Key`); кількість станів перемикача. */
+  setSwitch?: (name: string, state: number) => void;
+  switchStates?: (name: string) => number;
 }
 
 /** Односторонні копії матеріалів моделей вантажівок (спільні для всіх екземплярів). */
 const FRONT_ONLY = new WeakMap<THREE.Material, THREE.Material>();
 
-export function buildTruckModel(asm: SceneAssembler, def: TruckDef): TruckModel | null {
-  const bodyTpl = asm.template(def.carNode);
-  if (!bodyTpl) return null;
+/** dynamic — окремий екземпляр з робочими перемикачами (машина гравця: вмʼятини); інакше — копія шаблону. */
+export function buildTruckModel(asm: SceneAssembler, def: TruckDef, dynamic = false): TruckModel | null {
+  const dyn = dynamic ? asm.dynamicObject(def.carNode) : null;
+  const bodyTpl = dyn ? null : asm.template(def.carNode);
+  if (!dyn && !bodyTpl) return null;
   const root = new THREE.Group();
   root.name = def.carNode;
-  const body = bodyTpl.clone();
+  const body = dyn ? dyn.root : bodyTpl!.clone();
   // Детальний рівень моделі (тип 29, група 2) містить і власні колеса-екземпляри; колеса додаємо окремо
   // (вони крутяться й повертаються), тож ці ховаємо.
   const wheelNames = new Set(def.wheelNodes.map((n) => n.toLowerCase()));
@@ -171,5 +176,5 @@ export function buildTruckModel(asm: SceneAssembler, def: TruckDef): TruckModel 
     };
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(one) : one(mesh.material);
   });
-  return { root, body, wheels, wheelBase };
+  return { root, body, wheels, wheelBase, setSwitch: dyn?.setSwitch, switchStates: dyn?.states };
 }

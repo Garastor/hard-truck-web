@@ -50,6 +50,9 @@ export class Engine {
   force = 0;
   /** Ефективний газ 0…1 (після наростання). */
   throttle = 0;
+  /** Пошкодження: множник моменту й найвища доступна передача (див. damageEffects у career.ts). */
+  powerFactor = 1;
+  gearLimit = Infinity;
 
   readonly n0: number;
   readonly idle: number;
@@ -93,7 +96,7 @@ export class Engine {
     n = Math.max(n, 0.1 * n0);
     let t = m * Math.exp(-((Math.abs(n - n0) / (1.5 * n0)) ** 4));
     if (n < n0) t *= Math.sin((Math.PI / 2) * (n / n0)) * (n / n0) ** 0.2;
-    return t;
+    return t * this.powerFactor;
   }
 
   /** Гальмування двигуном (0x4aa320): лінійне за обертами. */
@@ -193,7 +196,9 @@ export class Engine {
     const current = this.wheelForce(this.gear, this.lockedN(this.gear, wheelSpeed), 1);
     let best = 0;
     let bestForce = 0;
-    for (let g = this.gear + 1; g <= this.topGear; g++) {
+    const top = Math.max(2, Math.min(this.topGear, this.gearLimit));
+    if (this.gear > top) return this.startShift(top, SHIFT_AUTO);
+    for (let g = this.gear + 1; g <= top; g++) {
       const f = this.wheelForce(g, this.lockedN(g, wheelSpeed), 1);
       if (f > current * UPSHIFT_GAIN && f > bestForce) {
         best = g;
