@@ -582,6 +582,12 @@ export class CareerGame {
     await modal(this.host.overlay, 'Рейтинг', table, ['Закрити']);
   }
 
+  /** Вийти з кар'єри без діалогу (перемикач «Кар'єра / Тест» у меню порту): зберегти й прибрати табло. */
+  leave(): void {
+    this.save();
+    this.dispose();
+  }
+
   private async quit(): Promise<void> {
     const i = await modal(this.host.overlay, 'Вийти в меню?', 'Прогрес збережено.', ['Вийти', 'Залишитися']);
     if (i !== 0) return;

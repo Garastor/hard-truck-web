@@ -444,6 +444,7 @@ async function play(id: LevelId, cfg: NonNullable<typeof careerCfg>): Promise<Dr
 let hudFont: PixelFont | null | undefined;
 
 async function startCareer(c: Career): Promise<void> {
+  playModeSel.value = 'career';
   await ensureTrucks();
   if (hudFont === undefined) hudFont = await source.read('MENU.FON').then((b) => new PixelFont(parseFon(b))).catch(() => null);
   const specs = trucks.map(truckSpec);
@@ -471,6 +472,25 @@ async function startCareer(c: Career): Promise<void> {
 }
 
 let menuArt: MenuArt | null | undefined;
+
+// Перемикач у меню порту (☰): кар'єра — гра як в оригіналі; тест — переглядач і вільна їзда для налагодження.
+const playModeSel = $<HTMLSelectElement>('playMode');
+playModeSel.value = params.get('career') ? 'career' : 'test';
+playModeSel.addEventListener('change', () => {
+  document.body.classList.remove('bar-open');
+  if (playModeSel.value === 'test') {
+    if (career) career.leave();
+    career = null;
+    careerCfg = null;
+    document.body.classList.remove('career');
+    selectTab('drive');
+    void open();
+  } else {
+    stopDrive();
+    const saved = loadCareer();
+    void (saved ? startCareer(saved) : menuLoop());
+  }
+});
 
 /** Налаштування (ОПЦИИ): якість рендера й лічильник кадрів. */
 async function optionsDialog(): Promise<void> {

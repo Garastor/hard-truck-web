@@ -507,6 +507,10 @@ body.career #stats {
   display: none;
 }
 
+#playMode {
+  font-weight: 700;
+}
+
 
 /* --- Меню оригіналу (LOAD.RES) --- */
 .menu-screen {
