@@ -106,6 +106,9 @@ export interface TruckModel {
   wheelBase: THREE.Matrix4[];
 }
 
+/** Односторонні копії матеріалів моделей вантажівок (спільні для всіх екземплярів). */
+const FRONT_ONLY = new WeakMap<THREE.Material, THREE.Material>();
+
 export function buildTruckModel(asm: SceneAssembler, def: TruckDef): TruckModel | null {
   const bodyTpl = asm.template(def.carNode);
   if (!bodyTpl) return null;
@@ -133,5 +136,21 @@ export function buildTruckModel(asm: SceneAssembler, def: TruckDef): TruckModel 
     wheels.push(w);
     wheelBase.push(m.clone());
   }
+  // Моделі вантажівок — без зворотного боку полігонів (як в оригіналі): інакше крізь прозорі вирізи
+  // крил видно внутрішній чорний бік (чорне над колесами Renault).
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const one = (m: THREE.Material) => {
+      let c = FRONT_ONLY.get(m);
+      if (!c) {
+        c = m.clone();
+        c.side = THREE.FrontSide;
+        FRONT_ONLY.set(m, c);
+      }
+      return c;
+    };
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(one) : one(mesh.material);
+  });
   return { root, body, wheels, wheelBase };
 }
