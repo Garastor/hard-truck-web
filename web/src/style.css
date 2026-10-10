@@ -244,8 +244,8 @@ body.bar-open #fps {
   pointer-events: auto;
   touch-action: none;
   border-radius: 50%;
-  width: 88px;
-  height: 88px;
+  width: 76px;
+  height: 76px;
   padding: 0;
   font-size: 22px;
   background: rgba(30, 32, 38, 0.55);
@@ -264,16 +264,16 @@ body.bar-open #fps {
 }
 
 .touch-btn.right {
-  left: calc(var(--sl) + 104px);
+  left: calc(var(--sl) + 92px);
   bottom: max(20px, env(safe-area-inset-bottom));
 }
 
 .touch-btn.gas,
 .touch-btn.brake {
   border-radius: 14px;
-  width: 86px;
-  height: 126px;
-  font-size: 14px;
+  width: 72px;
+  height: 104px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -283,15 +283,15 @@ body.bar-open #fps {
 }
 
 .touch-btn.brake {
-  right: calc(var(--sr) + 100px);
+  right: calc(var(--sr) + 88px);
   bottom: max(20px, env(safe-area-inset-bottom));
 }
 
 .touch-btn.cam,
 .touch-btn.reset {
-  width: 56px;
-  height: 56px;
-  font-size: 21px;
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
   top: calc(env(safe-area-inset-top, 0px) + 64px);
 }
 
@@ -300,21 +300,21 @@ body.bar-open #fps {
 }
 
 .touch-btn.reset {
-  right: calc(var(--sr) + 68px);
+  right: calc(var(--sr) + 60px);
 }
 
 .touch-btn.horn,
 .touch-btn.tilt {
-  width: 56px;
-  height: 56px;
-  font-size: 21px;
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
   right: var(--sr);
   top: auto;
-  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 144px);
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 120px);
 }
 
 .touch-btn.tilt {
-  right: calc(var(--sr) + 68px);
+  right: calc(var(--sr) + 60px);
 }
 
 
@@ -646,13 +646,6 @@ body.in-menu #fps {
   touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
-}
-
-@media (pointer: coarse) {
-  .hud-btn {
-    min-height: 52px;
-    padding: 0 16px;
-  }
 }
 
 .hud-btn:active {

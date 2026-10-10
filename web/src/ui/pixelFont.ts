@@ -93,11 +93,6 @@ export function hudScale(): number {
   return Math.max(1, Math.floor(window.innerHeight / 400));
 }
 
-/** Масштаб підписів кнопок: на сенсорному екрані вдвічі більший — щоб у кнопку було легко влучити й прочитати. */
-export function buttonScale(): number {
-  return hudScale() * (matchMedia('(pointer: coarse)').matches ? 2 : 1);
-}
-
 /** Полотно в «пікселях оригіналу», показане з масштабом без згладжування. */
 export function pixelCanvas(
   w: number,
