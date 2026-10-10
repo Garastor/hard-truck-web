@@ -291,6 +291,14 @@ body.driving #bar {
 
 body.driving.bar-open #bar {
   display: flex;
+  padding-left: calc(max(12px, env(safe-area-inset-left)) + 56px);
+}
+
+/* Поки меню відкрите, верхні ігрові кнопки й табло не перекривають його (зокрема ⛶). */
+body.driving.bar-open .touch-btn.cam,
+body.driving.bar-open .touch-btn.reset,
+body.driving.bar-open .drive-hud {
+  visibility: hidden;
 }
 
 #menu {
