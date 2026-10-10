@@ -301,6 +301,7 @@ export class DriveSession {
 
     // Очі водія: OV з [TECHn] (система вантажівки), як в оригіналі; вид з кабіни — за замовчуванням.
     s.cockpit = g2t(def.tech.viewer);
+    s.cockpit.y += setup?.seatRaise ?? 0;
     s.buildCab();
     s.camMode = 'cockpit';
 

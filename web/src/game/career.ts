@@ -374,11 +374,20 @@ export function buyPart(c: Career, index: number): 'ok' | 'have' | 'money' {
 /** Фізика машини в заїзді: у симуляторі — вантаж, знос шин і дощ; в аркаді — без них. */
 export function truckSetup(c: Career, spec: TruckSpec, track: TrackId) {
   const torque = c.parts.includes('ФД') ? 1.2 : 1;
-  if (c.difficulty === 'arcade') return { torque };
+  // РС — сидіння вище на 12 см (гіпотеза); АПС — обмеження буксування (лише «симулятор»).
+  const seatRaise = c.parts.includes('РС') ? 0.12 : 0;
+  if (c.difficulty === 'arcade') return { torque, seatRaise };
   const rain = c.weather[track] === 'rain' ? 0.8 : 1;
   const tires = 0.75 + 0.25 * c.condition.tires;
   const fill = spec.volume > 0 ? Math.min(1, cargoVolume(c) / spec.volume) : 0;
-  return { torque, grip: rain * tires, cargoMass: cargoWeight(c), cargoHeight: fill * 2.4 };
+  return {
+    torque,
+    seatRaise,
+    tractionControl: c.parts.includes('АПС'),
+    grip: rain * tires,
+    cargoMass: cargoWeight(c),
+    cargoHeight: fill * 2.4,
+  };
 }
 
 const money = (n: number) => `${Math.round(n).toLocaleString('uk-UA')} $`;

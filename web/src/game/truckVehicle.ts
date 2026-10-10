@@ -66,6 +66,10 @@ export interface TruckSetup {
   grip?: number;
   /** Множник моменту двигуна (форсований двигун). */
   torque?: number;
+  /** Антипробуксовочна система (АПС): тяга ведучого колеса не перевищує межу зчеплення. */
+  tractionControl?: boolean;
+  /** Регульоване сидіння (РС): очі водія вище на стільки метрів. */
+  seatRaise?: number;
 }
 
 export class TruckVehicle {
@@ -95,6 +99,7 @@ export class TruckVehicle {
   private readonly grip: number;
   /** Пошкодження гальм: множник сили (1 — справні). */
   private brakeFactor = 1;
+  private readonly tractionControl: boolean;
 
   /** Вплив пошкоджень (режим «симулятор»): момент, недоступні верхні передачі, сила гальм. */
   setDamage(d: { power: number; lostGears: number; brakes: number }): void {
@@ -112,6 +117,7 @@ export class TruckVehicle {
   ) {
     const tech = def.tech;
     this.grip = setup.grip ?? 1;
+    this.tractionControl = setup.tractionControl ?? false;
     this.wheelRadius = tech.wheelRadius;
     this.driven = [0, 1, 2, 3].map((i) => (tech.drivingWheels[i] ?? 1) !== 0);
     this.engine = new Engine({
@@ -253,7 +259,9 @@ export class TruckVehicle {
     const grip = (TIRE_GRIP + (TIRE_GRIP_BRAKING - TIRE_GRIP) * brakePedal) * this.grip;
     for (let i = 0; i < 4; i++) {
       this.ctrl.setWheelFrictionSlip(i, grip);
-      const engine = this.driven[i] ? eng.force / nDriven : 0;
+      let engine = this.driven[i] ? eng.force / nDriven : 0;
+      // АПС: не більше 90 % межі зчеплення колеса (гіпотеза) — колесо не зривається в буксування.
+      if (this.tractionControl && engine > 0) engine = Math.min(engine, 0.9 * grip * wheelLoad);
       const share = i < 2 ? BRAKE_FRONT : BRAKE_REAR;
       const rolling = ROLLING_RESISTANCE * wheelLoad;
       let force = brakePedal * share * tech.brakePower * this.brakeFactor + rolling;
