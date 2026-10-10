@@ -71,6 +71,11 @@ export class MaterialLibrary {
       // шини «*_black col 10» = 0,016 на всіх трасах). Палітра траси тут ні до чого — з неї шини були кремові/сині.
       const v = Number(this.rmp.colors[def.col - 1]);
       params.color = new THREE.Color().setRGB(v, v, v, THREE.SRGBColorSpace);
+      // Однотонні поверхні часто лежать під текстурованою деталлю в тій самій площині (бампер Renault на
+      // чорному): оригінал малює деталь пізніше. Зсуваємо однотонні трохи вглиб — деталь завжди зверху.
+      params.polygonOffset = true;
+      params.polygonOffsetFactor = 1;
+      params.polygonOffsetUnits = 2;
     } else if (def && def.col !== null && this.palette) {
       const c = def.col;
       params.color = new THREE.Color().setRGB(
@@ -139,6 +144,35 @@ export class MaterialLibrary {
  * Збирач обʼєктів сцени: кімнати світу, шаблони верхнього рівня (вантажівки, колеса, анімовані обʼєкти),
  * простори (24). Геометрія шаблонів кешується; інстанси — клони з матрицею простору.
  */
+/**
+ * Вузол «поділ площиною» (тип 9): показує групу 0, якщо камера з додатного боку площини (n·p + d ≥ 0, система
+ * вузла), інакше групу 1. Оновлюється рендерером щокадру (як THREE.LOD — через isLOD/update).
+ */
+export class SideSwitch extends THREE.Group {
+  readonly isLOD = true;
+  autoUpdate = true;
+  readonly plane: THREE.Vector4;
+  private static readonly tmp = new THREE.Vector3();
+
+  constructor(plane: [number, number, number, number] = [0, 0, 1, 0]) {
+    super();
+    this.plane = new THREE.Vector4(...plane);
+  }
+
+  update(camera: THREE.Camera): void {
+    const p = this.worldToLocal(camera.getWorldPosition(SideSwitch.tmp));
+    const front = this.plane.x * p.x + this.plane.y * p.y + this.plane.z * p.z + this.plane.w >= 0;
+    if (this.children[0]) this.children[0].visible = front;
+    if (this.children[1]) this.children[1].visible = !front;
+  }
+
+  override copy(source: this, recursive?: boolean): this {
+    super.copy(source, recursive);
+    this.plane.copy(source.plane);
+    return this;
+  }
+}
+
 export class SceneAssembler {
   readonly lib: MaterialLibrary;
   readonly stats = { rooms: 0, meshes: 0, triangles: 0, instances: 0, missingTextures: 0 };
@@ -369,10 +403,21 @@ export class SceneAssembler {
       const start = block.groups[d.i1] ?? [];
       const sky = block.name === 'SkyDomeKey';
       groups = [sky && !start.length ? (block.groups.find((g) => g.length) ?? []) : start];
+    } else if (d.t === 9 && d.shape.kind === 5 && block.groups.length >= 2) {
+      // Вибір за боком площини: група 0 — камера там, де n·p + d ≥ 0, група 1 — з іншого боку (варіанти
+      // геометрії, що збігаються в просторі; обидві разом — подвійні трикутники й мерехтіння).
+      const sw = new SideSwitch(d.shape.v as [number, number, number, number]);
+      for (const g of block.groups.slice(0, 2)) {
+        const go = new THREE.Group();
+        const b: Batches = new Map();
+        for (const child of g) this.visit(child, cur, b, go, depth + 1);
+        this.flush(b, go);
+        sw.add(go);
+      }
+      into.add(sw);
+      return;
     } else if (d.t === 9) {
-      // Поділ простору площиною (BSP): групи — геометрія по різні боки площини (напр. ліва й права половини
-      // вантажівки), а не варіанти. Оригінал обирає лише порядок малювання — з буфером глибини малюємо обидві.
-      groups = block.groups;
+      groups = [block.groups[0] ?? []];
     } else if (d.t === 10 || d.t === 11 || d.t === 22 || d.t === 29) {
       groups = [block.groups[Math.min(this.switchGroup, block.groups.length - 1)] ?? []];
     }
