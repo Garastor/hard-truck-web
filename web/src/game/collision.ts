@@ -21,6 +21,8 @@ export interface LevelCollision {
   floorRoom: string[];
   /** Стіни й огорожі. */
   walls: Poly[];
+  /** Кімната кожної стіни. */
+  wallRoom: string[];
   /** Чи описує `hit_*` поверхню для коліс; інакше землю беремо з видимої геометрії. */
   hasFloor: boolean;
   /** Кількість колайдерів за типами блоків (для налагодження). */
@@ -39,11 +41,16 @@ export function levelCollision(b3d: B3d): LevelCollision {
   const floors: Poly[] = [];
   const floorRoom: string[] = [];
   const walls: Poly[] = [];
+  const wallRoom: string[] = [];
   const stats: Record<string, number> = {};
   const roomBoxes = roomBounds(b3d);
   let room = '';
   const add = (p: Poly) => {
-    if (Math.abs(normalZ(p)) < FLOOR_MIN_NZ) return walls.push(p);
+    if (Math.abs(normalZ(p)) < FLOOR_MIN_NZ) {
+      walls.push(p);
+      wallRoom.push(room);
+      return;
+    }
     floors.push(p);
     floorRoom.push(room);
   };
@@ -98,7 +105,7 @@ export function levelCollision(b3d: B3d): LevelCollision {
     };
     visit(top, []);
   }
-  return { floors, floorRoom, walls, hasFloor: floors.length > walls.length / 4, stats };
+  return { floors, floorRoom, walls, wallRoom, hasFloor: floors.length > walls.length / 4, stats };
 }
 
 /** Вертикальна огорожа вздовж відрізка ламаної. */
@@ -271,6 +278,11 @@ export function floorCovers(floors: Poly[], x: number, y: number, z: number, dz 
  * Потрібна там, де немає точок рестарту (база MENU3D), і як страховка, якщо перетин порталу пропущено.
  */
 export function roomAt(col: Pick<LevelCollision, 'floors' | 'floorRoom'>, x: number, y: number, z: number): string | null {
+  return floorAt(col, x, y, z)?.room ?? null;
+}
+
+/** Найвища підлога під (x, y) не вище z + 1: кімната й висота (система гри). */
+export function floorAt(col: Pick<LevelCollision, 'floors' | 'floorRoom'>, x: number, y: number, z: number): { room: string; z: number } | null {
   let best: string | null = null;
   let bestZ = -Infinity;
   col.floors.forEach((p, i) => {
@@ -291,5 +303,5 @@ export function roomAt(col: Pick<LevelCollision, 'floors' | 'floorRoom'>, x: num
       }
     }
   });
-  return best;
+  return best === null ? null : { room: best, z: bestZ };
 }

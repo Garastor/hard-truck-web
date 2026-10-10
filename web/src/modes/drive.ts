@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { addCollisionPolys, addStaticMeshes, g2t, initRapier } from '../physics/world';
-import { levelCollision, roomAt, type LevelCollision } from '../game/collision';
+import { floorAt, levelCollision, roomAt, type LevelCollision } from '../game/collision';
 import { Input } from '../input/input';
 import { TruckVehicle, type TruckSetup } from '../game/truckVehicle';
 import { buildTruckModel, type TruckDef } from '../game/trucks';
@@ -11,6 +11,7 @@ import type { RmpArchive } from '../formats/rmp';
 import { EngineAudio } from '../audio/engineAudio';
 import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, Track, type Room } from '../game/track';
 import { AutoPilot, WayNet } from '../game/autopilot';
+import { RoomVisibility } from '../render/roomVisibility';
 
 type CamMode = 'chase' | 'cockpit' | 'far';
 
@@ -100,6 +101,12 @@ export class DriveSession {
   private checkpoints = new Set<number>();
   private passed = new Set<number>();
   private col!: LevelCollision;
+  /** Колайдери підлоги й стін кожної кімнати: увімкнені лише кімнати з машинами та їхні сусіди (як в оригіналі). */
+  private readonly roomColliders = new Map<string, RAPIER.Collider[]>();
+  private activeRooms = '';
+  private roomVis: RoomVisibility | null = null;
+  /** Кімнати суперників (для колізій) — оновлюються разом із кімнатою гравця. */
+  private readonly opponentRooms: (string | null)[] = [];
   private locateTimer = 0;
   private readonly prevVel = new THREE.Vector3();
   private raceStart: number | null = null;
@@ -135,9 +142,19 @@ export class DriveSession {
     // Колізії як в оригіналі — з обʼєктів hit_road/hit_obj; видима геометрія — лише запасний варіант.
     const col = levelCollision(built.assembler.b3d);
     s.col = col;
-    if (col.hasFloor) addCollisionPolys(s.world, col.floors, 1.0);
+    // Колізії — окремо для кожної кімнати: геометрія сусідніх кімнат перетинається в просторі
+    // (тунель траси крізь зал бази), а оригінал перевіряє зіткнення лише з кімнатою машини.
+    const byRoom = (polys: number[][][], rooms: string[]) => {
+      const m = new Map<string, number[][][]>();
+      polys.forEach((p, i) => (m.get(rooms[i]) ?? m.set(rooms[i], []).get(rooms[i])!).push(p));
+      return m;
+    };
+    const addRoom = (room: string, c: RAPIER.Collider | null) => {
+      if (c) (s.roomColliders.get(room) ?? s.roomColliders.set(room, []).get(room)!).push(c);
+    };
+    if (col.hasFloor) for (const [room, polys] of byRoom(col.floors, col.floorRoom)) addRoom(room, addCollisionPolys(s.world, polys, 1.0));
     else addStaticMeshes(s.world, built.root);
-    addCollisionPolys(s.world, col.walls, 0.4);
+    for (const [room, polys] of byRoom(col.walls, col.wallRoom)) addRoom(room, addCollisionPolys(s.world, polys, 0.4));
     // Нижче найнижчої підлоги — випали за межі колізій (напр. тунелі бази до трас): рестарт.
     if (col.hasFloor) {
       let minZ = Infinity;
@@ -156,6 +173,9 @@ export class DriveSession {
     s.truck = new TruckVehicle(s.world, def, model, s.spawn, setup);
     scene.add(s.truck.visual);
     s.spawnOpponents(rivals);
+    s.roomVis = new RoomVisibility(s.track, built.rooms);
+    s.updateOpponentRooms();
+    s.updateActiveRooms();
 
     // Очі водія: OV з [TECHn] (система вантажівки), як в оригіналі; вид з кабіни — за замовчуванням.
     s.cockpit = g2t(def.tech.viewer);
@@ -460,6 +480,7 @@ export class DriveSession {
     if (this.truck.body.translation().y < this.fallY) this.truck.reset(this.restartPoint());
     this.updateTrack();
     this.updateCamera(dt);
+    this.roomVis?.update(this.camera, this.room);
     this.handbrakeOn = state.handbrake;
     this.odometer += (this.truck.speedKmh / 3.6) * dt;
     this.updateCab(state);
@@ -498,12 +519,52 @@ ${raceLine}`;
     if (this.hud.textContent !== text) this.hud.textContent = text;
   }
 
+  /** Увімкнути колізії лише кімнат з машинами та їхніх сусідів через портали (решта — вимкнені). */
+  private updateActiveRooms(): void {
+    if (!this.roomColliders.size) return;
+    const rooms = [this.room, ...this.opponentRooms];
+    if (rooms.some((r) => !r)) {
+      // Кімната невідома — вмикаємо все, щоб нікуди не провалитися.
+      if (this.activeRooms === '*') return;
+      this.activeRooms = '*';
+      for (const cs of this.roomColliders.values()) for (const c of cs) c.setEnabled(true);
+      return;
+    }
+    const on = new Set<string>();
+    for (const r of rooms as string[]) {
+      on.add(r);
+      for (const p of this.track.rooms.get(r)?.portals ?? []) on.add(p.to);
+    }
+    const key = [...on].sort().join();
+    if (key === this.activeRooms) return;
+    this.activeRooms = key;
+    for (const [room, cs] of this.roomColliders) for (const c of cs) c.setEnabled(on.has(room) || !this.track.rooms.has(room));
+  }
+
+  private updateOpponentRooms(): void {
+    let changed = false;
+    this.opponents.forEach((o, i) => {
+      const p = o.truck.body.translation();
+      const r = this.locate(new THREE.Vector3(p.x, p.y, p.z)) ?? this.opponentRooms[i] ?? null;
+      if (r !== this.opponentRooms[i]) {
+        this.opponentRooms[i] = r;
+        changed = true;
+      }
+    });
+    if (changed) this.updateActiveRooms();
+  }
+
   /** Удар: різка зміна швидкості за один крок (≫ гальмування чи розгону) — накопичуємо силу. */
   private afterStep(): void {
     const v = this.truck.body.linvel();
     const dv = Math.hypot(v.x - this.prevVel.x, v.y - this.prevVel.y, v.z - this.prevVel.z);
     if (dv > 0.8) this.hits += dv;
     this.prevVel.set(v.x, v.y, v.z);
+  }
+
+  /** Висота підлоги (Three.js y) під точкою — за полігонами колізій усіх кімнат. */
+  floorHeight(p: THREE.Vector3): number | null {
+    return floorAt(this.col, p.x, -p.z, p.y)?.z ?? null;
   }
 
   /** Кімната під точкою (Three.js) — за підлогою hit_road/hit_obj. */
@@ -524,6 +585,7 @@ ${raceLine}`;
     if (jumped) this.locateTimer = 0;
     if (!next && (this.locateTimer -= 1 / 60) <= 0) {
       this.locateTimer = 0.25;
+      this.updateOpponentRooms();
       const at = this.locate(cur);
       if (at && at !== this.room) next = at;
     }
@@ -543,6 +605,7 @@ ${raceLine}`;
           return;
         }
         this.room = next;
+        this.updateActiveRooms();
         this.visited.add(next);
         for (const e of room.events) if (e.type === EVENT_CHECKPOINT) this.passed.add(e.param);
         this.onRoomEnter?.(room);
@@ -621,6 +684,7 @@ ${raceLine}`;
   }
 
   dispose(): void {
+    this.roomVis?.showAll();
     this.scene.remove(this.truck.visual);
     for (const o of this.opponents) this.scene.remove(o.truck.visual);
     this.input.dispose();

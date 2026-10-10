@@ -52,7 +52,7 @@ export function addStaticMeshes(world: RAPIER.World, root: THREE.Object3D, minUp
 }
 
 /** Колізійні полігони (система гри) → один trimesh. */
-export function addCollisionPolys(world: RAPIER.World, polys: number[][][], friction = 0.4): number {
+export function addCollisionPolys(world: RAPIER.World, polys: number[][][], friction = 0.4): RAPIER.Collider | null {
   const out: number[] = [];
   for (const poly of polys) {
     const pts = poly.map((p) => g2t(p));
@@ -60,10 +60,9 @@ export function addCollisionPolys(world: RAPIER.World, polys: number[][][], fric
       for (const q of [pts[0], pts[k], pts[k + 1]]) out.push(q.x, q.y, q.z);
     }
   }
-  if (!out.length) return 0;
+  if (!out.length) return null;
   const verts = new Float32Array(out);
   const idx = new Uint32Array(verts.length / 3);
   for (let i = 0; i < idx.length; i++) idx[i] = i;
-  world.createCollider(RAPIER.ColliderDesc.trimesh(verts, idx).setFriction(friction));
-  return idx.length / 3;
+  return world.createCollider(RAPIER.ColliderDesc.trimesh(verts, idx).setFriction(friction));
 }

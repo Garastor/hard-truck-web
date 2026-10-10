@@ -1,0 +1,97 @@
+/**
+ * Видимість кімнат через портали (як в оригіналі): малюємо кімнату з камерою і ті, що видно крізь
+ * портали (блоки 30), звужуючи прямокутник екрана на кожному порталі. Так геометрія сусідніх кімнат,
+ * що перетинається в просторі (тунель траси крізь зал бази), не видна з іншої кімнати, а телефон
+ * не малює невидиме.
+ */
+import * as THREE from 'three';
+import type { Portal, Track } from '../game/track';
+
+interface Rect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** Обмеження обходу: глибина ланцюжка порталів і загальна кількість переходів за кадр. */
+const MAX_DEPTH = 24;
+const MAX_STEPS = 600;
+
+export class RoomVisibility {
+  private readonly groups = new Map<string, THREE.Object3D>();
+  private readonly corners = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  readonly visible = new Set<string>();
+
+  constructor(
+    private readonly track: Track,
+    rooms: THREE.Object3D[],
+  ) {
+    for (const r of rooms) this.groups.set(r.name, r);
+  }
+
+  /** Показати все (кімната невідома). */
+  showAll(): void {
+    for (const g of this.groups.values()) g.visible = true;
+  }
+
+  update(camera: THREE.PerspectiveCamera, start: string | null): void {
+    if (!start || !this.track.rooms.has(start)) return this.showAll();
+    camera.updateMatrixWorld();
+    const vp = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    this.visible.clear();
+    this.visible.add(start);
+    const queue: [string, Rect, number][] = [[start, { x0: -1, y0: -1, x1: 1, y1: 1 }, 0]];
+    let steps = 0;
+    while (queue.length && steps < MAX_STEPS) {
+      const [room, rect, depth] = queue.shift()!;
+      const r = this.track.rooms.get(room);
+      if (!r || depth >= MAX_DEPTH) continue;
+      for (const p of r.portals) {
+        steps++;
+        const sub = this.portalRect(p, vp, rect);
+        if (!sub) continue;
+        const seen = this.visible.has(p.to);
+        this.visible.add(p.to);
+        // Уже видима кімната — далі не йдемо (окрім випадку, коли крізь неї видно більшу частину екрана).
+        if (!seen || (sub.x1 - sub.x0) * (sub.y1 - sub.y0) > 0.25) queue.push([p.to, sub, depth + 1]);
+      }
+    }
+    for (const [name, g] of this.groups) g.visible = this.visible.has(name);
+  }
+
+  /** Прямокутник порталу на екрані, обрізаний поточним; null — портал не видно. */
+  private portalRect(p: Portal, vp: THREE.Matrix4, clip: Rect): Rect | null {
+    const [a, b, c, d] = this.corners;
+    a.set(p.a.x, p.a.y, p.a.z);
+    b.set(p.b.x, p.a.y, p.b.z);
+    c.set(p.b.x, p.b.y, p.b.z);
+    d.set(p.a.x, p.b.y, p.a.z);
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    let behind = 0;
+    for (const v of this.corners) {
+      const w = v.x * vp.elements[3] + v.y * vp.elements[7] + v.z * vp.elements[11] + vp.elements[15];
+      if (w <= 0.05) {
+        behind++;
+        continue;
+      }
+      v.applyMatrix4(vp);
+      x0 = Math.min(x0, v.x);
+      x1 = Math.max(x1, v.x);
+      y0 = Math.min(y0, v.y);
+      y1 = Math.max(y1, v.y);
+    }
+    if (behind === 4) return null;
+    // Частина порталу за камерою (ми в ньому або дуже близько) — обережно: увесь поточний прямокутник.
+    if (behind > 0) {
+      // Якщо камера далеко від площини порталу, а він увесь позаду — вже відкинуто; тут — перетин.
+      return { ...clip };
+    }
+    const r = { x0: Math.max(x0, clip.x0), y0: Math.max(y0, clip.y0), x1: Math.min(x1, clip.x1), y1: Math.min(y1, clip.y1) };
+    return r.x0 < r.x1 && r.y0 < r.y1 ? r : null;
+  }
+}
+

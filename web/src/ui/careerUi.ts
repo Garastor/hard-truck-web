@@ -186,6 +186,15 @@ export class CareerGame {
       holder.matrix.copy(m);
       holder.add(model.root);
       frame.add(holder);
+      // Колеса — на підлогу подіуму (простір space_pod_n задає точку на подіумі, не висоту коліс).
+      frame.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(frame);
+      const at = new THREE.Vector3().setFromMatrixPosition(holder.matrixWorld);
+      // Подіум — видима геометрія (у колізіях його немає): промінь згори вниз від точки трохи вище подіуму.
+      const ray = new THREE.Raycaster(new THREE.Vector3(at.x, at.y + 3, at.z), new THREE.Vector3(0, -1, 0), 0, 10);
+      const hit = ray.intersectObjects(built.rooms, true)[0];
+      const floor = hit ? hit.point.y : this.drive?.floorHeight(new THREE.Vector3(at.x, box.max.y, at.z));
+      if (floor !== null && floor !== undefined) frame.position.y += floor - box.min.y;
       this.host.scene.add(frame);
       this.showroom.push(frame);
     });
@@ -348,10 +357,10 @@ export class CareerGame {
     const { canvas, ctx } = pixelCanvas(w, h);
     panel(ctx, 0, 0, w, h);
     rows.forEach(([k, v], i) => {
-      this.text(ctx, k, pad, pad + i * lh, '#e8e8e8');
-      this.text(ctx, v, pad + lw, pad + i * lh, '#e8e8e8');
+      this.text(ctx, k, pad, pad + i * lh, '#5fe3e3');
+      this.text(ctx, v, pad + lw, pad + i * lh, '#5fe3e3');
     });
-    noteLines.forEach((l, i) => this.text(ctx, l, pad, pad + rows.length * lh + i * 11, '#a8b0b4'));
+    noteLines.forEach((l, i) => this.text(ctx, l, pad, pad + rows.length * lh + i * 11, '#3fb8b8'));
     this.info.append(canvas);
     this.info.hidden = false;
   }
@@ -413,7 +422,7 @@ export class CareerGame {
     const b = el('button', 'hud-btn');
     b.setAttribute('aria-label', label);
     const { canvas, ctx } = pixelCanvas(this.measure(label), this.host.font?.height ?? 8);
-    this.text(ctx, label, 0, 0, '#f0f0f0');
+    this.text(ctx, label, 0, 0, '#5fe3e3');
     b.append(canvas);
     if (!repeat) b.addEventListener('click', onClick);
     else {
