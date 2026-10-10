@@ -32,6 +32,15 @@ export class DriveSession {
   private acc = 0;
   private camMode: CamMode = 'chase';
   private readonly camPos = new THREE.Vector3();
+  /**
+   * Інерція погляду на поворотах: камера (у кабіні й ззовні) відстає від курсу вантажівки й догоняє його
+   * як на пружині — візуальний ефект оригіналу. camYaw — зсув погляду відносно курсу, рад.
+   */
+  private camYaw = 0;
+  private camYawVel = 0;
+  private lastHeading: number | null = null;
+  /** Поза кабіни (без інерції погляду) — салон прикріплений до вантажівки. */
+  private readonly cabQuat = new THREE.Quaternion();
   private readonly camLook = new THREE.Vector3();
   private spawn!: { position: THREE.Vector3; forward: THREE.Vector3 };
   private cockpit = new THREE.Vector3(-0.4, 2.2, -1.2);
@@ -259,7 +268,7 @@ export class DriveSession {
     this.cab.visible = this.camMode === 'cockpit';
     if (!this.cab.visible) return;
     this.cab.position.copy(this.camera.position);
-    this.cab.quaternion.copy(this.camera.quaternion);
+    this.cab.quaternion.copy(this.cabQuat);
     const rot = (o: THREE.Object3D | undefined, axis: THREE.Vector3, angle: number) => {
       if (!o) return;
       o.matrix.copy(o.userData.baseMatrix as THREE.Matrix4).multiply(new THREE.Matrix4().makeRotationAxis(axis, angle));
@@ -479,22 +488,49 @@ ${raceLine}`;
     const v = this.truck.visual;
     const fwd = this.truck.forward();
     const up = new THREE.Vector3(0, 1, 0);
+    this.updateCamYaw(fwd, dt);
+    const lag = new THREE.Quaternion().setFromAxisAngle(up, this.camYaw);
     if (this.camMode === 'cockpit') {
-      // Камера жорстко в кабіні: орієнтація вантажівки + нахил погляду tangViewer.
+      // Камера в кабіні: орієнтація вантажівки + нахил погляду tangViewer; поворот погляду — з інерцією.
       const eye = this.cockpit.clone().applyQuaternion(v.quaternion).add(v.position);
+      const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (this.def.tech.viewerTilt * Math.PI) / 180);
+      this.cabQuat.copy(v.quaternion).multiply(tilt);
       this.camera.position.copy(eye);
-      this.camera.quaternion.copy(v.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (this.def.tech.viewerTilt * Math.PI) / 180));
+      this.camera.quaternion.copy(lag).multiply(v.quaternion).multiply(tilt);
       return;
     }
     const dist = this.camMode === 'far' ? 28 : 13;
     const height = this.camMode === 'far' ? 12 : 5;
-    const flat = fwd.clone().setY(0).normalize();
+    const flat = fwd.clone().setY(0).normalize().applyQuaternion(lag);
     const want = v.position.clone().addScaledVector(flat, -dist).addScaledVector(up, height);
     const k = 1 - Math.exp(-dt * 4);
     this.camPos.lerp(want, k);
     this.camLook.lerp(v.position.clone().addScaledVector(up, 2), 1 - Math.exp(-dt * 10));
     this.camera.position.copy(this.camPos);
     this.camera.lookAt(this.camLook);
+  }
+
+  /**
+   * Пружина «курс → погляд»: при повороті погляд зберігає старий напрям, потім догоняє (≈ 0,3 с,
+   * з невеликим перехльостом). Зсув обмежено ±20°. Параметри підібрано на око — гіпотеза.
+   */
+  private updateCamYaw(fwd: THREE.Vector3, dt: number): void {
+    const heading = Math.atan2(-fwd.x, -fwd.z);
+    if (this.lastHeading !== null && dt > 0) {
+      let d = heading - this.lastHeading;
+      if (d > Math.PI) d -= 2 * Math.PI;
+      if (d < -Math.PI) d += 2 * Math.PI;
+      // Рестарт або розворот на місці — без ривка.
+      if (Math.abs(d) > 0.5) this.camYaw = this.camYawVel = 0;
+      else this.camYaw -= d;
+      const k = 40;
+      const c = 2 * Math.sqrt(k) * 0.6;
+      this.camYawVel += (-k * this.camYaw - c * this.camYawVel) * dt;
+      this.camYaw += this.camYawVel * dt;
+      const max = (20 * Math.PI) / 180;
+      this.camYaw = Math.max(-max, Math.min(max, this.camYaw));
+    }
+    this.lastHeading = heading;
   }
 
   dispose(): void {
