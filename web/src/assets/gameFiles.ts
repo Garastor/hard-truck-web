@@ -13,6 +13,8 @@ export const REQUIRED: string[] = [
   ...Object.values(LEVELS).flatMap((l) => l.hw.map((f) => `${l.dir}/${f}`)),
   'TRUCK.TCH',
   'LOAD.RES',
+  'MENU.FON',
+  'large.fon',
 ];
 
 const DB = 'hard-truck-files';

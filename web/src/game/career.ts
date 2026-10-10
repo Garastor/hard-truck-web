@@ -456,9 +456,9 @@ export function deleteCareer(name: string): void {
 /** Поточний водій (екран «Сменить водителя»); за замовчуванням — як в оригіналі. */
 export function currentDriver(): string {
   try {
-    return localStorage.getItem(DRIVER) || 'ВОДИТЕЛЬ';
+    return localStorage.getItem(DRIVER) || 'Водій';
   } catch {
-    return 'ВОДИТЕЛЬ';
+    return 'Водій';
   }
 }
 

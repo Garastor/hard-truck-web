@@ -1,0 +1,224 @@
+/**
+ * Українські написи в меню оригіналу. Кнопки LOAD.RES — картинки з російським текстом у станах
+ * _b/_a/_p/_bp; між станами змінюється лише текст, тож пікселі тексту = пікселі, що відрізняються між
+ * станами. Їх зафарбовуємо фоном (дифузія з сусідніх пікселів) і пишемо український напис кольорами
+ * оригіналу. Підписи на фонах закриваємо шматком тієї ж смуги, зсунутим ліворуч, і пишемо поверх.
+ */
+
+/** Напис кнопки українською (\n — перенесення); відсутній — лишається оригінальний. */
+export const BUTTON_UK: Record<string, string> = {
+  'm/game': 'ГРА',
+  'm/connec': 'МЕРЕЖЕВА ГРА',
+  'm/quick': 'ПРОБНИЙ ЗАЇЗД',
+  'm/driver': 'ЗМІНИТИ ВОДІЯ',
+  'm/option': 'ОПЦІЇ',
+  'm/demo': 'ДЕМО',
+  'm/help': 'ДОПОМОГА',
+  'm/reels': 'ВІДЕОКЛІПИ',
+  'm/exit': 'ВИХІД З ГРИ',
+  'n/arcad': 'АРКАДНИЙ',
+  'n/simul': 'СИМУЛЯТОР',
+  'n/new': 'НОВА\nГРА',
+  'n/load': 'ЗАВАНТАЖИТИ\nГРУ',
+  'n/cancel': 'СКАСУВАТИ',
+  'd/cancel': 'СКАСУВАТИ',
+};
+
+/** Кольори тексту оригіналу за станами: заливка й тінь/контур (виміряно з масок). */
+const STYLE: Record<string, { fill: string; edge: string }> = {
+  b: { fill: 'rgb(228,196,252)', edge: 'rgb(116,88,48)' },
+  a: { fill: 'rgb(228,196,252)', edge: 'rgb(28,20,12)' },
+  p: { fill: 'rgb(252,228,136)', edge: 'rgb(28,20,12)' },
+  bp: { fill: 'rgb(252,228,136)', edge: 'rgb(28,20,12)' },
+  /** Недоступна кнопка — той самий текст, лише темніший. */
+  off: { fill: 'rgb(132,114,146)', edge: 'rgb(40,30,20)' },
+};
+
+const FONT = '"Arial Narrow", "Roboto Condensed", Arial, sans-serif';
+
+/** Висота великих літер напису, пікселів екрана 640×480 (однакова для всіх кнопок групи). */
+const CAP: Record<string, number> = { m: 11, n: 12, d: 12 };
+/** Підписи на фонах — тонкий геометричний шрифт, як в оригіналі. */
+const LABEL_FONT = '"Century Gothic", "Futura", "Trebuchet MS", Arial, sans-serif';
+
+/** Маска тексту: пікселі, що відрізняються між станами, розширені на 1 піксель (контур). */
+function textMask(states: ImageData[]): Uint8Array {
+  const { width: w, height: h } = states[0];
+  const m = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const j = i * 4;
+    for (let s = 1; s < states.length; s++) {
+      const a = states[0].data;
+      const b = states[s].data;
+      if (Math.abs(a[j] - b[j]) + Math.abs(a[j + 1] - b[j + 1]) + Math.abs(a[j + 2] - b[j + 2]) > 24) {
+        m[i] = 1;
+        break;
+      }
+    }
+  }
+  const out = m.slice();
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      if (m[y * w + x])
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx;
+            const yy = y + dy;
+            if (xx >= 0 && yy >= 0 && xx < w && yy < h) out[yy * w + xx] = 1;
+          }
+  return out;
+}
+
+/** Заповнює пікселі маски середнім уже відомих сусідів (шарами від краю всередину). */
+function inpaint(img: ImageData, mask: Uint8Array): void {
+  const { width: w, height: h, data } = img;
+  const todo = mask.slice();
+  for (let pass = 0; pass < 64; pass++) {
+    const fill: [number, number, number, number][] = [];
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (!todo[i]) continue;
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        let n = 0;
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx;
+            const yy = y + dy;
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+            const k = yy * w + xx;
+            if (todo[k]) continue;
+            r += data[k * 4];
+            g += data[k * 4 + 1];
+            b += data[k * 4 + 2];
+            n++;
+          }
+        if (n) fill.push([i, r / n, g / n, b / n]);
+      }
+    if (!fill.length) break;
+    for (const [i, r, g, b] of fill) {
+      data[i * 4] = r;
+      data[i * 4 + 1] = g;
+      data[i * 4 + 2] = b;
+      todo[i] = 0;
+    }
+  }
+}
+
+function bbox(mask: Uint8Array, w: number, h: number) {
+  let x0 = w;
+  let y0 = h;
+  let x1 = -1;
+  let y1 = -1;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      if (mask[y * w + x]) {
+        x0 = Math.min(x0, x);
+        x1 = Math.max(x1, x);
+        y0 = Math.min(y0, y);
+        y1 = Math.max(y1, y);
+      }
+  return x1 < 0 ? null : { x0, y0, x1, y1 };
+}
+
+/** Напис у прямокутнику: розмір за висотою, стиснення за шириною; вирівнювання праворуч або по центру. */
+function drawLabel(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  box: { x0: number; y0: number; x1: number; y1: number },
+  maxW: number,
+  align: 'right' | 'center',
+  style: { fill: string; edge: string },
+  outline: boolean,
+  underline = false,
+  cap?: number,
+  weight = 'bold',
+): void {
+  const lines = text.split('\n');
+  const lineH = (box.y1 - box.y0 + 1) / lines.length;
+  const size = Math.max(8, Math.round((cap ?? lineH * 0.92) / 0.74));
+  ctx.font = `${weight} ${size}px ${weight === 'bold' ? FONT : LABEL_FONT}`;
+  ctx.textBaseline = 'alphabetic';
+  lines.forEach((line, i) => {
+    const tw = ctx.measureText(line).width;
+    const k = Math.min(1, maxW / Math.max(1, tw));
+    const w = tw * k;
+    const x = align === 'right' ? box.x1 - w : (box.x0 + box.x1) / 2 - w / 2;
+    const base = box.y0 + lineH * (i + 1) - Math.max(1, lineH * 0.12);
+    ctx.save();
+    ctx.translate(x, base);
+    ctx.scale(k, 1);
+    ctx.fillStyle = style.edge;
+    if (outline) for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [1, 1]]) ctx.fillText(line, dx, dy);
+    else ctx.fillText(line, 1, 1);
+    ctx.fillStyle = style.fill;
+    ctx.fillText(line, 0, 0);
+    if (underline) ctx.fillRect(0, 2, tw, 1);
+    ctx.restore();
+  });
+}
+
+/**
+ * Українські стани кнопки: { b, a, p, bp?, off }. states — оригінальні полотна станів (той самий розмір).
+ * Повертає null, якщо для кнопки немає перекладу.
+ */
+export function localizeButton(base: string, states: Record<string, HTMLCanvasElement | null>): Record<string, HTMLCanvasElement> | null {
+  const text = BUTTON_UK[base];
+  const keys = Object.keys(states).filter((k) => states[k]);
+  if (!text || keys.length < 2) return null;
+  const src = keys.map((k) => states[k]!.getContext('2d')!.getImageData(0, 0, states[k]!.width, states[k]!.height));
+  const { width: w, height: h } = src[0];
+  const mask = textMask(src);
+  const box = bbox(mask, w, h);
+  if (!box) return null;
+  // Текст оригіналу притиснутий праворуч (головне меню, рівні) або по центру (великі кнопки).
+  const align = box.x1 > w * 0.75 && box.x0 > w * 0.3 ? 'right' : 'center';
+  const tight = { x0: box.x0 + 1, y0: box.y0 + 1, x1: box.x1 - 1, y1: box.y1 - 1 };
+  const maxW = align === 'right' ? tight.x1 - 8 : w - 10;
+  const out: Record<string, HTMLCanvasElement> = {};
+  const make = (key: string, from: ImageData, style: { fill: string; edge: string }, underline = false) => {
+    const img = new ImageData(new Uint8ClampedArray(from.data), w, h);
+    inpaint(img, mask);
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext('2d')!;
+    ctx.putImageData(img, 0, 0);
+    drawLabel(ctx, text, tight, maxW, align, style, key !== 'b' && key !== 'off', underline, CAP[base.split('/')[0]]);
+    out[key] = c;
+  };
+  keys.forEach((k, i) => make(k, src[i], STYLE[k] ?? STYLE.b, k === 'bp'));
+  make('off', src[keys.indexOf('b')] ?? src[0], STYLE.off);
+  return out;
+}
+
+/** Підписи на фонах: [x0, y0, x1, y1, текст] (вирівнювання праворуч, \n — два рядки). */
+const BACKGROUND_UK: Record<string, [number, number, number, number, string][]> = {
+  'n/back_new.txr': [
+    [166, 97, 320, 110, 'РІВЕНЬ СКЛАДНОСТІ'],
+    [130, 178, 322, 190, 'КІЛЬКІСТЬ СУПЕРНИКІВ'],
+    [156, 241, 298, 254, 'ЗБЕРЕЖЕНІ ІГРИ'],
+  ],
+  'd/back_dri.txr': [
+    [232, 152, 294, 166, 'ЗА КЕРМОМ'],
+    [150, 215, 296, 242, 'ЗАРЕЄСТРОВАНІ\nВОДІЇ'],
+  ],
+};
+
+/** Замінює російські підписи фону українськими. */
+export function localizeBackground(name: string, canvas: HTMLCanvasElement): void {
+  const items = BACKGROUND_UK[name];
+  if (!items) return;
+  const ctx = canvas.getContext('2d')!;
+  for (const [x0, y0, x1, y1, text] of items) {
+    const w = x1 - x0 + 1;
+    const h = y1 - y0 + 1;
+    // Латка: та сама смуга лівіше (без тексту), повторена на всю ширину підпису.
+    const srcX = Math.max(0, x0 - w);
+    const srcW = Math.max(4, Math.min(w, x0 - srcX));
+    for (let x = x0; x <= x1; x += srcW) ctx.drawImage(canvas, srcX, y0, Math.min(srcW, x1 - x + 1), h, x, y0, Math.min(srcW, x1 - x + 1), h);
+    drawLabel(ctx, text, { x0, y0, x1, y1 }, w, 'right', { fill: 'rgb(240,232,204)', edge: 'rgba(0,0,0,0.85)' }, false, false, 8.5, 'normal');
+  }
+}

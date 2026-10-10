@@ -16,6 +16,7 @@ import type { TruckSetup } from '../game/truckVehicle';
 import type { Room } from '../game/track';
 import type { DriveSession } from '../modes/drive';
 import type { BuiltScene } from '../render/sceneBuilder';
+import { PixelFont, panel, pixelCanvas } from './pixelFont';
 
 export type LevelKind = 'laps' | 'route' | 'free';
 
@@ -28,6 +29,8 @@ export interface CareerHost {
   built(): BuiltScene | null;
   /** Вийти з кар'єри в головне меню. */
   exit(): void;
+  /** Шрифт табло (MENU.FON); null — системний. */
+  font: PixelFont | null;
 }
 
 const EV_TUNNEL = 666;
@@ -303,76 +306,115 @@ export class CareerGame {
     else this.partZone(ev.param);
   }
 
-  /** Табличка «назва — значення» (КОД, ЦІНА ЗА ОД., ВАГА…). */
-  private table(rows: [string, string][]): void {
-    const t = el('table');
-    for (const [k, v] of rows) {
-      const tr = el('tr');
-      tr.append(el('td', '', k), el('td', '', v));
-      t.append(tr);
+  /** Текст піксельним шрифтом оригіналу (або системним, якщо MENU.FON недоступний). */
+  private text(ctx: CanvasRenderingContext2D, t: string, x: number, y: number, color: string): void {
+    if (this.host.font) this.host.font.draw(ctx, t, x, y, color);
+    else {
+      ctx.fillStyle = color;
+      ctx.font = '8px monospace';
+      ctx.textBaseline = 'top';
+      ctx.fillText(t, x, y);
     }
-    this.info.append(t);
+  }
+
+  private measure(t: string): number {
+    return this.host.font ? this.host.font.measure(t) : t.length * 5;
+  }
+
+  /** Розбиває текст на рядки не ширші за w пікселів шрифту. */
+  private wrap(t: string, w: number): string[] {
+    const out: string[] = [];
+    let line = '';
+    for (const word of t.split(' ')) {
+      const next = line ? `${line} ${word}` : word;
+      if (line && this.measure(next) > w) {
+        out.push(line);
+        line = word;
+      } else line = next;
+    }
+    if (line) out.push(line);
+    return out;
+  }
+
+  /** Табличка «назва — значення» як в оригіналі (КОД, ЦІНА ЗА ОД., ВАГА…) + необовʼязкова примітка. */
+  private table(rows: [string, string][], note?: string): void {
+    const pad = 10;
+    const lh = 14;
+    const lw = Math.max(...rows.map(([k]) => this.measure(k))) + 22;
+    const vw = Math.max(...rows.map(([, v]) => this.measure(v)));
+    const w = Math.max(180, pad * 2 + lw + vw);
+    const noteLines = note ? this.wrap(note, w - pad * 2) : [];
+    const h = pad * 2 + rows.length * lh - 6 + (noteLines.length ? 6 + noteLines.length * 11 : 0);
+    const { canvas, ctx } = pixelCanvas(w, h);
+    panel(ctx, 0, 0, w, h);
+    rows.forEach(([k, v], i) => {
+      this.text(ctx, k, pad, pad + i * lh, '#e8e8e8');
+      this.text(ctx, v, pad + lw, pad + i * lh, '#e8e8e8');
+    });
+    noteLines.forEach((l, i) => this.text(ctx, l, pad, pad + rows.length * lh + i * 11, '#a8b0b4'));
+    this.info.append(canvas);
     this.info.hidden = false;
   }
 
-  /** Табло гравця: «гроші / машина», смуги $, маса, обʼєм, машина, шини, гальма; «За кермом». */
+  /**
+   * Табло гравця як в оригіналі: над рамкою — вантаж; у рамці — «гроші / машина» і шість смуг
+   * ($ — вантаж/готівка/вантажівка, маса, обʼєм, машина, шини, гальма); нижче — «За кермом …». Текст бірюзовий.
+   */
   private renderPlayer(): void {
     const c = this.c;
     const s = this.spec;
     const cargo = this.cargoValue();
     const truck = Math.max(0, truckValue(c, s));
-    const total = Math.max(1, c.money + cargo + truck);
-    const pct = (v: number) => `${Math.max(0, Math.min(100, v * 100)).toFixed(1)}%`;
-    const key = [c.money, cargo, truck, cargoWeight(c), cargoVolume(c), c.condition.tech, c.condition.tires, c.condition.brakes, c.parts.join()].join();
+    const key = [c.money, cargo, truck, cargoWeight(c), cargoVolume(c), c.condition.tech, c.condition.tires, c.condition.brakes, c.parts.join(), window.innerHeight].join();
     if (key === this.playerKey) return;
     this.playerKey = key;
-    const p = this.player;
-    p.replaceChildren();
-    if (c.cargo.length) p.append(el('div', 'hud-cargo', c.cargo.map((i) => i.good.name).join(', ')));
-    const head = el('div', 'hud-head');
-    head.append(el('span', '', `гроші ${Math.round(c.money)}`), el('span', '', `машина ${Math.round(truck)}`));
-    p.append(head);
-    const bars = el('div', 'hud-bars');
-    const bar = (label: string, segs: [number, string][]) => {
-      const row = el('div', 'hud-row');
-      const track = el('div', 'hud-track');
+    const CYAN = '#5fe3e3';
+    const RED = '#e00000';
+    const MAG = '#e000e0';
+    const WHITE = '#f0f0f0';
+    const W = 214;
+    const cargoLine = c.cargo.length ? this.wrap(c.cargo.map((i) => i.good.name).join(', '), W)[0] : '';
+    const top = cargoLine ? 11 : 0;
+    const boxH = 72;
+    const H = top + boxH + 3 + 16;
+    const { canvas, ctx } = pixelCanvas(W, H);
+    if (cargoLine) this.text(ctx, cargoLine, 2, 0, CYAN);
+    panel(ctx, 0, top, W, boxH);
+    this.text(ctx, `гроші ${Math.round(c.money)}`, 8, top + 6, CYAN);
+    this.text(ctx, `машина ${Math.round(truck)}`, 112, top + 6, CYAN);
+    const barX = 8;
+    const barW = 150;
+    const total = Math.max(1, c.money + cargo + truck);
+    const rows: [string, [number, string][]][] = [
+      ['$', [[cargo / total, MAG], [c.money / total, RED], [truck / total, WHITE]]],
+      ['маса', [[Math.min(1, cargoWeight(c) / s.payload), MAG]]],
+      ['обʼєм', [[Math.min(1, cargoVolume(c) / s.volume), MAG]]],
+      ['машина', [[c.condition.tech, RED]]],
+      ['шини', [[c.condition.tires, RED]]],
+      ['гальма', [[c.condition.brakes, RED]]],
+    ];
+    rows.forEach(([label, segs], i) => {
+      const y = top + 19 + i * 8;
+      let x = barX;
       for (const [f, color] of segs) {
-        const seg = el('i');
-        seg.style.width = pct(f);
-        seg.style.background = color;
-        track.append(seg);
+        const w = Math.round(Math.max(0, Math.min(1, f)) * barW);
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y, w, 4);
+        x += w;
       }
-      row.append(track, el('span', '', label));
-      bars.append(row);
-    };
-    const RED = '#e01010';
-    const MAG = '#e020e0';
-    const WHITE = '#f4f4f4';
-    // $: вантаж (пурпуровий) | готівка (червоний) | вантажівка (білий) — частки капіталу.
-    bar('$', [
-      [cargo / total, MAG],
-      [c.money / total, RED],
-      [truck / total, WHITE],
-    ]);
-    const w = Math.min(1, cargoWeight(c) / s.payload);
-    const v = Math.min(1, cargoVolume(c) / s.volume);
-    bar('маса', [
-      [w, MAG],
-      [1 - w, RED],
-    ]);
-    bar('обʼєм', [
-      [v, MAG],
-      [1 - v, RED],
-    ]);
-    bar('машина', [[c.condition.tech, RED]]);
-    bar('шини', [[c.condition.tires, RED]]);
-    bar('гальма', [[c.condition.brakes, RED]]);
-    p.append(bars);
-    p.append(el('div', 'hud-foot', `За кермом ${c.name}${c.parts.length ? '   ' + c.parts.join(' ') : ''}`));
+      this.text(ctx, label, barX + barW + 6, y - 2, CYAN);
+    });
+    panel(ctx, 0, top + boxH + 3, W, 16);
+    this.text(ctx, `За кермом ${c.name}${c.parts.length ? '  ' + c.parts.join(' ') : ''}`, 8, top + boxH + 7, CYAN);
+    this.player.replaceChildren(canvas);
   }
 
   private button(label: string, onClick: () => void, repeat = false): HTMLButtonElement {
-    const b = el('button', 'hud-btn', label);
+    const b = el('button', 'hud-btn');
+    b.setAttribute('aria-label', label);
+    const { canvas, ctx } = pixelCanvas(this.measure(label), this.host.font?.height ?? 8);
+    this.text(ctx, label, 0, 0, '#f0f0f0');
+    b.append(canvas);
     if (!repeat) b.addEventListener('click', onClick);
     else {
       // Утримання — повторювати (як утримання клавіші в оригіналі).
@@ -421,7 +463,7 @@ export class CareerGame {
       ['ОБʼЄМ', `${g.volume.toFixed(2)}м3`],
       ['КРИХКІСТЬ', `${Math.round(g.fragility * 100)}%`],
       ['У КУЗОВІ', `${inCargo}`],
-    ]);
+    ], canLoad(c, this.spec, g) ? undefined : 'Більше не вміщується або бракує грошей');
     const act = (fn: () => number) => () => {
       if (fn()) {
         this.save();
@@ -433,9 +475,8 @@ export class CareerGame {
     const unload = act(() => unloadGood(c, section, 1));
     this.keyLoad = load;
     this.keyUnload = unload;
-    this.button('− ПОВЕРНУТИ', unload, true);
+    this.button('- ПОВЕРНУТИ', unload, true);
     this.button('+ ЗАВАНТАЖИТИ', load, true);
-    if (!canLoad(c, this.spec, g)) this.info.append(el('div', 'hud-note', 'Більше не вміщується або бракує грошей'));
   }
 
   private truckZone(pod: number): void {
@@ -466,11 +507,13 @@ export class CareerGame {
     const p = PARTS[i];
     if (!p) return;
     const have = this.c.parts.includes(p.code) && p.code !== 'ШН';
-    this.table([
-      ['КОД', p.code],
-      ['ЦІНА', `$${p.price}`],
-    ]);
-    this.info.append(el('div', 'hud-note', `${p.title}: ${p.hint}.${have ? ' Встановлено.' : ''}`));
+    this.table(
+      [
+        ['КОД', p.code],
+        ['ЦІНА', `$${p.price}`],
+      ],
+      `${p.title}: ${p.hint}.${have ? ' Встановлено.' : ''}`,
+    );
     if (have) return;
     const buy = () => {
       const r = buyPart(this.c, i);

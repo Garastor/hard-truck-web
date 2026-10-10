@@ -12,6 +12,7 @@ import { parseMsk } from '../formats/msk';
 import { parsePlm } from '../formats/plm';
 import type { RgbaImage } from '../formats/binary';
 import { formatMoney, type Career, type Difficulty } from '../game/career';
+import { localizeBackground, localizeButton } from './menuLocale';
 
 export class MenuArt {
   private readonly palette: Uint8Array | undefined;
@@ -58,7 +59,10 @@ class Screen {
     this.root.className = 'menu-screen';
     this.stage.className = 'menu-stage';
     const bg = art.background(background);
-    if (bg) this.stage.append(bg);
+    if (bg) {
+      localizeBackground(background, bg);
+      this.stage.append(bg);
+    }
     this.root.append(this.stage);
     document.body.append(this.root);
     document.body.classList.add('in-menu');
@@ -107,17 +111,16 @@ function maskButton(screen: Screen, art: MenuArt, base: string, x: number, y: nu
   const wrap = document.createElement('button');
   wrap.className = 'menu-btn';
   wrap.setAttribute('aria-label', LABELS[base.replace(/^\w+\//, '')] ?? base);
-  const states: Record<string, HTMLCanvasElement | null> = {};
-  for (const s of ['b', 'a', 'p', 'bp']) {
-    const c = art.mask(`${base}_${s}.msk`);
-    states[s] = c;
-    if (c) wrap.append(c);
-  }
+  const orig: Record<string, HTMLCanvasElement | null> = {};
+  for (const s of ['b', 'a', 'p', 'bp']) orig[s] = art.mask(`${base}_${s}.msk`);
+  // Українські написи замість російських (якщо є переклад); off — недоступна (темніший текст).
+  const states: Record<string, HTMLCanvasElement | null> = localizeButton(base, orig) ?? orig;
+  for (const c of Object.values(states)) if (c) wrap.append(c);
   let pressed = false;
   let over = false;
   const show = () => {
     const sel = opts.selected?.() ?? false;
-    const want = pressed ? 'p' : sel ? (states.bp ? 'bp' : 'p') : over ? 'a' : 'b';
+    const want = opts.disabled ? (states.off ? 'off' : 'b') : pressed ? 'p' : sel ? (states.bp ? 'bp' : 'p') : over ? 'a' : 'b';
     for (const [k, c] of Object.entries(states)) if (c) c.hidden = k !== (states[want] ? want : 'b');
   };
   if (opts.disabled) wrap.classList.add('disabled');
@@ -148,7 +151,7 @@ export function mainMenu(
       scr.root.hidden = true;
       await fn();
       scr.root.hidden = false;
-      who.textContent = `За рулем: ${opts.driver}`;
+      who.textContent = `За кермом: ${opts.driver}`;
     };
     const y = (k: number) => 109 + 40 * k;
     maskButton(scr, art, 'm/game', 0, y(0), () => done('game'));
@@ -162,7 +165,7 @@ export function mainMenu(
     maskButton(scr, art, 'm/exit', 0, y(8), () => done('viewer'), { disabled: !opts.viewer });
     const who = scr.place(document.createElement('div'), 390, 450, 240);
     who.className += ' menu-note';
-    who.textContent = `За рулем: ${opts.driver}`;
+    who.textContent = `За кермом: ${opts.driver}`;
   });
 }
 
@@ -220,7 +223,7 @@ export function newGameScreen(art: MenuArt, saves: Career[], driver: string): Pr
 export function driverScreen(art: MenuArt, current: string, known: string[]): Promise<string | null> {
   return new Promise((resolve) => {
     const scr = new Screen(art, 'd/back_dri.txr');
-    const input = scr.place(document.createElement('input'), 6, 180, 240, 32);
+    const input = scr.place(document.createElement('input'), 6, 161, 140, 20);
     input.className += ' menu-input';
     input.value = current;
     input.maxLength = 12;
@@ -228,7 +231,7 @@ export function driverScreen(art: MenuArt, current: string, known: string[]): Pr
       scr.close();
       resolve(v);
     };
-    const list = scr.place(document.createElement('div'), 172, 278, 156, 160);
+    const list = scr.place(document.createElement('div'), 162, 250, 130, 130);
     list.className += ' menu-list';
     for (const n of known) {
       const row = document.createElement('div');
@@ -237,7 +240,7 @@ export function driverScreen(art: MenuArt, current: string, known: string[]): Pr
       row.addEventListener('click', () => (input.value = n));
       list.append(row);
     }
-    maskButton(scr, art, 'd/ok', 327, 148, () => done(input.value.trim().toUpperCase() || current));
+    maskButton(scr, art, 'd/ok', 327, 148, () => done(input.value.trim() || current));
     maskButton(scr, art, 'd/cancel', 327, 362, () => done(null));
   });
 }

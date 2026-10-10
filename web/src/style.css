@@ -540,7 +540,6 @@ body.career #stats {
 }
 
 .menu-btn.disabled {
-  filter: grayscale(0.7) brightness(0.55);
   cursor: default;
 }
 
@@ -576,8 +575,7 @@ body.career #stats {
   border-radius: 0;
   background: transparent;
   color: #f0dc8a;
-  font: 700 18px/32px Arial, sans-serif;
-  text-transform: uppercase;
+  font: 700 14px/20px Arial, sans-serif;
 }
 
 body.in-menu #bar,
@@ -601,43 +599,15 @@ body.in-menu #fps {
   color: #fff;
 }
 
-.hud-info,
-.hud-player {
-  background: rgba(8, 10, 14, 0.78);
-  border: 1px solid #77787a;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.6);
-  pointer-events: auto;
-}
 
-.hud-info {
-  padding: 6px 10px;
-  text-transform: uppercase;
-}
 
 .hud-info[hidden] {
   display: none;
 }
 
-.hud-info table {
-  border-collapse: collapse;
-}
 
-.hud-info td {
-  padding: 0 14px 0 0;
-  white-space: nowrap;
-}
 
-.hud-info td + td {
-  padding-right: 0;
-  text-transform: none;
-}
 
-.hud-note {
-  margin-top: 4px;
-  text-transform: none;
-  color: #cfd3d6;
-  max-width: 260px;
-}
 
 .hud-actions {
   display: flex;
@@ -653,9 +623,11 @@ body.in-menu #fps {
 .hud-btn {
   min-height: 40px;
   padding: 0 12px;
-  border-radius: 2px;
-  border: 1px solid #8a8b8d;
-  background: rgba(8, 10, 14, 0.78);
+  border-radius: 0;
+  border: 1px solid #8c8c8c;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.8);
+  background: rgba(16, 18, 20, 0.62);
+  line-height: 0;
   color: #fff;
   font: 700 12px Tahoma, Arial, sans-serif;
   letter-spacing: 0.02em;
@@ -673,62 +645,22 @@ body.in-menu #fps {
   position: fixed;
   left: max(12px, env(safe-area-inset-left));
   bottom: max(8px, env(safe-area-inset-bottom));
-  width: 250px;
-  padding: 3px 8px 4px;
-  font: 11px/14px Tahoma, Arial, sans-serif;
+  line-height: 0;
 }
 
 @media (pointer: coarse) {
   .hud-player {
     left: 50%;
     transform: translateX(-50%);
-    width: min(250px, calc(100vw - 2 * 200px));
-    min-width: 190px;
   }
 }
 
-.hud-cargo {
-  text-transform: uppercase;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
-.hud-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
 
-.hud-row {
-  display: grid;
-  grid-template-columns: 1fr 52px;
-  align-items: center;
-  gap: 6px;
-  line-height: 11px;
-}
 
-.hud-row span {
-  color: #7fe6e6;
-  font-size: 10px;
-}
 
-.hud-track {
-  display: flex;
-  height: 5px;
-  background: rgba(255, 255, 255, 0.08);
-}
 
-.hud-track i {
-  display: block;
-  height: 100%;
-}
 
-.hud-foot {
-  margin-top: 3px;
-  padding-top: 2px;
-  border-top: 1px solid #555;
-}
 
 /* Лічильник кадрів у кар'єрі — праворуч від ☰, щоб не перекривав табло. */
 body.career #fps {
@@ -739,4 +671,23 @@ body.career #fps {
 body.driving.bar-open .career-hud,
 body.driving.bar-open .hud-player {
   visibility: hidden;
+}
+
+/* Табло намальоване піксельним шрифтом оригіналу — масштаб без згладжування. */
+canvas.pixel {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.hud-info {
+  line-height: 0;
+  pointer-events: auto;
+}
+
+.hud-info[hidden] {
+  display: none;
+}
+
+.hud-player {
+  pointer-events: auto;
 }

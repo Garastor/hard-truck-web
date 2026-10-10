@@ -16,6 +16,8 @@ import type { TruckSetup } from './game/truckVehicle';
 import { currentDriver, listCareers, loadCareer, newCareer, setCurrentDriver, truckSpec, type Career } from './game/career';
 import { CareerGame, modal, type LevelKind } from './ui/careerUi';
 import { MenuArt, driverScreen, mainMenu, newGameScreen } from './ui/menuScreens';
+import { PixelFont } from './ui/pixelFont';
+import { parseFon } from './formats/fon';
 
 /**
  * Переглядач ресурсів (Фази 1–2): обліт локацій, галерея текстур і масок.
@@ -439,8 +441,11 @@ async function play(id: LevelId, cfg: NonNullable<typeof careerCfg>): Promise<Dr
   return drive;
 }
 
+let hudFont: PixelFont | null | undefined;
+
 async function startCareer(c: Career): Promise<void> {
   await ensureTrucks();
+  if (hudFont === undefined) hudFont = await source.read('MENU.FON').then((b) => new PixelFont(parseFon(b))).catch(() => null);
   const specs = trucks.map(truckSpec);
   document.body.classList.add('career');
   career = await CareerGame.start(
@@ -450,6 +455,7 @@ async function startCareer(c: Career): Promise<void> {
       defs: async () => (await ensureTrucks(), trucks),
       play,
       built: () => built,
+      font: hudFont,
       exit: () => {
         career = null;
         careerCfg = null;
