@@ -54,6 +54,8 @@ const BRAKE_FRONT = 0.49;
 const BRAKE_REAR = 0.35;
 /** Коефіцієнт опору кочення (накат на 4-й передачі без газу, s7). */
 const ROLLING_RESISTANCE = 0.015;
+/** Утримання гальма на місці до вмикання задньої передачі, с. */
+const REVERSE_HOLD = 0.3;
 
 /** Стан машини з кар'єри, що впливає на фізику (режим «симулятор»). */
 export interface TruckSetup {
@@ -86,6 +88,8 @@ export class TruckVehicle {
   private steerAngle = 0;
   /** Задній хід: гравець утримує гальмо на місці (тоді «гальмо» — це газ назад). */
   private reverseMode = false;
+  /** Скільки утримується гальмо на місці (для вмикання задньої). */
+  private reverseHold = 0;
   private brakeTime = 0;
   private readonly mass: number;
   private readonly grip: number;
@@ -204,12 +208,16 @@ export class TruckVehicle {
     this.ctrl.setWheelSteering(0, Math.sign(this.steerAngle) * (left ? inner : outer));
     this.ctrl.setWheelSteering(1, Math.sign(this.steerAngle) * (left ? outer : inner));
 
-    // Задній хід — як в оригіналі: клавіша Z (кнопка R) вмикає/вимикає задню; газ везе в бік передачі,
-    // гальмо лише гальмує. Поки перемкнутися не можна (машина ще котиться не туди), газ не діє.
-    this.reverseMode = input.reverse;
-    const wrongWay = this.reverseMode ? this.engine.gear !== GEAR_R && v > 0.5 : this.engine.gear === GEAR_R && v < -0.5;
-    const gas = wrongWay ? 0 : input.throttle;
-    const brake = input.brake;
+    // Задній хід — автоматично: на місці утримуємо гальмо ≈ 0,3 с → R, тоді «гальмо» везе назад, а «газ»
+    // гальмує; зупинилися й тиснемо газ — знову вперед.
+    const stopped = Math.abs(v) < 0.5;
+    if (!this.reverseMode && input.brake > 0 && input.throttle === 0 && stopped) {
+      this.reverseHold += dt;
+      if (this.reverseHold >= REVERSE_HOLD) this.reverseMode = true;
+    } else this.reverseHold = 0;
+    if (this.reverseMode && input.throttle > 0 && input.brake === 0 && stopped) this.reverseMode = false;
+    const gas = this.reverseMode ? input.brake : input.throttle;
+    const brake = this.reverseMode ? input.throttle : input.brake;
 
     const eng = this.engine;
     eng.update(dt, gas, brake, v, this.reverseMode);

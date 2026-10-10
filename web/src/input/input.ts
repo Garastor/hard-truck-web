@@ -7,12 +7,10 @@ export interface ControlState {
   throttle: number;
   brake: number;
   handbrake: boolean;
-  /** Задня передача увімкнена (клавіша Z / кнопка R — як в оригіналі). */
-  reverse: boolean;
 }
 
 type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake';
-type Command = 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'reverse';
+type Command = 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt';
 
 /** Час повороту керма з клавіатури від центру до краю, с, і швидкість повернення, 1/с (оригінал, s6). */
 const STEER_RAMP = 1.1;
@@ -24,7 +22,7 @@ function inverseSmoothstep(y: number): number {
 }
 
 export class Input {
-  readonly state: ControlState = { steer: 0, throttle: 0, brake: 0, handbrake: false, reverse: false };
+  readonly state: ControlState = { steer: 0, throttle: 0, brake: 0, handbrake: false };
   private readonly held = new Set<Action>();
   private steerSmooth = 0;
   private steerHold = 0;
@@ -65,7 +63,6 @@ export class Input {
       if (e.code === 'KeyR') this.onCommand?.('reset');
       if (e.code === 'KeyH') this.onCommand?.('horn');
       if (e.code === 'KeyP') this.onCommand?.('autopilot');
-      if (e.code === 'KeyZ') this.toggleReverse();
     }
   }
 
@@ -140,12 +137,11 @@ export class Input {
         b.setPointerCapture(e.pointerId);
         b.classList.add('pressed');
         if (action) this.press(action, true);
-        if (cmd === 'reverse') this.toggleReverse();
-        else if (cmd) this.onCommand?.(cmd);
+        if (cmd) this.onCommand?.(cmd);
       };
       const up = (e: PointerEvent) => {
         e.preventDefault();
-        if (cmd !== 'reverse') b.classList.remove('pressed');
+        b.classList.remove('pressed');
         if (action) this.press(action, false);
       };
       b.addEventListener('pointerdown', down);
@@ -162,18 +158,8 @@ export class Input {
     btn('reset', '↺', undefined, 'reset');
     btn('horn', '📯', undefined, 'horn');
     btn('tilt', '📱', undefined, 'tilt');
-    btn('rev', 'R', undefined, 'reverse');
-    this.revButton = ui.querySelector('.rev');
     parent.append(ui);
     return ui;
-  }
-
-  private revButton: HTMLElement | null = null;
-
-  /** Задня передача: увімкнути/вимкнути (вмикається, коли машина зупиниться). */
-  toggleReverse(): void {
-    this.state.reverse = !this.state.reverse;
-    this.revButton?.classList.toggle('pressed', this.state.reverse);
   }
 
   dispose(): void {
