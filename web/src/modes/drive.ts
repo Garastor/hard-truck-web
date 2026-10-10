@@ -5,6 +5,7 @@ import { floorAt, levelCollision, roomAt, type LevelCollision } from '../game/co
 import { Input } from '../input/input';
 import { TruckVehicle, type TruckSetup } from '../game/truckVehicle';
 import { GlassRain } from '../render/glassRain';
+import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import type { BuiltScene } from '../render/sceneBuilder';
 import { walk } from '../formats/b3d';
@@ -161,6 +162,18 @@ export class DriveSession {
   get flipped(): boolean {
     const q = this.truck.body.rotation();
     return new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w)).y < 0.5;
+  }
+  /** Навігаційна система (НС): мінікарта з суперниками. */
+  private navMap: NavMap | null = null;
+  showMap(on: boolean): void {
+    if (on && !this.navMap) {
+      this.wayNet ??= new WayNet(this.built.assembler.b3d);
+      const parent = this.hud?.parentElement;
+      if (parent && this.wayNet.lines.length) this.navMap = new NavMap(parent, this.wayNet);
+    } else if (!on && this.navMap) {
+      this.navMap.dispose();
+      this.navMap = null;
+    }
   }
   private lightsKey = '';
   /** Стоп-сигнали (StopFaraKey: 1 — габарити, 2 — гальмування) і вогні заднього ходу (BackFaraKey) машини гравця. */
@@ -603,6 +616,13 @@ export class DriveSession {
     this.odometer += (this.truck.speedKmh / 3.6) * dt;
     this.updateCab(state);
     this.updateLights(state);
+    if (this.navMap) {
+      const p = (t: TruckVehicle) => {
+        const v = t.body.translation();
+        return new THREE.Vector3(v.x, v.y, v.z);
+      };
+      this.navMap.update(dt, p(this.truck), this.truck.forward(), this.opponents.map((o) => p(o.truck)));
+    }
     // Під дахом (кімнати з подією 4 «tunnel_rain» — тунелі) дощу немає: ні струменів, ні нових крапель.
     if (this.raining) {
       const sheltered = this.currentRoom?.events.some((e) => e.type === EVENT_RAIN) ?? false;
@@ -839,6 +859,7 @@ ${raceLine}`;
     this.input.dispose();
     this.touchUi?.remove();
     this.hud?.remove();
+    this.navMap?.dispose();
     this.audio?.dispose();
     void this.wakeLock?.release().catch(() => {});
     this.world.free();

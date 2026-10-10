@@ -273,6 +273,7 @@ export class CareerGame {
       this.drive = await this.host.play(track, { truck: this.c.truck, rivals, kind, setup: truckSetup(this.c, this.spec, track) });
       if (!this.drive) return;
       this.drive.setRain(this.c.weather[track] === 'rain');
+      this.drive.showMap(this.c.parts.includes('НС'));
       this.drive.onFinish = () => void this.finishTrip(true);
       this.drive.applyDents(this.c.dents);
       this.playerCollapsed = true;

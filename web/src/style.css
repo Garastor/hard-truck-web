@@ -693,6 +693,18 @@ body.in-menu #fps {
   line-height: 0;
 }
 
+/* Мінікарта навігаційної системи — праворуч угорі під кнопками камери. */
+.nav-map {
+  position: fixed;
+  right: var(--sr);
+  top: calc(max(8px, env(safe-area-inset-top)) + 60px);
+  pointer-events: none;
+}
+
+body.driving.bar-open .nav-map {
+  visibility: hidden;
+}
+
 .hud-player {
   pointer-events: auto;
   cursor: pointer;

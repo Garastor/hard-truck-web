@@ -183,6 +183,8 @@ async function startDrive(): Promise<void> {
     const kind = cfg?.kind ?? (id === 'CIRCUIT' ? 'laps' : id === 'MENU3D' ? 'free' : 'route');
     const rivals = cfg?.rivals ?? (id === 'TRIAL' || id === 'MENU3D' ? [] : trucks.filter((t) => t !== def).slice(0, nAi));
     drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup);
+    // Тестовий режим: мінікарта завжди (у кар'єрі — лише з навігаційною системою «НС»).
+    if (!cfg && id !== 'MENU3D') drive.showMap(true);
     setStatus(null);
   } catch (e) {
     console.error(e);
