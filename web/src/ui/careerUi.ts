@@ -190,6 +190,11 @@ export class CareerGame {
       for (let w = 0; w < model.wheels.length; w++) {
         model.wheels[w].matrix.copy(model.wheelBase[w]).multiply(new THREE.Matrix4().makeTranslation(0, 0, -SHOWROOM_SAG));
       }
+      // Тінь під вантажівкою (*Shadow) — частина моделі на рівні коліс у верхньому положенні; з опущеними
+      // колесами вона висіла б над подіумом і затуляла колеса — на подіумі не показуємо.
+      model.root.traverse((o) => {
+        if (/shadow$/i.test(o.name)) o.visible = false;
+      });
       holder.add(model.root);
       frame.add(holder);
       // Колеса — на підлогу подіуму (простір space_pod_n задає точку на подіумі, не висоту коліс).
