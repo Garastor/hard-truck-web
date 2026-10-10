@@ -26,6 +26,7 @@ body {
 }
 
 #view {
+  touch-action: none;
   position: fixed;
   inset: 0;
   width: 100%;
@@ -154,6 +155,21 @@ button.active {
   text-align: center;
 }
 
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  transform: translateX(-50%);
+  max-width: min(520px, calc(100% - 32px));
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  z-index: 4;
+  white-space: normal;
+}
+
+#toast[hidden],
 #status[hidden] {
   display: none;
 }

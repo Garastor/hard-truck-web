@@ -18,6 +18,9 @@ if (import.meta.env.DEV) Object.assign(window, { RAPIER });
 /**
  * Режим їзди (Фаза 3): фізичний світ з геометрії локації, вантажівка, камера, HUD.
  */
+/** Шар Three.js для деталей кабіни, що малюються поверх решти кабіни (кермо). */
+const CAB_TOP_LAYER = 1;
+
 export class DriveSession {
   private world!: RAPIER.World;
   private truck!: TruckVehicle;
@@ -221,6 +224,25 @@ export class DriveSession {
       return found;
     };
     this.cabParts = { rule: bySpace('RuleSpace'), tacho: bySpace('TachoSpace'), speed: bySpace('SpeedSpace') };
+    // Кермо частково «втоплене» в панель: оригінал малює його після кабіни, поверх неї.
+    // Відтворюємо це окремим шаром, який рендериться після очищення глибини.
+    this.cabParts.rule?.traverse((o) => o.layers.set(CAB_TOP_LAYER));
+  }
+
+  /** Другий прохід кадру: кабіна поверх світу, потім кермо поверх кабіни. */
+  renderOverlay(renderer: THREE.WebGLRenderer, camera: THREE.Camera): void {
+    const autoClear = renderer.autoClear;
+    const mask = camera.layers.mask;
+    renderer.autoClear = false;
+    renderer.clearDepth();
+    renderer.render(this.overlayScene, camera);
+    if (this.cabParts.rule && this.cab?.visible) {
+      renderer.clearDepth();
+      camera.layers.set(CAB_TOP_LAYER);
+      renderer.render(this.overlayScene, camera);
+      camera.layers.mask = mask;
+    }
+    renderer.autoClear = autoClear;
   }
 
   private updateCab(state: { steer: number }): void {

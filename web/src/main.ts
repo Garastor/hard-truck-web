@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LEVELS, devServerSource, loadLevel, type FileSource, type LevelId, type LoadedLevel } from './assets/loader';
 import { idbSource, importFiles, importZip, missingFiles } from './assets/gameFiles';
+import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from './ui/mobile';
 import { buildScene, type BuiltScene } from './render/sceneBuilder';
 import { parseTxr } from './formats/txr';
 import { parseMsk } from './formats/msk';
@@ -264,16 +265,20 @@ levelSel.addEventListener('change', open);
 $('menu').addEventListener('click', () => document.body.classList.toggle('bar-open'));
 truckSel.addEventListener('change', () => (tab === 'drive' ? void startDrive() : showTruck()));
 modeSel.addEventListener('change', open);
-$('fullscreen').addEventListener('click', async () => {
-  try {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else {
-      await document.documentElement.requestFullscreen();
-      await (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.('landscape').catch(() => {});
-    }
-  } catch {
-    /* iOS Safari без Fullscreen API — ігноруємо */
-  }
+$('fullscreen').addEventListener('click', () => void toggleFullscreen());
+async function toggleFullscreen(): Promise<void> {
+  if (isFullscreen()) return exitFullscreen();
+  if (!(await enterFullscreen())) toast(IOS_FULLSCREEN_HINT);
+}
+blockPageZoom();
+// На телефоні гра сама переходить на весь екран при першому дотику в режимі їзди
+// (браузер дозволяє це лише з обробника дотику).
+let autoFullscreenTried = false;
+document.addEventListener('pointerup', (e) => {
+  if (autoFullscreenTried || e.pointerType !== 'touch' || tab !== 'drive' || isFullscreen()) return;
+  autoFullscreenTried = true;
+  if (fullscreenSupported()) void enterFullscreen();
+  else toast(IOS_FULLSCREEN_HINT, 9000);
 });
 
 const clock = new THREE.Clock();
@@ -298,11 +303,7 @@ function loop(): void {
   }
   renderer.render(scene, camera);
   if (drive && tab === 'drive') {
-    // Кабіна поверх світу: очищаємо лише глибину.
-    renderer.autoClear = false;
-    renderer.clearDepth();
-    renderer.render(drive.overlayScene, camera);
-    renderer.autoClear = true;
+    drive.renderOverlay(renderer, camera);
   }
 }
 renderer.setAnimationLoop(loop);
