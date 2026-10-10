@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LEVELS, devServerSource, loadLevel, type FileSource, type LevelId, type LoadedLevel } from './assets/loader';
 import { idbSource, importFiles, importZip, missingFiles } from './assets/gameFiles';
+import { FpsMeter, FrameLimiter, QUALITY, loadQuality, loadShowFps, saveQuality, saveShowFps, type QualityId } from './ui/quality';
 import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from './ui/mobile';
 import { buildScene, type BuiltScene } from './render/sceneBuilder';
 import { parseTxr } from './formats/txr';
@@ -27,8 +28,14 @@ const status = $('status');
 const truckSel = $<HTMLSelectElement>('truck');
 const overlay = $('overlay');
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+let qualityId = loadQuality();
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: QUALITY[qualityId].antialias, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY[qualityId].dpr));
+const limiter = new FrameLimiter(QUALITY[qualityId].fps);
+const fpsMeter = new FpsMeter();
+const fpsEl = $('fps');
+let showFps = loadShowFps();
+fpsEl.hidden = !showFps;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8fb4d8);
 scene.fog = new THREE.Fog(0x8fb4d8, 400, 2500);
@@ -266,6 +273,26 @@ $('menu').addEventListener('click', () => document.body.classList.toggle('bar-op
 truckSel.addEventListener('change', () => (tab === 'drive' ? void startDrive() : showTruck()));
 modeSel.addEventListener('change', open);
 $('fullscreen').addEventListener('click', () => void toggleFullscreen());
+
+// Якість рендера: щільність пікселів і частота кадрів змінюються одразу, згладжування — з перезавантаженням.
+const qualitySel = $<HTMLSelectElement>('quality');
+for (const [id, q] of Object.entries(QUALITY)) qualitySel.add(new Option(q.label, id));
+qualitySel.value = qualityId;
+qualitySel.addEventListener('change', () => {
+  const next = qualitySel.value as QualityId;
+  saveQuality(next);
+  if (QUALITY[next].antialias !== QUALITY[qualityId].antialias) return location.reload();
+  qualityId = next;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY[next].dpr));
+  limiter.fps = QUALITY[next].fps;
+  resize();
+});
+$('fpsToggle').addEventListener('click', () => {
+  showFps = !showFps;
+  saveShowFps(showFps);
+  fpsEl.hidden = !showFps;
+  fpsEl.textContent = '…';
+});
 async function toggleFullscreen(): Promise<void> {
   if (isFullscreen()) return exitFullscreen();
   if (!(await enterFullscreen())) toast(IOS_FULLSCREEN_HINT, 15000);
@@ -290,7 +317,9 @@ document.addEventListener('visibilitychange', () => {
     renderer.setAnimationLoop(loop);
   }
 });
-function loop(): void {
+function loop(now: number): void {
+  if (!limiter.ready(now)) return;
+  if (showFps && fpsMeter.tick(now)) fpsEl.textContent = `${fpsMeter.value} к/с`;
   const dt = clock.getDelta();
   if (tab === 'drive') {
     drive?.update(dt);

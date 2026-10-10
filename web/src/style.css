@@ -155,6 +155,27 @@ button.active {
   text-align: center;
 }
 
+#fps {
+  position: fixed;
+  left: max(12px, env(safe-area-inset-left));
+  top: calc(max(8px, env(safe-area-inset-top)) + 52px);
+  z-index: 3;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--accent);
+  font: 12px/1.4 ui-monospace, monospace;
+  pointer-events: none;
+}
+
+#fps[hidden] {
+  display: none;
+}
+
+body.bar-open #fps {
+  visibility: hidden;
+}
+
 #toast {
   position: fixed;
   left: 50%;

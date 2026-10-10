@@ -39,6 +39,7 @@ export class DriveSession {
   readonly overlayScene = new THREE.Scene();
   /** Висота (Three.js y), нижче якої вантажівка вважається такою, що випала зі світу. */
   private fallY = -200;
+  private hudTimer = 0;
   private cab: THREE.Group | null = null;
   private cabParts: { rule?: THREE.Object3D; tacho?: THREE.Object3D; speed?: THREE.Object3D } = {};
   private cabSwitch: ((n: string, state: number) => void) | null = null;
@@ -428,8 +429,13 @@ ${['ЗЕЛЕНИЙ', 'ЖОВТИЙ', 'ЧЕРВОНИЙ'][Math.min(2, Math.floor(
         ? 'вільна їзда'
         : `${(this.room ?? '?').replace('room_', 'сектор ')}   коло ${Math.min(this.laps + 1, this.lapsToFinish || Infinity)}` +
           `${this.lapsToFinish ? '/' + this.lapsToFinish : ''}: ${lap}${best}${place}${start}${fin}`;
-    this.hud.textContent = `${speedLine}
+    // Табло — 10 разів на секунду: оновлення тексту щокадру змушує браузер перераховувати верстку.
+    this.hudTimer -= dt;
+    if (this.hudTimer > 0) return;
+    this.hudTimer = 0.1;
+    const text = `${speedLine}
 ${raceLine}`;
+    if (this.hud.textContent !== text) this.hud.textContent = text;
   }
 
   /** Кімнати й коло: перетин порталів, старт таймера, фініш (подія 666). */
