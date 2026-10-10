@@ -34,6 +34,7 @@ TECH_COUNT = 0x59C744
 PATTERN_OFF, PATTERN_LEN = 0x60, 0x1C
 
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+NO_DUMPS = False  # auto --no-dumps: без повних знімків памʼяті (вони підвішують гру)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
@@ -392,7 +393,7 @@ def record_segment(p, out_prefix, say, masses, window_before, window_after, hz, 
                 ok_speed = speed == speed and speed > 4
                 straight_since[ci] = straight_since.get(ci, t) if ok_speed and steer < 0.01 else t
                 turn_since[ci] = turn_since.get(ci, t) if ok_speed and steer > 0.8 else t
-                if t - last_dump > 2:
+                if t - last_dump > 2 and not NO_DUMPS:
                     if dumps["straight"] < 1 and t - straight_since[ci] > 1.5:
                         dump("straight", t, ci)
                     elif dumps["turn"] < 3 and t - turn_since[ci] > 1.0:
@@ -411,6 +412,8 @@ def main():
     if a[0] == "analyze":
         return cmd_analyze(a[1])
     if a[0] == "auto":
+        global NO_DUMPS
+        NO_DUMPS = "--no-dumps" in a
         return cmd_auto(a[1])
     p = Proc()
     if a[0] == "find":

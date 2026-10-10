@@ -19,12 +19,35 @@ const STEER_TO_WHEEL = 0.684;
 const ACKERMANN = 0.208;
 
 /**
- * Межа зчеплення шин (Rapier frictionSlip): передні — підібрані під коло з кермом до упору (s6,
- * R ≈ 8 м на 3,5 м/с і ≈ 17,8 м на 7,5 м/с), задні — тертя колеса оригіналу [0x30b] = 0,84.
+ * Межа зчеплення шин (Rapier frictionSlip) — тертя колеса оригіналу [0x30b] = 0,84 на всіх колесах.
+ * Відгук користувача: в оригіналі різкий поворот до упору — або крутий поворот із креном, або (на швидкості)
+ * занос із втратою швидкості, після чого вантажівка різко доповорочує. (Запис s6 із ≈ 5 к/с фізики
+ * показував ширше коло — великий крок часу спотворював, тож на нього не орієнтуємось.)
  */
-const TIRE_GRIP_FRONT = 0.42;
-const TIRE_GRIP_REAR = 0.84;
+const TIRE_GRIP = 0.84;
 const TIRE_GRIP_BRAKING = 1.0;
+/**
+ * Параметри бічних сил шин (підібрані під телеметрію s9: кермо до упору на 8,5 м/с — ≈ 51°/с;
+ * на 11,5 м/с — занос із втратою швидкості). Обʼєкт змінний — для підбору в консолі (dev).
+ */
+export const TIRE = {
+  /**
+   * Бічне тертя шини (межа = mu × навантаження). Вище за поздовжнє 0,84: в оригіналі з кермом до упору на
+   * 8,5 м/с — ≈ 51°/с (бічне ≈ 0,79 g), чого з 0,84 не досягти через перевантажену передню вісь.
+   */
+  mu: 1.15,
+  /** Кут проковзування, на якому бічна сила досягає межі, рад. */
+  slip_peak: 0.2,
+  /** Частка межі в повному заносі. */
+  slide: 0.95,
+  /** Поздовжнє гальмування в заносі: частка межі на одиницю «глибини» заносу і максимум. */
+  slide_drag: 0.25,
+  slide_drag_max: 0.45,
+  /** Нижня межа поздовжньої швидкості для кута проковзування, м/с (стійкість на місці). */
+  low_speed: 2,
+  /** Наскільки піднімати точку прикладання бічної сили до центру мас (0 — земля, 1 — центр мас). */
+  roll_lift: 0.45,
+};
 
 /** Частки breakpower на колесо: передні / задні (телеметрія ЗіЛ, s6) — гіпотеза для інших вантажівок. */
 const BRAKE_FRONT = 0.49;
@@ -42,6 +65,8 @@ export class TruckVehicle {
   rpm = 300;
   speedKmh = 0;
   readonly engine: Engine;
+  /** Параметри шин (спільні для всіх вантажівок) — для підбору в консолі. */
+  readonly tire = TIRE;
 
   private readonly wheelRadius: number;
   private readonly driven: boolean[];
@@ -102,12 +127,16 @@ export class TruckVehicle {
     );
     const mass = tech.mass + tech.bodyMass;
     this.mass = mass;
-    // Центр мас трохи нижче геометричного центру — стійкість, як у важкого тягача.
-    const com = g2t(tech.centerMass);
+    // Центр мас — CenterMassInB3D з TCH у системі моделі (x, висота, вперед): для ЗіЛа (0; 0,524; −0,3) —
+    // 0,3 м позаду початку моделі, ≈ 1,5 м над дорогою; так передня вісь несе ≈ 56 % ваги, як в оригіналі
+    // (навантаження коліс у s6: 12 452 / 9 662 Н). Rapier задає центр мас відносно колайдера.
+    const [cx, cy, cz] = tech.centerMass;
+    const colliderAt = new THREE.Vector3(center.x, center.y + size.y * 0.05, center.z);
+    const com = new THREE.Vector3(cx, cy, -cz).sub(colliderAt);
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2 * 0.8, size.z / 2)
-        .setTranslation(center.x, center.y + size.y * 0.05, center.z)
-        .setMassProperties(mass, { x: com.x, y: Math.min(com.y, center.y - size.y * 0.2), z: com.z }, {
+        .setTranslation(colliderAt.x, colliderAt.y, colliderAt.z)
+        .setMassProperties(mass, { x: com.x, y: com.y, z: com.z }, {
           x: mass * (size.y ** 2 + size.z ** 2) / 12,
           y: mass * (size.x ** 2 + size.z ** 2) / 12,
           z: mass * (size.x ** 2 + size.y ** 2) / 12,
@@ -127,8 +156,9 @@ export class TruckVehicle {
       this.ctrl.setWheelSuspensionRelaxation(i, 2.3);
       this.ctrl.setWheelMaxSuspensionTravel(i, 0.3);
       this.ctrl.setWheelMaxSuspensionForce(i, mass * 40);
-      this.ctrl.setWheelFrictionSlip(i, i < 2 ? TIRE_GRIP_FRONT : TIRE_GRIP_REAR);
-      this.ctrl.setWheelSideFrictionStiffness(i, 1.0);
+      this.ctrl.setWheelFrictionSlip(i, TIRE_GRIP);
+      // Бічні сили шин рахуємо самі (applyTireLateral) — у Rapier вимикаємо.
+      this.ctrl.setWheelSideFrictionStiffness(i, 0);
     }
   }
 
@@ -177,16 +207,11 @@ export class TruckVehicle {
     // переносимо в гальмо того ж колеса.
     // Двигун гальмує лише з відпущеним газом (сила проти руху); з газом — завжди тягне, зокрема з місця й назад.
     const engineBrakes = gas === 0 && eng.force * v < 0;
-    // Межа зчеплення Rapier спільна для повороту, тяги й гальмування. Недостатню повертаність оригіналу
-    // дає слабше зчеплення передніх коліс; задні (ведучі) — з тертям оригіналу 0,84, щоб тягнули повністю.
-    // Під час гальмування межу передніх плавно піднімаємо (оригінал гальмує сильніше, ніж тримає в повороті).
-    // На малій швидкості передні тримають повністю (поворот за геометрією коліс, як в оригіналі: R ≈ 6 м
-    // на 2,7 м/с), знижене зчеплення — від 3 до 7 м/с.
-    const k = Math.min(1, Math.max(0, (Math.abs(v) - 3) / 4));
-    const frontBase = TIRE_GRIP_REAR + (TIRE_GRIP_FRONT - TIRE_GRIP_REAR) * k;
-    const front = frontBase + (TIRE_GRIP_BRAKING - frontBase) * brakePedal;
+    // Межа зчеплення Rapier спільна для повороту, тяги й гальмування; під час гальмування — вища
+    // (оригінал гальмує до ≈ 0,55 g незалежно від бічного зчеплення).
+    const grip = TIRE_GRIP + (TIRE_GRIP_BRAKING - TIRE_GRIP) * brakePedal;
     for (let i = 0; i < 4; i++) {
-      this.ctrl.setWheelFrictionSlip(i, i < 2 ? front : Math.max(TIRE_GRIP_REAR, front));
+      this.ctrl.setWheelFrictionSlip(i, grip);
       const engine = this.driven[i] ? eng.force / nDriven : 0;
       const share = i < 2 ? BRAKE_FRONT : BRAKE_REAR;
       let force = brakePedal * share * tech.brakePower + ROLLING_RESISTANCE * wheelLoad;
@@ -198,6 +223,53 @@ export class TruckVehicle {
       this.ctrl.setWheelBrake(i, force * dt);
     }
     this.ctrl.updateVehicle(dt);
+    this.applyTireLateral(dt);
+  }
+
+  /**
+   * Бічні сили шин: кут проковзування α кожного колеса → сила до межі «тертя × навантаження» на α ≈ 7°,
+   * далі занос (сила слабшає до 80 % і гальмує рух боком — вантажівка втрачає швидкість, а потім
+   * знову зачіпається й різко доповорочує). Сила прикладена в точці контакту — дає крен кузова.
+   * Форма кривої — гіпотеза під опис поведінки оригіналу (відгук користувача), межа тертя — 0,84 з оригіналу.
+   */
+  private applyTireLateral(dt: number): void {
+    const r = this.body.rotation();
+    const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    const chassisFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+    const wheelMass = this.mass / 4;
+    for (let i = 0; i < 4; i++) {
+      if (!this.ctrl.wheelIsInContact(i)) continue;
+      const load = this.ctrl.wheelSuspensionForce(i) ?? 0;
+      const p = this.ctrl.wheelContactPoint(i);
+      if (load <= 0 || !p) continue;
+      const fwd = chassisFwd.clone().applyAxisAngle(up, this.ctrl.wheelSteering(i) ?? 0);
+      const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
+      const vp = this.body.velocityAtPoint(p);
+      const vLong = vp.x * fwd.x + vp.y * fwd.y + vp.z * fwd.z;
+      const vLat = vp.x * right.x + vp.y * right.y + vp.z * right.z;
+      const alpha = Math.atan2(Math.abs(vLat), Math.max(Math.abs(vLong), TIRE.low_speed));
+      const x = alpha / TIRE.slip_peak;
+      const mu = x <= 1 ? x : Math.max(TIRE.slide, 1 - (1 - TIRE.slide) * (x - 1) * 0.5);
+      // Бічна сила (перпендикулярно колесу): росте з кутом проковзування до межі, у заносі — TIRE.slide.
+      let force = mu * TIRE.mu * load;
+      // Не «перестрибувати» нуль бокової швидкості за один крок (стійкість на малій швидкості).
+      force = Math.min(force, (wheelMass * Math.abs(vLat)) / dt);
+      const impulse = right.multiplyScalar(-Math.sign(vLat) * force * dt);
+      if (x > 1) {
+        // Занос: колесо ще й гальмує вздовж руху — тим сильніше, чим глибший занос; вантажівка
+        // втрачає швидкість, доки шина знову не зачепиться (тоді — різкий доворот).
+        const drag = Math.min(TIRE.slide_drag_max, TIRE.slide_drag * (x - 1)) * TIRE.mu * load;
+        const limited = Math.min(drag, (wheelMass * Math.abs(vLong)) / dt);
+        impulse.addScaledVector(fwd, -Math.sign(vLong) * limited * dt);
+      }
+      // Точку прикладання піднімаємо до висоти центру мас на частку TIRE.roll_lift: крен лишається, а
+      // перекидальний момент менший (як rollInfluence у Bullet).
+      const com = this.body.worldCom();
+      const h = (com.x - p.x) * up.x + (com.y - p.y) * up.y + (com.z - p.z) * up.z;
+      const at = { x: p.x + up.x * h * TIRE.roll_lift, y: p.y + up.y * h * TIRE.roll_lift, z: p.z + up.z * h * TIRE.roll_lift };
+      this.body.applyImpulseAtPoint(impulse, at, true);
+    }
   }
 
   /** Синхронізує візуальну модель з фізикою (після world.step). */
