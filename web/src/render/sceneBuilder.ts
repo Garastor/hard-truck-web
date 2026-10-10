@@ -341,11 +341,13 @@ export class SceneAssembler {
       // Рівні деталізації (вантажівки; HTruck.exe 0x44bf38, режим 1): гра обирає групу за розміром моделі на
       // екрані — сфера sphere2 (r ≈ 2,5 м) у пікселях екрана 640: < values[0] — не малювати, далі група i, де
       // values[i] ≤ розмір (група 2 — найдетальніша, 0 — найпростіша). Переводимо пікселі у відстань:
-      // d = r · f / розмір, f ≈ 320 (половина ширини екрана 640) — гіпотеза щодо поля зору.
+      // d = 2r · f / розмір (гіпотеза: розмір — діаметр; підібрано так, щоб зблизька в салоні була повна модель).
       const lod = new THREE.LOD();
       const v = Array.from(d.values);
       const r = d.sphere2?.[3] ?? 2.5;
-      const dist = (px: number) => (r * 320) / Math.max(1, px);
+      // Розмір — діаметр сфери; f — фокусна відстань у пікселях екрана висотою 480 при полі зору камери 60°.
+      const f = 240 / Math.tan(Math.PI / 6);
+      const dist = (px: number) => (2 * r * f) / Math.max(1, px);
       const n = block.groups.length;
       const levels: [number, number][] = [];
       for (let gi = n - 1; gi >= 0; gi--) levels.push([gi, gi === n - 1 ? 0 : dist(v[gi + 1] ?? 1)]);
