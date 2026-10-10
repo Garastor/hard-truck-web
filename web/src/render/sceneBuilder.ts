@@ -349,9 +349,11 @@ export class SceneAssembler {
       const f = 240 / Math.tan(Math.PI / 6);
       const dist = (px: number) => (2 * r * f) / Math.max(1, px);
       const n = block.groups.length;
-      const levels: [number, number][] = [];
-      for (let gi = n - 1; gi >= 0; gi--) levels.push([gi, gi === n - 1 ? 0 : dist(v[gi + 1] ?? 1)]);
-      levels.push([-1, dist(v[0] ?? 1)]);
+      // Моделі прості (сотні полігонів) — показуємо найдетальнішу на будь-якій відстані (рішення користувача);
+      // пороги оригіналу (dist) лишаємо для довідки.
+      void dist;
+      void v;
+      const levels: [number, number][] = [[n - 1, 0]];
       for (const [gi, at] of levels) {
         const go = new THREE.Group();
         const b: Batches = new Map();

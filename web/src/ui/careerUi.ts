@@ -34,6 +34,8 @@ export interface CareerHost {
 }
 
 const EV_TUNNEL = 666;
+/** Наскільки опущені колеса стоячої вантажівки відносно точки колеса в моделі, м (хід підвіски 0,1…0,4 з TCH — гіпотеза). */
+const SHOWROOM_SAG = 0.2;
 const EV_TRUCK = 777;
 const EV_PART = 888;
 const EV_GOOD = 999;
@@ -184,6 +186,10 @@ export class CareerGame {
       const holder = new THREE.Group();
       holder.matrixAutoUpdate = false;
       holder.matrix.copy(m);
+      // Колеса в моделі — у верхньому положенні підвіски; на подіумі вантажівка стоїть — опускаємо їх.
+      for (let w = 0; w < model.wheels.length; w++) {
+        model.wheels[w].matrix.copy(model.wheelBase[w]).multiply(new THREE.Matrix4().makeTranslation(0, 0, -SHOWROOM_SAG));
+      }
       holder.add(model.root);
       frame.add(holder);
       // Колеса — на підлогу подіуму (простір space_pod_n задає точку на подіумі, не висоту коліс).
