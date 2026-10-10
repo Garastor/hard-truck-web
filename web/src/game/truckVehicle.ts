@@ -204,12 +204,12 @@ export class TruckVehicle {
     this.ctrl.setWheelSteering(0, Math.sign(this.steerAngle) * (left ? inner : outer));
     this.ctrl.setWheelSteering(1, Math.sign(this.steerAngle) * (left ? outer : inner));
 
-    // Задній хід: стоїмо й тримаємо гальмо → R, «гальмо» стає газом назад; газ на місці — знову вперед.
-    const stopped = Math.abs(v) < 0.5;
-    if (!this.reverseMode && input.brake > 0 && input.throttle === 0 && stopped) this.reverseMode = true;
-    else if (this.reverseMode && input.throttle > 0 && stopped) this.reverseMode = false;
-    const gas = this.reverseMode ? input.brake : input.throttle;
-    const brake = this.reverseMode ? input.throttle : input.brake;
+    // Задній хід — як в оригіналі: клавіша Z (кнопка R) вмикає/вимикає задню; газ везе в бік передачі,
+    // гальмо лише гальмує. Поки перемкнутися не можна (машина ще котиться не туди), газ не діє.
+    this.reverseMode = input.reverse;
+    const wrongWay = this.reverseMode ? this.engine.gear !== GEAR_R && v > 0.5 : this.engine.gear === GEAR_R && v < -0.5;
+    const gas = wrongWay ? 0 : input.throttle;
+    const brake = input.brake;
 
     const eng = this.engine;
     eng.update(dt, gas, brake, v, this.reverseMode);

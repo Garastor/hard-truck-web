@@ -16,7 +16,7 @@ import type { TruckSetup } from '../game/truckVehicle';
 import type { Room } from '../game/track';
 import type { DriveSession } from '../modes/drive';
 import type { BuiltScene } from '../render/sceneBuilder';
-import { PixelFont, panel, pixelCanvas } from './pixelFont';
+import { HUD_CYAN, PixelFont, panel, pixelCanvas } from './pixelFont';
 
 export type LevelKind = 'laps' | 'route' | 'free';
 
@@ -345,22 +345,23 @@ export class CareerGame {
     return out;
   }
 
-  /** Табличка «назва — значення» як в оригіналі (КОД, ЦІНА ЗА ОД., ВАГА…) + необовʼязкова примітка. */
+  /**
+   * Табличка «назва — значення» як в оригіналі (виміряно зі скріншота: підписи з x = 20, значення з x = 130,
+   * перший рядок y = 17, крок 15, ширина ≈ 246) + необовʼязкова примітка.
+   */
   private table(rows: [string, string][], note?: string): void {
-    const pad = 10;
-    const lh = 14;
-    const lw = Math.max(...rows.map(([k]) => this.measure(k))) + 22;
-    const vw = Math.max(...rows.map(([, v]) => this.measure(v)));
-    const w = Math.max(180, pad * 2 + lw + vw);
-    const noteLines = note ? this.wrap(note, w - pad * 2) : [];
-    const h = pad * 2 + rows.length * lh - 6 + (noteLines.length ? 6 + noteLines.length * 11 : 0);
+    const left = 20;
+    const valueX = Math.max(130, left + Math.max(...rows.map(([k]) => this.measure(k))) + 14);
+    const w = Math.max(246, valueX + Math.max(...rows.map(([, v]) => this.measure(v))) + 18);
+    const noteLines = note ? this.wrap(note, w - left * 2) : [];
+    const h = 17 + rows.length * 15 + 4 + (noteLines.length ? 4 + noteLines.length * 12 : 0);
     const { canvas, ctx } = pixelCanvas(w, h);
     panel(ctx, 0, 0, w, h);
     rows.forEach(([k, v], i) => {
-      this.text(ctx, k, pad, pad + i * lh, '#5fe3e3');
-      this.text(ctx, v, pad + lw, pad + i * lh, '#5fe3e3');
+      this.text(ctx, k, left, 17 + i * 15, HUD_CYAN);
+      this.text(ctx, v, valueX, 17 + i * 15, HUD_CYAN);
     });
-    noteLines.forEach((l, i) => this.text(ctx, l, pad, pad + rows.length * lh + i * 11, '#3fb8b8'));
+    noteLines.forEach((l, i) => this.text(ctx, l, left, 17 + rows.length * 15 + 2 + i * 12, HUD_CYAN));
     this.info.append(canvas);
     this.info.hidden = false;
   }
@@ -377,21 +378,21 @@ export class CareerGame {
     const key = [c.money, cargo, truck, cargoWeight(c), cargoVolume(c), c.condition.tech, c.condition.tires, c.condition.brakes, c.parts.join(), window.innerHeight].join();
     if (key === this.playerKey) return;
     this.playerKey = key;
-    const CYAN = '#5fe3e3';
+    const CYAN = HUD_CYAN;
     const RED = '#e00000';
     const MAG = '#e000e0';
     const WHITE = '#f0f0f0';
     const W = 214;
     const cargoLine = c.cargo.length ? this.wrap(c.cargo.map((i) => i.good.name).join(', '), W)[0] : '';
     const top = cargoLine ? 11 : 0;
-    const boxH = 72;
-    const H = top + boxH + 3 + 16;
+    const boxH = 74;
+    const H = top + boxH + 3 + 18;
     const { canvas, ctx } = pixelCanvas(W, H);
     if (cargoLine) this.text(ctx, cargoLine, 2, 0, CYAN);
     panel(ctx, 0, top, W, boxH);
-    this.text(ctx, `гроші ${Math.round(c.money)}`, 8, top + 6, CYAN);
-    this.text(ctx, `машина ${Math.round(truck)}`, 112, top + 6, CYAN);
-    const barX = 8;
+    this.text(ctx, `гроші ${Math.round(c.money)}`, 10, top + 8, CYAN);
+    this.text(ctx, `машина ${Math.round(truck)}`, 112, top + 8, CYAN);
+    const barX = 10;
     const barW = 150;
     const total = Math.max(1, c.money + cargo + truck);
     const rows: [string, [number, string][]][] = [
@@ -403,7 +404,7 @@ export class CareerGame {
       ['гальма', [[c.condition.brakes, RED]]],
     ];
     rows.forEach(([label, segs], i) => {
-      const y = top + 19 + i * 8;
+      const y = top + 21 + i * 8;
       let x = barX;
       for (const [f, color] of segs) {
         const w = Math.round(Math.max(0, Math.min(1, f)) * barW);
@@ -413,8 +414,8 @@ export class CareerGame {
       }
       this.text(ctx, label, barX + barW + 6, y - 2, CYAN);
     });
-    panel(ctx, 0, top + boxH + 3, W, 16);
-    this.text(ctx, `За кермом ${c.name}${c.parts.length ? '  ' + c.parts.join(' ') : ''}`, 8, top + boxH + 7, CYAN);
+    panel(ctx, 0, top + boxH + 3, W, 18);
+    this.text(ctx, `За кермом ${c.name}${c.parts.length ? '  ' + c.parts.join(' ') : ''}`, 10, top + boxH + 10, CYAN);
     this.player.replaceChildren(canvas);
   }
 
@@ -422,7 +423,7 @@ export class CareerGame {
     const b = el('button', 'hud-btn');
     b.setAttribute('aria-label', label);
     const { canvas, ctx } = pixelCanvas(this.measure(label), this.host.font?.height ?? 8);
-    this.text(ctx, label, 0, 0, '#5fe3e3');
+    this.text(ctx, label, 0, 0, HUD_CYAN);
     b.append(canvas);
     if (!repeat) b.addEventListener('click', onClick);
     else {

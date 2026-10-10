@@ -56,7 +56,6 @@ export class DriveSession {
   /** Пробіг, м (одометр на панелі: блакитні — км, червоні — десятки метрів). */
   private odometer = 0;
   private audio: EngineAudio | null = null;
-  private lastGear = 1;
   private brakeSqueal = 0;
   private track!: Track;
   private room: string | null = null;
@@ -487,10 +486,6 @@ export class DriveSession {
     const t = this.truck;
     if (this.audio) {
       this.audio.update(t.rpm, state.throttle);
-      if (t.gear !== this.lastGear) {
-        this.audio.play('gear', 0.6);
-        this.lastGear = t.gear;
-      }
       this.brakeSqueal -= dt;
       if (state.brake > 0 && t.gear > 0 && t.speedKmh > 25 && this.brakeSqueal <= 0) {
         this.audio.play('break', 0.5);

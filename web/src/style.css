@@ -306,6 +306,17 @@ body.bar-open #fps {
   right: calc(max(16px, env(safe-area-inset-right)) + 60px);
 }
 
+/* Задня передача (Z в оригіналі): перемикач, підсвічений, поки увімкнено. */
+.touch-btn.rev {
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
+  font-weight: 700;
+  top: auto;
+  right: calc(max(16px, env(safe-area-inset-right)) + 120px);
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 120px);
+}
+
 body.driving #bar {
   display: none;
 }

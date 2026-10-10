@@ -85,9 +85,12 @@ export class PixelFont {
   }
 }
 
-/** Масштаб піксельного табло: як в оригіналі на весь екран, але читабельно на телефоні. */
+/**
+ * Масштаб піксельного табло — лише цілий (як в оригіналі 640×480 — охайні пікселі): табло займає ту ж
+ * частку екрана, що й в оригіналі; на телефоні в ландшафті — 1×, на великому екрані — 2× і більше.
+ */
 export function hudScale(): number {
-  return window.innerHeight < 520 ? 1.5 : 2;
+  return Math.max(1, Math.floor(window.innerHeight / 400));
 }
 
 /** Полотно в «пікселях оригіналу», показане з масштабом без згладжування. */
@@ -102,13 +105,26 @@ export function pixelCanvas(w: number, h: number): { canvas: HTMLCanvasElement; 
   return { canvas, ctx: canvas.getContext('2d')! };
 }
 
-/** Рамка табличок оригіналу: напівпрозорий темний фон, світла лінія й темна всередині. */
+/** Колір тексту табло оригіналу (виміряно зі скріншота). */
+export const HUD_CYAN = 'rgb(123,255,255)';
+
+/**
+ * Рамка табличок оригіналу (виміряно зі скріншота): світла лінія 1 px по краю; усередині — «втиснута»
+ * панель: зверху й зліва смуга 4 px, що затемнює фон наполовину, темна лінія 1 px, далі фон темніший
+ * (≈ 80 %); справа й знизу смуги немає.
+ */
 export function panel(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
-  ctx.fillStyle = 'rgba(16, 18, 20, 0.62)';
-  ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = '#8c8c8c';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-  ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
-  ctx.strokeRect(x + 1.5, y + 1.5, w - 3, h - 3);
+  ctx.clearRect(x, y, w, h);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.56)';
+  ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.fillRect(x + 5, y + 5, w - 6, h - 6);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+  ctx.fillRect(x + 5, y + 5, w - 6, 1);
+  ctx.fillRect(x + 5, y + 5, 1, h - 6);
+  ctx.fillStyle = 'rgb(122, 124, 122)';
+  ctx.fillRect(x, y, w, 1);
+  ctx.fillRect(x, y + h - 1, w, 1);
+  ctx.fillRect(x, y, 1, h);
+  ctx.fillRect(x + w - 1, y, 1, h);
 }

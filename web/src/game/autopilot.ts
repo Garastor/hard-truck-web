@@ -74,7 +74,7 @@ export class WayNet {
 }
 
 export class AutoPilot {
-  readonly state: ControlState = { steer: 0, throttle: 0, brake: 0, handbrake: false };
+  readonly state: ControlState = { steer: 0, throttle: 0, brake: 0, handbrake: false, reverse: false };
   /** Бажана крейсерська швидкість, км/год. */
   cruise = 60;
   private stuck = 0;
