@@ -68,7 +68,13 @@ export class MaterialLibrary {
       } else params.color = 0xff00ff;
     } else if (def && def.col !== null && this.palette) {
       const c = def.col;
-      params.color = new THREE.Color(this.palette[c * 3] / 255, this.palette[c * 3 + 1] / 255, this.palette[c * 3 + 2] / 255);
+      // Палітра — у sRGB, як і текстури (без цього колір світлішає: «чорні» шини ставали світло-сірими).
+      params.color = new THREE.Color().setRGB(
+        this.palette[c * 3] / 255,
+        this.palette[c * 3 + 1] / 255,
+        this.palette[c * 3 + 2] / 255,
+        THREE.SRGBColorSpace,
+      );
     } else params.color = 0x808080;
     if (def?.params.transp) {
       params.transparent = true;

@@ -21,6 +21,9 @@ if (import.meta.env.DEV) Object.assign(window, { RAPIER });
  */
 /** Шар Three.js для деталей кабіни, що малюються поверх решти кабіни (кермо). */
 const CAB_TOP_LAYER = 1;
+/** Шкали стрілок кабіни, градусів на одиницю. */
+const SPEED_DEG_PER_KMH = 246 / 150;
+const TACHO_DEG_PER_RPM = 270 / 3000;
 
 export class DriveSession {
   private world!: RAPIER.World;
@@ -243,6 +246,17 @@ export class DriveSession {
     // Кермо частково «втоплене» в панель: оригінал малює його після кабіни, поверх неї.
     // Відтворюємо це окремим шаром, який рендериться після очищення глибини.
     this.cabParts.rule?.traverse((o) => o.layers.set(CAB_TOP_LAYER));
+    // Стрілки лежать у площині циферблата — з перевіркою глибини їх перекриває шкала. Малюємо їх після
+    // кабіни без перевірки глибини (кермо — окремим проходом, тож воно й далі закриває стрілки).
+    for (const needle of [this.cabParts.tacho, this.cabParts.speed]) {
+      needle?.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        m.material = (m.material as THREE.Material).clone();
+        (m.material as THREE.Material).depthTest = false;
+        m.renderOrder = 10;
+      });
+    }
   }
 
   /** Другий прохід кадру: кабіна поверх світу, потім кермо поверх кабіни. */
@@ -275,15 +289,17 @@ export class DriveSession {
     };
     const deg = Math.PI / 180;
     rot(this.cabParts.rule, new THREE.Vector3(0, 0, 1), -state.steer * 2.4);
-    // Наближене калібрування стрілок (точні коефіцієнти — з HTruck.exe, R7): 270° на 3000 об/хв і на 160 км/год.
-    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), Math.min(1, this.truck.rpm / 3000) * 270 * deg);
-    rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), Math.min(1, this.truck.speedKmh / 160) * 270 * deg);
+    // Кут стрілки = значення × коефіцієнт (0x48f950; коефіцієнти кабін у файлах гри не знайдено).
+    // Відкалібровано за шкалами ЗіЛа: спідометр 150 км/год ≈ 246°, тахометр 0–3000 об/хв на 270° (гіпотеза).
+    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), Math.min(this.truck.rpm, 3000) * TACHO_DEG_PER_RPM * deg);
+    rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), Math.min(this.truck.speedKmh, 165) * SPEED_DEG_PER_KMH * deg);
     // Табло: A — автоматична КПП, P — ручник, передача; одометр — 5 розрядів (KMeter0Key — молодший).
     const sw = this.cabSwitch;
     if (sw) {
       sw('AvtoKey', 1);
       sw('ParkKey', this.handbrakeOn ? 1 : 0);
-      sw('GearKey', this.truck.gear < 0 ? 0 : this.truck.gear === 0 ? 1 : 2);
+      // Стани GearKey — нумерація передач оригіналу: 0 — R, 1 — N, 2 — перша…
+      sw('GearKey', Math.max(0, Math.min(9, this.truck.gear + 1)));
       const tens = Math.floor(this.odometer / 10);
       for (let i = 0; i < 5; i++) sw(`KMeter${i}Key`, Math.floor(tens / 10 ** i) % 10);
     }
