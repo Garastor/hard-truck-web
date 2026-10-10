@@ -291,18 +291,33 @@ def cmd_auto(out_prefix, window_before=0x1000, window_after=0x2000, hz=30, max_m
         time.sleep(2)
     p = Proc()
     say(f"гра запущена (PID {p.pid}); чекаю, поки зʼявиться машина…")
-    cars = []
-    scans = 0
     recs = tech_records(p)
     masses = {rec[0x70:0x74] for rec in recs}  # maxrotmomentum
+    seg = 0
+    while find_pid() and time.time() - t_start < max_minutes * 60:
+        prefix = out_prefix if seg == 0 else f"{out_prefix}-{seg}"
+        if not record_segment(p, prefix, say, masses, window_before, window_after, hz, t_start, max_minutes):
+            break
+        seg += 1
+        say("вантажівка зникла (зміна локації?) — чекаю на нову…")
+        time.sleep(5)  # не заважаємо грі завантажувати локацію
+    say("гру закрито — запис завершено")
+
+
+def record_segment(p, out_prefix, say, masses, window_before, window_after, hz, t_start, max_minutes):
+    """Шукає машини й пише один відрізок до зникнення машини. False — гру закрито до появи машини."""
+    import json
+
+    cars = []
+    scans = 0
     while not cars:
         if not find_pid():
-            return say(f"гру закрито до появи машини (пошуків: {scans})")
+            say(f"гру закрито до появи машини (пошуків: {scans})")
+            return False
         cars = find_cars(p)
         scans += 1
         if not cars:
             if scans % 5 == 1:
-                # Діагностика: скільки разів у памʼяті трапляється лише маса техніки (поза таблицею).
                 hits = 0
                 st = {}
                 for _, data in p.chunks(st):
@@ -311,7 +326,7 @@ def cmd_auto(out_prefix, window_before=0x1000, window_after=0x2000, hz=30, max_m
                     f"пошук {scans}: машину не знайдено; збігів за моментом двигуна: {hits}; "
                     f"прочитано {st.get('ok', 0) >> 20} МБ, не прочитано {st.get('fail', 0) >> 20} МБ"
                 )
-            time.sleep(2)
+            time.sleep(3)
     say("машини: " + ", ".join(f"0x{a:08x} (TECH{i}, {how})" for a, i, how in cars))
     cars = cars[:6]
     size = window_before + window_after
@@ -326,19 +341,67 @@ def cmd_auto(out_prefix, window_before=0x1000, window_after=0x2000, hz=30, max_m
         json.dump(meta, f, indent=1)
     frames = 0
     t0 = time.perf_counter()
+    first = [p.read_padded(a - window_before, size) for a, _, _ in cars]
+
+    def key(c):
+        # [0x251] головна передача і [0x253] момент — незмінні; між ними [0x252] — оберти.
+        return c[window_before : window_before + 4] + c[window_before + 8 : window_before + 12] if c else b""
+
+    sigs = [key(c) for c in first]
+    # Повні знімки памʼяті для пошуку камери: один на прямій, до трьох — на стійкому повороті.
+    base_off = window_before - 0x944  # початок обʼєкта машини у вікні
+    straight_since = {}
+    turn_since = {}
+    dumps = {"straight": 0, "turn": 0}
+    last_dump = -10.0
+
+    def fld(c, idx):
+        return struct.unpack_from("<f", c, base_off + idx * 4)[0]
+
+    def dump(kind, t, car):
+        nonlocal last_dump
+        path = f"{out_prefix}.dump-{kind}{dumps[kind]}.bin"
+        n = 0
+        with open(path, "wb") as fd:
+            for addr, data in p.chunks():
+                fd.write(struct.pack("<II", addr, len(data)))
+                fd.write(data)
+                n += len(data)
+        dumps[kind] += 1
+        last_dump = time.perf_counter() - t0
+        say(f"знімок памʼяті {kind}: t={t:.1f} с, машина {car}, {n >> 20} МБ → {path}")
+
     with open(out_prefix + ".bin", "wb") as fo:
         while time.time() - t_start < max_minutes * 60:
             chunks = [p.read_padded(a - window_before, size) for a, _, _ in cars]
             if any(c is None for c in chunks) or not find_pid():
                 break  # гру закрито або обʼєкт зник
-            fo.write(struct.pack("<d", time.perf_counter() - t0))
+            # Обʼєкт звільнено (зміна локації): незмінні поля TCH більше не на місці.
+            if any(key(c) != sig for c, sig in zip(chunks, sigs)):
+                break
+            t = time.perf_counter() - t0
+            fo.write(struct.pack("<d", t))
             for c in chunks:
                 fo.write(c)
             frames += 1
             if frames % (hz * 10) == 0:
                 fo.flush()
+            for ci, c in enumerate(chunks):
+                speed = fld(c, 0x128)
+                steer = max(fld(c, 0x22F), fld(c, 0x230))
+                ok_speed = speed == speed and speed > 4
+                straight_since[ci] = straight_since.get(ci, t) if ok_speed and steer < 0.01 else t
+                turn_since[ci] = turn_since.get(ci, t) if ok_speed and steer > 0.8 else t
+                if t - last_dump > 2:
+                    if dumps["straight"] < 1 and t - straight_since[ci] > 1.5:
+                        dump("straight", t, ci)
+                    elif dumps["turn"] < 3 and t - turn_since[ci] > 1.0:
+                        dump("turn", t, ci)
             time.sleep(max(0.0, 1 / hz - 0.002))
-    say(f"запис завершено: {frames} кадрів, {time.perf_counter() - t0:.1f} с")
+    say(f"відрізок {out_prefix}: {frames} кадрів, {time.perf_counter() - t0:.1f} с")
+    return True
+
+
 
 
 def main():
