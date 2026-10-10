@@ -36,6 +36,8 @@ export interface CareerHost {
 const EV_TUNNEL = 666;
 /** Наскільки опущені колеса стоячої вантажівки відносно точки колеса в моделі, м (хід підвіски 0,1…0,4 з TCH — гіпотеза). */
 const SHOWROOM_SAG = 0.2;
+/** Зсув уперед на подіумі, м: довгий Renault інакше виступає задом крізь стіну в задній проїзд. */
+const SHOWROOM_SHIFT: Record<string, number> = { reno: 1.2 };
 const EV_TRUCK = 777;
 const EV_PART = 888;
 const EV_GOOD = 999;
@@ -195,6 +197,7 @@ export class CareerGame {
       model.root.traverse((o) => {
         if (/shadow$/i.test(o.name)) o.visible = false;
       });
+      model.root.position.y += SHOWROOM_SHIFT[def.carNode.toLowerCase()] ?? 0;
       holder.add(model.root);
       frame.add(holder);
       // Колеса — на підлогу подіуму (простір space_pod_n задає точку на подіумі, не висоту коліс).
