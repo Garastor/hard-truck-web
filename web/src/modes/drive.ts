@@ -570,7 +570,7 @@ ${raceLine}`;
   /** Кімната під точкою (Three.js) — за підлогою hit_road/hit_obj. */
   private locate(p: THREE.Vector3): string | null {
     const r = roomAt(this.col, p.x, -p.z, p.y);
-    return r && this.track.rooms.has(r) ? r : null;
+    return r && this.track.rooms.has(r) ? this.track.canonical(r) : null;
   }
 
   /** Кімнати й коло: перетин порталів, старт таймера, фініш (подія 666). */
@@ -582,6 +582,8 @@ ${raceLine}`;
     // Стрибок (рестарт, телепорт) — не перетин порталів: кімнату визначаємо лише за підлогою.
     const jumped = this.prevPos.distanceTo(cur) > 15;
     let next = this.room && !jumped ? this.track.crossPortal(this.room, this.prevPos, cur) : null;
+    if (next) next = this.track.canonical(next);
+    if (next === this.room) next = null;
     if (jumped) this.locateTimer = 0;
     if (!next && (this.locateTimer -= 1 / 60) <= 0) {
       this.locateTimer = 0.25;

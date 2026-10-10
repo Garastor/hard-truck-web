@@ -32,8 +32,24 @@ export const EVENT_DEATH = 3264;
 export class Track {
   readonly rooms = new Map<string, Room>();
 
+  /** Тупикові підкімнати без власних порталів (ніші подіумів, полиці з товаром) → кімната, з якої в них прохід. */
+  private readonly parent = new Map<string, string>();
+
   constructor(b3d: B3d) {
     for (const b of b3d.blocks) if (b.data.t === 19) this.rooms.set(b.name, this.readRoom(b));
+    for (const r of this.rooms.values())
+      for (const p of r.portals) {
+        const to = this.rooms.get(p.to);
+        if (to && !to.portals.length && !this.parent.has(p.to)) this.parent.set(p.to, r.name);
+      }
+  }
+
+  /**
+   * Кімната, у якій «перебуває» машина: тупикова підкімната — частина своєї кімнати (з неї нічого не видно
+   * крізь портали, а події зали записані в основній кімнаті).
+   */
+  canonical(room: string): string {
+    return this.parent.get(room) ?? room;
   }
 
   private readRoom(block: Block): Room {
