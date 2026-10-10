@@ -10,6 +10,10 @@ export interface ControlState {
 }
 
 type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake';
+/** Значок сигналу (гучномовець із хвилями) — однотонний, як решта кнопок. */
+const HORN_SVG =
+  '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M3 10v4h3l6 4V6L6 10H3z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M19 6.5a8 8 0 0 1 0 11"/></svg>';
+
 type Command = 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt';
 
 /** Час повороту керма з клавіатури від центру до краю, с, і швидкість повернення, 1/с (оригінал, s6). */
@@ -127,10 +131,11 @@ export class Input {
   mountTouch(parent: HTMLElement): HTMLElement {
     const ui = document.createElement('div');
     ui.className = 'touch-ui';
-    const btn = (cls: string, label: string, action?: Action, cmd?: Command) => {
+    const btn = (cls: string, label: string, action?: Action, cmd?: Command, svg?: string) => {
       const b = document.createElement('button');
       b.className = `touch-btn ${cls}`;
-      b.textContent = label;
+      if (svg) b.innerHTML = svg;
+      else b.textContent = label;
       b.setAttribute('aria-label', cls);
       const down = (e: PointerEvent) => {
         e.preventDefault();
@@ -156,8 +161,7 @@ export class Input {
     btn('gas', 'ГАЗ', 'gas');
     btn('cam', '👁', undefined, 'camera');
     btn('reset', '↺', undefined, 'reset');
-    btn('horn', '📯', undefined, 'horn');
-    btn('tilt', '📱', undefined, 'tilt');
+    btn('horn', '', undefined, 'horn', HORN_SVG);
     parent.append(ui);
     return ui;
   }

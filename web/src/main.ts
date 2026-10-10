@@ -298,6 +298,29 @@ qualitySel.addEventListener('change', () => {
   limiter.fps = QUALITY[next].fps;
   resize();
 });
+// Налаштування керування: кермо праворуч, педалі ліворуч (зберігається в цьому браузері).
+const SWAP_KEY = 'ht.swapControls';
+function loadSwap(): boolean {
+  try {
+    return localStorage.getItem(SWAP_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+function setSwap(on: boolean): void {
+  document.body.classList.toggle('swap-controls', on);
+  try {
+    localStorage.setItem(SWAP_KEY, on ? '1' : '0');
+  } catch {
+    /* приватний режим — лише на цей сеанс */
+  }
+}
+document.body.classList.toggle('swap-controls', loadSwap());
+$('options').addEventListener('click', () => {
+  document.body.classList.remove('bar-open');
+  void optionsDialog();
+});
+
 $('fpsToggle').addEventListener('click', () => {
   showFps = !showFps;
   saveShowFps(showFps);
@@ -503,8 +526,17 @@ async function optionsDialog(): Promise<void> {
   sel.value = qualitySel.value;
   label.append(sel);
   box.append(label);
+  const swapLabel = document.createElement('label');
+  swapLabel.className = 'career-check';
+  const swap = document.createElement('input');
+  swap.type = 'checkbox';
+  swap.checked = loadSwap();
+  swapLabel.append(swap, ' Поміняти місцями кермо й педалі');
+  box.append(swapLabel);
   const ok = await modal(overlay, 'Опції', box, ['Гаразд', 'Скасувати']);
-  if (ok === 0 && sel.value !== qualitySel.value) {
+  if (ok !== 0) return;
+  setSwap(swap.checked);
+  if (sel.value !== qualitySel.value) {
     qualitySel.value = sel.value;
     qualitySel.dispatchEvent(new Event('change'));
   }

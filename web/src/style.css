@@ -288,7 +288,8 @@ body.bar-open #fps {
 }
 
 .touch-btn.cam,
-.touch-btn.reset {
+.touch-btn.reset,
+.touch-btn.horn {
   width: 48px;
   height: 48px;
   font-size: 18px;
@@ -303,18 +304,32 @@ body.bar-open #fps {
   right: calc(var(--sr) + 60px);
 }
 
-.touch-btn.horn,
-.touch-btn.tilt {
-  width: 48px;
-  height: 48px;
-  font-size: 18px;
-  right: var(--sr);
-  top: auto;
-  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 120px);
+/* Сигнал — угорі поруч із рестартом. */
+.touch-btn.horn {
+  right: calc(var(--sr) + 120px);
+  display: grid;
+  place-items: center;
 }
 
-.touch-btn.tilt {
-  right: calc(var(--sr) + 60px);
+/* Налаштування «поміняти місцями»: кермо праворуч, педалі ліворуч (гальмо — ближче до краю). */
+body.swap-controls .touch-btn.left {
+  left: auto;
+  right: calc(var(--sr) + 92px);
+}
+
+body.swap-controls .touch-btn.right {
+  left: auto;
+  right: var(--sr);
+}
+
+body.swap-controls .touch-btn.brake {
+  right: auto;
+  left: var(--sl);
+}
+
+body.swap-controls .touch-btn.gas {
+  right: auto;
+  left: calc(var(--sl) + 88px);
 }
 
 
@@ -330,6 +345,7 @@ body.driving.bar-open #bar {
 /* Поки меню відкрите, верхні ігрові кнопки й табло не перекривають його (зокрема ⛶). */
 body.driving.bar-open .touch-btn.cam,
 body.driving.bar-open .touch-btn.reset,
+body.driving.bar-open .touch-btn.horn,
 body.driving.bar-open .drive-hud {
   visibility: hidden;
 }
@@ -348,7 +364,8 @@ body.driving .drive-hud {
 }
 
 body.driving .touch-btn.cam,
-body.driving .touch-btn.reset {
+body.driving .touch-btn.reset,
+body.driving .touch-btn.horn {
   top: max(8px, env(safe-area-inset-top));
 }
 
@@ -511,6 +528,18 @@ body.career #stats {
   font-weight: 700;
 }
 
+.career-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.career-check input {
+  width: 20px;
+  height: 20px;
+}
+
 
 /* --- Меню оригіналу (LOAD.RES) --- */
 .menu-screen {
@@ -664,10 +693,23 @@ body.in-menu #fps {
   line-height: 0;
 }
 
+.hud-player {
+  pointer-events: auto;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* На телефоні — праворуч над педалями (з «поміняти місцями» — ліворуч); тап згортає до значка. */
 @media (pointer: coarse) {
   .hud-player {
-    left: 50%;
-    transform: translateX(-50%);
+    left: auto;
+    right: var(--sr);
+    bottom: calc(max(20px, env(safe-area-inset-bottom)) + 116px);
+  }
+
+  body.swap-controls .hud-player {
+    right: auto;
+    left: var(--sl);
   }
 }
 

@@ -16,7 +16,7 @@ import type { TruckSetup } from '../game/truckVehicle';
 import type { Room } from '../game/track';
 import type { DriveSession } from '../modes/drive';
 import type { BuiltScene } from '../render/sceneBuilder';
-import { HUD_CYAN, PixelFont, frame, inset, panel, pixelCanvas } from './pixelFont';
+import { HUD_CYAN, PixelFont, frame, hudScale, inset, panel, pixelCanvas } from './pixelFont';
 
 export type LevelKind = 'laps' | 'route' | 'free';
 
@@ -99,6 +99,8 @@ export class CareerGame {
   private showroom: THREE.Object3D[] = [];
   private zoneKey = '';
   private busy = false;
+  /** Табло гравця згорнуте до значка (на трасах — за замовчуванням). */
+  private playerCollapsed = false;
   /** Удари й пробіг, за які знос уже нараховано (знос рахується під час заїзду). */
   private wornHits = 0;
   private wornDist = 0;
@@ -114,6 +116,12 @@ export class CareerGame {
     this.info = el('div', 'hud-info');
     this.actions = el('div', 'hud-actions');
     this.player = el('div', 'hud-player');
+    this.player.setAttribute('role', 'button');
+    this.player.setAttribute('aria-label', 'Табло гравця: згорнути / розгорнути');
+    this.player.addEventListener('click', () => {
+      this.playerCollapsed = !this.playerCollapsed;
+      this.renderPlayer();
+    });
     this.panel.append(this.info, this.actions, this.player);
     window.addEventListener('keydown', this.onKey);
   }
@@ -150,6 +158,7 @@ export class CareerGame {
     if (!this.drive) return;
     this.drive.onRoomEnter = (room) => this.onBaseRoom(room);
     this.drive.applyDents(this.c.dents);
+    this.playerCollapsed = false;
     this.setupBase();
     this.zoneKey = '';
     this.refresh();
@@ -267,6 +276,7 @@ export class CareerGame {
       asm?.setSwitch('RainKey', this.c.weather[track] === 'rain' ? 1 : 0);
       this.drive.onFinish = () => void this.finishTrip(true);
       this.drive.applyDents(this.c.dents);
+      this.playerCollapsed = true;
       this.drive.onDeath = () => void this.fatal();
       this.drive.onResetRequest = () => void this.askRecover();
       this.wornHits = this.wornDist = 0;
@@ -465,13 +475,25 @@ export class CareerGame {
     const s = this.spec;
     const cargo = this.cargoValue();
     const truck = Math.max(0, truckValue(c, s));
-    const key = [c.money, cargo, truck, cargoWeight(c), cargoVolume(c), c.condition.tech, c.condition.tires, c.condition.brakes, c.parts.join(), window.innerHeight].join();
+    const key = [c.money, cargo, truck, cargoWeight(c), cargoVolume(c), c.condition.tech, c.condition.tires, c.condition.brakes, c.parts.join(), window.innerHeight, this.playerCollapsed].join();
     if (key === this.playerKey) return;
     this.playerKey = key;
     const CYAN = HUD_CYAN;
     const RED = '#e00000';
     const MAG = '#e000e0';
     const WHITE = '#f0f0f0';
+    if (this.playerCollapsed) {
+      // Значок: рамка табло з трьома смугами стану (машина, шини, гальма) — видно знос і згорнутим.
+      const { canvas, ctx } = pixelCanvas(30, 22, hudScale() * 1.5);
+      frame(ctx, 0, 0, 30, 22);
+      inset(ctx, 4, 4, 23, 15);
+      [c.condition.tech, c.condition.tires, c.condition.brakes].forEach((f, i) => {
+        ctx.fillStyle = RED;
+        ctx.fillRect(6, 6 + i * 4, Math.max(1, Math.round(19 * f)), 3);
+      });
+      this.player.replaceChildren(canvas);
+      return;
+    }
     // Розмітка виміряна зі скріншота оригіналу: одна рамка на все табло, усередині дві втиснуті панелі
     // (смуги й «За кермом»), підписи смуг — праворуч від панелі; «гроші» лежать на верхній лінії рамки.
     const W = 262;
