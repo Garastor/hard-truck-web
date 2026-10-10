@@ -10,6 +10,21 @@ import { Engine, GEAR_R } from './engine';
  * Параметри — з [TECHn] у TRUCK.TCH. Двигун і коробка — відтворені з HTruck.exe (engine.ts);
  * шини, підвіска й інтегрування кузова — поки Rapier (доріжка R4 продовжується).
  */
+/** Кермо (телеметрія s6): межа 1,04/(1 + 0,056·v), не більше 0,913; кут колеса = 0,684 × кермо. */
+const STEER_A = 1.041;
+const STEER_B = 0.056;
+const STEER_MAX = 0.913;
+const STEER_TO_WHEEL = 0.684;
+/** cot(зовнішнього) − cot(внутрішнього) кута коліс (ЗіЛ, s6: 0,624 / 0,558 рад). */
+const ACKERMANN = 0.208;
+
+/**
+ * Межа зчеплення шин (Rapier frictionSlip), підібрана під коло з кермом до упору (s6):
+ * радіус 17,4 м на 7,5 м/с (оригінал ≈ 17,8) і 7,4 м на 3,5 м/с (≈ 8). Під час гальмування — вища.
+ */
+const TIRE_GRIP = 0.42;
+const TIRE_GRIP_BRAKING = 1.0;
+
 /** Частки breakpower на колесо: передні / задні (телеметрія ЗіЛ, s6) — гіпотеза для інших вантажівок. */
 const BRAKE_FRONT = 0.49;
 const BRAKE_REAR = 0.35;
@@ -111,7 +126,7 @@ export class TruckVehicle {
       this.ctrl.setWheelSuspensionRelaxation(i, 2.3);
       this.ctrl.setWheelMaxSuspensionTravel(i, 0.3);
       this.ctrl.setWheelMaxSuspensionForce(i, mass * 40);
-      this.ctrl.setWheelFrictionSlip(i, 2.2);
+      this.ctrl.setWheelFrictionSlip(i, TIRE_GRIP);
       this.ctrl.setWheelSideFrictionStiffness(i, 1.0);
     }
   }
@@ -126,12 +141,15 @@ export class TruckVehicle {
     const v = lv.x * fwd.x + lv.y * fwd.y + lv.z * fwd.z;
     this.speedKmh = Math.abs(v) * 3.6;
 
-    // Кермо: менший кут на швидкості.
-    const maxSteer = 0.55 / (1 + Math.abs(v) / 15);
-    const targetSteer = -input.steer * maxSteer;
-    this.steerAngle += (targetSteer - this.steerAngle) * Math.min(1, dt * 8);
-    this.ctrl.setWheelSteering(0, this.steerAngle);
-    this.ctrl.setWheelSteering(1, this.steerAngle);
+    // Кермо як в оригіналі (s6): межа залежить від швидкості 1,04/(1 + 0,056·v) ≤ 0,913,
+    // кут колеса = 0,684 × кермо; внутрішнє колесо повертається більше (Аккерман, cot o − cot i = 0,208).
+    const limit = Math.min(STEER_MAX, STEER_A / (1 + STEER_B * Math.abs(v)));
+    this.steerAngle = -input.steer * limit * STEER_TO_WHEEL;
+    const inner = Math.abs(this.steerAngle);
+    const outer = inner > 1e-4 ? Math.atan(1 / (1 / Math.tan(inner) + ACKERMANN)) : 0;
+    const left = this.steerAngle > 0; // + — вліво
+    this.ctrl.setWheelSteering(0, Math.sign(this.steerAngle) * (left ? inner : outer));
+    this.ctrl.setWheelSteering(1, Math.sign(this.steerAngle) * (left ? outer : inner));
 
     // Задній хід: стоїмо й тримаємо гальмо → R, «гальмо» стає газом назад; газ на місці — знову вперед.
     const stopped = Math.abs(v) < 0.5;
@@ -157,7 +175,11 @@ export class TruckVehicle {
     // Rapier ігнорує гальмо колеса, на яке діє сила двигуна, тож гальмування двигуном (сила проти руху)
     // переносимо в гальмо того ж колеса.
     const engineBrakes = eng.force * v <= 0;
+    // Межа зчеплення Rapier спільна для повороту й гальмування; оригінал на повороті тримає слабше,
+    // ніж гальмує, тож під час гальмування межу плавно піднімаємо.
+    const grip = TIRE_GRIP + (TIRE_GRIP_BRAKING - TIRE_GRIP) * brakePedal;
     for (let i = 0; i < 4; i++) {
+      this.ctrl.setWheelFrictionSlip(i, grip);
       const engine = this.driven[i] ? eng.force / nDriven : 0;
       const share = i < 2 ? BRAKE_FRONT : BRAKE_REAR;
       let force = brakePedal * share * tech.brakePower + ROLLING_RESISTANCE * wheelLoad;

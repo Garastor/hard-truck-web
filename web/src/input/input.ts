@@ -12,10 +12,21 @@ export interface ControlState {
 type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake';
 type Command = 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt';
 
+/** Час повороту керма з клавіатури від центру до краю, с, і швидкість повернення, 1/с (оригінал, s6). */
+const STEER_RAMP = 1.1;
+const STEER_RETURN = 4.3;
+
+/** Обернена до smoothstep x²(3 − 2x) на [0, 1]. */
+function inverseSmoothstep(y: number): number {
+  return 0.5 - Math.sin(Math.asin(1 - 2 * Math.min(1, y)) / 3);
+}
+
 export class Input {
   readonly state: ControlState = { steer: 0, throttle: 0, brake: 0, handbrake: false };
   private readonly held = new Set<Action>();
   private steerSmooth = 0;
+  private steerHold = 0;
+  private steerDir = 0;
   /** Кермування нахилом телефона (DeviceOrientation), −1..1 або null, якщо вимкнено. */
   private tilt: number | null = null;
   private readonly onOrient = (e: DeviceOrientationEvent) => {
@@ -74,8 +85,22 @@ export class Input {
       padBrake = p.buttons[6]?.value ?? 0;
       break;
     }
-    const rate = target === 0 ? 4 : 2.5;
-    this.steerSmooth += Math.sign(target - this.steerSmooth) * Math.min(Math.abs(target - this.steerSmooth), rate * dt);
+    // Кермо з клавіатури як в оригіналі (телеметрія s6, поля [0x22f]/[0x230]): при утриманні — плавна
+    // S-крива від 0 до повного за 1,1 с; відпустив — експоненційно до нуля (≈ 4,3 1/с).
+    if (target !== 0) {
+      if (Math.sign(target) !== this.steerDir) {
+        // Нова сторона: продовжуємо з поточного положення керма по тій самій кривій.
+        this.steerDir = Math.sign(target);
+        this.steerHold = inverseSmoothstep(Math.max(0, this.steerSmooth * this.steerDir)) * STEER_RAMP;
+      }
+      this.steerHold = Math.min(STEER_RAMP, this.steerHold + dt);
+      const x = this.steerHold / STEER_RAMP;
+      this.steerSmooth = this.steerDir * x * x * (3 - 2 * x);
+    } else {
+      this.steerDir = 0;
+      this.steerSmooth *= Math.exp(-STEER_RETURN * dt);
+      if (Math.abs(this.steerSmooth) < 1e-3) this.steerSmooth = 0;
+    }
     this.state.steer = padSteer || (this.tiltEnabled && this.tilt !== null && target === 0 ? this.tilt : this.steerSmooth);
     this.state.throttle = Math.max(this.held.has('gas') ? 1 : 0, padGas);
     this.state.brake = Math.max(this.held.has('brake') ? 1 : 0, padBrake);
