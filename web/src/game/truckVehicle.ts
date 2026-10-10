@@ -214,11 +214,15 @@ export class TruckVehicle {
       this.ctrl.setWheelFrictionSlip(i, grip);
       const engine = this.driven[i] ? eng.force / nDriven : 0;
       const share = i < 2 ? BRAKE_FRONT : BRAKE_REAR;
-      let force = brakePedal * share * tech.brakePower + ROLLING_RESISTANCE * wheelLoad;
+      const rolling = ROLLING_RESISTANCE * wheelLoad;
+      let force = brakePedal * share * tech.brakePower + rolling;
       if (input.handbrake && i >= 2) force += tech.brakePower;
       if (engineBrakes) {
         this.ctrl.setWheelEngineForce(i, 0);
         force += Math.abs(engine);
+      } else if (engine !== 0 && Math.abs(v) > 0.1) {
+        // З тягою Rapier ігнорує й опір кочення — віднімаємо його від сили двигуна.
+        this.ctrl.setWheelEngineForce(i, -(engine - Math.sign(v) * rolling));
       } else this.ctrl.setWheelEngineForce(i, -engine);
       this.ctrl.setWheelBrake(i, force * dt);
     }
