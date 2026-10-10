@@ -175,7 +175,7 @@ export class SideSwitch extends THREE.Group {
 
 export class SceneAssembler {
   readonly lib: MaterialLibrary;
-  readonly stats = { rooms: 0, meshes: 0, triangles: 0, instances: 0, missingTextures: 0 };
+  readonly stats = { rooms: 0, meshes: 0, triangles: 0, instances: 0, sprites: 0, missingTextures: 0 };
   private readonly topByName = new Map<string, Block>();
   /** Усі простори (24), включно з вкладеними, з композицією матриць батьків. */
   private readonly spaces = new Map<string, THREE.Matrix4>();
@@ -353,6 +353,9 @@ export class SceneAssembler {
       case 18:
         this.addInstance(d.space, d.object, into);
         return;
+      case 28:
+        this.addSprites(d.center, d.raw, into);
+        return;
       case 20:
       case 23:
       case 30:
@@ -430,6 +433,66 @@ export class SceneAssembler {
     }
     for (const g of groups) for (const child of g) this.visit(child, cur, batches, into, depth + 1);
   }
+
+  /**
+   * Тип 28 — білборди, повернуті до камери (ореоли ліхтарів і фар, відблиски): u32 n, далі n полігонів —
+   * u32 формат (2), f32, u32, u32 матеріал, u32 k, k × (x, y — зміщення кута в метрах у площині екрана; u, v).
+   * Світяться — додаємо колір (адитивно), глибину не пишемо.
+   */
+  private addSprites(center: [number, number, number], raw: Uint8Array, into: THREE.Object3D): void {
+    const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    let o = 0;
+    const n = dv.getUint32(o, true);
+    o += 4;
+    for (let p = 0; p < n && o + 20 <= raw.byteLength; p++) {
+      const material = dv.getUint32(o + 12, true);
+      const k = dv.getUint32(o + 16, true);
+      o += 20;
+      if (o + k * 16 > raw.byteLength) return;
+      const pts: [number, number, number, number][] = [];
+      for (let i = 0; i < k; i++, o += 16) pts.push([0, 4, 8, 12].map((j) => dv.getFloat32(o + j, true)) as [number, number, number, number]);
+      if (k < 3) continue;
+      const sprite = this.sprite(material, pts);
+      if (!sprite) continue;
+      sprite.position.set(...center);
+      into.add(sprite);
+    }
+  }
+
+  private sprite(material: number, pts: [number, number, number, number][]): THREE.Sprite | null {
+    const base = this.lib.material(material) as THREE.MeshBasicMaterial;
+    if (!base.map) return null;
+    const xs = pts.map((q) => q[0]);
+    const ys = pts.map((q) => q[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    if (x1 - x0 < 1e-4 || y1 - y0 < 1e-4) return null;
+    // UV у кутах прямокутника — з найближчих вершин (у даних кути завжди осьові).
+    const uvAt = (x: number, y: number) => {
+      let best = pts[0];
+      for (const q of pts) if (Math.hypot(q[0] - x, q[1] - y) < Math.hypot(best[0] - x, best[1] - y)) best = q;
+      return [best[2], best[3]];
+    };
+    const [ubl, vbl] = uvAt(x0, y0);
+    const [ubr] = uvAt(x1, y0);
+    const [, vtl] = uvAt(x0, y1);
+    const key = `${material}|${ubl},${vbl},${ubr},${vtl}`;
+    let mat = this.spriteMats.get(key);
+    if (!mat) {
+      const map = base.map.clone();
+      map.offset.set(ubl, vbl);
+      map.repeat.set(ubr - ubl, vtl - vbl);
+      map.needsUpdate = true;
+      mat = new THREE.SpriteMaterial({ map, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+      this.spriteMats.set(key, mat);
+    }
+    const s = new THREE.Sprite(mat);
+    s.center.set(-x0 / (x1 - x0), -y0 / (y1 - y0));
+    s.scale.set(x1 - x0, y1 - y0, 1);
+    this.stats.sprites++;
+    return s;
+  }
+
+  private readonly spriteMats = new Map<string, THREE.SpriteMaterial>();
 
   private addInstance(spaceName: string, objectName: string, into: THREE.Object3D): void {
     // Порожній простір: у моделях (вантажівки) — система координат батька (деталі кабіни, колеса);

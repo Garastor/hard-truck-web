@@ -151,8 +151,8 @@ export class DriveSession {
   private glassRain: GlassRain | null = null;
   /** Вмʼятини кузова: накопичена сила ударів за зонами (FC, FR, R, BR, BC, BL, L, FL). */
   dents: Record<string, number> = {};
-  private dentSwitch: ((name: string, state: number) => void) | undefined;
-  private dentStates: ((name: string) => number) | undefined;
+  private modelSwitch: ((name: string, state: number) => void) | undefined;
+  private modelStates: ((name: string) => number) | undefined;
   /** Фатальна ситуація (вода, прірва — подія 3264). Без обробника — рестарт на точці кімнати. */
   onDeath: (() => void) | null = null;
   /** Кнопка «↺». Без обробника — безкоштовно ставить машину на дорогу (тестовий режим). */
@@ -161,6 +161,19 @@ export class DriveSession {
   get flipped(): boolean {
     const q = this.truck.body.rotation();
     return new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w)).y < 0.5;
+  }
+  private lightsKey = '';
+  /** Стоп-сигнали (StopFaraKey: 1 — габарити, 2 — гальмування) і вогні заднього ходу (BackFaraKey) машини гравця. */
+  private updateLights(state: { throttle: number; brake: number }): void {
+    const reverse = this.truck.gear < 0;
+    const braking = reverse ? state.throttle > 0 : state.brake > 0;
+    const key = `${braking ? 1 : 0}${reverse ? 1 : 0}`;
+    if (key === this.lightsKey || !this.modelSwitch) return;
+    this.lightsKey = key;
+    for (const side of ['L', 'R']) {
+      this.modelSwitch(`StopFaraKey${side}`, braking ? 2 : 1);
+      this.modelSwitch(`BackFaraKey${side}`, reverse ? 1 : 0);
+    }
   }
   /** Швидкість машини гравця, км/год. */
   get speedKmh(): number {
@@ -181,12 +194,12 @@ export class DriveSession {
   }
   private updateDent(zone: string): void {
     const name = `Damage${zone}Key`;
-    const n = this.dentStates?.(name) ?? 0;
+    const n = this.modelStates?.(name) ?? 0;
     if (!n) return;
     // Остання група деяких перемикачів порожня (деталь відпала) — до неї доходимо лише після дуже сильних ударів.
     const acc = this.dents[zone] ?? 0;
     const level = DENT_STEPS.filter((s) => acc >= s).length;
-    this.dentSwitch?.(name, Math.min(n - 1, level));
+    this.modelSwitch?.(name, Math.min(n - 1, level));
   }
   /** Вʼїзд у нову кімнату (події залів бази, тунелі) і фініш — для кар'єри. */
   onRoomEnter: ((room: Room) => void) | null = null;
@@ -259,8 +272,8 @@ export class DriveSession {
 
     const model = buildTruckModel(built.assembler, def, true);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня в цій локації`);
-    s.dentSwitch = model.setSwitch;
-    s.dentStates = model.switchStates;
+    s.modelSwitch = model.setSwitch;
+    s.modelStates = model.switchStates;
     s.track = new Track(built.assembler.b3d);
     s.spawn = s.findSpawn();
     s.room = s.locate(s.spawn.position) ?? s.track.guessRoom(s.spawn.position);
@@ -589,6 +602,7 @@ export class DriveSession {
     this.handbrakeOn = state.handbrake;
     this.odometer += (this.truck.speedKmh / 3.6) * dt;
     this.updateCab(state);
+    this.updateLights(state);
     // Під дахом (кімнати з подією 4 «tunnel_rain» — тунелі) дощу немає: ні струменів, ні нових крапель.
     if (this.raining) {
       const sheltered = this.currentRoom?.events.some((e) => e.type === EVENT_RAIN) ?? false;
