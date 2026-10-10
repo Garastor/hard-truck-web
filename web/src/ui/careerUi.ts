@@ -272,8 +272,7 @@ export class CareerGame {
       const kind: LevelKind = info.kind === 'laps' ? 'laps' : 'route';
       this.drive = await this.host.play(track, { truck: this.c.truck, rivals, kind, setup: truckSetup(this.c, this.spec, track) });
       if (!this.drive) return;
-      const asm = this.host.built()?.assembler;
-      asm?.setSwitch('RainKey', this.c.weather[track] === 'rain' ? 1 : 0);
+      this.drive.setRain(this.c.weather[track] === 'rain');
       this.drive.onFinish = () => void this.finishTrip(true);
       this.drive.applyDents(this.c.dents);
       this.playerCollapsed = true;

@@ -4,6 +4,7 @@ import { addCollisionPolys, addStaticMeshes, g2t, initRapier } from '../physics/
 import { floorAt, levelCollision, roomAt, type LevelCollision } from '../game/collision';
 import { Input } from '../input/input';
 import { TruckVehicle, type TruckSetup } from '../game/truckVehicle';
+import { GlassRain } from '../render/glassRain';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import type { BuiltScene } from '../render/sceneBuilder';
 import { walk } from '../formats/b3d';
@@ -23,6 +24,8 @@ if (import.meta.env.DEV) Object.assign(window, { RAPIER });
 /** Шар Three.js для деталей кабіни, що малюються поверх решти кабіни (кермо). */
 const CAB_TOP_LAYER = 1;
 
+/** Швидкість «стікання» текстури струменів дощу, повторів текстури за секунду (гіпотеза). */
+const RAIN_SPEED = 2.5;
 /** Зони вмʼятин за годинниковою стрілкою від переду — суфікси перемикачів `Damage<зона>Key` у моделях. */
 const DENT_ZONES = ['FC', 'FR', 'R', 'BR', 'BC', 'BL', 'L', 'FL'];
 /** Удари слабші за це (м/с за крок) вмʼятин не лишають; пороги рівнів — за накопиченою силою (гіпотеза). */
@@ -99,6 +102,53 @@ export class DriveSession {
   get currentRoom(): Room | null {
     return this.room ? (this.track.rooms.get(this.room) ?? null) : null;
   }
+  /** Дощ: струмені навколо камери (Foreground_object → RainNode/RainKey) і краплі на склі кабіни (GlassKey). */
+  private rain: { root: THREE.Group; setSwitch: (n: string, s: number) => void; tex: THREE.Texture[] } | null = null;
+  raining = false;
+  setRain(on: boolean): void {
+    this.raining = on;
+    if (on && !this.rain) {
+      const dyn = this.built.assembler.dynamicObject('Foreground_object');
+      if (dyn) {
+        const wrap = new THREE.Group();
+        dyn.root.rotation.x = -Math.PI / 2;
+        wrap.add(dyn.root);
+        const tex: THREE.Texture[] = [];
+        wrap.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          mesh.frustumCulled = false;
+          const mat = mesh.material as THREE.MeshBasicMaterial;
+          // Там же відблиски сонця в обʼєктиві (lens0…7) — їх оригінал ставить за сонцем; поки не малюємо.
+          if (mat.map?.name.startsWith('txr/lens')) mesh.visible = false;
+          else if (mat.map) {
+            // Струмені: текстура «тече» вниз (своя копія з повтором).
+            const m = mat.clone();
+            m.map = mat.map.clone();
+            m.map.wrapS = m.map.wrapT = THREE.RepeatWrapping;
+            m.map.needsUpdate = true;
+            // Альфа текстури — 0…0,2 (сірі напівпрозорі риски): змішування, а не поріг alphaTest.
+            m.alphaTest = 0;
+            m.transparent = true;
+            m.depthWrite = false;
+            mesh.material = m;
+            tex.push(m.map);
+          }
+        });
+        this.scene.add(wrap);
+        this.rain = { root: wrap, setSwitch: dyn.setSwitch, tex };
+      }
+    }
+    // RainKey: група 0 — струмені, група 1 — порожня.
+    this.rain?.setSwitch('RainKey', on ? 0 : 1);
+    if (this.rain) this.rain.root.visible = on;
+    if (this.glassRain) {
+      this.glassRain.raining = on;
+      this.glassRain.wipersOn = on;
+    }
+  }
+  /** Краплі на склі кабіни й двірники. */
+  private glassRain: GlassRain | null = null;
   /** Вмʼятини кузова: накопичена сила ударів за зонами (FC, FR, R, BR, BC, BL, L, FL). */
   dents: Record<string, number> = {};
   private dentSwitch: ((name: string, state: number) => void) | undefined;
@@ -338,6 +388,9 @@ export class DriveSession {
       return found;
     };
     this.cabParts = { rule: bySpace('RuleSpace'), tacho: bySpace('TachoSpace'), speed: bySpace('SpeedSpace') };
+    // Скло (GlassKey, група 1) показуємо завжди: його текстуру — краплі — малює GlassRain, суха — прозора.
+    dyn.setSwitch('GlassKey', 1);
+    this.glassRain = new GlassRain(inner);
     // Кермо частково «втоплене» в панель: оригінал малює його після кабіни, поверх неї.
     // Відтворюємо це окремим шаром, який рендериться після очищення глибини.
     this.cabParts.rule?.traverse((o) => o.layers.set(CAB_TOP_LAYER));
@@ -536,6 +589,11 @@ export class DriveSession {
     this.handbrakeOn = state.handbrake;
     this.odometer += (this.truck.speedKmh / 3.6) * dt;
     this.updateCab(state);
+    if (this.cab?.visible) this.glassRain?.update(dt);
+    if (this.rain?.root.visible) {
+      this.rain.root.position.copy(this.camera.position);
+      for (const t of this.rain.tex) t.offset.y = (t.offset.y + dt * RAIN_SPEED) % 1;
+    }
     const t = this.truck;
     if (this.audio) {
       this.audio.update(t.rpm, state.throttle);

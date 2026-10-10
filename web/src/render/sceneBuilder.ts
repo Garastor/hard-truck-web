@@ -436,6 +436,22 @@ export class SceneAssembler {
     // у кімнатах — привʼязка до спостерігача (сонце, лінзи) — поки не відтворюємо.
     if (!spaceName && this.buildingRooms) return;
     const m = spaceName ? this.space(spaceName) : new THREE.Matrix4();
+    if (this.switchTarget && !this.buildingRooms) {
+      // Окремий екземпляр (кабіна, машина гравця): вкладені обʼєкти будуємо наново, щоб їхні перемикачі
+      // (скло з краплями GlassKey, фари) теж керувалися грою.
+      const blk = this.topByName.get(objectName.toLowerCase());
+      if (!m || !blk) return;
+      const g = new THREE.Group();
+      g.name = blk.name;
+      const b: Batches = new Map();
+      this.visit(blk, null, b, g, 0);
+      this.flush(b, g);
+      g.matrixAutoUpdate = false;
+      g.matrix.copy(m);
+      into.add(g);
+      this.stats.instances++;
+      return;
+    }
     const tpl = this.template(objectName);
     if (!m || !tpl) return;
     const inst = tpl.clone();
