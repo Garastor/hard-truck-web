@@ -26,8 +26,13 @@ const SHIFT_NEUTRAL = 0.1;
 const CLUTCH_TIME = 1.0;
 /** Вгору, якщо сила на вищій передачі > поточна × 1,1. */
 const UPSHIFT_GAIN = 1.1;
-/** Ривок на старті з нейтралі: повний газ, с. */
-const LAUNCH_TIME = 0.27;
+/**
+ * Пробуксовка зчеплення (0x4aa1c0): поки оберти, звʼязані з колесами, нижчі за 0,5·n₀ (або колеса
+ * крутяться проти передачі), газ — повний (телеметрія s6: [0x339] = 1,0 до ≈ 0,8 м/с), а двигун тримає
+ * оберти CLUTCH_SLIP_N·n₀ (гіпотеза: точне значення в оригіналі не розібране).
+ */
+const CLUTCH_SLIP_BELOW = 0.5;
+const CLUTCH_SLIP_N = 0.75;
 /** Газ із клавіатури: g = t / (t + 1,2). */
 const THROTTLE_RAMP = 1.2;
 
@@ -51,8 +56,6 @@ export class Engine {
 
   private gasTime = 0;
   private shift: { target: number; t: number; dur: number; nStart: number; from: number } | null = null;
-  /** Залишок «ривка» на старті (повний газ одразу після включення передачі з нейтралі), с. */
-  private launch = 0;
   /** Час після завершення перемикання (для «зчеплення»). */
   private sinceShift = Infinity;
 
@@ -115,16 +118,12 @@ export class Engine {
     // Газ наростає поступово, як у грі з клавіатури.
     this.gasTime = gas > 0 ? this.gasTime + dt : 0;
     this.throttle = gas > 0 ? gas * (this.gasTime / (this.gasTime + THROTTLE_RAMP)) : 0;
-    if (this.launch > 0) {
-      this.launch -= dt;
-      if (gas > 0) this.throttle = gas;
-    }
     const stopped = Math.abs(wheelSpeed) < 0.3;
 
     // Вибір передачі (автомат).
     if (!this.shift) {
       if (wantReverse && stopped && this.gear !== GEAR_R) this.startShift(GEAR_R, SHIFT_NEUTRAL);
-      else if (this.gear === GEAR_R && gas > 0 && stopped) this.startShift(2, SHIFT_NEUTRAL);
+      else if (this.gear === GEAR_R && !wantReverse && gas > 0 && wheelSpeed > -2) this.startShift(2, SHIFT_NEUTRAL);
       else if (this.gear === GEAR_N && gas > 0) this.startShift(2, SHIFT_NEUTRAL);
       else if (this.gear >= 2 && brake > 0 && gas === 0 && Math.abs(wheelSpeed) < 6) this.startShift(GEAR_N, SHIFT_NEUTRAL);
       else if (this.gear >= 2 && gas > 0 && this.sinceShift > CLUTCH_TIME) this.autoShift(wheelSpeed);
@@ -138,8 +137,6 @@ export class Engine {
       this.n = k * this.n0 + (1 - k) * s.nStart;
       this.force = 0;
       if (s.t >= s.dur) {
-        // Рушання з нейтралі: перші ≈ 0,27 с після включення передачі газ — повний (телеметрія s6).
-        if (s.from === GEAR_N && s.target !== GEAR_N) this.launch = LAUNCH_TIME;
         this.gear = s.target;
         this.shift = null;
         this.sinceShift = 0;
@@ -156,12 +153,33 @@ export class Engine {
     }
 
     this.sinceShift += dt;
-    const locked = this.lockedN(this.gear, wheelSpeed);
-    // «Зчеплення»: протягом 1 с після перемикання оберти плавно переходять від n₀ до жорсткого
-    // звʼязку з колесами (сила рахується від поточних обертів — у грі вона не наростає з нуля).
-    const b = Math.min(1, this.sinceShift / CLUTCH_TIME);
-    this.n = Math.max(b * locked + (1 - b) * this.n0, this.idle);
+    // Оберти, жорстко звʼязані з колесами; відʼємні — колеса крутяться проти передачі (котимось назад).
+    const ratio = this.ratios[this.gear];
+    const locked = ((wheelSpeed * Math.sign(ratio)) / (2 * Math.PI * this.spec.wheelRadius)) * Math.abs(ratio);
+    const slipLimit = CLUTCH_SLIP_BELOW * this.n0;
+    if (locked < slipLimit) {
+      // Пробуксовка зчеплення: повний газ, оберти між «зчепленими» і робочими.
+      const f = Math.max(0, locked) / slipLimit;
+      this.n = Math.max(this.idle, f * Math.max(0, locked) + (1 - f) * CLUTCH_SLIP_N * this.n0);
+      if (gas > 0) this.throttle = gas;
+    } else {
+      // «Зчеплення»: протягом 1 с після перемикання оберти плавно переходять від n₀ до жорсткого
+      // звʼязку з колесами (сила рахується від поточних обертів — у грі вона не наростає з нуля).
+      const b = Math.min(1, this.sinceShift / CLUTCH_TIME);
+      this.n = Math.max(b * locked + (1 - b) * this.n0, this.idle);
+    }
     this.force = this.wheelForce(this.gear, this.n, this.throttle);
+  }
+
+  /** Стан як після запуску двигуна: нейтраль, холості оберти. */
+  reset(): void {
+    this.gear = GEAR_N;
+    this.n = this.idle;
+    this.force = 0;
+    this.throttle = 0;
+    this.gasTime = 0;
+    this.shift = null;
+    this.sinceShift = Infinity;
   }
 
   private startShift(target: number, dur: number): void {

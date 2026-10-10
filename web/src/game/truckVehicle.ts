@@ -175,11 +175,16 @@ export class TruckVehicle {
     const wheelLoad = (this.mass * 9.81) / 4;
     // Rapier ігнорує гальмо колеса, на яке діє сила двигуна, тож гальмування двигуном (сила проти руху)
     // переносимо в гальмо того ж колеса.
-    const engineBrakes = eng.force * v <= 0;
+    // Двигун гальмує лише з відпущеним газом (сила проти руху); з газом — завжди тягне, зокрема з місця й назад.
+    const engineBrakes = gas === 0 && eng.force * v < 0;
     // Межа зчеплення Rapier спільна для повороту, тяги й гальмування. Недостатню повертаність оригіналу
     // дає слабше зчеплення передніх коліс; задні (ведучі) — з тертям оригіналу 0,84, щоб тягнули повністю.
     // Під час гальмування межу передніх плавно піднімаємо (оригінал гальмує сильніше, ніж тримає в повороті).
-    const front = TIRE_GRIP_FRONT + (TIRE_GRIP_BRAKING - TIRE_GRIP_FRONT) * brakePedal;
+    // На малій швидкості передні тримають повністю (поворот за геометрією коліс, як в оригіналі: R ≈ 6 м
+    // на 2,7 м/с), знижене зчеплення — від 3 до 7 м/с.
+    const k = Math.min(1, Math.max(0, (Math.abs(v) - 3) / 4));
+    const frontBase = TIRE_GRIP_REAR + (TIRE_GRIP_FRONT - TIRE_GRIP_REAR) * k;
+    const front = frontBase + (TIRE_GRIP_BRAKING - frontBase) * brakePedal;
     for (let i = 0; i < 4; i++) {
       this.ctrl.setWheelFrictionSlip(i, i < 2 ? front : Math.max(TIRE_GRIP_REAR, front));
       const engine = this.driven[i] ? eng.force / nDriven : 0;
@@ -225,6 +230,8 @@ export class TruckVehicle {
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.reverseMode = false;
+    this.brakeTime = 0;
+    this.engine.reset();
   }
 
   /** Поточний напрям «уперед» у світі. */
