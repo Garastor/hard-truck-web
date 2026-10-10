@@ -188,6 +188,10 @@ export class DriveSession {
       this.modelSwitch(`BackFaraKey${side}`, reverse ? 1 : 0);
     }
   }
+  /** Кермування нахилом телефона (дозвіл на iOS питають в «Опціях», за жестом). */
+  setTilt(on: boolean): void {
+    if (on !== this.input.tiltEnabled) void this.input.toggleTilt();
+  }
   /** Швидкість машини гравця, км/год. */
   get speedKmh(): number {
     return this.truck.speedKmh;

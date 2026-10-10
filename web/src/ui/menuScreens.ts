@@ -97,7 +97,9 @@ class Screen {
 const LABELS: Record<string, string> = {
   game: 'Гра', connec: 'Мережева гра', quick: 'Пробний заїзд', driver: 'Змінити водія', option: 'Опції',
   demo: 'Демо', help: 'Допомога', reels: 'Відеокліпи', exit: 'Вихід', arcad: 'Аркадний', simul: 'Симулятор',
-  new: 'Нова гра', load: 'Завантажити гру', cancel: 'Скасувати', ok: 'Гаразд',
+  new: 'Нова гра', load: 'Завантажити гру', cancel: 'Скасувати', ok: 'Гаразд', defaul: 'За замовчуванням',
+  joyst: 'Геймпад', mouse: 'Нахил телефона', keyb: 'Кнопки', big: 'Висока якість', med: 'Середня якість', small: 'Низька якість',
+  rs320: 'Вікно', rs640: 'Повний екран', rs800: 'Прискорювач',
   but0: '0', but1: '1', but2: '2', but3: '3', but4: '4', but5: '5', but6: '6', but7: '7',
 };
 
@@ -242,5 +244,137 @@ export function driverScreen(art: MenuArt, current: string, known: string[]): Pr
     }
     maskButton(scr, art, 'd/ok', 327, 148, () => done(input.value.trim() || current));
     maskButton(scr, art, 'd/cancel', 327, 362, () => done(null));
+  });
+}
+
+export type ControlMode = 'buttons' | 'tilt';
+export type QualityLevel = 'high' | 'balance' | 'eco';
+
+export interface OptionsState {
+  control: ControlMode;
+  quality: QualityLevel;
+  fullscreen: boolean;
+  swap: boolean;
+  fps: boolean;
+}
+
+export interface OptionsActions {
+  /** Повертає новий стан керування (нахил на iOS вимагає дозволу — може не вдатися). */
+  setControl(c: ControlMode): Promise<ControlMode>;
+  setQuality(q: QualityLevel): void;
+  setFullscreen(on: boolean): Promise<boolean>;
+  setSwap(on: boolean): void;
+  setFps(on: boolean): void;
+}
+
+/** Клавіші порту (для таблиці «перевизначення клавіатури» — поки лише показуємо). */
+const KEY_ROWS: [string, string][] = [
+  ['Газ', '↑ / W'],
+  ['Гальмо, задній хід', '↓ / S'],
+  ['Кермо', '← → / A D'],
+  ['Ручне гальмо', 'Пробіл'],
+  ['Камера', 'C'],
+  ['Сигнал', 'H'],
+  ['Відновитися', 'R'],
+  ['Автопілот (налагодження)', 'P'],
+];
+
+/**
+ * «Опции» (o/back_opt): таблиця налаштувань і клавіш; «Управление» — кнопки / нахил / геймпад (немає),
+ * «Разрешение» — якість графіки, «Видеорежим» — вікно / екран (прискорювач — завжди, набір *2.B3D).
+ * Рамки кнопок: стовпчики x = 27, 150, 273; рядки y = 368, 399, 430; «По умолчанию» (27, 328), ОК (397, 343).
+ */
+export function optionsScreen(art: MenuArt, st: OptionsState, act: OptionsActions, defaults: OptionsState): Promise<void> {
+  return new Promise((resolve) => {
+    const scr = new Screen(art, 'o/back_opt.txr');
+    const buttons: { refresh: () => void }[] = [];
+    const refresh = () => {
+      buttons.forEach((b) => b.refresh());
+      renderRows();
+    };
+    const col = (k: number) => 27 + 123 * k;
+    const row = (k: number) => 368 + 31 * k;
+    buttons.push(maskButton(scr, art, 'o/joyst', col(0), row(0), () => {}, { disabled: true }));
+    buttons.push(
+      maskButton(scr, art, 'o/mouse', col(0), row(1), () => void act.setControl('tilt').then((c) => ((st.control = c), refresh())), {
+        selected: () => st.control === 'tilt',
+      }),
+    );
+    buttons.push(
+      maskButton(scr, art, 'o/keyb', col(0), row(2), () => void act.setControl('buttons').then((c) => ((st.control = c), refresh())), {
+        selected: () => st.control === 'buttons',
+      }),
+    );
+    const levels: [string, QualityLevel][] = [['o/big', 'high'], ['o/med', 'balance'], ['o/small', 'eco']];
+    levels.forEach(([base, q], i) =>
+      buttons.push(maskButton(scr, art, base, col(1), row(i), () => ((st.quality = q), act.setQuality(q), refresh()), { selected: () => st.quality === q })),
+    );
+    buttons.push(
+      maskButton(scr, art, 'o/rs320', col(2), row(0), () => void act.setFullscreen(false).then((on) => ((st.fullscreen = on), refresh())), {
+        selected: () => !st.fullscreen,
+      }),
+    );
+    buttons.push(
+      maskButton(scr, art, 'o/rs640', col(2), row(1), () => void act.setFullscreen(true).then((on) => ((st.fullscreen = on), refresh())), {
+        selected: () => st.fullscreen,
+      }),
+    );
+    buttons.push(maskButton(scr, art, 'o/rs800', col(2), row(2), () => {}, { selected: () => true }));
+    maskButton(scr, art, 'o/defaul', 27, 328, () => {
+      if (st.control !== defaults.control) void act.setControl(defaults.control).then((c) => ((st.control = c), refresh()));
+      st.quality = defaults.quality;
+      act.setQuality(st.quality);
+      st.swap = defaults.swap;
+      act.setSwap(st.swap);
+      st.fps = defaults.fps;
+      act.setFps(st.fps);
+      refresh();
+    });
+    maskButton(scr, art, 'o/ok', 397, 343, () => {
+      scr.close();
+      resolve();
+    });
+
+    // Таблиця (рамка ≈ 27…445 × 107…325): угорі — перемикачі (тап змінює), нижче — клавіші.
+    const table = scr.place(document.createElement('div'), 32, 110, 408, 212);
+    table.className += ' menu-list menu-table';
+    function renderRows(): void {
+      table.replaceChildren();
+      const add = (k: string, v: string, onClick?: () => void) => {
+        const r = document.createElement('div');
+        r.className = onClick ? 'menu-row menu-trow' : 'menu-trow';
+        const a = document.createElement('span');
+        a.textContent = k;
+        const b = document.createElement('span');
+        b.textContent = v;
+        r.append(a, b);
+        if (onClick) r.addEventListener('click', onClick);
+        table.append(r);
+      };
+      add('Кермо й педалі', st.swap ? 'навпаки' : 'звичайно', () => ((st.swap = !st.swap), act.setSwap(st.swap), renderRows()));
+      add('Лічильник кадрів', st.fps ? 'так' : 'ні', () => ((st.fps = !st.fps), act.setFps(st.fps), renderRows()));
+      add('Кермування нахилом', st.control === 'tilt' ? 'так' : 'ні');
+      add('', '');
+      for (const [k, v] of KEY_ROWS) add(k, v);
+    }
+    renderRows();
+  });
+}
+
+/** «Помощь»: текст у великій панелі екрана l/backlast (≈ 30…608 × 33…353), кнопка «НАЗАД» праворуч унизу. */
+export function helpScreen(art: MenuArt, text: string): Promise<void> {
+  return new Promise((resolve) => {
+    const scr = new Screen(art, 'l/backlast.txr');
+    const box = scr.place(document.createElement('div'), 44, 44, 552, 252);
+    box.className += ' menu-list menu-help';
+    for (const para of text.split('\n\n')) {
+      const p = document.createElement('p');
+      p.textContent = para;
+      box.append(p);
+    }
+    maskButton(scr, art, 'l/cancel', 495, 384, () => {
+      scr.close();
+      resolve();
+    });
   });
 }

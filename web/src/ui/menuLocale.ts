@@ -22,6 +22,18 @@ export const BUTTON_UK: Record<string, string> = {
   'n/load': 'ЗАВАНТАЖИТИ\nГРУ',
   'n/cancel': 'СКАСУВАТИ',
   'd/cancel': 'СКАСУВАТИ',
+  'o/ok': 'ОК',
+  'o/defaul': 'ЗА ЗАМОВЧУВАННЯМ',
+  'o/joyst': 'ГЕЙМПАД',
+  'o/mouse': 'НАХИЛ',
+  'o/keyb': 'КНОПКИ',
+  'o/big': 'ВИСОКА',
+  'o/med': 'СЕРЕДНЯ',
+  'o/small': 'НИЗЬКА',
+  'o/rs320': 'ВІКНО',
+  'o/rs640': 'ЕКРАН',
+  'o/rs800': 'ПРИСКОРЮВАЧ',
+  'l/cancel': 'НАЗАД',
 };
 
 /** Кольори тексту оригіналу за станами: заливка й тінь/контур (виміряно з масок). */
@@ -37,7 +49,7 @@ const STYLE: Record<string, { fill: string; edge: string }> = {
 const FONT = '"Arial Narrow", "Roboto Condensed", Arial, sans-serif';
 
 /** Висота великих літер напису, пікселів екрана 640×480 (однакова для всіх кнопок групи). */
-const CAP: Record<string, number> = { m: 11, n: 12, d: 12 };
+const CAP: Record<string, number> = { m: 11, n: 12, d: 12, o: 9, l: 12 };
 /** Підписи на фонах — тонкий геометричний шрифт, як в оригіналі. */
 const LABEL_FONT = '"Century Gothic", "Futura", "Trebuchet MS", Arial, sans-serif';
 
@@ -194,12 +206,22 @@ export function localizeButton(base: string, states: Record<string, HTMLCanvasEl
   return out;
 }
 
-/** Підписи на фонах: [x0, y0, x1, y1, текст] (вирівнювання праворуч, \n — два рядки). */
-const BACKGROUND_UK: Record<string, [number, number, number, number, string][]> = {
+/**
+ * Підписи на фонах: [x0, y0, x1, y1, текст, латка?] (вирівнювання праворуч, 
+ — два рядки). Латка — звідки брати
+ * чистий фон: 'left' (смуга лівіше, за замовчуванням) або 'above' (над підписом — коли ліворуч інші написи).
+ */
+const BACKGROUND_UK: Record<string, [number, number, number, number, string, ('left' | 'above')?][]> = {
   'n/back_new.txr': [
     [166, 97, 320, 110, 'РІВЕНЬ СКЛАДНОСТІ'],
     [130, 178, 322, 190, 'КІЛЬКІСТЬ СУПЕРНИКІВ'],
     [156, 241, 298, 254, 'ЗБЕРЕЖЕНІ ІГРИ'],
+  ],
+  'o/back_opt.txr': [
+    [254, 96, 446, 106, 'НАЛАШТУВАННЯ ТА КЛАВІШІ', 'above'],
+    [48, 355, 128, 366, 'КЕРУВАННЯ', 'above'],
+    [162, 355, 250, 366, 'ЯКІСТЬ', 'above'],
+    [286, 355, 375, 366, 'ВІДЕОРЕЖИМ', 'above'],
   ],
   'd/back_dri.txr': [
     [232, 152, 294, 166, 'ЗА КЕРМОМ'],
@@ -212,13 +234,21 @@ export function localizeBackground(name: string, canvas: HTMLCanvasElement): voi
   const items = BACKGROUND_UK[name];
   if (!items) return;
   const ctx = canvas.getContext('2d')!;
-  for (const [x0, y0, x1, y1, text] of items) {
+  // Спершу всі латки (з оригінального фону), потім написи — щоб латка не захопила вже намальований текст.
+  for (const [x0, y0, x1, y1, , patch] of items) {
     const w = x1 - x0 + 1;
     const h = y1 - y0 + 1;
+    if (patch === 'above') {
+      ctx.drawImage(canvas, x0, Math.max(0, y0 - h), w, h, x0, y0, w, h);
+      continue;
+    }
     // Латка: та сама смуга лівіше (без тексту), повторена на всю ширину підпису.
     const srcX = Math.max(0, x0 - w);
     const srcW = Math.max(4, Math.min(w, x0 - srcX));
     for (let x = x0; x <= x1; x += srcW) ctx.drawImage(canvas, srcX, y0, Math.min(srcW, x1 - x + 1), h, x, y0, Math.min(srcW, x1 - x + 1), h);
+  }
+  for (const [x0, y0, x1, y1, text] of items) {
+    const w = x1 - x0 + 1;
     drawLabel(ctx, text, { x0, y0, x1, y1 }, w, 'right', { fill: 'rgb(240,232,204)', edge: 'rgba(0,0,0,0.85)' }, false, false, 8.5, 'normal');
   }
 }

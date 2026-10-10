@@ -607,6 +607,38 @@ body.career #stats {
   background: rgba(255, 220, 120, 0.25);
 }
 
+/* Таблиця «Опцій»: рядки — по лініях рамки фону (≈ 13,6 px), назва ліворуч, значення праворуч. */
+.menu-table {
+  line-height: 13.6px;
+  overflow: hidden;
+}
+
+.menu-trow {
+  display: flex;
+  height: 13.6px;
+  white-space: nowrap;
+}
+
+.menu-trow span:first-child {
+  width: 228px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* «Допомога» — текст у великій панелі екрана виходу. */
+.menu-help {
+  font: 500 12px/1.4 Arial, sans-serif;
+  color: #f0e6c8;
+  text-shadow: 1px 1px 0 #000;
+  overflow-y: auto;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.menu-help p {
+  margin: 0 0 8px;
+}
+
 .menu-note {
   font: 600 12px/1.3 Arial, sans-serif;
   color: #f0dc8a;

@@ -15,7 +15,10 @@ import type { DriveSession } from './modes/drive';
 import type { TruckSetup } from './game/truckVehicle';
 import { currentDriver, listCareers, loadCareer, newCareer, setCurrentDriver, truckSpec, type Career } from './game/career';
 import { CareerGame, modal, type LevelKind } from './ui/careerUi';
-import { MenuArt, driverScreen, mainMenu, newGameScreen } from './ui/menuScreens';
+import {
+  MenuArt, driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
+  type ControlMode, type OptionsState, type QualityLevel,
+} from './ui/menuScreens';
 import { PixelFont } from './ui/pixelFont';
 import { parseFon } from './formats/fon';
 
@@ -185,6 +188,7 @@ async function startDrive(): Promise<void> {
     drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup);
     // Тестовий режим: мінікарта завжди (у кар'єрі — лише з навігаційною системою «НС»).
     if (!cfg && id !== 'MENU3D') drive.showMap(true);
+    if (loadControl() === 'tilt') drive.setTilt(true);
     setStatus(null);
   } catch (e) {
     console.error(e);
@@ -517,8 +521,72 @@ playModeSel.addEventListener('change', () => {
   }
 });
 
-/** Налаштування (ОПЦИИ): якість рендера й лічильник кадрів. */
+/** Керування: кнопки чи нахил телефона (зберігається в цьому браузері). */
+const CONTROL_KEY = 'ht.control';
+function loadControl(): ControlMode {
+  try {
+    return localStorage.getItem(CONTROL_KEY) === 'tilt' ? 'tilt' : 'buttons';
+  } catch {
+    return 'buttons';
+  }
+}
+function saveControl(c: ControlMode): void {
+  try {
+    localStorage.setItem(CONTROL_KEY, c);
+  } catch {
+    /* приватний режим */
+  }
+}
+
+const OPTION_DEFAULTS: OptionsState = { control: 'buttons', quality: 'balance', fullscreen: false, swap: false, fps: false };
+
+/** Налаштування (ОПЦИИ) — екран оригіналу з LOAD.RES; без нього — простий діалог. */
 async function optionsDialog(): Promise<void> {
+  if (menuArt === undefined) menuArt = await MenuArt.load((n) => source.read(n));
+  if (menuArt) {
+    const st: OptionsState = {
+      control: loadControl(),
+      quality: qualitySel.value as QualityLevel,
+      fullscreen: isFullscreen(),
+      swap: loadSwap(),
+      fps: showFps,
+    };
+    await optionsScreen(
+      menuArt,
+      st,
+      {
+        async setControl(c) {
+          if (c === 'tilt') {
+            // iOS дає доступ до датчика руху лише за жестом користувача — питаємо тут, у натисканні.
+            const DOE = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> };
+            if (DOE.requestPermission && (await DOE.requestPermission().catch(() => 'denied')) !== 'granted') {
+              toast('Без дозволу на датчик руху нахил не працює (Safari: Параметри → Safari → Рух і орієнтація).', 8000);
+              return loadControl();
+            }
+          }
+          saveControl(c);
+          drive?.setTilt(c === 'tilt');
+          return c;
+        },
+        setQuality(q) {
+          if (qualitySel.value === q) return;
+          qualitySel.value = q;
+          qualitySel.dispatchEvent(new Event('change'));
+        },
+        async setFullscreen(on) {
+          if (on && !isFullscreen() && !(await enterFullscreen())) toast(IOS_FULLSCREEN_HINT, 15000);
+          if (!on && isFullscreen()) await exitFullscreen();
+          return isFullscreen();
+        },
+        setSwap: setSwap,
+        setFps(on) {
+          if (on !== showFps) $('fpsToggle').click();
+        },
+      },
+      OPTION_DEFAULTS,
+    );
+    return;
+  }
   const box = document.createElement('div');
   box.className = 'career-form';
   const label = document.createElement('label');
@@ -544,11 +612,15 @@ async function optionsDialog(): Promise<void> {
   }
 }
 
-const HELP =
-  'Керування: кермо — кнопки ◀ ▶ (або нахил телефона), ГАЗ і ГАЛЬМО праворуч; на місці ГАЛЬМО — задній хід. ' +
-  'База: підʼїдьте до секції товару, вантажівки на подіумі чи вітрини запчастини — зверху зʼявиться табло ' +
-  'і кнопки. Виїзд — тунелі за вказівником «Выезд». Кільце й Полігон — гонки на призи; Приморськ, ' +
-  'Перелісся, Гірський — доставка вантажу.';
+const HELP = [
+  'ДАЛЬНОБІЙНИКИ. Ви — водій вантажівки. Заробляйте на перевезеннях і гонках, купуйте кращі машини й запчастини, обійдіть суперників у рейтингу.',
+  'КЕРУВАННЯ. Кермо — кнопки ◀ ▶ (або нахил телефона — «Опції» → «Керування»), ГАЗ і ГАЛЬМО праворуч (можна поміняти місцями). Коробка автоматична; щоб поїхати назад — зупиніться й потримайте ГАЛЬМО. Угорі: сигнал, «↺» — відновитися, «👁» — камера. Клавіатура: стрілки або WASD, пробіл — ручне гальмо, C — камера, H — сигнал, R — відновитися.',
+  'БАЗА. Підʼїдьте до секції в залі «Завантаження» — зверху зʼявиться табличка товару й кнопки «+» та «−» (утримуйте). У залі «Автомобілі» — вантажівки на подіумах, у «Запчастинах» — покращення. Ремонт — кнопкою на табло бази. Виїзд на траси — тунелі за вказівником «Выезд»: над кожним видно назву траси й погоду.',
+  'ТРАСИ. Кільце й Полігон — гонки на призи за місце (Полігон — між прапорцями за стрілками). Приморськ, Перелісся й Гірський — доставка: вантаж продається на фініші дорожче, ніж куплений; удари бʼють крихкий вантаж. У дощ слизько, але винагорода більша.',
+  'СТАН МАШИНИ. Табло гравця (тапніть, щоб згорнути чи розгорнути): гроші, маса й обʼєм вантажу, стан машини, шин і гальм. У режимі «Симулятор» пошкоджена машина слабшає й втрачає передачі, зношені гальма гірше гальмують, лиса гума ковзає. У дорозі можна підремонтуватися до задовільного стану (кнопка «РЕМОНТ», утримувати на місці). Перевернулися — «ВІДНОВИТИСЯ» (платно).',
+  'ЗАПЧАСТИНИ. ФД — потужніший двигун; АПС — менше пробуксовок; ШН — шини зношуються вдвічі повільніше; ПП — вантаж бʼється менше; НС — карта траси з суперниками; РС — вище сидіння; ДТ — гальма зношуються вдвічі повільніше.',
+  'ГРА ЗБЕРІГАЄТЬСЯ автоматично для кожного водія в цьому браузері.',
+].join('\n\n');
 
 async function menuLoop(): Promise<void> {
   history.replaceState(null, '', location.pathname);
@@ -566,7 +638,7 @@ async function menuLoop(): Promise<void> {
       if (n) setCurrentDriver(n);
     },
     onOptions: optionsDialog,
-    onHelp: async () => void (await modal(overlay, 'Помощь', HELP, ['Гаразд'])),
+    onHelp: () => helpScreen(menuArt!, HELP),
   });
   if (choice === 'game') {
     await ensureTrucks();
