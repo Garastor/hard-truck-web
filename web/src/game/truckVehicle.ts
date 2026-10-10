@@ -19,10 +19,11 @@ const STEER_TO_WHEEL = 0.684;
 const ACKERMANN = 0.208;
 
 /**
- * Межа зчеплення шин (Rapier frictionSlip), підібрана під коло з кермом до упору (s6):
- * радіус 17,4 м на 7,5 м/с (оригінал ≈ 17,8) і 7,4 м на 3,5 м/с (≈ 8). Під час гальмування — вища.
+ * Межа зчеплення шин (Rapier frictionSlip): передні — підібрані під коло з кермом до упору (s6,
+ * R ≈ 8 м на 3,5 м/с і ≈ 17,8 м на 7,5 м/с), задні — тертя колеса оригіналу [0x30b] = 0,84.
  */
-const TIRE_GRIP = 0.42;
+const TIRE_GRIP_FRONT = 0.42;
+const TIRE_GRIP_REAR = 0.84;
 const TIRE_GRIP_BRAKING = 1.0;
 
 /** Частки breakpower на колесо: передні / задні (телеметрія ЗіЛ, s6) — гіпотеза для інших вантажівок. */
@@ -126,7 +127,7 @@ export class TruckVehicle {
       this.ctrl.setWheelSuspensionRelaxation(i, 2.3);
       this.ctrl.setWheelMaxSuspensionTravel(i, 0.3);
       this.ctrl.setWheelMaxSuspensionForce(i, mass * 40);
-      this.ctrl.setWheelFrictionSlip(i, TIRE_GRIP);
+      this.ctrl.setWheelFrictionSlip(i, i < 2 ? TIRE_GRIP_FRONT : TIRE_GRIP_REAR);
       this.ctrl.setWheelSideFrictionStiffness(i, 1.0);
     }
   }
@@ -175,11 +176,12 @@ export class TruckVehicle {
     // Rapier ігнорує гальмо колеса, на яке діє сила двигуна, тож гальмування двигуном (сила проти руху)
     // переносимо в гальмо того ж колеса.
     const engineBrakes = eng.force * v <= 0;
-    // Межа зчеплення Rapier спільна для повороту й гальмування; оригінал на повороті тримає слабше,
-    // ніж гальмує, тож під час гальмування межу плавно піднімаємо.
-    const grip = TIRE_GRIP + (TIRE_GRIP_BRAKING - TIRE_GRIP) * brakePedal;
+    // Межа зчеплення Rapier спільна для повороту, тяги й гальмування. Недостатню повертаність оригіналу
+    // дає слабше зчеплення передніх коліс; задні (ведучі) — з тертям оригіналу 0,84, щоб тягнули повністю.
+    // Під час гальмування межу передніх плавно піднімаємо (оригінал гальмує сильніше, ніж тримає в повороті).
+    const front = TIRE_GRIP_FRONT + (TIRE_GRIP_BRAKING - TIRE_GRIP_FRONT) * brakePedal;
     for (let i = 0; i < 4; i++) {
-      this.ctrl.setWheelFrictionSlip(i, grip);
+      this.ctrl.setWheelFrictionSlip(i, i < 2 ? front : Math.max(TIRE_GRIP_REAR, front));
       const engine = this.driven[i] ? eng.force / nDriven : 0;
       const share = i < 2 ? BRAKE_FRONT : BRAKE_REAR;
       let force = brakePedal * share * tech.brakePower + ROLLING_RESISTANCE * wheelLoad;

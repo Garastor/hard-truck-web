@@ -26,6 +26,8 @@ const SHIFT_NEUTRAL = 0.1;
 const CLUTCH_TIME = 1.0;
 /** Вгору, якщо сила на вищій передачі > поточна × 1,1. */
 const UPSHIFT_GAIN = 1.1;
+/** Ривок на старті з нейтралі: повний газ, с. */
+const LAUNCH_TIME = 0.27;
 /** Газ із клавіатури: g = t / (t + 1,2). */
 const THROTTLE_RAMP = 1.2;
 
@@ -48,7 +50,9 @@ export class Engine {
   readonly ratios: number[];
 
   private gasTime = 0;
-  private shift: { target: number; t: number; dur: number; nStart: number } | null = null;
+  private shift: { target: number; t: number; dur: number; nStart: number; from: number } | null = null;
+  /** Залишок «ривка» на старті (повний газ одразу після включення передачі з нейтралі), с. */
+  private launch = 0;
   /** Час після завершення перемикання (для «зчеплення»). */
   private sinceShift = Infinity;
 
@@ -111,6 +115,10 @@ export class Engine {
     // Газ наростає поступово, як у грі з клавіатури.
     this.gasTime = gas > 0 ? this.gasTime + dt : 0;
     this.throttle = gas > 0 ? gas * (this.gasTime / (this.gasTime + THROTTLE_RAMP)) : 0;
+    if (this.launch > 0) {
+      this.launch -= dt;
+      if (gas > 0) this.throttle = gas;
+    }
     const stopped = Math.abs(wheelSpeed) < 0.3;
 
     // Вибір передачі (автомат).
@@ -130,6 +138,8 @@ export class Engine {
       this.n = k * this.n0 + (1 - k) * s.nStart;
       this.force = 0;
       if (s.t >= s.dur) {
+        // Рушання з нейтралі: перші ≈ 0,27 с після включення передачі газ — повний (телеметрія s6).
+        if (s.from === GEAR_N && s.target !== GEAR_N) this.launch = LAUNCH_TIME;
         this.gear = s.target;
         this.shift = null;
         this.sinceShift = 0;
@@ -155,7 +165,7 @@ export class Engine {
   }
 
   private startShift(target: number, dur: number): void {
-    this.shift = { target, t: 0, dur, nStart: this.n };
+    this.shift = { target, t: 0, dur, nStart: this.n, from: this.gear };
   }
 
   /** Автомат: вгору, якщо на вищій передачі сила більша за поточну × 1,1 (0x4aa76c). */
