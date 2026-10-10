@@ -112,6 +112,12 @@ export function buildTruckModel(asm: SceneAssembler, def: TruckDef): TruckModel 
   const root = new THREE.Group();
   root.name = def.carNode;
   const body = bodyTpl.clone();
+  // Детальний рівень моделі (тип 29, група 2) містить і власні колеса-екземпляри; колеса додаємо окремо
+  // (вони крутяться й повертаються), тож ці ховаємо.
+  const wheelNames = new Set(def.wheelNodes.map((n) => n.toLowerCase()));
+  body.traverse((o) => {
+    if (wheelNames.has(o.name.toLowerCase())) o.visible = false;
+  });
   root.add(body);
   const wheels: THREE.Object3D[] = [];
   const wheelBase: THREE.Matrix4[] = [];

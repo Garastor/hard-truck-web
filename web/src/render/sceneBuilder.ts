@@ -337,20 +337,49 @@ export class SceneAssembler {
       this.switchTarget.set(block.name, list);
       return;
     }
+    if (d.t === 29 && block.groups.length >= 2) {
+      // Рівні деталізації (вантажівки; HTruck.exe 0x44bf38, режим 1): гра обирає групу за розміром моделі на
+      // екрані — сфера sphere2 (r ≈ 2,5 м) у пікселях екрана 640: < values[0] — не малювати, далі група i, де
+      // values[i] ≤ розмір (група 2 — найдетальніша, 0 — найпростіша). Переводимо пікселі у відстань:
+      // d = r · f / розмір, f ≈ 320 (половина ширини екрана 640) — гіпотеза щодо поля зору.
+      const lod = new THREE.LOD();
+      const v = Array.from(d.values);
+      const r = d.sphere2?.[3] ?? 2.5;
+      const dist = (px: number) => (r * 320) / Math.max(1, px);
+      const n = block.groups.length;
+      const levels: [number, number][] = [];
+      for (let gi = n - 1; gi >= 0; gi--) levels.push([gi, gi === n - 1 ? 0 : dist(v[gi + 1] ?? 1)]);
+      levels.push([-1, dist(v[0] ?? 1)]);
+      for (const [gi, at] of levels) {
+        const go = new THREE.Group();
+        const b: Batches = new Map();
+        for (const child of block.groups[gi] ?? []) this.visit(child, cur, b, go, depth + 1);
+        this.flush(b, go);
+        lod.addLevel(go, at);
+      }
+      into.add(lod);
+      return;
+    }
     if (d.t === 21) {
       // Перемикач стану: i1 — початковий стан. Виняток — купол неба, який рушій вмикає сам (група 1).
       const start = block.groups[d.i1] ?? [];
       const sky = block.name === 'SkyDomeKey';
       groups = [sky && !start.length ? (block.groups.find((g) => g.length) ?? []) : start];
-    } else if (d.t === 9 || d.t === 10 || d.t === 11 || d.t === 22 || d.t === 29) {
+    } else if (d.t === 9) {
+      // Поділ простору площиною (BSP): групи — геометрія по різні боки площини (напр. ліва й права половини
+      // вантажівки), а не варіанти. Оригінал обирає лише порядок малювання — з буфером глибини малюємо обидві.
+      groups = block.groups;
+    } else if (d.t === 10 || d.t === 11 || d.t === 22 || d.t === 29) {
       groups = [block.groups[Math.min(this.switchGroup, block.groups.length - 1)] ?? []];
     }
     for (const g of groups) for (const child of g) this.visit(child, cur, batches, into, depth + 1);
   }
 
   private addInstance(spaceName: string, objectName: string, into: THREE.Object3D): void {
-    if (!spaceName) return; // привʼязка до спостерігача (сонце, лінзи) — пізніше
-    const m = this.space(spaceName);
+    // Порожній простір: у моделях (вантажівки) — система координат батька (деталі кабіни, колеса);
+    // у кімнатах — привʼязка до спостерігача (сонце, лінзи) — поки не відтворюємо.
+    if (!spaceName && this.switchTarget) return;
+    const m = spaceName ? this.space(spaceName) : new THREE.Matrix4();
     const tpl = this.template(objectName);
     if (!m || !tpl) return;
     const inst = tpl.clone();
