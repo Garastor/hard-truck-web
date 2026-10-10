@@ -7,9 +7,9 @@
  */
 import * as THREE from 'three';
 import {
-  PARTS, TRACKS, TUNNELS, autoLoad, buyPart, buyTruck, canLoad, cargoVolume, cargoWeight, deleteCareer, fmt,
-  formatMoney as money, loadCareer, loadGood, newCareer, repair, repairCost, saveCareer, settleTrip, truckSetup,
-  truckValue, unloadGood, type Career, type Difficulty, type TrackId, type TruckSpec,
+  PARTS, TRACKS, TUNNELS, autoLoad, buyPart, buyTruck, canLoad, cargoVolume, cargoWeight, fmt,
+  formatMoney as money, loadGood, repair, repairCost, saveCareer, settleTrip, truckSetup,
+  truckValue, unloadGood, type Career, type TrackId, type TruckSpec,
 } from '../game/career';
 import { buildTruckModel, type TruckDef } from '../game/trucks';
 import type { TruckSetup } from '../game/truckVehicle';
@@ -68,46 +68,23 @@ export function modal(overlay: HTMLElement, title: string, body: string | HTMLEl
   });
 }
 
-/** Головне меню гри. */
-export async function mainMenu(overlay: HTMLElement): Promise<'continue' | 'new' | 'quick' | 'viewer'> {
-  const saved = loadCareer();
-  const body = el('div');
-  body.append(el('p', 'career-text', saved ? `Збережена кар'єра: ${saved.name}, ${money(saved.money)}, рейсів ${saved.trips}.` : 'Карʼєра: база → траса → база. Заробляйте на вантажах і гонках, купуйте кращі вантажівки.'));
-  const opts = saved ? ['Продовжити карʼєру', 'Нова карʼєра', 'Швидкий заїзд', 'Переглядач'] : ['Нова карʼєра', 'Швидкий заїзд', 'Переглядач'];
-  const i = await modal(overlay, 'Дальнобійники', body, opts);
-  const ids = saved ? (['continue', 'new', 'quick', 'viewer'] as const) : (['new', 'quick', 'viewer'] as const);
-  return ids[i];
-}
-
-/** Форма нової кар'єри: імʼя, рівень складності, кількість суперників (як у меню оригіналу). */
-export async function newCareerForm(overlay: HTMLElement, specs: TruckSpec[]): Promise<Career | null> {
-  const form = el('div', 'career-form');
-  const name = el('input');
-  name.value = 'Водій';
-  name.maxLength = 16;
-  const diff = el('select');
-  diff.add(new Option('Симулятор — вантаж, знос і дощ впливають на керування', 'sim'));
-  diff.add(new Option('Аркадний — простіше керування', 'arcade'));
-  const rivals = el('select');
-  for (let i = 1; i <= 7; i++) rivals.add(new Option(String(i), String(i)));
-  rivals.value = '3';
-  for (const [label, input] of [['Імʼя водія', name], ['Рівень', diff], ['Суперників', rivals]] as const) {
-    const l = el('label', '', label);
-    l.append(input);
-    form.append(l);
-  }
-  const ok = await modal(overlay, 'Нова карʼєра', form, ['Почати', 'Скасувати']);
-  if (ok !== 0) return null;
-  deleteCareer();
-  return newCareer({ name: name.value.trim() || 'Водій', difficulty: diff.value as Difficulty, rivals: Number(rivals.value), trucks: specs });
-}
-
 export class CareerGame {
   private drive: DriveSession | null = null;
   private level: 'MENU3D' | TrackId = 'MENU3D';
   private panel: HTMLElement;
-  private status: HTMLElement;
-  private zone: HTMLElement;
+  private info: HTMLElement;
+  private actions: HTMLElement;
+  private player: HTMLElement;
+  private playerKey = '';
+  private keyLoad: (() => void) | null = null;
+  private keyUnload: (() => void) | null = null;
+  private keyBuy: (() => void) | null = null;
+  /** Клавіатура (ПК): + — завантажити, − — повернути, Enter — купити. */
+  private readonly onKey = (e: KeyboardEvent) => {
+    if ((e.key === '+' || e.key === '=') && this.keyLoad) this.keyLoad();
+    else if (e.key === '-' && this.keyUnload) this.keyUnload();
+    else if (e.key === 'Enter' && !e.repeat && this.keyBuy) this.keyBuy();
+  };
   private timer = 0;
   private showroom: THREE.Object3D[] = [];
   private zoneKey = '';
@@ -119,10 +96,12 @@ export class CareerGame {
     private readonly defs: TruckDef[],
     private readonly specs: TruckSpec[],
   ) {
-    this.panel = el('div', 'career-panel');
-    this.status = el('div', 'career-status');
-    this.zone = el('div', 'career-zone');
-    this.panel.append(this.status, this.zone);
+    this.panel = el('div', 'career-hud');
+    this.info = el('div', 'hud-info');
+    this.actions = el('div', 'hud-actions');
+    this.player = el('div', 'hud-player');
+    this.panel.append(this.info, this.actions, this.player);
+    window.addEventListener('keydown', this.onKey);
   }
 
   static async start(host: CareerHost, c: Career, specs: TruckSpec[]): Promise<CareerGame> {
@@ -136,6 +115,7 @@ export class CareerGame {
 
   dispose(): void {
     clearInterval(this.timer);
+    window.removeEventListener('keydown', this.onKey);
     this.clearShowroom();
     this.panel.remove();
   }
@@ -296,26 +276,26 @@ export class CareerGame {
     return this.c.cargo.reduce((s, i) => s + i.qty * i.good.price, 0);
   }
 
-  // --- Панель ---
+  // --- Табло (як в оригіналі): зліва зверху — інформація про товар/вантажівку/запчастину,
+  // знизу — «інформація гравця» (гроші, машина, 6 смуг, «За кермом»). Кнопки — для сенсорного екрана. ---
 
   private refresh(): void {
-    const c = this.c;
-    const s = this.spec;
-    const k = c.condition;
-    const pct = (v: number) => `${Math.round(v * 100)}%`;
-    const statusText =
-      `${c.name} · ${money(c.money)}\n` +
-      `${s.name}: ${(cargoWeight(c) / 1000).toFixed(1)}/${(s.payload / 1000).toFixed(0)} т, ${cargoVolume(c).toFixed(1)}/${s.volume} м³\n` +
-      `стан ${pct(k.tech)} · шини ${pct(k.tires)} · гальма ${pct(k.brakes)}` +
-      (c.parts.length ? `\n${c.parts.join(' ')}` : '');
-    if (this.status.textContent !== statusText) this.status.textContent = statusText;
-
+    this.renderPlayer();
     const room = this.drive?.currentRoom;
     const ev = room?.events.find((e) => e.type === EV_GOOD || e.type === EV_TRUCK || e.type === EV_PART);
-    const key = this.level === 'MENU3D' ? (ev ? `${ev.type}/${ev.param}/${c.money}/${c.truck}/${c.parts.join()}` : 'base') : `track/${this.level}`;
+    const c = this.c;
+    const key =
+      this.level === 'MENU3D'
+        ? ev
+          ? `${ev.type}/${ev.param}/${c.money}/${c.truck}/${c.parts.join()}/${c.cargo.map((i) => i.qty).join()}`
+          : `base/${repairCost(c, this.spec)}`
+        : `track/${this.level}`;
     if (key === this.zoneKey) return;
     this.zoneKey = key;
-    this.zone.replaceChildren();
+    this.info.replaceChildren();
+    this.actions.replaceChildren();
+    this.keyLoad = this.keyUnload = this.keyBuy = null;
+    this.info.hidden = true;
     if (this.level !== 'MENU3D') return this.trackZone();
     if (!ev) return this.baseZone();
     if (ev.type === EV_GOOD) this.goodZone(ev.param);
@@ -323,8 +303,76 @@ export class CareerGame {
     else this.partZone(ev.param);
   }
 
-  private button(label: string, onClick: () => void, repeat = false, primary = false): HTMLButtonElement {
-    const b = el('button', primary ? 'primary' : '', label);
+  /** Табличка «назва — значення» (КОД, ЦІНА ЗА ОД., ВАГА…). */
+  private table(rows: [string, string][]): void {
+    const t = el('table');
+    for (const [k, v] of rows) {
+      const tr = el('tr');
+      tr.append(el('td', '', k), el('td', '', v));
+      t.append(tr);
+    }
+    this.info.append(t);
+    this.info.hidden = false;
+  }
+
+  /** Табло гравця: «гроші / машина», смуги $, маса, обʼєм, машина, шини, гальма; «За кермом». */
+  private renderPlayer(): void {
+    const c = this.c;
+    const s = this.spec;
+    const cargo = this.cargoValue();
+    const truck = Math.max(0, truckValue(c, s));
+    const total = Math.max(1, c.money + cargo + truck);
+    const pct = (v: number) => `${Math.max(0, Math.min(100, v * 100)).toFixed(1)}%`;
+    const key = [c.money, cargo, truck, cargoWeight(c), cargoVolume(c), c.condition.tech, c.condition.tires, c.condition.brakes, c.parts.join()].join();
+    if (key === this.playerKey) return;
+    this.playerKey = key;
+    const p = this.player;
+    p.replaceChildren();
+    if (c.cargo.length) p.append(el('div', 'hud-cargo', c.cargo.map((i) => i.good.name).join(', ')));
+    const head = el('div', 'hud-head');
+    head.append(el('span', '', `гроші ${Math.round(c.money)}`), el('span', '', `машина ${Math.round(truck)}`));
+    p.append(head);
+    const bars = el('div', 'hud-bars');
+    const bar = (label: string, segs: [number, string][]) => {
+      const row = el('div', 'hud-row');
+      const track = el('div', 'hud-track');
+      for (const [f, color] of segs) {
+        const seg = el('i');
+        seg.style.width = pct(f);
+        seg.style.background = color;
+        track.append(seg);
+      }
+      row.append(track, el('span', '', label));
+      bars.append(row);
+    };
+    const RED = '#e01010';
+    const MAG = '#e020e0';
+    const WHITE = '#f4f4f4';
+    // $: вантаж (пурпуровий) | готівка (червоний) | вантажівка (білий) — частки капіталу.
+    bar('$', [
+      [cargo / total, MAG],
+      [c.money / total, RED],
+      [truck / total, WHITE],
+    ]);
+    const w = Math.min(1, cargoWeight(c) / s.payload);
+    const v = Math.min(1, cargoVolume(c) / s.volume);
+    bar('маса', [
+      [w, MAG],
+      [1 - w, RED],
+    ]);
+    bar('обʼєм', [
+      [v, MAG],
+      [1 - v, RED],
+    ]);
+    bar('машина', [[c.condition.tech, RED]]);
+    bar('шини', [[c.condition.tires, RED]]);
+    bar('гальма', [[c.condition.brakes, RED]]);
+    p.append(bars);
+    p.append(el('div', 'hud-foot', `За кермом ${c.name}${c.parts.length ? '   ' + c.parts.join(' ') : ''}`));
+  }
+
+  private button(label: string, onClick: () => void, repeat = false): HTMLButtonElement {
+    const b = el('button', 'hud-btn', label);
     if (!repeat) b.addEventListener('click', onClick);
     else {
       // Утримання — повторювати (як утримання клавіші в оригіналі).
@@ -338,53 +386,42 @@ export class CareerGame {
       });
       for (const ev of ['pointerup', 'pointerleave', 'pointercancel'] as const) b.addEventListener(ev, stop);
     }
+    this.actions.append(b);
     return b;
   }
 
   private baseZone(): void {
-    const row = el('div', 'career-actions');
     const rc = repairCost(this.c, this.spec);
     if (rc > 0)
-      row.append(
-        this.button(`Ремонт ${money(rc)}`, () => {
-          if (!repair(this.c, this.spec)) return toastIn(this.host.overlay, 'Недостатньо грошей');
-          this.save();
-          this.zoneKey = '';
-        }),
-      );
-    row.append(this.button('Рейтинг', () => void this.rating()));
-    row.append(this.button('Меню', () => void this.quit()));
-    this.zone.append(row);
+      this.button(`РЕМОНТ $${rc}`, () => {
+        if (!repair(this.c, this.spec)) return toastIn(this.host.overlay, 'Недостатньо грошей');
+        this.save();
+        this.zoneKey = '';
+        this.refresh();
+      });
+    this.button('РЕЙТИНГ', () => void this.rating());
+    this.button('МЕНЮ', () => void this.quit());
   }
 
   private trackZone(): void {
-    const row = el('div', 'career-actions');
-    row.append(this.button('⇦ На базу', () => void this.leaveTrack()));
-    row.append(this.button('Рейтинг', () => void this.rating()));
-    this.zone.append(row);
+    this.button('НА БАЗУ', () => void this.leaveTrack());
+    this.button('РЕЙТИНГ', () => void this.rating());
   }
 
-  private async leaveTrack(): Promise<void> {
-    if (this.drive?.result) return this.finishTrip(true);
-    const i = await modal(this.host.overlay, 'Повернутися на базу?', 'Заїзд не завершено: приз не нараховується, вантаж повернеться на базу.', ['На базу', 'Залишитися']);
-    if (i === 0) await this.finishTrip(false);
-  }
-
+  /** Завантаження/повернення товару: утримання кнопки, як утримання клавіші в оригіналі; з клавіатури — + і −. */
   private goodZone(section: number): void {
     const c = this.c;
     const g = c.market[section];
     if (!g) return;
     const inCargo = c.cargo.find((i) => i.good.section === section)?.qty ?? 0;
-    const crate = ['дорогий', 'легкий', 'компактний', 'міцний'][g.variant];
-    this.zone.append(
-      el(
-        'div',
-        'career-text',
-        `Секція ${section + 1} (${crate} товар): упаковка ${money(g.price)}, ${g.volume} м³, ${g.weight} кг, ` +
-          `крихкість ${Math.round(g.fragility * 100)} %.\nУ кузові: ${inCargo} уп. Можна ще: ${canLoad(c, this.spec, g)}.`,
-      ),
-    );
-    const row = el('div', 'career-actions');
+    this.table([
+      ['КОД', g.name],
+      ['ЦІНА ЗА ОД.', `$${g.price}`],
+      ['ВАГА', `${g.weight.toFixed(2)}кг`],
+      ['ОБʼЄМ', `${g.volume.toFixed(2)}м3`],
+      ['КРИХКІСТЬ', `${Math.round(g.fragility * 100)}%`],
+      ['У КУЗОВІ', `${inCargo}`],
+    ]);
     const act = (fn: () => number) => () => {
       if (fn()) {
         this.save();
@@ -392,10 +429,13 @@ export class CareerGame {
         this.refresh();
       }
     };
-    row.append(this.button('− 1', act(() => unloadGood(c, section, 1)), true));
-    row.append(this.button('+ 1', act(() => loadGood(c, this.spec, section, 1)), true, true));
-    row.append(this.button('+ 10', act(() => loadGood(c, this.spec, section, 10)), true));
-    this.zone.append(row);
+    const load = act(() => loadGood(c, this.spec, section, 1));
+    const unload = act(() => unloadGood(c, section, 1));
+    this.keyLoad = load;
+    this.keyUnload = unload;
+    this.button('− ПОВЕРНУТИ', unload, true);
+    this.button('+ ЗАВАНТАЖИТИ', load, true);
+    if (!canLoad(c, this.spec, g)) this.info.append(el('div', 'hud-note', 'Більше не вміщується або бракує грошей'));
   }
 
   private truckZone(pod: number): void {
@@ -403,55 +443,51 @@ export class CareerGame {
     if (!def) return;
     const s = this.specs.find((x) => x.index === def.index)!;
     const diff = s.price - truckValue(this.c, this.spec);
-    this.zone.append(
-      el(
-        'div',
-        'career-text',
-        `${s.name}: ${s.horsePower} к.с., вантажопідйомність ${(s.payload / 1000).toFixed(0)} т, кузов ${s.volume} м³.\n` +
-          `Ціна ${money(s.price)}; ваша ${this.spec.name} — ${money(truckValue(this.c, this.spec))}. Доплата ${money(Math.max(0, diff))}.`,
-      ),
-    );
-    const row = el('div', 'career-actions');
-    row.append(
-      this.button(
-        'Купити',
-        () => {
-          const r = buyTruck(this.c, this.specs, def.index);
-          if (r !== 'ok') return toastIn(this.host.overlay, r === 'money' ? 'Недостатньо грошей' : 'Вантаж не поміститься — спершу розвантажтесь');
-          this.save();
-          // Нова вантажівка: перезапуск бази на ній (стара стає на подіум).
-          void this.goBase();
-        },
-        false,
-        true,
-      ),
-    );
-    this.zone.append(row);
+    this.table([
+      ['КОД', s.name.toUpperCase()],
+      ['ЦІНА', `$${s.price}`],
+      ['ПОТУЖНІСТЬ', `${s.horsePower.toFixed(2)}к.с.`],
+      ['ВАНТАЖОПІДЙОМНІСТЬ', `${(s.payload / 1000).toFixed(2)}т`],
+      ['КУЗОВ', `${s.volume.toFixed(1)}м3`],
+      ['ДОПЛАТА', `$${Math.max(0, Math.round(diff))}`],
+    ]);
+    const buy = () => {
+      const r = buyTruck(this.c, this.specs, def.index);
+      if (r !== 'ok') return toastIn(this.host.overlay, r === 'money' ? 'Недостатньо грошей' : 'Вантаж не поміститься — спершу розвантажтесь');
+      this.save();
+      // Нова вантажівка: перезапуск бази на ній (стара стає на подіум).
+      void this.goBase();
+    };
+    this.keyBuy = buy;
+    this.button('КУПИТИ', buy);
   }
 
   private partZone(i: number): void {
     const p = PARTS[i];
     if (!p) return;
     const have = this.c.parts.includes(p.code) && p.code !== 'ШН';
-    this.zone.append(el('div', 'career-text', `${p.code} — ${p.title}: ${p.hint}.\n${have ? 'Встановлено.' : `Ціна ${money(p.price)}.`}`));
+    this.table([
+      ['КОД', p.code],
+      ['ЦІНА', `$${p.price}`],
+    ]);
+    this.info.append(el('div', 'hud-note', `${p.title}: ${p.hint}.${have ? ' Встановлено.' : ''}`));
     if (have) return;
-    const row = el('div', 'career-actions');
-    row.append(
-      this.button(
-        'Купити',
-        () => {
-          const r = buyPart(this.c, i);
-          if (r !== 'ok') return toastIn(this.host.overlay, r === 'money' ? 'Недостатньо грошей' : 'Вже встановлено');
-          this.save();
-          this.zoneKey = '';
-          this.refresh();
-          toastIn(this.host.overlay, `Встановлено: ${p.title}`);
-        },
-        false,
-        true,
-      ),
-    );
-    this.zone.append(row);
+    const buy = () => {
+      const r = buyPart(this.c, i);
+      if (r !== 'ok') return toastIn(this.host.overlay, r === 'money' ? 'Недостатньо грошей' : 'Вже встановлено');
+      this.save();
+      this.zoneKey = '';
+      this.refresh();
+      toastIn(this.host.overlay, `Встановлено: ${p.title}`);
+    };
+    this.keyBuy = buy;
+    this.button('КУПИТИ', buy);
+  }
+
+  private async leaveTrack(): Promise<void> {
+    if (this.drive?.result) return this.finishTrip(true);
+    const i = await modal(this.host.overlay, 'Повернутися на базу?', 'Заїзд не завершено: приз не нараховується, вантаж повернеться на базу.', ['На базу', 'Залишитися']);
+    if (i === 0) await this.finishTrip(false);
   }
 
   private async rating(): Promise<void> {

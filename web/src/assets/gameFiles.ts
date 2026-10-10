@@ -12,6 +12,7 @@ import type { FileSource } from './loader';
 export const REQUIRED: string[] = [
   ...Object.values(LEVELS).flatMap((l) => l.hw.map((f) => `${l.dir}/${f}`)),
   'TRUCK.TCH',
+  'LOAD.RES',
 ];
 
 const DB = 'hard-truck-files';

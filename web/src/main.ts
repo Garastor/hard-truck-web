@@ -13,8 +13,9 @@ import { decodeCp1251 } from './formats/binary';
 import { buildTruckModel, parseTrucks, type TruckDef } from './game/trucks';
 import type { DriveSession } from './modes/drive';
 import type { TruckSetup } from './game/truckVehicle';
-import { loadCareer, truckSpec } from './game/career';
-import { CareerGame, mainMenu, newCareerForm, type LevelKind } from './ui/careerUi';
+import { currentDriver, listCareers, loadCareer, newCareer, setCurrentDriver, truckSpec, type Career } from './game/career';
+import { CareerGame, modal, type LevelKind } from './ui/careerUi';
+import { MenuArt, driverScreen, mainMenu, newGameScreen } from './ui/menuScreens';
 
 /**
  * Переглядач ресурсів (Фази 1–2): обліт локацій, галерея текстур і масок.
@@ -438,11 +439,9 @@ async function play(id: LevelId, cfg: NonNullable<typeof careerCfg>): Promise<Dr
   return drive;
 }
 
-async function startCareer(fresh: boolean): Promise<void> {
+async function startCareer(c: Career): Promise<void> {
   await ensureTrucks();
   const specs = trucks.map(truckSpec);
-  const c = fresh ? await newCareerForm(overlay, specs) : loadCareer();
-  if (!c) return void menuLoop();
   document.body.classList.add('career');
   career = await CareerGame.start(
     {
@@ -465,10 +464,65 @@ async function startCareer(fresh: boolean): Promise<void> {
   );
 }
 
+let menuArt: MenuArt | null | undefined;
+
+/** Налаштування (ОПЦИИ): якість рендера й лічильник кадрів. */
+async function optionsDialog(): Promise<void> {
+  const box = document.createElement('div');
+  box.className = 'career-form';
+  const label = document.createElement('label');
+  label.textContent = 'Якість графіки';
+  const sel = document.createElement('select');
+  for (const [id, q] of Object.entries(QUALITY)) sel.add(new Option(q.label, id));
+  sel.value = qualitySel.value;
+  label.append(sel);
+  box.append(label);
+  const ok = await modal(overlay, 'Опції', box, ['Гаразд', 'Скасувати']);
+  if (ok === 0 && sel.value !== qualitySel.value) {
+    qualitySel.value = sel.value;
+    qualitySel.dispatchEvent(new Event('change'));
+  }
+}
+
+const HELP =
+  'Керування: кермо — кнопки ◀ ▶ (або нахил телефона), ГАЗ і ГАЛЬМО праворуч; на місці ГАЛЬМО — задній хід. ' +
+  'База: підʼїдьте до секції товару, вантажівки на подіумі чи вітрини запчастини — зверху зʼявиться табло ' +
+  'і кнопки. Виїзд — тунелі за вказівником «Выезд». Кільце й Полігон — гонки на призи; Приморськ, ' +
+  'Перелісся, Гірський — доставка вантажу.';
+
 async function menuLoop(): Promise<void> {
   history.replaceState(null, '', location.pathname);
-  const choice = await mainMenu(overlay);
-  if (choice === 'continue' || choice === 'new') return startCareer(choice === 'new');
+  stopDrive();
+  if (menuArt === undefined) menuArt = await MenuArt.load((n) => source.read(n));
+  if (!menuArt) return fallbackMenu();
+  const choice = await mainMenu(menuArt, {
+    viewer: import.meta.env.DEV,
+    get driver() {
+      return currentDriver();
+    },
+    onDriver: async () => {
+      const names = [...new Set(listCareers().map((c) => c.name))];
+      const n = await driverScreen(menuArt!, currentDriver(), names);
+      if (n) setCurrentDriver(n);
+    },
+    onOptions: optionsDialog,
+    onHelp: async () => void (await modal(overlay, 'Помощь', HELP, ['Гаразд'])),
+  });
+  if (choice === 'game') {
+    await ensureTrucks();
+    const driver = currentDriver();
+    const pick = await newGameScreen(menuArt, listCareers(), driver);
+    if (!pick) return menuLoop();
+    if (pick.action === 'load') {
+      const c = loadCareer(pick.name);
+      return c ? startCareer(c) : menuLoop();
+    }
+    if (loadCareer(driver)) {
+      const i = await modal(overlay, 'Нова гра', `У водія ${driver} вже є збережена гра. Почати заново?`, ['Почати заново', 'Скасувати']);
+      if (i !== 0) return menuLoop();
+    }
+    return startCareer(newCareer({ name: driver, difficulty: pick.difficulty, rivals: pick.rivals, trucks: trucks.map(truckSpec) }));
+  }
   if (choice === 'quick') {
     levelSel.value = 'CIRCUIT';
     selectTab('drive');
@@ -476,9 +530,26 @@ async function menuLoop(): Promise<void> {
   await open();
 }
 
+/** Без LOAD.RES (немає файлу) — просте меню. */
+async function fallbackMenu(): Promise<void> {
+  const saved = loadCareer();
+  const opts = saved ? ['Продовжити гру', 'Нова гра', 'Пробний заїзд'] : ['Нова гра', 'Пробний заїзд'];
+  const i = await modal(overlay, 'Дальнобійники', 'Меню без графіки оригіналу (бракує LOAD.RES).', opts);
+  const pick = saved ? i : i + 1;
+  if (pick === 0 && saved) return startCareer(saved);
+  if (pick === 1) {
+    await ensureTrucks();
+    return startCareer(newCareer({ name: currentDriver(), difficulty: 'sim', rivals: 3, trucks: trucks.map(truckSpec) }));
+  }
+  levelSel.value = 'CIRCUIT';
+  selectTab('drive');
+  await open();
+}
+
 /** Запуск: ?career=1 — продовжити кар'єру; ?tab=… — переглядач/швидкий заїзд (розробка); інакше — меню. */
 async function startup(): Promise<void> {
-  if (params.get('career') && loadCareer()) return startCareer(false);
+  const resume = params.get('career') ? loadCareer() : null;
+  if (resume) return startCareer(resume);
   if (params.get('tab')) return open();
   await menuLoop();
 }

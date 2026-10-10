@@ -171,7 +171,7 @@ export function newCareer(opts: { name: string; difficulty: Difficulty; rivals: 
   const seed = opts.seed ?? Math.floor(Math.random() * 2 ** 31);
   const r = rng(seed ^ 0xa1);
   const cheapest = [...opts.trucks].sort((a, b) => a.price - b.price)[0];
-  const rivals = Math.max(1, Math.min(7, opts.rivals));
+  const rivals = Math.max(0, Math.min(7, opts.rivals));
   const drivers: Driver[] = [{ name: opts.name, ai: false, truck: cheapest.index, money: START_MONEY + cheapest.price, lastTime: null }];
   const others = opts.trucks.filter((t) => t.index !== cheapest.index);
   for (let i = 0; i < rivals; i++) {
@@ -326,8 +326,8 @@ export function settleTrip(c: Career, specs: TruckSpec[], res: TripResult): stri
     const suspension = c.parts.includes('ПП') ? 0.5 : 1;
     const broken = Math.min(0.9, (res.hits / 60) * fragility * suspension);
     if (res.finished && value > 0) {
-      const markup = 0.15 + info.difficulty * 0.05;
-      income = value * (1 + markup) * (1 - broken) * (1 + 0.25 * placeBonus) * (rain ? 1.3 : 1);
+      const markup = 0.1 + info.difficulty * 0.03;
+      income = value * (1 + markup) * (1 - broken) * (1 + 0.15 * placeBonus) * (rain ? 1.3 : 1);
       lines.push(`Вантаж продано за ${money(income)} (куплено за ${money(value)}).`);
       lines.push(`Побито ${Math.round(broken * 100)} % вантажу; місце ${res.place} з ${res.racers}${rain ? '; дощ +30 %' : ''}.`);
     } else if (value > 0) {
@@ -385,30 +385,86 @@ export function formatMoney(n: number): string {
   return money(n);
 }
 
-// --- Збереження (localStorage; профіль невеликий). ---
-const KEY = 'ht.career.v1';
+// --- Збереження (localStorage; профілі невеликі). Як в оригіналі — кілька ігор, по одній на водія. ---
+const KEY = 'ht.careers.v1';
+const LAST = 'ht.career.last';
+const DRIVER = 'ht.driver';
+const OLD_KEY = 'ht.career.v1';
 
-export function saveCareer(c: Career): void {
+function readAll(): Record<string, Career> {
   try {
-    localStorage.setItem(KEY, JSON.stringify(c));
+    const all = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, Career>;
+    // Перенесення єдиного збереження попередньої версії.
+    const old = localStorage.getItem(OLD_KEY);
+    if (old) {
+      const c = JSON.parse(old) as Career;
+      if (c?.version === 1 && !all[c.name]) all[c.name] = c;
+      localStorage.removeItem(OLD_KEY);
+      localStorage.setItem(KEY, JSON.stringify(all));
+    }
+    return all;
+  } catch {
+    return {};
+  }
+}
+
+function writeAll(all: Record<string, Career>): void {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(all));
   } catch {
     /* приватний режим тощо — гра йде без збереження */
   }
 }
 
-export function loadCareer(): Career | null {
+export function saveCareer(c: Career): void {
+  const all = readAll();
+  all[c.name] = c;
+  writeAll(all);
   try {
-    const raw = localStorage.getItem(KEY);
-    const c = raw ? (JSON.parse(raw) as Career) : null;
-    return c?.version === 1 ? c : null;
+    localStorage.setItem(LAST, c.name);
   } catch {
-    return null;
+    /* ігноруємо */
   }
 }
 
-export function deleteCareer(): void {
+/** Гра водія name (або остання зіграна). */
+export function loadCareer(name?: string): Career | null {
+  const all = readAll();
+  let key = name;
+  if (key === undefined) {
+    try {
+      key = localStorage.getItem(LAST) ?? undefined;
+    } catch {
+      key = undefined;
+    }
+  }
+  const c = key !== undefined ? all[key] : undefined;
+  return c?.version === 1 ? c : null;
+}
+
+/** Усі збережені ігри (список «Существующие игры»). */
+export function listCareers(): Career[] {
+  return Object.values(readAll()).filter((c) => c?.version === 1);
+}
+
+export function deleteCareer(name: string): void {
+  const all = readAll();
+  delete all[name];
+  writeAll(all);
+}
+
+/** Поточний водій (екран «Сменить водителя»); за замовчуванням — як в оригіналі. */
+export function currentDriver(): string {
   try {
-    localStorage.removeItem(KEY);
+    return localStorage.getItem(DRIVER) || 'ВОДИТЕЛЬ';
+  } catch {
+    return 'ВОДИТЕЛЬ';
+  }
+}
+
+export function setCurrentDriver(name: string): void {
+  try {
+    localStorage.setItem(DRIVER, name);
   } catch {
     /* ігноруємо */
   }
