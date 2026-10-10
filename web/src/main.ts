@@ -268,7 +268,7 @@ modeSel.addEventListener('change', open);
 $('fullscreen').addEventListener('click', () => void toggleFullscreen());
 async function toggleFullscreen(): Promise<void> {
   if (isFullscreen()) return exitFullscreen();
-  if (!(await enterFullscreen())) toast(IOS_FULLSCREEN_HINT);
+  if (!(await enterFullscreen())) toast(IOS_FULLSCREEN_HINT, 15000);
 }
 blockPageZoom();
 // На телефоні гра сама переходить на весь екран при першому дотику в режимі їзди
@@ -278,7 +278,7 @@ document.addEventListener('pointerup', (e) => {
   if (autoFullscreenTried || e.pointerType !== 'touch' || tab !== 'drive' || isFullscreen()) return;
   autoFullscreenTried = true;
   if (fullscreenSupported()) void enterFullscreen();
-  else toast(IOS_FULLSCREEN_HINT, 9000);
+  else toast(IOS_FULLSCREEN_HINT, 15000);
 });
 
 const clock = new THREE.Clock();
