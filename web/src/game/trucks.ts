@@ -170,6 +170,12 @@ export function buildTruckModel(asm: SceneAssembler, def: TruckDef, dynamic = fa
       if (!c) {
         c = m.clone();
         c.side = THREE.FrontSide;
+        // Однотонні деталі моделі лежать під текстурованими в тій самій площині (бампер Renault на чорному):
+        // оригінал малює деталь пізніше — зсуваємо однотонні вглиб, деталь завжди зверху.
+        if (c.polygonOffset && !(c as THREE.MeshBasicMaterial).map) {
+          c.polygonOffsetFactor = 1;
+          c.polygonOffsetUnits = 2;
+        }
         FRONT_ONLY.set(m, c);
       }
       return c;

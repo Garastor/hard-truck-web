@@ -71,11 +71,12 @@ export class MaterialLibrary {
       // шини «*_black col 10» = 0,016 на всіх трасах). Палітра траси тут ні до чого — з неї шини були кремові/сині.
       const v = Number(this.rmp.colors[def.col - 1]);
       params.color = new THREE.Color().setRGB(v, v, v, THREE.SRGBColorSpace);
-      // Однотонні поверхні часто лежать під текстурованою деталлю в тій самій площині (бампер Renault на
-      // чорному): оригінал малює деталь пізніше. Зсуваємо однотонні трохи вглиб — деталь завжди зверху.
+      // У світі однотонні полігони — переважно розмітка, що лежить на текстурованій дорозі в тій самій площині:
+      // висуваємо трохи до камери, інакше далі розмітка «тоне» в асфальті. (У моделях вантажівок навпаки —
+      // див. buildTruckModel.)
       params.polygonOffset = true;
-      params.polygonOffsetFactor = 1;
-      params.polygonOffsetUnits = 2;
+      params.polygonOffsetFactor = -1;
+      params.polygonOffsetUnits = -2;
     } else if (def && def.col !== null && this.palette) {
       const c = def.col;
       params.color = new THREE.Color().setRGB(
