@@ -20,7 +20,7 @@ import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, EVENT_RAIN, Track, type Ro
 import { AutoPilot, WayNet } from '../game/autopilot';
 import { RoomVisibility } from '../render/roomVisibility';
 
-type CamMode = 'chase' | 'cockpit' | 'far';
+export type CamMode = 'chase' | 'cockpit' | 'far';
 
 if (import.meta.env.DEV) Object.assign(window, { RAPIER });
 
@@ -691,6 +691,64 @@ export class DriveSession {
       if (hit) return new THREE.Vector3(p.x, p.y + up - hit.timeOfImpact + 2.5, p.z);
     }
     return new THREE.Vector3(p.x, p.y + 2.5, p.z);
+  }
+
+  // --- Налагодження (ht.dev, див. web/src/dev/devTools.ts) ---
+
+  /** Камера: позаду / з кабіни / здалеку. */
+  get cameraMode(): CamMode {
+    return this.camMode;
+  }
+  set cameraMode(mode: CamMode) {
+    this.camMode = mode;
+  }
+  /** Без відліку світлофора (одразу «зелений»). */
+  skipCountdown(): void {
+    if (this.countdown > 0) {
+      this.countdown = 0;
+      this.raceStart = this.clock;
+    }
+  }
+  /** Машина гравця. */
+  get playerTruck(): TruckVehicle {
+    return this.truck;
+  }
+  /** Поточна кімната машини гравця. */
+  get roomName(): string | null {
+    return this.room;
+  }
+  /** Чи увімкнено автопілот. */
+  get autopilotOn(): boolean {
+    return !!this.autopilot;
+  }
+  /**
+   * Перенести машину гравця: у точку рестарту кімнати (`room_011`) або в точку (x, z) Three.js на дорогу з
+   * напрямком heading (рад, 0 — уздовж −z). Повертає false, якщо кімнати немає.
+   */
+  teleport(target: string | { x: number; z: number; heading?: number }): boolean {
+    // Колізії ввімкнені лише біля машин: спершу кімната (і крок світу — оновити структури запитів castRay),
+    // потім висота дороги; інакше машина провалювалась крізь світ.
+    const activate = (room: string | null) => {
+      if (room) this.room = room;
+      this.updateActiveRooms();
+      this.world.step();
+    };
+    if (typeof target === 'string') {
+      const r = this.track.rooms.get(target)?.restart;
+      if (!r) return false;
+      activate(target);
+      this.truck.reset({ position: this.groundAt(r.position), forward: r.forward.clone() });
+      return true;
+    }
+    // Довільна точка: висота невідома — на мить вмикаємо колізії всієї траси й шукаємо дорогу згори.
+    const h = target.heading ?? 0;
+    for (const cs of this.roomColliders.values()) for (const c of cs) c.setEnabled(true);
+    this.activeRooms = '*';
+    this.world.step();
+    const p = this.groundAt(new THREE.Vector3(target.x, 500, target.z));
+    activate(this.locate(p) ?? this.track.guessRoom(p));
+    this.truck.reset({ position: p, forward: new THREE.Vector3(-Math.sin(h), 0, -Math.cos(h)) });
+    return true;
   }
 
   /** Рестарт як в оригіналі: точка рестарту поточної кімнати (подія 11), інакше — на місці. */

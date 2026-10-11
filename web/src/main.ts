@@ -22,6 +22,7 @@ import {
 import { PixelFont } from './ui/pixelFont';
 import { parseFon } from './formats/fon';
 import { reflectionMode, setReflectionMode } from './render/wetReflections';
+import { installDevTools } from './dev/devTools';
 
 /**
  * Переглядач ресурсів (Фази 1–2): обліт локацій, галерея текстур і масок.
@@ -404,8 +405,10 @@ function loop(now: number): void {
 }
 renderer.setAnimationLoop(loop);
 
-if (import.meta.env.DEV)
-  Object.assign(window, { ht: { THREE, scene, camera, controls, get built() { return built; }, get level() { return level; }, get drive() { return drive; }, importZip, missingFiles, idbSource } });
+if (import.meta.env.DEV) {
+  const dev = installDevTools({ drive: () => drive, level: () => levelSel.value });
+  Object.assign(window, { ht: { THREE, scene, camera, controls, get built() { return built; }, get level() { return level; }, get drive() { return drive; }, importZip, missingFiles, idbSource, dev } });
+}
 
 // --- Джерело файлів гри: dev-сервер (розробка на ПК) або імпортовані в браузер (телефон, офлайн). ---
 let source: FileSource = devServerSource;

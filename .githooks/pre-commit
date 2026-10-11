@@ -1,0 +1,12 @@
+#!/bin/sh
+# Перед комітом: перевірка типів і golden-тести порту — лише якщо в коміті є зміни в web/.
+# Увімкнути: git config core.hooksPath .githooks
+git diff --cached --name-only | grep -q '^web/' || exit 0
+PATH="/c/Program Files/nodejs:$PATH"
+export PATH
+cd web || exit 1
+echo "pre-commit: tsc --noEmit…"
+npx tsc --noEmit || { echo "pre-commit: помилки типів — коміт скасовано"; exit 1; }
+echo "pre-commit: vitest…"
+npx vitest run --reporter=dot >/dev/null 2>&1 || { echo "pre-commit: тести не пройшли (npm test --prefix web) — коміт скасовано"; exit 1; }
+echo "pre-commit: гаразд"

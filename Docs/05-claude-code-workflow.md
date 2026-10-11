@@ -57,6 +57,16 @@
 - iPhone: Safari → Розробка (потрібен Mac) або тимчасово — оверлей логів у debug-режимі гри.
 - Для PWA/DeviceOrientation на iOS потрібен HTTPS → `vite --host` з `@vitejs/plugin-basic-ssl`.
 
+## 5а. Інфраструктура проєкту для Claude Code (`.claude/`, 2026-10-11)
+
+| Що | Де | Навіщо |
+|----|----|--------|
+| Скіл `verify-in-game` | `.claude/skills/verify-in-game/` | перевірка зміни в браузері: окрема вкладка, `ht.dev`, знімок, мобільний вʼюпорт |
+| Скіл `step-done` | `.claude/skills/step-done/` | закриття кроку: tsc, тести, журнал/roadmap, коміт |
+| Агент `re-analyst` | `.claude/agents/re-analyst.md` | реверс HTruck.exe окремо від основної розмови, висновок з адресами |
+| `ht.dev` | `web/src/dev/devTools.ts` | `ready`, `setup`, `teleport`, `run`, `smoke`, `still`, `info` — перевірки одним-двома викликами |
+| Хук pre-commit | `.githooks/pre-commit` | tsc + тести при змінах у `web/`; увімкнути: `git config core.hooksPath .githooks` |
+
 ## 6. Чого не робить Claude без вашого підтвердження
 
 - Пушити в публічні місця, публікувати ресурси гри.
