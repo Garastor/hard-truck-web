@@ -124,6 +124,10 @@ const CRASH_SOUNDS = ['crash2', 'crash4a', 'crash9'];
 /** Тестовий режим: сила ударів, після якої машина вибухає (у кар'єрі техстан 0 — це 250 при зносі 0,004 за одиницю). */
 const WRECK_HITS = 250;
 /** Туман під дощем: початок і повна непрозорість, м (гіпотеза). */
+/** Дзеркало: частка ширини екрана, співвідношення сторін і вертикальне поле зору, ° (на око). */
+const MIRROR_WIDTH = 0.3;
+const MIRROR_ASPECT = 3.2;
+const MIRROR_FOV = 22;
 const NEXT_CAM: Record<CamMode, CamMode> = { cockpit: 'first', first: 'chase', chase: 'far', far: 'cockpit' };
 /** Вертикальне поле зору виду від першої особи: піраміда 1.6×1.2 (HTruck.exe 0x4851ac) → 2·atan(0,6). */
 const PANEL_FOV = THREE.MathUtils.radToDeg(2 * Math.atan(0.6));
@@ -687,6 +691,7 @@ export class DriveSession {
       if (cmd === 'map' && s.mapAllowed && s.navMap) s.navMap.el.hidden = !s.navMap.el.hidden;
       if (cmd === 'engine') s.toggleEngine();
       if (cmd === 'wipers') s.toggleWipers();
+      if (cmd === 'mirror') s.toggleMirror();
     };
     s.touchUi = s.input.mountTouch(overlay);
     // Не гасити екран під час їзди (Screen Wake Lock, де підтримується).
@@ -925,6 +930,84 @@ export class DriveSession {
     renderer.autoClear = autoClear;
     cam.near = near;
     cam.updateProjectionMatrix();
+    if (this.mirrorOn && (this.camMode === 'cockpit' || this.camMode === 'first')) this.renderMirror(renderer);
+    else if (this.mirror) this.mirror.frame.hidden = true;
+  }
+
+  /** Дзеркало заднього огляду (M): віконце вгорі по центру з видом назад, віддзеркаленим (як у дзеркалі). */
+  mirrorOn = false;
+  private mirror: {
+    rt: THREE.WebGLRenderTarget;
+    cam: THREE.PerspectiveCamera;
+    scene: THREE.Scene;
+    ortho: THREE.OrthographicCamera;
+    material: THREE.MeshBasicMaterial;
+    frame: HTMLElement;
+  } | null = null;
+
+  private renderMirror(renderer: THREE.WebGLRenderer): void {
+    const size = renderer.getSize(new THREE.Vector2());
+    const w = Math.round(Math.min(size.x * MIRROR_WIDTH, 420));
+    const h = Math.round(w / MIRROR_ASPECT);
+    const x = Math.round((size.x - w) / 2);
+    const top = Math.round((this.hud?.getBoundingClientRect().bottom ?? 0) + 6);
+    const ratio = renderer.getPixelRatio();
+    if (!this.mirror) {
+      const rt = new THREE.WebGLRenderTarget(1, 1, { colorSpace: THREE.SRGBColorSpace });
+      const material = new THREE.MeshBasicMaterial({ map: rt.texture, depthTest: false, depthWrite: false });
+      const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+      // Дзеркало: ліве й праве міняються місцями.
+      quad.scale.x = -1;
+      const scene = new THREE.Scene();
+      scene.add(quad);
+      const frame = document.createElement('div');
+      frame.className = 'mirror-frame';
+      this.hud?.parentElement?.append(frame);
+      this.mirror = { rt, cam: new THREE.PerspectiveCamera(MIRROR_FOV, MIRROR_ASPECT, 1, this.camera.far), scene, ortho: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), material, frame };
+    }
+    const m = this.mirror;
+    if (m.rt.width !== Math.round(w * ratio) || m.rt.height !== Math.round(h * ratio)) m.rt.setSize(Math.round(w * ratio), Math.round(h * ratio));
+    // Погляд назад з місця водія: орієнтація машини, розвернута на 180° навколо вертикалі.
+    m.cam.position.copy(this.camera.position);
+    m.cam.quaternion.copy(this.truck.visual.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI));
+    m.cam.updateMatrixWorld();
+    // Кімнати позаду — видимість за камерою дзеркала (кадр головної камери вже намальовано; наступний кадр
+    // перерахує видимість для неї).
+    this.roomVis?.update(m.cam, this.room);
+    renderer.setRenderTarget(m.rt);
+    renderer.clear();
+    renderer.render(this.scene, m.cam);
+    renderer.setRenderTarget(null);
+    const autoClear = renderer.autoClear;
+    renderer.autoClear = false;
+    renderer.setScissorTest(true);
+    renderer.setScissor(x, size.y - top - h, w, h);
+    renderer.setViewport(x, size.y - top - h, w, h);
+    renderer.render(m.scene, m.ortho);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, size.x, size.y);
+    renderer.autoClear = autoClear;
+    Object.assign(m.frame.style, { left: `${x - 1}px`, top: `${top - 1}px`, width: `${w}px`, height: `${h}px` });
+    m.frame.hidden = false;
+  }
+
+  /** Підсвітка кнопок групи «ще» за станом (лише коли змінився). */
+  private togglesKey = '';
+  private syncToggles(): void {
+    const st = [this.headlights, this.mirrorOn, !!this.navMap && !this.navMap.el.hidden, this.glassRain?.wipersOn ?? false, this.truck.engineOn, this.mapAllowed, !!this.glassRain];
+    const key = st.map(Number).join('');
+    if (key === this.togglesKey) return;
+    this.togglesKey = key;
+    const [lights, mirror, map, wipers, engine, mapAllowed, glass] = st;
+    this.input.setToggle('lights', lights);
+    this.input.setToggle('mirror', mirror);
+    this.input.setToggle('map', map, !mapAllowed);
+    this.input.setToggle('wipers', wipers, !glass);
+    this.input.setToggle('engine', engine);
+  }
+
+  toggleMirror(): void {
+    this.mirrorOn = !this.mirrorOn;
   }
 
   /** Зараз побудовані прилади Panel (вид від першої особи), а не кабіна (див. buildCab). */
@@ -1157,6 +1240,7 @@ export class DriveSession {
     this.updateCab(state);
     this.updateLights(state);
     const wet = this.raining && (this.glassRain?.raining ?? true);
+    this.syncToggles();
     this.wetReflections.forEach((r, i) => r.update(this.camera, i === 0 ? this.headlights : this.night || wet, wet));
     this.updateSurface(dt);
     this.checkDeath(dt);
@@ -1480,6 +1564,8 @@ export class DriveSession {
   }
 
   dispose(): void {
+    this.mirror?.rt.dispose();
+    this.mirror?.frame.remove();
     if (this.baseFov !== undefined) {
       this.camera.fov = this.baseFov;
       this.camera.updateProjectionMatrix();

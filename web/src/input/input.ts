@@ -14,7 +14,19 @@ type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake';
 const HORN_SVG =
   '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M3 10v4h3l6 4V6L6 10H3z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M19 6.5a8 8 0 0 1 0 11"/></svg>';
 
-type Command = 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers';
+/** Значки групи «ще» (однотонні, як сигнал). */
+const svg = (body: string) =>
+  `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">${body}</svg>`;
+const ICONS = {
+  more: svg('<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>'),
+  lights: svg('<path d="M12 6c-3 0-5 2.5-5 6s2 6 5 6V6z"/><path d="M15 8h6M15 12h6M15 16h6"/>'),
+  mirror: svg('<rect x="3" y="7" width="18" height="9" rx="3"/><path d="M12 16v3"/>'),
+  map: svg('<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>'),
+  wipers: svg('<path d="M3 18a9 9 0 0 1 18 0"/><path d="M12 18L7 9"/>'),
+  engine: svg('<path d="M12 3v8"/><path d="M6.3 7.3a8 8 0 1 0 11.4 0"/>'),
+};
+
+type Command = 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror';
 
 /** Час повороту керма з клавіатури від центру до краю, с, і швидкість повернення, 1/с (оригінал, s6). */
 const STEER_RAMP = 1.1;
@@ -50,7 +62,7 @@ export class Input {
 
   /**
    * Клавіші — як в оригіналі (таблиця клавіш HTruck.exe: стрілки — газ, гальмо, кермо; H — сигнал, W — двірники,
-   * C — камера, 0 — відновитися; L — фари, Tab — навігація, пробіл — двигун). Ручне гальмо в таблиці оригіналу
+   * C — камера, 0 — відновитися; L — фари, M — дзеркало, Tab — навігація, пробіл — двигун). Ручне гальмо в таблиці оригіналу
    * без клавіші — Shift.
    */
   private static readonly KEYS: Record<string, Action> = {
@@ -72,6 +84,7 @@ export class Input {
     Tab: 'map',
     Space: 'engine',
     KeyW: 'wipers',
+    KeyM: 'mirror',
   };
 
   private key(e: KeyboardEvent): void {
@@ -179,8 +192,36 @@ export class Input {
     btn('cam', '👁', undefined, 'camera');
     btn('reset', '↺', undefined, 'reset');
     btn('horn', '', undefined, 'horn', HORN_SVG);
+    // Група «ще» (згорнута): фари, дзеркало, навігація, двірники, двигун — як клавіші L, M, Tab, W, пробіл.
+    const more = document.createElement('div');
+    more.className = 'touch-more';
+    more.hidden = true;
+    btn('more', '', undefined, undefined, ICONS.more);
+    const toggle = ui.lastElementChild as HTMLElement;
+    toggle.addEventListener('pointerdown', () => {
+      more.hidden = !more.hidden;
+      toggle.classList.toggle('on', !more.hidden);
+    });
+    const items: [string, Command][] = [['lights', 'lights'], ['mirror', 'mirror'], ['map', 'map'], ['wipers', 'wipers'], ['engine', 'engine']];
+    for (const [cls, cmd] of items) {
+      btn(cls, '', undefined, cmd, ICONS[cls as keyof typeof ICONS]);
+      const b = ui.lastElementChild as HTMLElement;
+      b.dataset.cmd = cmd;
+      more.append(b);
+    }
+    ui.append(more);
     parent.append(ui);
+    this.touchUi = ui;
     return ui;
+  }
+
+  private touchUi: HTMLElement | null = null;
+  /** Підсвітка увімкнених функцій у групі «ще» (фари, дзеркало…); hidden — кнопку не показувати. */
+  setToggle(cmd: Command, on: boolean, hidden = false): void {
+    const b = this.touchUi?.querySelector<HTMLElement>(`[data-cmd="${cmd}"]`);
+    if (!b) return;
+    b.classList.toggle('on', on);
+    b.hidden = hidden;
   }
 
   dispose(): void {

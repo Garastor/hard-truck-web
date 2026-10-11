@@ -333,6 +333,41 @@ body.bar-open #fps {
   place-items: center;
 }
 
+/* Група «ще»: кнопка-перемикач поруч із сигналом, під нею — стовпчик функцій. */
+.touch-btn.more {
+  width: 48px;
+  height: 48px;
+  right: calc(var(--sr) + 180px);
+  display: grid;
+  place-items: center;
+}
+
+.touch-more {
+  position: absolute;
+  right: calc(var(--sr) + 180px);
+  top: calc(max(8px, env(safe-area-inset-top)) + 56px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.touch-more[hidden] {
+  display: none;
+}
+
+.touch-more .touch-btn {
+  position: static;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+}
+
+.touch-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Налаштування «поміняти місцями»: кермо праворуч, педалі ліворуч (гальмо — ближче до краю). */
 body.swap-controls .touch-btn.left {
   left: auto;
@@ -387,8 +422,14 @@ body.driving .drive-hud {
 
 body.driving .touch-btn.cam,
 body.driving .touch-btn.reset,
-body.driving .touch-btn.horn {
+body.driving .touch-btn.horn,
+body.driving .touch-btn.more {
   top: max(8px, env(safe-area-inset-top));
+}
+
+body.driving.bar-open .touch-btn.more,
+body.driving.bar-open .touch-more {
+  visibility: hidden;
 }
 
 /* --- Імпорт файлів гри --- */
@@ -801,6 +842,14 @@ body.in-menu #fps {
   position: fixed;
   right: var(--sr);
   top: calc(max(8px, env(safe-area-inset-top)) + 60px);
+  pointer-events: none;
+}
+
+/* Рамка дзеркала заднього огляду (зображення малює WebGL під нею) — тонка, як у табличок табло. */
+.mirror-frame {
+  position: fixed;
+  border: 1px solid #8c8c8c;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.8);
   pointer-events: none;
 }
 
