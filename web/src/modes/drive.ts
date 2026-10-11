@@ -1122,6 +1122,10 @@ export class DriveSession {
     const blade = (await this.wiperTextureLoader?.().catch(() => null)) ?? null;
     const streaks = await this.cab2dLoader!(['rain.msk']).catch(() => null);
     if (token !== this.cab2dToken || !this.cab2d) return;
+    if ((!drops || !blade || !streaks) && !rainHintShown) {
+      rainHintShown = true;
+      toast('Дощ і двірники 2D-кабіни: файли гри імпортовано раніше — повторіть імпорт ZIP в «Опціях».');
+    }
     const rain = new Cab2dRain(drops?.get('drop7.msk') ?? null, drops?.get('drop10.msk') ?? null, blade, streaks?.get('rain.msk') ?? null);
     rain.onStroke = () => this.audio?.play('wipers', 0.9);
     rain.raining = this.raining;
@@ -1767,6 +1771,9 @@ export class DriveSession {
     this.world.free();
   }
 }
+
+/** Підказку про повторний імпорт для дощу 2D-кабіни показуємо раз за сеанс. */
+let rainHintShown = false;
 
 /** Сила власного світла фар у денний дощ відносно ночі (на око: помітне на темному асфальті, не засвічує). */
 const DAY_RAIN_HEADLIGHTS = 0.45;

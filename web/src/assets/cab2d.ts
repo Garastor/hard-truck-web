@@ -40,6 +40,12 @@ export function extractCab2d(rmpBytes: Uint8Array): [string, Uint8Array][] {
 export const WIPER_TXR = 'flash.txr';
 
 /**
+ * Файли дощу 2D-кабіни, що зʼявились у порті пізніше за маски кабіни: на пристрої, імпортованому раніше, їх немає
+ * (COUNT.RMP на пристрої не зберігається) — «Опції» показують неповний набір, кабіна підказує повторний імпорт.
+ */
+export const CAB2D_RAIN_FILES = ['drop7.msk', 'drop10.msk', 'rain.msk', WIPER_TXR].map((n) => `${CAB2D_DIR}${n}`);
+
+/**
  * Текстура програмного набору (CAB2D/<імʼя>.txr): зі сховища, інакше (dev-сервер ПК) — з COUNT.RMP із записом у
  * сховище. null — немає (імпорт до появи цієї текстури: потрібен повторний).
  */

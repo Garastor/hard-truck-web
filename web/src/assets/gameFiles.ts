@@ -1,7 +1,7 @@
 import { Unzip, UnzipInflate } from 'fflate';
 import { LEVELS } from './loader';
 import type { FileSource } from './loader';
-import { CAB2D_DIR, CAB2D_SOURCE, extractCab2d } from './cab2d';
+import { CAB2D_DIR, CAB2D_RAIN_FILES, CAB2D_SOURCE, extractCab2d } from './cab2d';
 
 /**
  * Файли гри на пристрої гравця (Фаза 7): імпорт з HardTruck.zip або теки гри → IndexedDB.
@@ -175,9 +175,18 @@ export interface StorageInfo {
 
 export async function storageInfo(): Promise<StorageInfo> {
   const missing = await missingFiles().catch(() => REQUIRED);
+  // Файли дощу 2D-кабіни (витягуються з COUNT.RMP лише при імпорті) — теж у підрахунку: без них «Опції» показують
+  // неповний набір, і видно, що потрібен повторний імпорт.
+  const have = await storedFiles().catch(() => new Set<string>());
+  const rain = CAB2D_RAIN_FILES.filter((f) => have.has(f)).length;
   const est = await navigator.storage?.estimate?.().catch(() => null);
   const persisted = navigator.storage?.persisted ? await navigator.storage.persisted().catch(() => null) : null;
-  return { stored: REQUIRED.length - missing.length, required: REQUIRED.length, usage: est?.usage ?? null, persisted };
+  return {
+    stored: REQUIRED.length - missing.length + rain,
+    required: REQUIRED.length + CAB2D_RAIN_FILES.length,
+    usage: est?.usage ?? null,
+    persisted,
+  };
 }
 
 export async function clearFiles(): Promise<void> {
