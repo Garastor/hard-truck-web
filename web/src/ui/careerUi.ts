@@ -78,33 +78,53 @@ export function modal(overlay: HTMLElement, title: string, body: string | HTMLEl
   });
 }
 
-/** Знак «телефон екстреного виклику»: синій знак із білою рамкою, у білому полі — чорна телефонна трубка. */
+/**
+ * Знак «телефон» (пункт виклику допомоги): синій квадрат із заокругленими кутами й білою лінією вздовж краю,
+ * посередині — біле поле з чорною трубкою по діагоналі. Векторний (у 2 рази дрібнішій сітці,
+ * ніж табло), щоб трубка мала форму, а не «пікселі».
+ */
 export function callSign(): HTMLCanvasElement {
-  const PHONE = [
-    '.XXX....XXX.',
-    'XXXXXXXXXXXX',
-    'XX..XXXX..XX',
-    '...XX..XX...',
-    '..XXXXXXXX..',
-    '..XX.XX.XX..',
-    '..XXXXXXXX..',
-    '..XX.XX.XX..',
-    '..XXXXXXXX..',
-  ];
-  const { canvas, ctx } = pixelCanvas(24, 24, hudScale() * 1.75);
-  ctx.fillStyle = 'rgb(20, 70, 170)';
-  ctx.fillRect(1, 0, 22, 24);
-  ctx.fillRect(0, 1, 24, 22);
+  // Сітка вчетверо дрібніша за табло — векторна трубка без «сходинок».
+  const W = 88;
+  const { canvas, ctx } = pixelCanvas(W, W, hudScale() * 0.5);
+  ctx.fillStyle = 'rgb(0, 122, 194)';
+  ctx.beginPath();
+  ctx.roundRect(0, 0, W, W, 14);
+  ctx.fill();
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.roundRect(7, 7, W - 14, W - 14, 10);
+  ctx.stroke();
+  // Біле поле посередині.
+  const S = 54;
+  const o = (W - S) / 2;
   ctx.fillStyle = '#fff';
-  ctx.fillRect(2, 2, 20, 1);
-  ctx.fillRect(2, 21, 20, 1);
-  ctx.fillRect(2, 2, 1, 20);
-  ctx.fillRect(21, 2, 1, 20);
-  ctx.fillRect(5, 5, 14, 14);
-  ctx.fillStyle = '#000';
-  PHONE.forEach((r, y) => {
-    for (let x = 0; x < r.length; x++) if (r[x] === 'X') ctx.fillRect(6 + x, 7 + y, 1, 1);
-  });
+  ctx.fillRect(o, o, S, S);
+  const p = (u: number, v: number): [number, number] => [o + u * S, o + v * S];
+  // Ручка — дуга від навушника (вгорі) до мікрофона (праворуч унизу).
+  ctx.strokeStyle = '#000';
+  ctx.lineCap = 'butt';
+  ctx.lineWidth = S * 0.17;
+  ctx.beginPath();
+  ctx.moveTo(...p(0.4, 0.2));
+  ctx.bezierCurveTo(...p(0.12, 0.34), ...p(0.2, 0.62), ...p(0.42, 0.8));
+  ctx.bezierCurveTo(...p(0.52, 0.88), ...p(0.62, 0.84), ...p(0.66, 0.78));
+  ctx.stroke();
+  // Торці (навушник і мікрофон): ширші за ручку, продовжують її за дотичною; від ручки — тонка біла щілина.
+  const cap = (u: number, v: number, dx: number, dy: number) => {
+    const [x, y] = p(u, v);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.atan2(dx, -dy));
+    ctx.fillStyle = '#000';
+    ctx.fillRect(-S * 0.15, -S * 0.22, S * 0.3, S * 0.24);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(-S * 0.17, -S * 0.04, S * 0.34, S * 0.035);
+    ctx.restore();
+  };
+  cap(0.4, 0.2, 0.28, -0.14);
+  cap(0.66, 0.78, 0.04, -0.06);
   return canvas;
 }
 
