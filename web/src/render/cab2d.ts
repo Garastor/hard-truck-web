@@ -40,13 +40,18 @@ const WHEEL_KNOTS: [number, number][] = [
   [0, 0], [5, 5], [13, 9], [16, 10], [20, 11], [25, 12], [31, 13], [38, 14], [46, 15], [55, 16], [65, 17], [76, 18], [90, 19],
 ];
 /**
- * Кут керма на кожному з 39 кадрів m_rul, ° (проти годинникової стрілки — додатний): виміряно за центром мас
- * маточини й спиць відносно центру обода. Біля центру ≈ 1,5° на кадр, на краях — до 9°.
+ * Кут керма на кожному з 39 кадрів m_rul, ° (проти годинникової стрілки — додатний), відносно середнього кадру:
+ * накопичені різниці сусідніх кадрів, знайдені підбором повороту, що найкраще суміщає кадр n із n + 1 (поворот
+ * «еліптичний» — кермо видно під кутом, обід — еліпс 176×159). Біля центру ≈ 0,75° на кадр, на краях — 9…13°.
  */
 const WHEEL_ANGLES = [
-  97.4, 86.6, 77, 68.1, 59.3, 50.6, 42.4, 34.7, 28, 22.4, 18.7, 15.9, 13, 10.1, 7.1, 5.7, 4.6, 3.2, 1.8, 0.4, -1.1, -2.7,
-  -4.1, -5.1, -6.5, -9.4, -12.5, -15.3, -18.1, -22, -27.7, -34.3, -41.9, -50.2, -58.8, -67.6, -76.5, -86.3, -97.1,
+  79.5, 69.5, 60, 49.5, 41.5, 34.5, 28.25, 22.75, 18, 14.25, 11, 9, 7.25, 5.25, 3.25, 3, 2.25, 1.5, 0.75, 0, -1, -1.75,
+  -2.5, -3.25, -4, -5.75, -7.75, -9.75, -11.5, -14.75, -18.5, -23.75, -29.75, -36.5, -43.75, -52.75, -62, -71, -84,
 ];
+/** Центр обода в спрайті m_rul (180×162) і стиснення еліпса обода по вертикалі. */
+const WHEEL_CX = 89.5;
+const WHEEL_CY = 80;
+const WHEEL_SQUASH = 79.5 / 88;
 function wheelFrame(steer: number): number {
   // Знак — під кермо порту (−1 — ліворуч): кадри з меншим номером — кермо повернуте ліворуч.
   const a = THREE.MathUtils.clamp(steer, -1, 1) * 90;
@@ -174,11 +179,21 @@ export class Cab2d {
     }
     m.color.set(color ?? 0xffffff);
     m.alphaTest = tex ? 0.5 : 0;
-    q.rotation.z = rotation;
     q.visible = !!tex || color !== undefined;
     // Площина 1×1 з центром у нулі; камера — y униз (top < bottom), рядок 0 маски (flipY = false) — угорі.
-    q.scale.set(tw, th, 1);
-    q.position.set(x + tw / 2, y + th / 2, 0);
+    q.matrixAutoUpdate = false;
+    q.matrix.makeScale(tw, th, 1).setPosition(x + tw / 2, y + th / 2, 0);
+    if (rotation) {
+      // Доповорот керма — навколо центру обода, «еліптичний»: розтягнути еліпс до кола, повернути, стиснути назад.
+      const c = new THREE.Vector3(x + WHEEL_CX, y + WHEEL_CY, 0);
+      const r = new THREE.Matrix4()
+        .makeTranslation(c.x, c.y, 0)
+        .multiply(new THREE.Matrix4().makeScale(1, WHEEL_SQUASH, 1))
+        .multiply(new THREE.Matrix4().makeRotationZ(rotation))
+        .multiply(new THREE.Matrix4().makeScale(1, 1 / WHEEL_SQUASH, 1))
+        .multiply(new THREE.Matrix4().makeTranslation(-c.x, -c.y, 0));
+      q.matrix.premultiply(r);
+    }
   }
 
   render(renderer: THREE.WebGLRenderer): void {
