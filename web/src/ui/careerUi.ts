@@ -113,15 +113,28 @@ export function modal(overlay: HTMLElement, title: string, body: string | HTMLEl
     box.append(head);
     box.append(typeof body === 'string' ? pixelText(body, boxContentWidth()) : body);
     const row = el('div', 'career-actions');
+    const close = (i: number) => {
+      window.removeEventListener('keydown', onKey, true);
+      back.remove();
+      resolve(i);
+    };
+    // Клавіатура: Enter — перша (основна) кнопка, Esc — остання (скасувати / закрити).
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' && e.key !== 'Escape') return;
+      if (!back.isConnected) return window.removeEventListener('keydown', onKey, true);
+      // Лише верхнє вікно (вкладені — останні в overlay).
+      if ([...overlay.querySelectorAll('.career-modal')].pop() !== back) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      close(e.key === 'Enter' ? 0 : buttons.length - 1);
+    };
+    window.addEventListener('keydown', onKey, true);
     buttons.forEach((b, i) => {
       const btn = el('button', i === 0 ? 'hud-btn primary' : 'hud-btn');
       btn.setAttribute('aria-label', b);
       if (uiFont) btn.append(pixelText(b, 400));
       else btn.textContent = b;
-      btn.addEventListener('click', () => {
-        back.remove();
-        resolve(i);
-      });
+      btn.addEventListener('click', () => close(i));
       row.append(btn);
     });
     box.append(row);

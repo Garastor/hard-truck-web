@@ -121,19 +121,19 @@ export class EngineAudio {
     };
   }
 
-  /** Оновлення двигуна: rpm — оберти, load — навантаження 0..1 (газ). */
-  update(rpm: number, load: number): void {
+  /** Оновлення двигуна: rpm — оберти, load — навантаження 0..1 (газ); running = false — двигун заглушено. */
+  update(rpm: number, load: number, running = true): void {
     const t = this.ctx.currentTime;
     const k = 0.08;
     const idleRate = Math.min(2.2, Math.max(0.8, rpm / 800));
     const fullRate = Math.min(2.0, Math.max(0.6, rpm / 1500));
     if (this.idle) {
       this.idle.src.playbackRate.setTargetAtTime(idleRate, t, k);
-      this.idle.gain.gain.setTargetAtTime(0.55 * (1 - load) + 0.1, t, k);
+      this.idle.gain.gain.setTargetAtTime(running ? 0.55 * (1 - load) + 0.1 : 0, t, k);
     }
     if (this.full) {
       this.full.src.playbackRate.setTargetAtTime(fullRate, t, k);
-      this.full.gain.gain.setTargetAtTime(0.7 * load, t, k);
+      this.full.gain.gain.setTargetAtTime(running ? 0.7 * load : 0, t, k);
     }
   }
 

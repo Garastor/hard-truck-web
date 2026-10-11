@@ -499,7 +499,10 @@ export class DriveSession {
   private movables: Movables | null = null;
   /** Навігаційна система (НС): мінікарта з суперниками. */
   private navMap: NavMap | null = null;
+  /** Навігація дозволена (тест або встановлено «НС»): Tab ховає й показує карту. */
+  private mapAllowed = false;
   showMap(on: boolean): void {
+    this.mapAllowed = on;
     if (on && !this.navMap) {
       this.wayNet ??= new WayNet(this.built.assembler.b3d);
       const parent = this.hud?.parentElement;
@@ -521,10 +524,15 @@ export class DriveSession {
   private lights: TruckLights | null = null;
   /** Відблиски ліхтарів на дорозі — власні, у формі ліхтарів (див. WetReflections; оригінальні білборди сховані). */
   private readonly wetReflections: WetReflections[] = [];
+  /** Фари гравця вручну (L): null — як в оригіналі, самі вночі й у дощ. */
+  private lightsOverride: boolean | null = null;
+  private get headlights(): boolean {
+    return this.lightsOverride ?? (this.night || (this.raining && (this.glassRain?.raining ?? true)));
+  }
   private updateLights(state: { throttle: number; brake: number }): void {
     const wet = this.raining && (this.glassRain?.raining ?? true);
     const reverse = this.truck.gear < 0;
-    this.lights?.update(this.night, wet, reverse ? state.throttle > 0 : state.brake > 0, reverse);
+    this.lights?.update(this.headlights, false, reverse ? state.throttle > 0 : state.brake > 0, reverse);
     for (const o of this.opponents) o.lights?.update(this.night, wet, o.pilot.state.brake > 0, o.truck.gear < 0);
   }
   /** Кермування нахилом телефона (дозвіл на iOS питають в «Опціях», за жестом). */
@@ -677,6 +685,10 @@ export class DriveSession {
         else s.recover();
       }
       if (cmd === 'camera') s.camMode = s.camMode === 'chase' ? 'cockpit' : s.camMode === 'cockpit' ? 'far' : 'chase';
+      if (cmd === 'lights') s.lightsOverride = !s.headlights;
+      if (cmd === 'map' && s.mapAllowed && s.navMap) s.navMap.el.hidden = !s.navMap.el.hidden;
+      if (cmd === 'engine') s.toggleEngine();
+      if (cmd === 'wipers' && s.glassRain) s.glassRain.wipersOn = !s.glassRain.wipersOn;
     };
     s.touchUi = s.input.mountTouch(overlay);
     // Не гасити екран під час їзди (Screen Wake Lock, де підтримується).
@@ -1093,6 +1105,13 @@ export class DriveSession {
     }
   }
 
+  /** Пробіл: заглушити / завести двигун (заводиться звуком стартера start). */
+  toggleEngine(): void {
+    const on = !this.truck.engineOn;
+    this.truck.engineOn = on;
+    if (on) this.audio?.play('start', 0.8);
+  }
+
   /** Пауза (розгорнуте меню кнопок на трасі): світ, час і звук зупинені, кадр лишається. */
   get paused(): boolean {
     return this.isPaused;
@@ -1131,7 +1150,7 @@ export class DriveSession {
     this.updateCab(state);
     this.updateLights(state);
     const wet = this.raining && (this.glassRain?.raining ?? true);
-    for (const r of this.wetReflections) r.update(this.camera, this.night || wet, wet);
+    this.wetReflections.forEach((r, i) => r.update(this.camera, i === 0 ? this.headlights : this.night || wet, wet));
     this.updateSurface(dt);
     this.checkDeath(dt);
     this.effects?.update(dt);
@@ -1174,7 +1193,7 @@ export class DriveSession {
     }
     const t = this.truck;
     if (this.audio) {
-      this.audio.update(t.rpm, state.throttle);
+      this.audio.update(t.rpm, t.engineOn ? state.throttle : 0, t.engineOn);
       this.brakeSqueal -= dt;
       if (state.brake > 0 && t.gear > 0 && t.speedKmh > 25 && this.brakeSqueal <= 0) {
         this.audio.play('break', 0.5);

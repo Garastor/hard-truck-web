@@ -129,6 +129,8 @@ export class TruckVehicle {
   rpm = 300;
   speedKmh = 0;
   readonly engine: Engine;
+  /** Двигун працює (пробіл глушить і заводить). */
+  engineOn = true;
   /** Параметри шин (спільні для всіх вантажівок) — для підбору в консолі. */
   readonly tire = TIRE;
   /** Параметри підвіски (спільні) — для підбору в консолі. */
@@ -319,12 +321,13 @@ export class TruckVehicle {
       if (this.reverseHold >= REVERSE_HOLD) this.reverseMode = true;
     } else this.reverseHold = 0;
     if (this.reverseMode && input.throttle > 0 && input.brake === 0 && stopped) this.reverseMode = false;
-    const gas = this.reverseMode ? input.brake : input.throttle;
+    // Заглушений двигун не тягне (оберти — до нуля, гальмування двигуном лишається).
+    const gas = !this.engineOn ? 0 : this.reverseMode ? input.brake : input.throttle;
     const brake = this.reverseMode ? input.throttle : input.brake;
 
     const eng = this.engine;
     eng.update(dt, gas, brake, v, this.reverseMode);
-    this.rpm = eng.rpm;
+    this.rpm = this.engineOn ? eng.rpm : Math.max(0, this.rpm - 3000 * dt);
     this.gear = eng.displayGear === GEAR_R ? -1 : eng.displayGear - 1;
 
     // Гальмо з клавіатури наростає як t/(t + 1) (поле [0x33a] оригіналу; телеметрія s6).

@@ -14,7 +14,7 @@ type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake';
 const HORN_SVG =
   '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M3 10v4h3l6 4V6L6 10H3z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M19 6.5a8 8 0 0 1 0 11"/></svg>';
 
-type Command = 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt';
+type Command = 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers';
 
 /** Час повороту керма з клавіатури від центру до краю, с, і швидкість повернення, 1/с (оригінал, s6). */
 const STEER_RAMP = 1.1;
@@ -48,12 +48,30 @@ export class Input {
     window.addEventListener('keyup', this.onKey);
   }
 
+  /**
+   * Клавіші — як в оригіналі (таблиця клавіш HTruck.exe: стрілки — газ, гальмо, кермо; H — сигнал, W — двірники,
+   * C — камера, 0 — відновитися; L — фари, Tab — навігація, пробіл — двигун). Ручне гальмо в таблиці оригіналу
+   * без клавіші — Shift.
+   */
   private static readonly KEYS: Record<string, Action> = {
-    ArrowLeft: 'left', KeyA: 'left',
-    ArrowRight: 'right', KeyD: 'right',
-    ArrowUp: 'gas', KeyW: 'gas',
-    ArrowDown: 'brake', KeyS: 'brake',
-    Space: 'handbrake',
+    ArrowLeft: 'left',
+    ArrowRight: 'right',
+    ArrowUp: 'gas',
+    ArrowDown: 'brake',
+    ShiftLeft: 'handbrake',
+    ShiftRight: 'handbrake',
+  };
+  private static readonly COMMANDS: Record<string, Command> = {
+    KeyC: 'camera',
+    KeyR: 'reset',
+    Digit0: 'reset',
+    Numpad0: 'reset',
+    KeyH: 'horn',
+    KeyP: 'autopilot',
+    KeyL: 'lights',
+    Tab: 'map',
+    Space: 'engine',
+    KeyW: 'wipers',
   };
 
   private key(e: KeyboardEvent): void {
@@ -62,11 +80,10 @@ export class Input {
       e.preventDefault();
       if (e.type === 'keydown') this.held.add(a);
       else this.held.delete(a);
-    } else if (e.type === 'keydown' && !e.repeat) {
-      if (e.code === 'KeyC') this.onCommand?.('camera');
-      if (e.code === 'KeyR') this.onCommand?.('reset');
-      if (e.code === 'KeyH') this.onCommand?.('horn');
-      if (e.code === 'KeyP') this.onCommand?.('autopilot');
+    } else if (Input.COMMANDS[e.code] && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement)) {
+      // Tab і пробіл — без типової дії браузера (фокус, прокрутка, натискання кнопки у фокусі).
+      e.preventDefault();
+      if (e.type === 'keydown' && !e.repeat) this.onCommand?.(Input.COMMANDS[e.code]);
     }
   }
 

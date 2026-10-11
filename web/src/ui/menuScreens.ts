@@ -75,7 +75,22 @@ class Screen {
     this.stage.style.transform = `translate(-50%, -50%) scale(${s})`;
   }
 
+  private onKey: ((e: KeyboardEvent) => void) | null = null;
+
+  /** Клавіатура: Enter і Esc — дії екрана (ОК / назад). Лише для верхнього екрана. */
+  keys(enter: (() => void) | null, esc: (() => void) | null): void {
+    this.onKey = (e) => {
+      const fn = e.key === 'Enter' ? enter : e.key === 'Escape' ? esc : null;
+      if (!fn || [...document.querySelectorAll('.menu-screen')].pop() !== this.root) return;
+      if (document.querySelector('.career-modal')) return;
+      e.preventDefault();
+      fn();
+    };
+    window.addEventListener('keydown', this.onKey);
+  }
+
   close(): void {
+    if (this.onKey) window.removeEventListener('keydown', this.onKey);
     window.removeEventListener('resize', this.onResize);
     this.root.remove();
     document.body.classList.remove('in-menu');
@@ -198,6 +213,7 @@ export function newGameScreen(art: MenuArt, saves: Career[], driver: string): Pr
     maskButton(scr, art, 'n/new', 327, 111, () => done({ action: 'new', difficulty, rivals }));
     maskButton(scr, art, 'n/load', 327, 239, () => picked && done({ action: 'load', name: picked }), { disabled: !saves.length });
     maskButton(scr, art, 'n/cancel', 327, 389, () => done(null));
+    scr.keys(null, () => done(null));
     // Список «Существующие игры» (рамка ≈ 152…300 × 256…448): 10 рядків, порожні — «none», як в оригіналі.
     const list = scr.place(document.createElement('div'), 156, 270, 142, 176);
     list.className += ' menu-list';
@@ -244,6 +260,7 @@ export function driverScreen(art: MenuArt, current: string, known: string[]): Pr
     }
     maskButton(scr, art, 'd/ok', 327, 148, () => done(input.value.trim() || current));
     maskButton(scr, art, 'd/cancel', 327, 362, () => done(null));
+    scr.keys(() => done(input.value.trim() || current), () => done(null));
   });
 }
 
@@ -272,13 +289,18 @@ export interface OptionsActions {
 
 /** Клавіші порту (для таблиці «перевизначення клавіатури» — поки лише показуємо). */
 const KEY_ROWS: [string, string][] = [
-  ['Газ', '↑ / W'],
-  ['Гальмо, задній хід', '↓ / S'],
-  ['Кермо', '← → / A D'],
-  ['Ручне гальмо', 'Пробіл'],
+  ['Газ', '↑'],
+  ['Гальмо, задній хід', '↓'],
+  ['Кермо', '← →'],
+  ['Ручне гальмо', 'Shift'],
+  ['Двигун: заглушити / завести', 'Пробіл'],
+  ['Фари', 'L'],
+  ['Двірники', 'W'],
+  ['Навігація (якщо є)', 'Tab'],
   ['Камера', 'C'],
   ['Сигнал', 'H'],
-  ['Відновитися', 'R'],
+  ['Відновитися', '0 / R'],
+  ['Вікна: так / скасувати', 'Enter / Esc'],
   ['Автопілот (налагодження)', 'P'],
 ];
 
@@ -335,10 +357,12 @@ export function optionsScreen(art: MenuArt, st: OptionsState, act: OptionsAction
       act.setCab(st.cab);
       refresh();
     });
-    maskButton(scr, art, 'o/ok', 397, 343, () => {
+    const ok = () => {
       scr.close();
       resolve();
-    });
+    };
+    maskButton(scr, art, 'o/ok', 397, 343, ok);
+    scr.keys(ok, ok);
 
     // Таблиця (рамка ≈ 27…445 × 107…325): угорі — перемикачі (тап змінює), нижче — клавіші.
     const table = scr.place(document.createElement('div'), 32, 110, 408, 212);
@@ -378,9 +402,11 @@ export function helpScreen(art: MenuArt, text: string): Promise<void> {
       p.textContent = para;
       box.append(p);
     }
-    maskButton(scr, art, 'l/cancel', 495, 384, () => {
+    const back = () => {
       scr.close();
       resolve();
-    });
+    };
+    maskButton(scr, art, 'l/cancel', 495, 384, back);
+    scr.keys(back, back);
   });
 }
