@@ -98,7 +98,17 @@ function setStatus(text: string | null): void {
   status.textContent = text ?? '';
 }
 
+/**
+ * Відкрито з налагоджувального посилання (?tab=… або ?career=1 на dev-сервері): лише тоді адреса стежить за
+ * вкладкою й кар'єрою. Звичайний запуск (зокрема гра з домашнього екрана) — завжди головне меню, адреса чиста.
+ */
+const debugLink = import.meta.env.DEV && !isStandalone() && (params.has('tab') || params.has('career'));
+function isStandalone(): boolean {
+  return matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+}
+
 function syncUrl(): void {
+  if (!debugLink) return history.replaceState(null, '', location.pathname);
   if (career || careerCfg) return history.replaceState(null, '', '?career=1');
   const p = new URLSearchParams({ level: levelSel.value, mode: modeSel.value, tab });
   if (tab === 'trucks' || tab === 'drive') p.set('truck', truckSel.value);
@@ -762,9 +772,13 @@ async function fallbackMenu(): Promise<void> {
 
 /** Запуск: ?career=1 — продовжити кар'єру; ?tab=… — переглядач/швидкий заїзд (розробка); інакше — меню. */
 async function startup(): Promise<void> {
-  const resume = params.get('career') ? loadCareer() : null;
-  if (resume) return startCareer(resume);
-  if (params.get('tab')) return open();
+  // Гравець при запуску — у головному меню; ?career=1 і ?tab=… — лише налагоджувальні посилання dev-сервера
+  // (встановлена раніше гра на домашньому екрані стартувала з ?tab=drive — у standalone ігноруємо).
+  if (debugLink) {
+    const resume = params.get('career') ? loadCareer() : null;
+    if (resume) return startCareer(resume);
+    if (params.get('tab')) return open();
+  }
   await menuLoop();
 }
 

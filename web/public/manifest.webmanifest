@@ -2,7 +2,7 @@
   "name": "Hard Truck Web",
   "short_name": "Hard Truck",
   "description": "Порт «Дальнобійників» (1998) у браузер. Потрібні файли оригінальної гри.",
-  "start_url": "./?tab=drive",
+  "start_url": "./",
   "scope": "./",
   "display": "fullscreen",
   "orientation": "landscape",
