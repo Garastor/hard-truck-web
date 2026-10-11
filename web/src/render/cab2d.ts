@@ -39,6 +39,14 @@ const TILE = 460;
 const WHEEL_KNOTS: [number, number][] = [
   [0, 0], [5, 5], [13, 9], [16, 10], [20, 11], [25, 12], [31, 13], [38, 14], [46, 15], [55, 16], [65, 17], [76, 18], [90, 19],
 ];
+/**
+ * Кут керма на кожному з 39 кадрів m_rul, ° (проти годинникової стрілки — додатний): виміряно за центром мас
+ * маточини й спиць відносно центру обода. Біля центру ≈ 1,5° на кадр, на краях — до 9°.
+ */
+const WHEEL_ANGLES = [
+  97.4, 86.6, 77, 68.1, 59.3, 50.6, 42.4, 34.7, 28, 22.4, 18.7, 15.9, 13, 10.1, 7.1, 5.7, 4.6, 3.2, 1.8, 0.4, -1.1, -2.7,
+  -4.1, -5.1, -6.5, -9.4, -12.5, -15.3, -18.1, -22, -27.7, -34.3, -41.9, -50.2, -58.8, -67.6, -76.5, -86.3, -97.1,
+];
 function wheelFrame(steer: number): number {
   // Знак — під кермо порту (−1 — ліворуч): кадри з меншим номером — кермо повернуте ліворуч.
   const a = THREE.MathUtils.clamp(steer, -1, 1) * 90;
@@ -148,7 +156,7 @@ export class Cab2d {
     return { x: (r.x + ox) * s, y: (r.y + oy) * s, w: r.w * s, h: r.h * s };
   }
 
-  private quad(name: string | null, x: number, y: number, w?: number, h?: number, color?: number, opacity = 1): void {
+  private quad(name: string | null, x: number, y: number, w?: number, h?: number, color?: number, rotation = 0): void {
     let q = this.quads[this.used];
     if (!q) {
       q = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ transparent: true, alphaTest: 0.5, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
@@ -165,9 +173,8 @@ export class Cab2d {
       m.needsUpdate = true;
     }
     m.color.set(color ?? 0xffffff);
-    // Напівпрозорий кадр (перехід між кадрами керма) — змішуванням, без порогу.
-    m.alphaTest = tex && opacity >= 1 ? 0.5 : 0;
-    m.opacity = opacity;
+    m.alphaTest = tex ? 0.5 : 0;
+    q.rotation.z = rotation;
     q.visible = !!tex || color !== undefined;
     // Площина 1×1 з центром у нулі; камера — y униз (top < bottom), рядок 0 маски (flipY = false) — угорі.
     q.scale.set(tw, th, 1);
@@ -198,13 +205,15 @@ export class Cab2d {
     this.quad(st.gear < 0 ? 'gear_r' : `gear${String(Math.min(9, st.gear)).padStart(2, '0')}`, px + 65, py + 5);
     this.quad('autogear', px + 96, py - 8);
     if (st.handbrake) this.quad('park', px + 39, py - 5);
-    // Кермо: два сусідні кадри — другий поверх із прозорістю за дробовою частиною (39 кадрів на весь хід, і
-    // далеко від центру кожен кадр — кілька градусів: без змішування кермо поверталось ривками).
+    // Кермо: найближчий кадр, доповернутий на залишок кута до неперервного положення (39 кадрів на весь хід, на
+    // краях — до 9° між кадрами: без доповороту кермо поверталось ривками; змішування кадрів давало двоїння).
+    // Обертання — навколо центру спрайта (≈ центр обода); камера з y униз — знак протилежний.
     const wf = wheelFrame(st.steer);
-    const w0 = Math.floor(wf);
-    const wheel = (f: number) => `m_rul_${String(f + 1).padStart(2, '0')}`;
-    this.quad(wheel(w0), X + 115, Y + 325);
-    if (wf > w0) this.quad(wheel(w0 + 1), X + 115, Y + 325, undefined, undefined, undefined, wf - w0);
+    const n = Math.round(wf);
+    const f0 = Math.floor(wf);
+    const exact = WHEEL_ANGLES[f0] + (WHEEL_ANGLES[Math.min(38, f0 + 1)] - WHEEL_ANGLES[f0]) * (wf - f0);
+    const turn = THREE.MathUtils.degToRad(exact - WHEEL_ANGLES[n]);
+    this.quad(`m_rul_${String(n + 1).padStart(2, '0')}`, X + 115, Y + 325, undefined, undefined, undefined, -turn);
     // Чорне поза маскою: над нею й нижче за Y + 460, а також боки, якщо екран ширший за маску.
     const { ox, oy, w, h } = this.view;
     const left = -ox;
