@@ -195,6 +195,12 @@ async function startDrive(): Promise<void> {
     const kind = cfg?.kind ?? (id === 'CIRCUIT' ? 'laps' : id === 'MENU3D' ? 'free' : 'route');
     const rivals = cfg?.rivals ?? (id === 'TRIAL' || id === 'MENU3D' ? [] : trucks.filter((t) => t !== def).slice(0, nAi));
     drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup);
+    drive.onSettingsCommand = (cmd) => {
+      if (cmd === 'swap') return setSwap(!loadSwap());
+      const style = drive?.cabStyleCurrent === '2d' ? '3d' : '2d';
+      setCabStyle(style);
+      drive?.setCabStyle(style);
+    };
     // Маски 2D-кабіни: з файлів на пристрої; якщо їх імпортовано раніше без масок — з ПК (dev-сервер), із записом.
     drive.setCab2dLoader(async (mask) => (await loadCab2d(source, mask, storeFile)) ?? (source === devServerSource ? null : loadCab2d(devServerSource, mask, storeFile)));
     const [small, large] = await hudFonts();

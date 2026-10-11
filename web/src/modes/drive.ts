@@ -695,6 +695,8 @@ export class DriveSession {
       if (cmd === 'engine') s.toggleEngine();
       if (cmd === 'wipers') s.toggleWipers();
       if (cmd === 'mirror') s.toggleMirror();
+      if (cmd === 'cab') s.onSettingsCommand?.('cab');
+      if (cmd === 'swap') s.onSettingsCommand?.('swap');
     };
     s.touchUi = s.input.mountTouch(overlay);
     // Не гасити екран під час їзди (Screen Wake Lock, де підтримується).
@@ -1008,7 +1010,7 @@ export class DriveSession {
   private togglesKey = '';
   private syncToggles(): void {
     const st = [this.headlights, this.mirrorOn, !!this.navMap && !this.navMap.el.hidden, this.glassRain?.wipersOn ?? false, this.truck.engineOn, this.mapAllowed, !!this.glassRain];
-    const key = st.map(Number).join('');
+    const key = st.map(Number).join('') + this.cabStyleNow;
     if (key === this.togglesKey) return;
     this.togglesKey = key;
     const [lights, mirror, map, wipers, engine, mapAllowed, glass] = st;
@@ -1017,6 +1019,7 @@ export class DriveSession {
     this.input.setToggle('map', map, !mapAllowed);
     this.input.setToggle('wipers', wipers, !glass);
     this.input.setToggle('engine', engine);
+    this.input.setToggle('cab', this.cabStyleNow === '2d');
   }
 
   toggleMirror(): void {
@@ -1025,6 +1028,12 @@ export class DriveSession {
 
   /** Зараз побудовані прилади Panel (вид від першої особи), а не кабіна (див. buildCab). */
   private panelMode = false;
+
+  /** Налаштування з групи «ще» (кабіна 2D/3D, поміняти місцями керування) — зберігає й застосовує main.ts. */
+  onSettingsCommand: ((cmd: 'cab' | 'swap') => void) | null = null;
+  get cabStyleCurrent(): CabStyle {
+    return this.cabStyleNow;
+  }
 
   /** Кабіна: 3D-модель чи 2D-растр panel_mask («Опції»). */
   setCabStyle(style: CabStyle): void {

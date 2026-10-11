@@ -261,60 +261,61 @@ body.bar-open #fps {
   }
 }
 
+/* Сенсорні кнопки — у стилі табличок табло: квадратні, тонка рамка, напівпрозорий темний фон, блакитні значки. */
 .touch-btn {
   position: absolute;
   pointer-events: auto;
   touch-action: none;
-  border-radius: 50%;
-  width: 76px;
-  height: 76px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
   padding: 0;
-  font-size: 22px;
-  background: rgba(30, 32, 38, 0.55);
-  border: 2px solid rgba(255, 255, 255, 0.25);
-  color: #fff;
+  border-radius: 0;
+  border: 1px solid #8c8c8c;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.8);
+  background: rgba(16, 18, 20, 0.62);
+  color: rgb(123, 255, 255);
+  font: 700 12px Tahoma, Arial, sans-serif;
+  letter-spacing: 0.02em;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .touch-btn.pressed {
-  background: rgba(224, 165, 38, 0.6);
-  border-color: var(--accent);
+  background: rgba(224, 32, 224, 0.45);
+}
+
+/* Рух: кермо ліворуч, педалі праворуч — однакові квадрати. */
+.touch-btn.left,
+.touch-btn.right,
+.touch-btn.brake,
+.touch-btn.gas {
+  width: 80px;
+  height: 80px;
+  bottom: max(20px, env(safe-area-inset-bottom));
 }
 
 .touch-btn.left {
   left: var(--sl);
-  bottom: max(20px, env(safe-area-inset-bottom));
 }
 
 .touch-btn.right {
   left: calc(var(--sl) + 92px);
-  bottom: max(20px, env(safe-area-inset-bottom));
-}
-
-.touch-btn.gas,
-.touch-btn.brake {
-  border-radius: 14px;
-  width: 72px;
-  height: 104px;
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .touch-btn.gas {
   right: var(--sr);
-  bottom: max(20px, env(safe-area-inset-bottom));
 }
 
 .touch-btn.brake {
-  right: calc(var(--sr) + 88px);
-  bottom: max(20px, env(safe-area-inset-bottom));
+  right: calc(var(--sr) + 92px);
 }
 
+/* Угорі праворуч: вид, відновитися, сигнал, група «ще». */
 .touch-btn.cam,
 .touch-btn.reset,
 .touch-btn.horn {
-  width: 48px;
-  height: 48px;
-  font-size: 18px;
   top: calc(env(safe-area-inset-top, 0px) + 64px);
 }
 
@@ -323,29 +324,22 @@ body.bar-open #fps {
 }
 
 .touch-btn.reset {
-  right: calc(var(--sr) + 60px);
+  right: calc(var(--sr) + 52px);
 }
 
-/* Сигнал — угорі поруч із рестартом. */
 .touch-btn.horn {
-  right: calc(var(--sr) + 120px);
-  display: grid;
-  place-items: center;
+  right: calc(var(--sr) + 104px);
 }
 
 /* Група «ще»: кнопка-перемикач поруч із сигналом, під нею — стовпчик функцій. */
 .touch-btn.more {
-  width: 48px;
-  height: 48px;
-  right: calc(var(--sr) + 180px);
-  display: grid;
-  place-items: center;
+  right: calc(var(--sr) + 156px);
 }
 
 .touch-more {
   position: absolute;
-  right: calc(var(--sr) + 180px);
-  top: calc(max(8px, env(safe-area-inset-top)) + 56px);
+  right: calc(var(--sr) + 156px);
+  top: calc(max(8px, env(safe-area-inset-top)) + 52px);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -357,15 +351,11 @@ body.bar-open #fps {
 
 .touch-more .touch-btn {
   position: static;
-  width: 48px;
-  height: 48px;
-  display: grid;
-  place-items: center;
 }
 
+/* Увімкнене (фари, дзеркало…) — світла рамка кольору тексту. */
 .touch-btn.on {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: rgb(123, 255, 255);
 }
 
 /* Налаштування «поміняти місцями»: кермо праворуч, педалі ліворуч (гальмо — ближче до краю). */
@@ -386,7 +376,7 @@ body.swap-controls .touch-btn.brake {
 
 body.swap-controls .touch-btn.gas {
   right: auto;
-  left: calc(var(--sl) + 88px);
+  left: calc(var(--sl) + 92px);
 }
 
 
@@ -863,17 +853,30 @@ body.driving.bar-open .nav-map {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* На телефоні — праворуч над педалями (з «поміняти місцями» — ліворуч); тап згортає до значка. */
+/*
+ * На телефоні: табло гравця — ліворуч угорі, на рівні вікна закупівлі, а вікна й кнопки кар'єри — праворуч
+ * (на прохання користувача); мінікарта — ліворуч під згорнутим табло гравця. Тап по табло згортає його до значка.
+ */
 @media (pointer: coarse) {
   .hud-player {
-    left: auto;
-    right: var(--sr);
-    bottom: calc(max(20px, env(safe-area-inset-bottom)) + 116px);
+    top: calc(max(8px, env(safe-area-inset-top)) + 52px);
+    bottom: auto;
   }
 
-  body.swap-controls .hud-player {
+  .career-hud {
+    left: auto;
+    right: var(--sr);
+    align-items: flex-end;
+  }
+
+  .hud-actions {
+    justify-content: flex-end;
+  }
+
+  .nav-map {
     right: auto;
     left: var(--sl);
+    top: calc(max(8px, env(safe-area-inset-top)) + 112px);
   }
 }
 

@@ -24,9 +24,15 @@ const ICONS = {
   map: svg('<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>'),
   wipers: svg('<path d="M3 18a9 9 0 0 1 18 0"/><path d="M12 18L7 9"/>'),
   engine: svg('<path d="M12 3v8"/><path d="M6.3 7.3a8 8 0 1 0 11.4 0"/>'),
+  cab: svg('<rect x="3" y="5" width="18" height="14"/><path d="M3 13h18M8 19l2-6M16 19l-2-6"/>'),
+  swap: svg('<path d="M4 8h14l-3-3M20 16H6l3 3"/>'),
+  cam: svg('<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+  reset: svg('<path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 4v5h5"/>'),
+  left: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M17 4L6 12l11 8z"/></svg>',
+  right: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M7 4l11 8-11 8z"/></svg>',
 };
 
-type Command = 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror';
+type Command = 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror' | 'cab' | 'swap';
 
 /** Час повороту керма з клавіатури від центру до краю, с, і швидкість повернення, 1/с (оригінал, s6). */
 const STEER_RAMP = 1.1;
@@ -185,14 +191,15 @@ export class Input {
       b.addEventListener('contextmenu', (e) => e.preventDefault());
       ui.append(b);
     };
-    btn('left', '◀', 'left');
-    btn('right', '▶', 'right');
+    btn('left', '', 'left', undefined, ICONS.left);
+    btn('right', '', 'right', undefined, ICONS.right);
     btn('brake', 'ГАЛЬМО', 'brake');
     btn('gas', 'ГАЗ', 'gas');
-    btn('cam', '👁', undefined, 'camera');
-    btn('reset', '↺', undefined, 'reset');
+    btn('cam', '', undefined, 'camera', ICONS.cam);
+    btn('reset', '', undefined, 'reset', ICONS.reset);
     btn('horn', '', undefined, 'horn', HORN_SVG);
-    // Група «ще» (згорнута): фари, дзеркало, навігація, двірники, двигун — як клавіші L, M, Tab, W, пробіл.
+    // Група «ще» (згорнута): фари, дзеркало, навігація, двірники, двигун (клавіші L, M, Tab, W, пробіл), а також
+    // кабіна 2D / 3D і «поміняти місцями» кермо й педалі.
     const more = document.createElement('div');
     more.className = 'touch-more';
     more.hidden = true;
@@ -202,7 +209,7 @@ export class Input {
       more.hidden = !more.hidden;
       toggle.classList.toggle('on', !more.hidden);
     });
-    const items: [string, Command][] = [['lights', 'lights'], ['mirror', 'mirror'], ['map', 'map'], ['wipers', 'wipers'], ['engine', 'engine']];
+    const items: [string, Command][] = [['lights', 'lights'], ['mirror', 'mirror'], ['map', 'map'], ['wipers', 'wipers'], ['engine', 'engine'], ['cab', 'cab'], ['swap', 'swap']];
     for (const [cls, cmd] of items) {
       btn(cls, '', undefined, cmd, ICONS[cls as keyof typeof ICONS]);
       const b = ui.lastElementChild as HTMLElement;
