@@ -40,20 +40,20 @@ const GEAR_D = 'rgb(0,255,0)';
  * широкі колеса по краях.
  */
 const TRUCK_ICON = [
-  '...X...........X...',
-  '...X.XXXXXXXXX.X...',
-  '...X.X.......X.X...',
-  '...X.X.......X.X...',
-  '..XXXXXXXXXXXXXXX..',
-  '..X..X.......X..X..',
-  '..X..XXXXXXXXX..X..',
-  '......X.XXX.X......',
-  '...XXXX.....XXXX...',
-  '...X..X.XXX.X..X...',
-  '...XX.X.....X.XX...',
-  '...XXXXXXXXXXXXX...',
-  '...XXX.......XXX...',
-  '...XXX.......XXX...',
+  '.X...........X.',
+  '.X.XXXXXXXXX.X.',
+  '.X.X.......X.X.',
+  '.X.X.......X.X.',
+  'XXXXXXXXXXXXXXX',
+  'X..X.......X..X',
+  'X..XXXXXXXXX..X',
+  '....X.XXX.X....',
+  '.XXXX.....XXXX.',
+  '.X..X.XXX.X..X.',
+  '.XX.X.....X.XX.',
+  '.XXXXXXXXXXXXX.',
+  '.XXX.......XXX.',
+  '.XXX.......XXX.',
 ];
 
 /** Ящики: один на двох. */
@@ -279,7 +279,8 @@ export class DriveHud {
       x += gap;
       const iy = y + Math.round((lh - rows.length) / 2);
       x = icon(ctx, rows, x, iy, HUD_CYAN) + 4;
-      S.draw(ctx, text, x + pctW - S.measure(text), ys, HUD_CYAN);
+      // Відсотки — одразу за значком (ліворуч у зарезервованій ширині «100%»).
+      S.draw(ctx, text, x, ys, HUD_CYAN);
       x += pctW;
     };
     if (truck) stat(TRUCK_ICON, truck, 12);
