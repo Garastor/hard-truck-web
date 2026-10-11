@@ -27,6 +27,11 @@ if (import.meta.env.DEV) Object.assign(window, { RAPIER });
 /** Шар Three.js для деталей кабіни, що малюються поверх решти кабіни (кермо). */
 const CAB_TOP_LAYER = 1;
 
+/** Утонули: тіло (≈ 1,1 м над дорогою, коли стоїть) нижче за цю висоту над водою. Падіння без підлоги довше — загибель. */
+const DROWN_HEIGHT = 1.3;
+/** Звідки над тілом пускаємо промінь до поверхні, м. */
+const SURFACE_RAY_UP = 6;
+const FALL_DEATH_TIME = 3;
 /** Ґрунт під колесами (звук гравію stones): матеріали поза дорогою (гіпотеза за назвами матеріалів трас). */
 const OFFROAD = /grass|beach|sand|dirt|gravel|ground|field|earth|mud|forest|cobble/i;
 /** Звуки ударів: тихіші за IMPACT_SOUND_MIN (м/с за крок) не чути; від IMPACT_CRASH — аварія (гіпотеза). */
@@ -201,21 +206,38 @@ export class DriveSession {
     const room = this.room ? this.built.rooms.find((r) => r.name === this.room) : null;
     if (!room) return;
     const t = this.truck.body.translation();
-    this.ray.set(new THREE.Vector3(t.x, t.y + 1, t.z), new THREE.Vector3(0, -1, 0));
-    this.ray.far = 6;
+    // Промінь з 6 м над тілом: машина, що вже пірнула, теж «бачить» поверхню води над собою.
+    this.ray.set(new THREE.Vector3(t.x, t.y + SURFACE_RAY_UP, t.z), new THREE.Vector3(0, -1, 0));
+    this.ray.far = SURFACE_RAY_UP + 5;
     this.ray.camera = this.camera; // білборди (тип 28) без камери кидають виняток
-    const hit = this.ray.intersectObject(room, true).find((h) => (h.object as THREE.Mesh).isMesh);
-    if (!hit) return;
+    const name = (h: THREE.Intersection) => {
+      const m = (h.object as THREE.Mesh).material;
+      return (Array.isArray(m) ? m[h.face?.materialIndex ?? 0] : m)?.name ?? '';
+    };
+    // Стелі тунелів і мости над головою пропускаємо: поверхня — не вище 3 м над тілом (вода — будь-де, бо під нею
+    // може опинитися машина, що пірнула).
+    const hit = this.ray
+      .intersectObject(room, true)
+      .find((h) => (h.object as THREE.Mesh).isMesh && (h.distance > SURFACE_RAY_UP - 3 || /water|river/i.test(name(h))));
+    // Висота тіла над видимою поверхнею (відʼємна — під нею); без влучання — високо в повітрі.
+    this.surfaceHeight = hit ? hit.distance - SURFACE_RAY_UP : Infinity;
+    if (!hit) {
+      this.overWater = false;
+      return;
+    }
     const mesh = hit.object as THREE.Mesh;
     const mat = Array.isArray(mesh.material) ? mesh.material[hit.face?.materialIndex ?? 0] : mesh.material;
     this.offRoad = OFFROAD.test(mat?.name ?? '');
     this.overWater = /water|river/i.test(mat?.name ?? '');
   }
   private overWater = false;
+  private surfaceHeight = Infinity;
   private deathCooldown = 0;
+  private noFloorTime = 0;
   /**
    * Подія 3264 («death_NNN») позначає кімнату без форми й висоти: дорога там іде вздовж річки чи над прірвою.
-   * Загибель — коли в такій кімнаті під машиною вода або зовсім немає підлоги (не сам вʼїзд у кімнату).
+   * Загибель — коли в такій кімнаті машина впала у воду (торкнулася поверхні) або довго падає без підлоги під собою.
+   * Перелетіти обрив над водою на швидкості — задум гри: у повітрі під машиною вода, але це не загибель.
    */
   private checkDeath(dt: number): void {
     if ((this.deathCooldown -= dt) > 0) return;
@@ -224,8 +246,10 @@ export class DriveSession {
     const t = this.truck.body.translation();
     const p = new THREE.Vector3(t.x, t.y, t.z);
     const floor = this.floorHeight(p);
-    const water = this.overWater;
-    if (!water && floor !== null) return;
+    this.noFloorTime = floor === null ? this.noFloorTime + dt : 0;
+    const water = this.overWater && this.surfaceHeight < DROWN_HEIGHT;
+    if (!water && this.noFloorTime < FALL_DEATH_TIME) return;
+    this.noFloorTime = 0;
     this.deathCooldown = 2;
     this.hits += 10;
     // Утонули — сплеск; прірва — удар.
