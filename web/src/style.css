@@ -882,8 +882,16 @@ body.in-menu #fps {
 .hud-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  /* Проміжок — як між верхніми кнопками: колонки кнопок збігаються. */
+  gap: calc(8px * var(--ui, 1));
   pointer-events: auto;
+}
+
+/* Кнопки з написом (На базу, Ремонт, Купити…) — щонайменше на дві квадратні кнопки з проміжком, тієї ж висоти. */
+.hud-actions .hud-btn:not(.hud-square):not(.hud-toggle) {
+  min-width: calc(96px * var(--ui, 1));
+  height: calc(44px * var(--ui, 1));
+  min-height: 0;
 }
 
 .hud-actions:empty {
