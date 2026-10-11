@@ -197,10 +197,13 @@ export function mainMenu(
     const who = scr.place(document.createElement('div'), 390, 450, 240);
     who.className += ' menu-note';
     who.textContent = `За кермом: ${opts.driver}`;
-    // Присвята (на прохання користувача) — одним рядком під кнопками, ліворуч унизу.
-    const engine = scr.place(document.createElement('div'), 6, 461, 370);
+    // Присвята (на прохання користувача) — одним рядком над написом «Дальнобойщики», по центру напису.
+    const engine = scr.place(document.createElement('div'), 14, 12, 472);
     engine.className += ' menu-note';
     engine.style.whiteSpace = 'nowrap';
+    engine.style.textAlign = 'center';
+    // Темний ореол — читається й на світлих смугах фону.
+    engine.style.textShadow = '0 0 2px #000, 0 0 4px #000';
     engine.textContent = 'Рушій «Клим» — на честь мого друга Клима';
   });
 }
