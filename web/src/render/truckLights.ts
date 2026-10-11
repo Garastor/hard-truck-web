@@ -48,23 +48,38 @@ export class TruckLights {
  * «камера → дзеркальна точка» перетинає дорогу, і зменшуємо пропорційно — на екрані те саме місце й розмір, а
  * перевірка глибини працює (кузови відблиск закривають).
  */
-/** Наскільки над оцінкою дороги ставити відблиск, м (дорога під колесами трохи вища за розрахункову). */
-const REFLECTION_LIFT = 0.15;
+/** Наскільки над дорогою ставити відблиск, м (щоб не потонув в асфальті). */
+const REFLECTION_LIFT = 0.04;
+/**
+ * Глибина віддзеркалення під дорогою, м — однакова для всіх машин (гіпотеза): скло ліхтарів у моделях стоїть на
+ * 0,7…2,3 м, і за справжньою висотою відблиски одних машин виходили далеко позаду, інших — під бампером.
+ * Оригінал рахує точку в коді рендерингу (HTruck.exe ≈ 0x4b6800, не розібрано).
+ */
+const REFLECTION_DEPTH = 1;
 
 export class LampReflections {
-  private readonly items: { sprite: THREE.Sprite; mirror: THREE.Vector3; scale: THREE.Vector2; front: boolean }[] = [];
+  /** lamp — ліхтар у системі моделі; toParent — з системи моделі в систему батька білборду (ліхтар буває в
+   * окремому просторі, напр. на причепі). */
+  private readonly items: {
+    sprite: THREE.Sprite;
+    lamp: THREE.Vector3;
+    toParent: THREE.Matrix4;
+    scale: THREE.Vector2;
+    front: boolean;
+  }[] = [];
+  private readonly m = new THREE.Vector3();
   private readonly tmp = new THREE.Vector3();
 
-  /** root — модель у системі гри (z угору), groundZ — висота дороги в цій системі. */
+  /** root — модель у системі гри (z угору), groundZ — висота дороги під машиною в цій системі (щокадру). */
   constructor(
     private readonly root: THREE.Object3D,
-    private readonly groundZ: number,
+    private readonly groundZ: () => number,
   ) {
+    root.updateWorldMatrix(true, true);
+    const rootInv = root.matrixWorld.clone().invert();
     root.traverse((o) => {
       const sp = o as THREE.Sprite;
       if (!sp.isSprite || !/refl_[rw]/.test((sp.material.map as THREE.Texture | null)?.name ?? '')) return;
-      const m = sp.position.clone();
-      m.z = 2 * groundZ - m.z;
       // Передня фара (*FFara*) чи задній ліхтар (*BFara*) — за назвою блоку-предка.
       let front = false;
       for (let p: THREE.Object3D | null = sp.parent; p; p = p.parent) {
@@ -74,7 +89,14 @@ export class LampReflections {
           break;
         }
       }
-      this.items.push({ sprite: sp, mirror: m, scale: new THREE.Vector2(sp.scale.x, sp.scale.y), front });
+      const parentToRoot = rootInv.clone().multiply(sp.parent!.matrixWorld);
+      this.items.push({
+        sprite: sp,
+        lamp: sp.position.clone().applyMatrix4(parentToRoot),
+        toParent: parentToRoot.clone().invert(),
+        scale: new THREE.Vector2(sp.scale.x, sp.scale.y),
+        front,
+      });
       // Нижнім краєм — на дорозі (інакше нижня половина білборду ховається під асфальтом).
       sp.center.y = 0;
     });
@@ -83,18 +105,21 @@ export class LampReflections {
   update(camera: THREE.Camera): void {
     if (!this.items.length) return;
     this.root.updateWorldMatrix(true, false);
-    // Камера в системі моделі (батьки білбордів — без власних зсувів, тож система моделі = їхня).
+    // Камера в системі моделі.
     const c = this.root.worldToLocal(camera.getWorldPosition(this.tmp));
+    const ground = this.groundZ();
+    const g = ground + REFLECTION_LIFT;
     for (const it of this.items) {
-      const m = it.mirror;
-      const g = this.groundZ + REFLECTION_LIFT;
+      // «Дзеркальна» точка під ліхтарем (див. REFLECTION_DEPTH).
+      const m = this.m.copy(it.lamp);
+      m.z = ground - REFLECTION_DEPTH;
       // Віддзеркалення видно лише з боку, куди світить ліхтар (задній — ззаду машини, фара — спереду; вісь y
       // моделі — вперед); інакше точка на дорозі виходила з протилежного боку — «рентген» крізь машину.
       const facing = it.front ? c.y > m.y : c.y < m.y;
       it.sprite.visible = facing && c.z > g;
       if (!it.sprite.visible) continue;
       const t = (c.z - g) / (c.z - m.z);
-      it.sprite.position.set(c.x + (m.x - c.x) * t, c.y + (m.y - c.y) * t, g);
+      it.sprite.position.set(c.x + (m.x - c.x) * t, c.y + (m.y - c.y) * t, g).applyMatrix4(it.toParent);
       it.sprite.scale.set(it.scale.x * t, it.scale.y * t, 1);
     }
   }

@@ -534,7 +534,7 @@ export class DriveSession {
     for (const r of s.track.rooms.values()) for (const e of r.events) if (e.type === EVENT_CHECKPOINT) s.checkpoints.add(e.param);
     s.truck = new TruckVehicle(s.world, def, model, s.spawn, setup);
     s.lights = new TruckLights(model.setSwitch, s.truck.visual, s.truck.lightGeometry);
-    s.reflections.push(new LampReflections(model.root, s.truck.lightGeometry.groundY));
+    s.reflections.push(new LampReflections(model.root, () => s.truck.groundHeight()));
     scene.add(s.truck.visual);
     s.spawnOpponents(rivals);
     s.roomVis = new RoomVisibility(s.track, built.rooms);
@@ -767,7 +767,7 @@ export class DriveSession {
       const pilot = new AutoPilot(this.wayNet!);
       pilot.cruise = 58 + ((i * 7) % 18);
       const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
-      this.reflections.push(new LampReflections(model.root, truck.lightGeometry.groundY));
+      this.reflections.push(new LampReflections(model.root, () => truck.groundHeight()));
       this.opponents.push({ truck, pilot, odo: new Odometer(), lights });
     });
   }

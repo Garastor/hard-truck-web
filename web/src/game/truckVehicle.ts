@@ -367,6 +367,19 @@ export class TruckVehicle {
   }
 
   /** Синхронізує візуальну модель з фізикою (після world.step). */
+  /**
+   * Висота дороги під машиною в системі моделі (z гри = y кузова): середнє за колесами з фактичним ходом
+   * підвіски (під вагою вона стиснута, і в кожної машини по-різному).
+   */
+  groundHeight(): number {
+    let sum = 0;
+    for (let i = 0; i < 4; i++) {
+      const anchor = g2t(new THREE.Vector3().setFromMatrixPosition(this.wheelVisual[i].base)).y + this.suspRest * 0.5;
+      sum += anchor - (this.ctrl.wheelSuspensionLength(i) ?? this.suspRest) - this.wheelRadius;
+    }
+    return sum / 4;
+  }
+
   syncVisual(): void {
     const t = this.body.translation();
     const r = this.body.rotation();
