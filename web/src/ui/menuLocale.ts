@@ -318,22 +318,25 @@ export function localizeButton(
 }
 
 /**
- * Підписи на фонах: [x0, y0, x1, y1, текст, латка?] (вирівнювання праворуч, 
- — два рядки). Латка — звідки брати
- * чистий фон: 'left' (смуга лівіше, за замовчуванням) або 'above' (над підписом — коли ліворуч інші написи).
+ * Підписи на фонах: [x0, y0, x1, y1, текст, заповнення?, центр?]. Рамка напису — вирівнювання праворуч (або по
+ * центру колонки «центр» [x0, x1]); \n — два рядки. Старий підпис з тінню прибирається заповненням по стовпчиках
+ * між рядком над ним і рядком під ним (прямокутник «заповнення» [x0, y0, x1, y1]; без нього — рамка напису з запасом
+ * на тінь): малюнок тла зберігається, без вставок шматків сусіднього тла (вони давали шви на діагональному малюнку).
  */
-const BACKGROUND_UK: Record<string, [number, number, number, number, string, ('left' | 'above')?, [number, number]?][]> = {
+type Label = [number, number, number, number, string, [number, number, number, number]?, [number, number]?];
+const BACKGROUND_UK: Record<string, Label[]> = {
   'n/back_new.txr': [
     [166, 97, 320, 110, 'РІВЕНЬ СКЛАДНОСТІ'],
     [130, 178, 322, 190, 'КІЛЬКІСТЬ СУПЕРНИКІВ'],
     [156, 241, 298, 254, 'ЗБЕРЕЖЕНІ ІГРИ'],
   ],
+  // Виміряно на тлі: літери — рядки 97…105 і 357…365, нижче тінь, далі світла лінія рамки (107, 368) — її не чіпаємо.
   'o/back_opt.txr': [
-    [254, 96, 446, 106, 'НАЛАШТУВАННЯ ТА КЛАВІШІ', 'above'],
+    [254, 96, 446, 106, 'НАЛАШТУВАННЯ ТА КЛАВІШІ', [253, 96, 448, 106]],
     // Заголовки колонок кнопок — по центру колонки (стовпчики x = 27, 150, 273, кнопка 99 px).
-    [48, 355, 128, 366, 'КЕРУВАННЯ', 'above', [27, 125]],
-    [162, 355, 250, 366, 'ЯКІСТЬ', 'above', [150, 248]],
-    [286, 355, 375, 366, 'ВІДЕОРЕЖИМ', 'above', [273, 371]],
+    [48, 355, 128, 366, 'КЕРУВАННЯ', [48, 356, 128, 367], [27, 125]],
+    [162, 355, 250, 366, 'ЯКІСТЬ', [172, 356, 250, 367], [150, 248]],
+    [286, 355, 375, 366, 'ВІДЕОРЕЖИМ', [287, 356, 374, 367], [273, 371]],
   ],
   'd/back_dri.txr': [
     [232, 152, 294, 166, 'ЗА КЕРМОМ'],
@@ -341,23 +344,41 @@ const BACKGROUND_UK: Record<string, [number, number, number, number, string, ('l
   ],
 };
 
+/** Заповнює прямокутник по стовпчиках: лінійно між пікселем над ним і пікселем під ним. */
+function fillColumns(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number): void {
+  const W = ctx.canvas.width;
+  const H = ctx.canvas.height;
+  x0 = Math.max(0, x0);
+  x1 = Math.min(W - 1, x1);
+  const top = Math.max(0, y0 - 1);
+  const bottom = Math.min(H - 1, y1 + 1);
+  const w = x1 - x0 + 1;
+  const h = bottom - top + 1;
+  if (w <= 0 || h < 3) return;
+  const img = ctx.getImageData(x0, top, w, h);
+  const d = img.data;
+  for (let x = 0; x < w; x++) {
+    const a = x * 4;
+    const b = ((h - 1) * w + x) * 4;
+    for (let y = 1; y < h - 1; y++) {
+      const t = y / (h - 1);
+      const i = (y * w + x) * 4;
+      for (let ch = 0; ch < 3; ch++) d[i + ch] = d[a + ch] + (d[b + ch] - d[a + ch]) * t;
+      d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, x0, top);
+}
+
 /** Замінює російські підписи фону українськими. */
 export function localizeBackground(name: string, canvas: HTMLCanvasElement): void {
   const items = BACKGROUND_UK[name];
   if (!items) return;
   const ctx = canvas.getContext('2d')!;
-  // Спершу всі латки (з оригінального фону), потім написи — щоб латка не захопила вже намальований текст.
-  for (const [x0, y0, x1, y1, , patch] of items) {
-    const w = x1 - x0 + 1;
-    const h = y1 - y0 + 1;
-    if (patch === 'above') {
-      ctx.drawImage(canvas, x0, Math.max(0, y0 - h), w, h, x0, y0, w, h);
-      continue;
-    }
-    // Латка: та сама смуга лівіше (без тексту), повторена на всю ширину підпису.
-    const srcX = Math.max(0, x0 - w);
-    const srcW = Math.max(4, Math.min(w, x0 - srcX));
-    for (let x = x0; x <= x1; x += srcW) ctx.drawImage(canvas, srcX, y0, Math.min(srcW, x1 - x + 1), h, x, y0, Math.min(srcW, x1 - x + 1), h);
+  // Спершу прибрати всі старі підписи, потім писати нові.
+  for (const [x0, y0, x1, y1, , fill] of items) {
+    const [fx0, fy0, fx1, fy1] = fill ?? [x0 - 2, y0, x1 + 3, y1 + 2];
+    fillColumns(ctx, fx0, fy0, fx1, fy1);
   }
   for (const [x0, y0, x1, y1, text, , center] of items) {
     const box = center ? { x0: center[0], y0, x1: center[1], y1 } : { x0, y0, x1, y1 };
