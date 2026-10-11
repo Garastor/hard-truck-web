@@ -192,7 +192,10 @@ export class DriveSession {
             m.alphaTest = 0;
             m.transparent = true;
             m.depthWrite = false;
-            if (def?.flags.has('noz')) m.depthTest = false;
+            // Без перевірки глибини на всіх трасах: на COUNT це прапорець noz матеріалу, на MOUNT його немає, але
+            // Foreground_object — передній план біля глядача (інакше земля обрізає циліндр і видно межу).
+            m.depthTest = false;
+            m.fog = false;
             // Циліндр дощу видно зсередини.
             m.side = THREE.DoubleSide;
             mesh.material = m;

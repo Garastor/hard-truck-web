@@ -2,9 +2,10 @@ import * as THREE from 'three';
 
 /**
  * Власні відблиски ліхтарів на дорозі (не з оригіналу — замість білбордів refl_r/refl_w, див. LampReflections):
- * скло кожного ліхтаря моделі віддзеркалюється в площині дороги й витягується до глядача, тож відблиск має форму
- * ліхтаря і плавно згасає на кінці. Світиться лише скло, видиме зараз (перемикачі StopFaraKey — габарит/гальмо,
- * BackFaraKey — задній хід, FFaraKey — фари), тому відблиск сам іде за станом світла. Параметри — на око.
+ * кожне скло, що світиться зараз (перемикачі StopFaraKey — габарит/гальмо, BackFaraKey — задній хід, FFaraKey —
+ * фари), дає м'яку пляму на асфальті від ліхтаря до глядача (від фар — ширший конус). Пляма лежить на дорозі
+ * (висота асфальту — променями вниз), тож з різних камер видно перспективу; під пологим кутом мокра дорога відбиває
+ * сильніше. Поперек — гаусів спад, уздовж — плавне згасання (шейдер). Параметри — на око.
  */
 export type ReflectionMode = 'own' | 'original';
 
@@ -26,45 +27,66 @@ export function setReflectionMode(mode: ReflectionMode): void {
   }
 }
 
-/** Глибина віддзеркалення нижнього й верхнього краю скла під дорогою, м: відблиск від ліхтаря до кінця смуги. */
-const DEPTH_NEAR = 0.15;
-const DEPTH_FAR = 1.7;
-/** Яскравість дальнього кінця відносно ближнього. */
-const FAR_FADE = 0;
+/**
+ * Форма плями на дорозі, м: початок від ліхтаря, довжина, ширина відносно скла (і найменша півширина),
+ * розширення до кінця (×(1 + spread)). Задні ліхтарі — коротка пляма, фари — довгий конус.
+ */
+const REAR_PATCH = { start: 0.1, length: 2.6, width: 1.6, minHalfWidth: 0.22, spread: 0.6 };
+const HEAD_PATCH = { start: 0.3, length: 7, width: 1.6, minHalfWidth: 0.3, spread: 2.2 };
+/** Відрізків уздовж смуги (щоб вона йшла по дорозі). */
+const SEGMENTS = 8;
 /** Над дорогою, м (щоб не потонув в асфальті). */
 const LIFT = 0.05;
 /** Суха нічна дорога відбиває слабше за мокру. */
 const DRY_FACTOR = 0.3;
-/** Шари відблиску: ширина контуру ліхтаря (відносно центру скла), довжина й яскравість — м'які краї. */
-const LAYERS = [
-  { width: 1, length: 1, gain: 0.5 },
-  { width: 2, length: 1.2, gain: 0.28 },
-  { width: 3.5, length: 1.4, gain: 0.14 },
-];
 
 type Kind = 'brake' | 'tail' | 'reverse' | 'head';
 
 const KIND: Record<Kind, { color: THREE.Color; gain: number; needsLights: boolean }> = {
-  brake: { color: new THREE.Color(1, 0.08, 0.04), gain: 1, needsLights: false },
-  tail: { color: new THREE.Color(1, 0.08, 0.04), gain: 0.4, needsLights: true },
-  reverse: { color: new THREE.Color(1, 1, 0.95), gain: 0.6, needsLights: false },
-  head: { color: new THREE.Color(1, 0.95, 0.8), gain: 0.55, needsLights: true },
+  brake: { color: new THREE.Color(1, 0.08, 0.04), gain: 3.2, needsLights: false },
+  tail: { color: new THREE.Color(1, 0.08, 0.04), gain: 1.6, needsLights: true },
+  reverse: { color: new THREE.Color(1, 1, 0.95), gain: 2, needsLights: false },
+  head: { color: new THREE.Color(1, 0.95, 0.8), gain: 2, needsLights: true },
 };
+
+const VERTEX = /* glsl */ `
+attribute vec2 band;
+varying vec2 vBand;
+varying float vDist;
+void main() {
+  vBand = band;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vDist = -mv.z;
+  gl_Position = projectionMatrix * mv;
+}`;
+
+const FRAGMENT = /* glsl */ `
+uniform vec3 color;
+uniform float gain;
+varying vec2 vBand;
+varying float vDist;
+void main() {
+  // Поперек — гаусів спад, уздовж — швидке наростання на початку й плавне згасання до кінця.
+  float across = exp(-vBand.x * vBand.x * 3.5);
+  float v = vBand.y;
+  float along = smoothstep(0.0, 0.18, v) * pow(1.0 - v, 1.4);
+  float fade = 1.0 - smoothstep(80.0, 220.0, vDist);
+  vec3 c = color * gain * across * along * fade;
+  // Шум ±0,5/255 — без сходинок на плавному градієнті.
+  float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+  gl_FragColor = vec4(c + n / 255.0, 1.0);
+}`;
 
 interface Lamp {
   src: THREE.Mesh;
   kind: Kind;
   front: boolean;
-  /** Вершини трикутників скла в системі моделі. */
-  verts: Float32Array;
-  /** Частка висоти скла кожної вершини (0 — низ, 1 — верх). */
-  height: Float32Array;
-  centerX: number;
-  centerY: number;
-  centerZ: number;
+  /** Центр і півширина скла в системі моделі (x — убік). */
+  center: THREE.Vector3;
+  halfWidth: number;
   out: THREE.Mesh;
   pos: THREE.BufferAttribute;
-  col: THREE.BufferAttribute;
+  material: THREE.ShaderMaterial;
 }
 
 export class WetReflections {
@@ -72,20 +94,9 @@ export class WetReflections {
   private readonly tmp = new THREE.Vector3();
   private readonly cam = new THREE.Vector3();
   private readonly lampW = new THREE.Vector3();
-  private readonly v = new THREE.Vector3();
   private readonly p = new THREE.Vector3();
-  private readonly p0 = new THREE.Vector3();
-  private readonly pf = new THREE.Vector3();
-  private readonly material = new THREE.MeshBasicMaterial({
-    vertexColors: true,
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -4,
-  });
+  private readonly fwd = new THREE.Vector3();
+  private readonly across = new THREE.Vector3();
 
   /**
    * root — модель у системі гри (z угору); groundZ — висота дороги під машиною в цій системі (запасний варіант);
@@ -99,6 +110,14 @@ export class WetReflections {
     root.updateWorldMatrix(true, true);
     const rootInv = root.matrixWorld.clone().invert();
     const v = new THREE.Vector3();
+    // Смуга: SEGMENTS+1 рядів по 2 вершини; band = (поперек −1…1, уздовж 0…1).
+    const rows = SEGMENTS + 1;
+    const band = new Float32Array(rows * 4);
+    const index: number[] = [];
+    for (let r = 0; r < rows; r++) {
+      band.set([-1, r / SEGMENTS, 1, r / SEGMENTS], r * 4);
+      if (r < SEGMENTS) index.push(r * 2, r * 2 + 1, r * 2 + 2, r * 2 + 1, r * 2 + 3, r * 2 + 2);
+    }
     root.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
@@ -107,31 +126,27 @@ export class WetReflections {
       const p = mesh.geometry.getAttribute('position');
       if (!p || p.count < 3) return;
       const m = rootInv.clone().multiply(mesh.matrixWorld);
-      const verts = new Float32Array(p.count * 3);
-      let zMin = Infinity;
-      let zMax = -Infinity;
-      let cx = 0;
-      let cy = 0;
-      let cz = 0;
-      for (let i = 0; i < p.count; i++) {
-        v.fromBufferAttribute(p, i).applyMatrix4(m);
-        verts.set([v.x, v.y, v.z], i * 3);
-        zMin = Math.min(zMin, v.z);
-        zMax = Math.max(zMax, v.z);
-        cx += v.x;
-        cy += v.y;
-        cz += v.z;
-      }
-      const height = new Float32Array(p.count);
-      for (let i = 0; i < p.count; i++) height[i] = zMax > zMin ? (verts[i * 3 + 2] - zMin) / (zMax - zMin) : 0.5;
+      const box = new THREE.Box3();
+      for (let i = 0; i < p.count; i++) box.expandByPoint(v.fromBufferAttribute(p, i).applyMatrix4(m));
       const geo = new THREE.BufferGeometry();
-      const pos = new THREE.BufferAttribute(new Float32Array(p.count * 3 * LAYERS.length), 3);
-      const col = new THREE.BufferAttribute(new Float32Array(p.count * 3 * LAYERS.length), 3);
+      const pos = new THREE.BufferAttribute(new Float32Array(rows * 2 * 3), 3);
       pos.setUsage(THREE.DynamicDrawUsage);
-      col.setUsage(THREE.DynamicDrawUsage);
       geo.setAttribute('position', pos);
-      geo.setAttribute('color', col);
-      const out = new THREE.Mesh(geo, this.material);
+      geo.setAttribute('band', new THREE.BufferAttribute(band, 2));
+      geo.setIndex(index);
+      const material = new THREE.ShaderMaterial({
+        vertexShader: VERTEX,
+        fragmentShader: FRAGMENT,
+        uniforms: { color: { value: KIND[info.kind].color }, gain: { value: 0 } },
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -4,
+      });
+      const out = new THREE.Mesh(geo, material);
       out.frustumCulled = false;
       out.visible = false;
       out.renderOrder = 5;
@@ -139,14 +154,11 @@ export class WetReflections {
         src: mesh,
         kind: info.kind,
         front: info.front,
-        verts,
-        height,
-        centerX: cx / p.count,
-        centerY: cy / p.count,
-        centerZ: cz / p.count,
+        center: box.getCenter(new THREE.Vector3()),
+        halfWidth: (box.max.x - box.min.x) / 2,
         out,
         pos,
-        col,
+        material,
       });
     });
     for (const l of this.lamps) root.add(l.out);
@@ -172,48 +184,52 @@ export class WetReflections {
     for (const l of this.lamps) {
       const k = KIND[l.kind];
       // Видно, лише коли світиться саме це скло, і з боку, куди світить ліхтар (задній — ззаду машини).
-      let show = (!k.needsLights || lights) && effectivelyVisible(l.src, this.root) && (l.front ? c.y > l.centerY : c.y < l.centerY);
+      let show = (!k.needsLights || lights) && effectivelyVisible(l.src, this.root) && (l.front ? c.y > l.center.y : c.y < l.center.y);
       // Дорога під ліхтарем — у світі (промінь униз), а не площина днища: на переломі дороги смуга лягає на асфальт.
-      const lamp = this.lampW.set(l.centerX, l.centerY, l.centerZ).applyMatrix4(mw);
-      const near = show ? (this.groundAt?.(lamp.x, lamp.y, lamp.z) ?? this.root.localToWorld(this.tmp.set(l.centerX, l.centerY, this.groundZ())).y) : 0;
-      show &&= cam.y > near + LIFT;
+      const lamp = this.lampW.copy(l.center).applyMatrix4(mw);
+      const near = show ? (this.groundAt?.(lamp.x, lamp.y, lamp.z) ?? this.root.localToWorld(this.tmp.set(l.center.x, l.center.y, this.groundZ())).y) : 0;
+      show &&= cam.y > near + LIFT + 0.2;
       l.out.visible = show;
       if (!show) continue;
       const g = near + LIFT;
-      const project = (wx: number, wz: number, depth: number, out: THREE.Vector3) => {
-        // Точка на дорозі на промені «камера → віддзеркалення»: на екрані — там, де було б віддзеркалення.
-        const t = (cam.y - g) / (cam.y - (near - depth));
-        return out.set(cam.x + (wx - cam.x) * t, g, cam.z + (wz - cam.z) * t);
-      };
-      // Кінець смуги — і висота дороги там (на підйомі позаду машини смуга піднімається разом з асфальтом).
-      const p0 = project(lamp.x, lamp.z, DEPTH_NEAR, this.p0);
-      const pf = project(lamp.x, lamp.z, DEPTH_FAR * LAYERS[LAYERS.length - 1].length, this.pf);
-      // Висота дороги посередині й на кінці смуги відносно початку (ламана з двох відрізків — на перегині).
-      // Від рівня дороги під ліхтарем, а не від камери: у тунелі промінь згори влучав у стелю.
+      // Пляма лежить на асфальті й тягнеться від ліхтаря до глядача (як відблиск на мокрій дорозі), з
+      // перспективою — не білборд.
+      const fwd = this.fwd.set(cam.x - lamp.x, 0, cam.z - lamp.z);
+      if (fwd.lengthSq() < 1e-6) fwd.set(mw.elements[4], 0, mw.elements[6]);
+      fwd.normalize();
+      // Ширина — поперек напрямку до глядача.
+      const across = this.across.set(-fwd.z, 0, fwd.x);
+      const shape = l.kind === 'head' ? HEAD_PATCH : REAR_PATCH;
       const top = near + 2;
-      const rel = (h: number | null | undefined) => (h === null || h === undefined ? 0 : Math.max(-1.5, Math.min(1.5, h - near)));
-      const riseMid = rel(this.groundAt?.((p0.x + pf.x) / 2, top, (p0.z + pf.z) / 2));
-      const riseFar = rel(this.groundAt?.(pf.x, top, pf.z));
-      const span = Math.max(0.01, Math.hypot(pf.x - p0.x, pf.z - p0.z));
-      const rise = (u: number) => (u < 0.5 ? riseMid * u * 2 : riseMid + (riseFar - riseMid) * Math.min(1, (u - 0.5) * 2));
-      const gain = k.gain * surface;
-      const n = l.height.length;
-      LAYERS.forEach((layer, li) => {
-        for (let i = 0; i < n; i++) {
-          const s = l.height[i];
-          const depth = DEPTH_NEAR + (DEPTH_FAR - DEPTH_NEAR) * layer.length * s;
-          const v = this.v.set(l.centerX + (l.verts[i * 3] - l.centerX) * layer.width, l.verts[i * 3 + 1], l.verts[i * 3 + 2]).applyMatrix4(mw);
-          const p = project(v.x, v.z, depth, this.p);
-          p.y += rise(Math.hypot(p.x - p0.x, p.z - p0.z) / span);
-          this.root.worldToLocal(p);
-          const j = li * n + i;
-          l.pos.setXYZ(j, p.x, p.y, p.z);
-          const b = gain * layer.gain * (1 - (1 - FAR_FADE) * s);
-          l.col.setXYZ(j, k.color.r * b, k.color.g * b, k.color.b * b);
+      const rel = (x: number, z: number) => {
+        const r = this.groundAt?.(x, top, z);
+        return r === null || r === undefined ? 0 : Math.max(-1.5, Math.min(1.5, r - near));
+      };
+      const along = (d: number, out: THREE.Vector3) => out.set(lamp.x, g, lamp.z).addScaledVector(fwd, d);
+      const pm = along(shape.start + shape.length / 2, this.p);
+      const riseMid = rel(pm.x, pm.z);
+      const pf = along(shape.start + shape.length, this.p);
+      const riseFar = rel(pf.x, pf.z);
+      const halfW0 = Math.max(shape.minHalfWidth, l.halfWidth * shape.width);
+      for (let r = 0; r <= SEGMENTS; r++) {
+        const u = r / SEGMENTS;
+        const p = along(shape.start + shape.length * u, this.p);
+        p.y += u < 0.5 ? riseMid * u * 2 : riseMid + (riseFar - riseMid) * (u - 0.5) * 2;
+        const halfW = halfW0 * (1 + shape.spread * u);
+        for (const [i, sgn] of [
+          [0, -1],
+          [1, 1],
+        ] as const) {
+          const q = this.tmp.copy(p).addScaledVector(across, sgn * halfW);
+          this.root.worldToLocal(q);
+          l.pos.setXYZ(r * 2 + i, q.x, q.y, q.z);
         }
-      });
+      }
       l.pos.needsUpdate = true;
-      l.col.needsUpdate = true;
+      // Під пологим кутом мокра дорога відбиває сильніше (Френель, на око).
+      const dist = Math.hypot(lamp.x - cam.x, lamp.z - cam.z);
+      const grazing = 1 - Math.min(1, (cam.y - near) / Math.max(1, dist));
+      l.material.uniforms.gain.value = k.gain * surface * (0.45 + 0.55 * grazing);
     }
   }
 
@@ -221,8 +237,8 @@ export class WetReflections {
     for (const l of this.lamps) {
       l.out.removeFromParent();
       l.out.geometry.dispose();
+      l.material.dispose();
     }
-    this.material.dispose();
   }
 }
 
