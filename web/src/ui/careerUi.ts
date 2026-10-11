@@ -180,10 +180,17 @@ export class CareerGame {
   private keyLoad: (() => void) | null = null;
   private keyUnload: (() => void) | null = null;
   private keyBuy: (() => void) | null = null;
-  /** Клавіатура (ПК): + — завантажити, − — повернути, Enter — купити. */
+  /**
+   * Клавіатура (ПК, як в оригіналі): + — купити (завантажити товар, купити машину чи запчастину), − — продати
+   * (повернути товар); і на цифровому блоці, і в основному ряду (за кодом клавіші — незалежно від розкладки).
+   * Enter — теж купити.
+   */
   private readonly onKey = (e: KeyboardEvent) => {
-    if ((e.key === '+' || e.key === '=') && this.keyLoad) this.keyLoad();
-    else if (e.key === '-' && this.keyUnload) this.keyUnload();
+    const plus = e.code === 'NumpadAdd' || e.code === 'Equal' || e.key === '+';
+    const minus = e.code === 'NumpadSubtract' || e.code === 'Minus' || e.key === '-';
+    if (plus && this.keyLoad) this.keyLoad();
+    else if (plus && !e.repeat && this.keyBuy) this.keyBuy();
+    else if (minus && this.keyUnload) this.keyUnload();
     else if (e.key === 'Enter' && !e.repeat && this.keyBuy) this.keyBuy();
   };
   private timer = 0;

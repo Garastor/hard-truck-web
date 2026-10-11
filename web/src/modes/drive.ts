@@ -13,7 +13,6 @@ import { WetReflections } from '../render/wetReflections';
 import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import { SKY_FOG, type BuiltScene } from '../render/sceneBuilder';
-import { cabMode, setCabMode, type CabMode } from '../game/viewSettings';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
 import { EngineAudio, type LoopSound } from '../audio/engineAudio';
@@ -24,7 +23,8 @@ import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, EVENT_RAIN, Track, type Ro
 import { AutoPilot, WayNet } from '../game/autopilot';
 import { RoomVisibility } from '../render/roomVisibility';
 
-export type CamMode = 'chase' | 'cockpit' | 'far';
+/** Камера (C): з кабіни, від першої особи (лише прилади Panel), позаду, здалеку. */
+export type CamMode = 'chase' | 'cockpit' | 'first' | 'far';
 
 if (import.meta.env.DEV) Object.assign(window, { RAPIER });
 
@@ -124,7 +124,8 @@ const CRASH_SOUNDS = ['crash2', 'crash4a', 'crash9'];
 /** Тестовий режим: сила ударів, після якої машина вибухає (у кар'єрі техстан 0 — це 250 при зносі 0,004 за одиницю). */
 const WRECK_HITS = 250;
 /** Туман під дощем: початок і повна непрозорість, м (гіпотеза). */
-/** Вертикальне поле зору в режимі «панель»: піраміда 1.6×1.2 (HTruck.exe 0x4851ac) → 2·atan(0,6). */
+const NEXT_CAM: Record<CamMode, CamMode> = { cockpit: 'first', first: 'chase', chase: 'far', far: 'cockpit' };
+/** Вертикальне поле зору виду від першої особи: піраміда 1.6×1.2 (HTruck.exe 0x4851ac) → 2·atan(0,6). */
 const PANEL_FOV = THREE.MathUtils.radToDeg(2 * Math.atan(0.6));
 
 /** Туман: колір, початок і кінець, м (гіпотеза). */
@@ -299,6 +300,7 @@ export class DriveSession {
     if (this.glassRain) {
       this.glassRain.raining = on;
       this.glassRain.wipersOn = on;
+      this.wipersManual = null;
     }
   }
   /** Тестовий режим: погода — дощ і слизька дорога (×0,8 до зчеплення, як у кар'єрі). */
@@ -346,7 +348,6 @@ export class DriveSession {
   }
   /** Звуки поза двигуном: двигуни суперників (extcar), двірники, грім; пауза між звуками ударів. */
   private oppSounds: (LoopSound | null)[] | null = null;
-  private wiperSound: LoopSound | null | undefined;
   private thunderIn = 20;
   private impactCooldown = 0;
   /** Удар: легкий — hit, сильний — один із crash* (гучність за силою). */
@@ -465,10 +466,7 @@ export class DriveSession {
       const vol = d > 150 ? 0 : 0.5 / (1 + (d / 15) ** 2);
       snd.set(vol, Math.min(2, Math.max(0.6, o.truck.rpm / 1500)), d > 0.1 ? rel.dot(right) / d : 0);
     });
-    // Двірники — поки працюють; грім — зрідка, коли дощ не під дахом.
-    const wipers = this.glassRain?.wipersOn ?? false;
-    if (wipers && this.wiperSound === undefined) this.wiperSound = a.loopSound('wipers');
-    this.wiperSound?.set(wipers ? 0.35 : 0);
+    // Грім — зрідка, коли дощ не під дахом (двірники — звук на кожен помах, див. buildCab).
     if (this.raining && this.glassRain?.raining) {
       if ((this.thunderIn -= dt) <= 0) {
         this.thunderIn = 15 + Math.random() * 30;
@@ -684,11 +682,11 @@ export class DriveSession {
         if (s.onResetRequest) s.onResetRequest();
         else s.recover();
       }
-      if (cmd === 'camera') s.camMode = s.camMode === 'chase' ? 'cockpit' : s.camMode === 'cockpit' ? 'far' : 'chase';
+      if (cmd === 'camera') s.cameraMode = NEXT_CAM[s.camMode];
       if (cmd === 'lights') s.lightsOverride = !s.headlights;
       if (cmd === 'map' && s.mapAllowed && s.navMap) s.navMap.el.hidden = !s.navMap.el.hidden;
       if (cmd === 'engine') s.toggleEngine();
-      if (cmd === 'wipers' && s.glassRain) s.glassRain.wipersOn = !s.glassRain.wipersOn;
+      if (cmd === 'wipers') s.toggleWipers();
     };
     s.touchUi = s.input.mountTouch(overlay);
     // Не гасити екран під час їзди (Screen Wake Lock, де підтримується).
@@ -768,6 +766,8 @@ export class DriveSession {
   }
   set cameraMode(mode: CamMode) {
     this.camMode = mode;
+    // Кабіна й вид від першої особи — різні моделі (кабіна машини / спільні прилади Panel): перебудовуємо.
+    if ((mode === 'cockpit' && this.panelMode) || (mode === 'first' && !this.panelMode)) this.rebuildCab(mode === 'first');
   }
   /** Без відліку світлофора (одразу «зелений»). */
   skipCountdown(): void {
@@ -833,12 +833,11 @@ export class DriveSession {
 
   /**
    * Вид з кабіни: кабіна `<Prefix>Cab` у системі «очей водія» (y — уперед, z — угору) з кермом і стрілками, або —
-   * у режимі «панель» (налаштування; в оригіналі — коли у відеорежимі не вибрано кабіну, HTruck.exe 0x4e8ddc) —
-   * спільна для всіх машин приладова панель `Panel`: прилади без стійок і даху, вужче поле зору (піраміда 1.6×1.2,
-   * 0x4851ac). Панель закріплена в кадрі внизу по центру (як рушій її розміщує, не розібрано — гіпотеза).
+   * вид від першої особи (panel) — спільні для всіх машин прилади `Panel` без кабіни (в оригіналі — один з видів
+   * клавіші C; HTruck.exe 0x4e8ddc), вужче поле зору (піраміда 1.6×1.2, 0x4851ac). Прилади закріплені в кадрі
+   * внизу по центру (як рушій їх розміщує, не розібрано — гіпотеза).
    */
-  private buildCab(): void {
-    const panel = cabMode() === 'panel';
+  private buildCab(panel = false): void {
     const dyn = panel ? this.built.assembler.dynamicObject('Panel') : this.built.assembler.dynamicObject(`${this.def.prefix}Cab`);
     if (!dyn) return;
     this.panelMode = panel;
@@ -886,7 +885,9 @@ export class DriveSession {
     if (!panel) {
       dyn.setSwitch('GlassKey', 1);
       this.glassRain = new GlassRain(inner, this.dropSprites);
-      this.glassRain.raining = this.glassRain.wipersOn = this.raining;
+      this.glassRain.onStroke = () => this.audio?.play('wipers', 0.9);
+      this.glassRain.raining = this.raining;
+      this.glassRain.wipersOn = this.wipersManual ?? this.raining;
     }
     // Кермо частково «втоплене» в панель: оригінал малює його після кабіни, поверх неї.
     // Відтворюємо це окремим шаром, який рендериться після очищення глибини.
@@ -926,26 +927,25 @@ export class DriveSession {
     cam.updateProjectionMatrix();
   }
 
-  /** Режим «панель» замість кабіни (див. buildCab). */
+  /** Зараз побудовані прилади Panel (вид від першої особи), а не кабіна (див. buildCab). */
   private panelMode = false;
 
-  /** Перемикач «Кабіна: повна / панель» з «Опцій» — перебудувати вид з кабіни на ходу. */
-  setCabMode(mode: CabMode): void {
-    setCabMode(mode);
+  private rebuildCab(panel: boolean): void {
     if (this.cab) this.overlayScene.remove(this.cab);
     this.cab = null;
     this.cabSwitch = null;
     this.cabParts = {};
     this.glassRain = null;
-    this.buildCab();
+    this.buildCab(panel);
     if (this.hudFonts) this.setHudFonts(...this.hudFonts);
   }
 
   private updateCab(state: { steer: number }): void {
     // З кабіни зовнішній корпус власної вантажівки не малюємо (як в оригіналі).
-    this.truck.visual.visible = this.camMode !== 'cockpit' || !this.cab;
+    const inside = this.camMode === 'cockpit' || this.camMode === 'first';
+    this.truck.visual.visible = !inside || !this.cab;
     if (!this.cab) return;
-    this.cab.visible = this.camMode === 'cockpit';
+    this.cab.visible = inside;
     if (!this.cab.visible) return;
     this.cab.position.copy(this.camera.position);
     // Кабіна — разом із машиною (погляд з інерцією повертається в ній), панель — нерухомо в кадрі.
@@ -1105,6 +1105,13 @@ export class DriveSession {
     }
   }
 
+  /** Двірники вручну (W); null — самі під дощем. Переживає зміну виду (кабіна перебудовується). */
+  private wipersManual: boolean | null = null;
+  toggleWipers(): void {
+    this.wipersManual = !(this.glassRain?.wipersOn ?? this.wipersManual ?? this.raining);
+    if (this.glassRain) this.glassRain.wipersOn = this.wipersManual;
+  }
+
   /** Пробіл: заглушити / завести двигун (заводиться звуком стартера start). */
   toggleEngine(): void {
     const on = !this.truck.engineOn;
@@ -1178,7 +1185,8 @@ export class DriveSession {
       if (this.rain) this.rain.root.visible = !sheltered;
       if (this.glassRain) this.glassRain.raining = !sheltered;
     }
-    if (this.cab?.visible) this.glassRain?.update(dt, this.truck.speedKmh);
+    // Двірники ходять (і чути) за будь-якої камери.
+    this.glassRain?.update(dt, this.truck.speedKmh);
     if (this.rain?.root.visible) {
       // Foreground_object — «передній план» біля глядача: повертаємо разом із камерою (вісь циліндра — вгору
       // в кадрі), тож його верхній і нижній край (±8 м на 15 м) не потрапляють у кадр навіть з камери позаду.
@@ -1423,12 +1431,12 @@ export class DriveSession {
     const lag = new THREE.Quaternion().setFromAxisAngle(up, this.camYaw);
     // Поле зору: з панеллю — вужче (як в оригіналі), інакше — звичайне (truck.ini, див. main.ts).
     this.baseFov ??= this.camera.fov;
-    const fov = this.camMode === 'cockpit' && this.panelMode ? PANEL_FOV : this.baseFov;
+    const fov = this.camMode === 'first' && this.panelMode ? PANEL_FOV : this.baseFov;
     if (this.camera.fov !== fov) {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
     }
-    if (this.camMode === 'cockpit') {
+    if (this.camMode === 'cockpit' || this.camMode === 'first') {
       // Камера в кабіні: орієнтація вантажівки + нахил погляду tangViewer; поворот погляду — з інерцією.
       const eye = this.cockpit.clone().applyQuaternion(v.quaternion).add(v.position);
       const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (this.def.tech.viewerTilt * Math.PI) / 180);
@@ -1493,7 +1501,6 @@ export class DriveSession {
     }
     SKY_FOG.horizon.value = SKY_FOG.top.value = 0;
     for (const s of this.oppSounds ?? []) s?.stop();
-    this.wiperSound?.stop();
     this.stonesSound?.stop();
     this.audio?.dispose();
     void this.wakeLock?.release().catch(() => {});

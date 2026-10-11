@@ -273,8 +273,6 @@ export interface OptionsState {
   fullscreen: boolean;
   swap: boolean;
   fps: boolean;
-  /** Вид з кабіни: повна кабіна машини чи спільна приладова панель (як в оригіналі без режиму з кабіною). */
-  cab: 'full' | 'panel';
 }
 
 export interface OptionsActions {
@@ -284,7 +282,6 @@ export interface OptionsActions {
   setFullscreen(on: boolean): Promise<boolean>;
   setSwap(on: boolean): void;
   setFps(on: boolean): void;
-  setCab(mode: 'full' | 'panel'): void;
 }
 
 /** Клавіші порту (для таблиці «перевизначення клавіатури» — поки лише показуємо). */
@@ -353,8 +350,6 @@ export function optionsScreen(art: MenuArt, st: OptionsState, act: OptionsAction
       act.setSwap(st.swap);
       st.fps = defaults.fps;
       act.setFps(st.fps);
-      st.cab = defaults.cab;
-      act.setCab(st.cab);
       refresh();
     });
     const ok = () => {
@@ -382,7 +377,6 @@ export function optionsScreen(art: MenuArt, st: OptionsState, act: OptionsAction
       };
       add('Кермо й педалі', st.swap ? 'навпаки' : 'звичайно', () => ((st.swap = !st.swap), act.setSwap(st.swap), renderRows()));
       add('Лічильник кадрів', st.fps ? 'так' : 'ні', () => ((st.fps = !st.fps), act.setFps(st.fps), renderRows()));
-      add('Кабіна', st.cab === 'panel' ? 'лише панель' : 'повна', () => ((st.cab = st.cab === 'panel' ? 'full' : 'panel'), act.setCab(st.cab), renderRows()));
       add('Кермування нахилом', st.control === 'tilt' ? 'так' : 'ні');
       add('', '');
       for (const [k, v] of KEY_ROWS) add(k, v);

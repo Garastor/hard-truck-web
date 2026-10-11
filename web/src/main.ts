@@ -1,4 +1,3 @@
-import { cabMode, setCabMode } from './game/viewSettings';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LEVELS, devServerSource, loadLevel, type FileSource, type LevelId, type LoadedLevel } from './assets/loader';
@@ -601,7 +600,7 @@ function saveControl(c: ControlMode): void {
   }
 }
 
-const OPTION_DEFAULTS: OptionsState = { control: 'buttons', quality: 'balance', fullscreen: false, swap: false, fps: false, cab: 'full' };
+const OPTION_DEFAULTS: OptionsState = { control: 'buttons', quality: 'balance', fullscreen: false, swap: false, fps: false };
 
 /** Налаштування (ОПЦИИ) — екран оригіналу з LOAD.RES; без нього — простий діалог. */
 async function optionsDialog(): Promise<void> {
@@ -614,7 +613,6 @@ async function optionsDialog(): Promise<void> {
       fullscreen: isFullscreen(),
       swap: loadSwap(),
       fps: showFps,
-      cab: cabMode(),
     };
     await optionsScreen(
       menuArt,
@@ -647,10 +645,7 @@ async function optionsDialog(): Promise<void> {
         setFps(on) {
           if (on !== showFps) $('fpsToggle').click();
         },
-        setCab(mode) {
-          setCabMode(mode);
-          drive?.setCabMode(mode);
-        },
+
       },
       OPTION_DEFAULTS,
     );

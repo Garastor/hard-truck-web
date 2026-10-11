@@ -9,7 +9,11 @@ import * as THREE from 'three';
 
 /** Кут розмаху двірника від положення спокою, рад, і тривалість одного помаху туди-назад, с (гіпотеза). */
 const SWEEP = (105 * Math.PI) / 180;
-const PERIOD = 1.4;
+/**
+ * Повний помах двірників (туди й назад), с — як довжина запису wipersSound (1,62 с, у ньому два стуки: у крайніх
+ * положеннях), щоб звук ішов у такт (гіпотеза: темп помаху в оригіналі не розібрано).
+ */
+const PERIOD = 1.62;
 /** Нових крапель за секунду під дощем і швидкість висихання без дощу (частка непрозорості за секунду). */
 const DROPS_PER_SEC = 60;
 const DRY_RATE = 0.08;
@@ -38,6 +42,8 @@ export class GlassRain {
   private angle = 0;
   wipersOn = false;
   raining = false;
+  /** Початок кожного помаху (звук двірників). */
+  onStroke: (() => void) | null = null;
 
   /** cabRoot — внутрішня група кабіни (система моделі), у якій шукаємо скло й двірники. */
   /** sprites — оригінальні краплі (txr/glass_1.msk, glass_2.msk); без них — власний кружок. */
@@ -96,9 +102,13 @@ export class GlassRain {
     // Двірники: косинусний помах; вимкнені — доходять до положення спокою.
     const prev = this.angle;
     if (this.wipersOn || this.phase > 0) {
+      if (this.phase === 0) this.onStroke?.();
       this.phase += dt / PERIOD;
       if (!this.wipersOn && this.phase >= 1) this.phase = 0;
-      else this.phase %= 1;
+      else if (this.phase >= 1) {
+        this.phase %= 1;
+        this.onStroke?.();
+      }
     }
     this.angle = -SWEEP * (0.5 - 0.5 * Math.cos(2 * Math.PI * this.phase));
     for (const w of this.wipers) {
