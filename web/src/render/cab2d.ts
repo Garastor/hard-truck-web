@@ -32,20 +32,27 @@ const SWAY = 30;
 /** Висота маски від її верху до чорної заливки внизу, px (truck.ini maskYtile для виду прямо). */
 const TILE = 460;
 /**
- * Кермо: кадр 19 ± g(|a|), a = round(−кермо·90) — кадри густіші біля центру (таблиця порогів 0x547ab1).
+ * Кермо: кадр 19 ± g(|a|), a = −кермо·90 у знаках оригіналу — кадри густіші біля центру (таблиця порогів 0x547ab1:
+ * до 5 — щокроку, до 13 — через крок, далі пороги 16, 20, 25, 31, 38, 46, 55, 65, 76). Тут — неперервно: між
+ * порогами лінійно, щоб кадри можна було плавно змішувати (render), а не перескакувати.
  */
+const WHEEL_KNOTS: [number, number][] = [
+  [0, 0], [5, 5], [13, 9], [16, 10], [20, 11], [25, 12], [31, 13], [38, 14], [46, 15], [55, 16], [65, 17], [76, 18], [90, 19],
+];
 function wheelFrame(steer: number): number {
-  // Знак — під кермо порту (−1 — ліворуч): кадри з меншим номером — кермо повернуте праворуч.
-  const a = Math.round(steer * 90);
+  // Знак — під кермо порту (−1 — ліворуч): кадри з меншим номером — кермо повернуте ліворуч.
+  const a = THREE.MathUtils.clamp(steer, -1, 1) * 90;
   const m = Math.abs(a);
-  let g: number;
-  if (m <= 5) g = m;
-  else if (m <= 13) g = 5 + Math.floor((m - 5) / 2);
-  else {
-    const i = [16, 20, 25, 31, 38, 46, 55, 65, 76].findIndex((t) => m <= t);
-    g = i < 0 ? 19 : 10 + i;
+  let g = 19;
+  for (let i = 1; i < WHEEL_KNOTS.length; i++) {
+    const [m1, g1] = WHEEL_KNOTS[i];
+    if (m <= m1) {
+      const [m0, g0] = WHEEL_KNOTS[i - 1];
+      g = g0 + ((m - m0) / (m1 - m0)) * (g1 - g0);
+      break;
+    }
   }
-  return Math.max(0, Math.min(38, 19 + Math.sign(a) * g));
+  return THREE.MathUtils.clamp(19 + Math.sign(a) * g, 0, 38);
 }
 
 export interface Cab2dState {
@@ -141,7 +148,7 @@ export class Cab2d {
     return { x: (r.x + ox) * s, y: (r.y + oy) * s, w: r.w * s, h: r.h * s };
   }
 
-  private quad(name: string | null, x: number, y: number, w?: number, h?: number, color?: number): void {
+  private quad(name: string | null, x: number, y: number, w?: number, h?: number, color?: number, opacity = 1): void {
     let q = this.quads[this.used];
     if (!q) {
       q = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ transparent: true, alphaTest: 0.5, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
@@ -158,7 +165,9 @@ export class Cab2d {
       m.needsUpdate = true;
     }
     m.color.set(color ?? 0xffffff);
-    m.alphaTest = tex ? 0.5 : 0;
+    // Напівпрозорий кадр (перехід між кадрами керма) — змішуванням, без порогу.
+    m.alphaTest = tex && opacity >= 1 ? 0.5 : 0;
+    m.opacity = opacity;
     q.visible = !!tex || color !== undefined;
     // Площина 1×1 з центром у нулі; камера — y униз (top < bottom), рядок 0 маски (flipY = false) — угорі.
     q.scale.set(tw, th, 1);
@@ -189,7 +198,13 @@ export class Cab2d {
     this.quad(st.gear < 0 ? 'gear_r' : `gear${String(Math.min(9, st.gear)).padStart(2, '0')}`, px + 65, py + 5);
     this.quad('autogear', px + 96, py - 8);
     if (st.handbrake) this.quad('park', px + 39, py - 5);
-    this.quad(`m_rul_${String(wheelFrame(st.steer) + 1).padStart(2, '0')}`, X + 115, Y + 325);
+    // Кермо: два сусідні кадри — другий поверх із прозорістю за дробовою частиною (39 кадрів на весь хід, і
+    // далеко від центру кожен кадр — кілька градусів: без змішування кермо поверталось ривками).
+    const wf = wheelFrame(st.steer);
+    const w0 = Math.floor(wf);
+    const wheel = (f: number) => `m_rul_${String(f + 1).padStart(2, '0')}`;
+    this.quad(wheel(w0), X + 115, Y + 325);
+    if (wf > w0) this.quad(wheel(w0 + 1), X + 115, Y + 325, undefined, undefined, undefined, wf - w0);
     // Чорне поза маскою: над нею й нижче за Y + 460, а також боки, якщо екран ширший за маску.
     const { ox, oy, w, h } = this.view;
     const left = -ox;
