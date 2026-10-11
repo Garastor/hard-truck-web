@@ -99,6 +99,17 @@ export class EngineAudio {
     };
   }
 
+  /** Кінець звуків, що не накладаються (playOnce), за часом аудіоконтексту. */
+  private readonly busyUntil = new Map<string, number>();
+
+  /** Одноразовий звук, лише якщо такий самий уже не звучить (сигнал: швидкі повторні натискання не накладаються). */
+  playOnce(name: string, volume = 1): void {
+    const buf = this.buffers.get(name);
+    if (!buf || this.ctx.state !== 'running' || this.ctx.currentTime < (this.busyUntil.get(name) ?? 0)) return;
+    this.busyUntil.set(name, this.ctx.currentTime + buf.duration);
+    this.play(name, volume);
+  }
+
   /** Одноразовий звук; повертає зупинку (обірвати раніше кінця запису). */
   play(name: string, volume = 1, rate = 1): { stop(): void } | null {
     const buf = this.buffers.get(name);

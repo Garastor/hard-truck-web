@@ -683,7 +683,7 @@ export class DriveSession {
 
     if (rmp) s.audio = await EngineAudio.create(rmp).catch(() => null);
     s.input.onCommand = (cmd) => {
-      if (cmd === 'horn') s.audio?.play('horn');
+      if (cmd === 'horn') s.audio?.playOnce('horn');
       if (cmd === 'autopilot') s.toggleAutopilot();
       if (cmd === 'tilt')
         void s.input.toggleTilt().then((on) => s.touchUi?.querySelector('.tilt')?.classList.toggle('pressed', on));

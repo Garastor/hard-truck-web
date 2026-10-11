@@ -195,9 +195,16 @@ export class CareerGame {
   /**
    * Клавіатура (ПК, як в оригіналі): + — купити (завантажити товар, купити машину чи запчастину), − — продати
    * (повернути товар); і на цифровому блоці, і в основному ряду (за кодом клавіші — незалежно від розкладки).
-   * Enter — теж купити.
+   * Enter — теж купити. Esc на трасі — розгорнути / згорнути групу кнопок (знак «телефон»).
    */
   private readonly onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && !e.repeat && this.drive && this.level !== 'MENU3D' && !this.busy) {
+      e.preventDefault();
+      this.actionsCollapsed = !this.actionsCollapsed;
+      this.zoneKey = '';
+      this.refresh();
+      return;
+    }
     const plus = e.code === 'NumpadAdd' || e.code === 'Equal' || e.key === '+';
     const minus = e.code === 'NumpadSubtract' || e.code === 'Minus' || e.key === '-';
     if (plus && this.keyLoad) this.keyLoad();
