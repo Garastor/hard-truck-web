@@ -885,9 +885,10 @@ export class DriveSession {
       return found;
     };
     this.cabParts = { rule: bySpace('RuleSpace'), tacho: bySpace('TachoSpace'), speed: bySpace('SpeedSpace') };
-    // Цифри одометра (KMeter*Key) — змішування замість порогу alphaTest 0,5: поріг спотворював контури цифр.
+    // Цифри одометра (KMeter*Key) і табло передач (GearKey, A — AvtoKey, P — ParkKey) — змішування замість порогу
+    // alphaTest 0,5: поріг спотворював контури й лишав зубці.
     inner.traverse((o) => {
-      if (!/^KMeter\dKey#/.test(o.name)) return;
+      if (!/^(KMeter\d|Gear|Avto|Park)Key#/.test(o.name)) return;
       o.traverse((g) => {
         const mesh = g as THREE.Mesh;
         if (!mesh.material) return;
