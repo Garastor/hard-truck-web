@@ -177,8 +177,9 @@ export class DriveHud {
     const ys = y + Math.round((lh - sh) / 2);
     let speedLayer: HTMLCanvasElement | null = null;
     if (dg && ink) {
-      // Окреме полотно в повній роздільності екрана з плавним масштабуванням — як текстура одометра в кабіні
-      // (лінійна фільтрація + alphaTest); на піксельному полотні дрібні цифри з напівпрозорими краями розмивались.
+      // Окреме полотно в повній роздільності екрана з плавним масштабуванням (м'які контури); на піксельному
+      // полотні дрібні цифри з напівпрозорими краями розмивались. Відсікання прозорості (alphaTest 0,5, як у
+      // кабіні) спотворювало контури — без нього.
       const k = hudScale() * (window.devicePixelRatio || 1);
       const sx = x + speedW - step * speed.length;
       const sy = Math.round(ly + ink.gearTop + ink.gearH / 2 - ink.h / 2);
@@ -197,10 +198,6 @@ export class DriveHud {
         sctx.drawImage(c, 0, ink.top, c.width, sh0, dx * k, 0, c.width * ink.scale * k, ink.h * k);
         dx += step;
       }
-      // Відсікання прозорості 0,5, як у матеріалі кабіни (alphaTest): після плавного збільшення краї чіткі.
-      const img = sctx.getImageData(0, 0, speedLayer.width, speedLayer.height);
-      for (let i = 3; i < img.data.length; i += 4) img.data[i] = img.data[i] >= 128 ? 255 : 0;
-      sctx.putImageData(img, 0, 0);
     } else L.draw(ctx, speed, x + speedW - L.measure(speed), y, HUD_CYAN);
     x += speedW + 8;
     L.draw(ctx, gear, x + Math.floor((gearW - L.measure(gear)) / 2), ly, gear === 'R' ? GEAR_R : gear === 'N' ? GEAR_N : GEAR_D);
