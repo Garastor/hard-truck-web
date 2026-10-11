@@ -252,6 +252,11 @@ export class Cab2d {
     renderer.render(this.scene, this.cam);
   }
 
+  /** Додатковий шар під маскою панелі (дощ і двірники — render/cab2dRain.ts), у координатах кадру 640×480. */
+  attach(obj: THREE.Object3D): void {
+    this.scene.add(obj);
+  }
+
   dispose(): void {
     for (const t of this.tex.values()) t.dispose();
     for (const q of this.quads) {

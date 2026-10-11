@@ -8,11 +8,12 @@ import type { FileSource } from './loader';
  * (*.RMP без «3»): порт бере на пристрій лише апаратний набір, тож маски кабін (9 штук) і її приладів (кермо
  * m_rul_01…39, цифри big/small/smallr, тахометр rpm00…16, передачі gear_r/gear00…09, autogear, park; разом ≈ 2 МБ)
  * витягуємо з COUNT.RMP під час імпорту й зберігаємо окремо (`CAB2D/<імʼя>.msk` і палітру `CAB2D/palette.plm`).
+ * Там же краплі дощу 2D-кабіни (`msk\drop7.msk`, `drop10.msk` — render/cab2dRain.ts).
  */
 export const CAB2D_SOURCE = 'COUNT/COUNT.RMP';
 export const CAB2D_DIR = 'CAB2D/';
 const PALETTE = `${CAB2D_DIR}palette.plm`;
-const CAB2D_MASK = /^(\w+_pan|m_rul_\d\d|big\d|small\d|smallr\d|rpm\d\d|gear_r|gear\d\d|autogear|park)\.msk$/i;
+const CAB2D_MASK = /^(\w+_pan|m_rul_\d\d|big\d|small\d|smallr\d|rpm\d\d|gear_r|gear\d\d|autogear|park|drop7|drop10)\.msk$/i;
 
 /** Маски кабін і палітра з архіву програмного набору: [шлях у сховищі, байти]. */
 export function extractCab2d(rmpBytes: Uint8Array): [string, Uint8Array][] {

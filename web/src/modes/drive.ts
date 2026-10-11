@@ -14,6 +14,7 @@ import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import { SKY_FOG, type BuiltScene } from '../render/sceneBuilder';
 import { CAB2D_PARTS, Cab2d } from '../render/cab2d';
+import { Cab2dRain } from '../render/cab2dRain';
 import { cabStyle, type CabStyle } from '../game/viewSettings';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
@@ -338,7 +339,8 @@ export class DriveSession {
     SKY_FOG.top.value = rain ? (night ? 0.5 : 0.7) : 0;
   }
   /** Краплі на склі кабіни й двірники. */
-  private glassRain: GlassRain | null = null;
+  /** Краплі на склі й двірники: 3D-кабіна — GlassRain (скло моделі), 2D — Cab2dRain (як в оригіналі). */
+  private glassRain: GlassRain | Cab2dRain | null = null;
   /** Вмʼятини кузова: накопичена сила ударів за зонами (FC, FR, R, BR, BC, BL, L, FL). */
   dents: Record<string, number> = {};
   private modelSwitch: ((name: string, state: number) => void) | undefined;
@@ -1078,10 +1080,24 @@ export class DriveSession {
       return;
     }
     this.cab2d = new Cab2d(masks.get(panel)!, new Map([...masks].filter(([n]) => n !== panel)));
+    // Дощ і двірники 2D-кабіни (як в оригіналі). Краплю drop7 — окремо: на пристрої, імпортованому до цього, її
+    // немає — тоді двірники ходять, але крапель не буде (повторний імпорт додасть).
+    const drops = await this.cab2dLoader!(['drop7.msk']).catch(() => null);
+    if (token !== this.cab2dToken || !this.cab2d) return;
+    const rain = new Cab2dRain(drops?.get('drop7.msk') ?? null);
+    rain.onStroke = () => this.audio?.play('wipers', 0.9);
+    rain.raining = this.raining;
+    rain.wipersOn = this.wipersManual ?? this.raining;
+    this.cab2d.attach(rain.root);
+    this.glassRain = rain;
   }
 
   private drop2dCab(): void {
     this.cab2dToken++;
+    if (this.glassRain instanceof Cab2dRain) {
+      this.glassRain.dispose();
+      this.glassRain = null;
+    }
     this.cab2d?.dispose();
     this.cab2d = null;
   }
