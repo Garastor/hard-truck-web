@@ -78,6 +78,45 @@ export function modal(overlay: HTMLElement, title: string, body: string | HTMLEl
   });
 }
 
+/** Знак «телефон екстреного виклику»: синій знак із білою рамкою, у білому полі — чорна телефонна трубка. */
+export function callSign(): HTMLCanvasElement {
+  const PHONE = [
+    '.XXX....XXX.',
+    'XXXXXXXXXXXX',
+    'XX..XXXX..XX',
+    '...XX..XX...',
+    '..XXXXXXXX..',
+    '..XX.XX.XX..',
+    '..XXXXXXXX..',
+    '..XX.XX.XX..',
+    '..XXXXXXXX..',
+  ];
+  const { canvas, ctx } = pixelCanvas(24, 24, hudScale() * 1.75);
+  ctx.fillStyle = 'rgb(20, 70, 170)';
+  ctx.fillRect(1, 0, 22, 24);
+  ctx.fillRect(0, 1, 24, 22);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(2, 2, 20, 1);
+  ctx.fillRect(2, 21, 20, 1);
+  ctx.fillRect(2, 2, 1, 20);
+  ctx.fillRect(21, 2, 1, 20);
+  ctx.fillRect(5, 5, 14, 14);
+  ctx.fillStyle = '#000';
+  PHONE.forEach((r, y) => {
+    for (let x = 0; x < r.length; x++) if (r[x] === 'X') ctx.fillRect(6 + x, 7 + y, 1, 1);
+  });
+  return canvas;
+}
+
+/** Стрілка «згорнути» (вліво) кольору тексту табло. */
+export function collapseArrow(): HTMLCanvasElement {
+  const { canvas, ctx } = pixelCanvas(9, 9, hudScale() * 2);
+  ctx.fillStyle = HUD_CYAN;
+  // Трикутник вістрям уліво: стовпчик 2 + i заввишки 2i + 1.
+  for (let i = 0; i < 5; i++) ctx.fillRect(2 + i, 4 - i, 1, 2 * i + 1);
+  return canvas;
+}
+
 export class CareerGame {
   private drive: DriveSession | null = null;
   private level: 'MENU3D' | TrackId = 'MENU3D';
@@ -603,23 +642,15 @@ export class CareerGame {
   }
 
   /**
-   * Згортання групи кнопок до значка (як табло гравця): значок — остання кнопка групи; згорнуто — лише він
-   * і кнопки keep (те, що не можна сховати, — «Відновитися» перекинутої машини).
+   * Згортання групи кнопок до значка (як табло гравця). Згорнуто — значок «телефон екстреного виклику» (як
+   * дорожній знак пункту виклику допомоги) і кнопки keep (те, що не можна сховати, — «Відновитися» перекинутої
+   * машини); розгорнуто — у кінці групи кнопка зі стрілкою «згорнути».
    */
   private collapsible(keep: HTMLElement[] = []): void {
-    const toggle = el('button', 'hud-btn hud-toggle');
-    toggle.setAttribute('aria-label', this.actionsCollapsed ? 'Кнопки: розгорнути' : 'Кнопки: згорнути');
-    // Значок: рамка табло з трьома «кнопками» (сірі рамки, як у кнопок табло).
-    const { canvas, ctx } = pixelCanvas(30, 22, hudScale() * 1.5);
-    frame(ctx, 0, 0, 30, 22);
-    inset(ctx, 4, 4, 23, 15);
-    for (let i = 0; i < 3; i++) {
-      ctx.fillStyle = 'rgb(140, 140, 140)';
-      ctx.fillRect(7, 6 + i * 4, 17, 3);
-      ctx.fillStyle = HUD_CYAN;
-      ctx.fillRect(8, 7 + i * 4, 15, 1);
-    }
-    toggle.append(canvas);
+    const collapsed = this.actionsCollapsed;
+    const toggle = el('button', collapsed ? 'hud-btn hud-toggle' : 'hud-btn');
+    toggle.setAttribute('aria-label', collapsed ? 'Кнопки: розгорнути' : 'Кнопки: згорнути');
+    toggle.append(collapsed ? callSign() : collapseArrow());
     toggle.addEventListener('click', () => {
       this.actionsCollapsed = !this.actionsCollapsed;
       this.zoneKey = '';
