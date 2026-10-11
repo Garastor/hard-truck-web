@@ -56,17 +56,68 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return e;
 }
 
-/** Модальне вікно з текстом і кнопками; повертає вибрану кнопку. */
+/** Шрифт табло (MENU.FON) для вікон і підказок; до завантаження — системний (setHudFont з main). */
+let uiFont: PixelFont | null = null;
+export function setHudFont(f: PixelFont | null): void {
+  uiFont = f;
+}
+
+/** Рядки тексту не ширші за w пікселів шрифту. */
+function wrapText(f: PixelFont, t: string, w: number): string[] {
+  const out: string[] = [];
+  for (const para of t.split('\n')) {
+    let line = '';
+    for (const word of para.split(' ')) {
+      const next = line ? `${line} ${word}` : word;
+      if (line && f.measure(next) > w) {
+        out.push(line);
+        line = word;
+      } else line = next;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+/**
+ * Текст піксельним шрифтом табло (бірюзовий) з переносом за шириною в CSS-пікселях; без шрифту — звичайний
+ * текст. line — крок рядків у пікселях шрифту.
+ */
+function pixelText(t: string, cssWidth: number, color = HUD_CYAN, line = 12): HTMLElement {
+  const f = uiFont;
+  if (!f) return el('p', 'career-text', t);
+  const s = hudScale();
+  // У MENU.FON немає «ялинок» і кривих лапок — прямі.
+  const text = t.replace(/[«»„“”]/g, '"');
+  const lines = wrapText(f, text, Math.max(40, Math.floor(cssWidth / s)));
+  const w = Math.max(1, ...lines.map((l) => f.measure(l)));
+  const { canvas, ctx } = pixelCanvas(w, lines.length * line - (line - f.height));
+  lines.forEach((l, i) => f.draw(ctx, l, 0, i * line, color));
+  canvas.setAttribute('aria-label', t);
+  canvas.classList.add('career-pixel-text');
+  return canvas;
+}
+
+/** Ширина вмісту вікна, CSS-пікселі (як у .career-box: до 520, з полями). */
+function boxContentWidth(): number {
+  return Math.min(520, window.innerWidth - 32) - 34;
+}
+
+/** Модальне вікно в стилі табличок табло (тонка рамка, піксельний шрифт); повертає вибрану кнопку. */
 export function modal(overlay: HTMLElement, title: string, body: string | HTMLElement, buttons: string[]): Promise<number> {
   return new Promise((resolve) => {
     const back = el('div', 'career-modal');
     const box = el('div', 'career-box');
-    box.append(el('h2', '', title));
-    if (typeof body === 'string') box.append(el('p', 'career-text', body));
-    else box.append(body);
+    const head = el('h2');
+    head.append(pixelText(title, boxContentWidth(), 'rgb(255,255,255)'));
+    box.append(head);
+    box.append(typeof body === 'string' ? pixelText(body, boxContentWidth()) : body);
     const row = el('div', 'career-actions');
     buttons.forEach((b, i) => {
-      const btn = el('button', i === 0 ? 'primary' : '', b);
+      const btn = el('button', i === 0 ? 'hud-btn primary' : 'hud-btn');
+      btn.setAttribute('aria-label', b);
+      if (uiFont) btn.append(pixelText(b, 400));
+      else btn.textContent = b;
       btn.addEventListener('click', () => {
         back.remove();
         resolve(i);
@@ -792,7 +843,8 @@ export class CareerGame {
 
 /** Коротке повідомлення поверх гри. */
 export function toastIn(overlay: HTMLElement, text: string, ms = 4500): void {
-  const t = el('div', 'career-toast', text);
+  const t = el('div', 'career-toast');
+  t.append(pixelText(text, Math.min(520, window.innerWidth - 32) - 30));
   overlay.append(t);
   setTimeout(() => t.remove(), ms);
 }

@@ -17,6 +17,7 @@ import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
 import { EngineAudio, type LoopSound } from '../audio/engineAudio';
 import { DriveHud, odometerDigits } from '../ui/driveHud';
+import { RouteProgress } from '../game/raceProgress';
 import type { PixelFont } from '../ui/pixelFont';
 import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, EVENT_RAIN, Track, type Room } from '../game/track';
 import { AutoPilot, WayNet } from '../game/autopilot';
@@ -209,6 +210,8 @@ export class DriveSession {
   /** Суперники (aicar у truck.ini): вантажівки під керуванням автопілота. */
   readonly opponents: { truck: TruckVehicle; pilot: AutoPilot; odo: Odometer; lights: TruckLights | null; flippedFor: number }[] = [];
   private readonly playerOdo = new Odometer();
+  /** Маршрут гонки від старту гравця — для місця в гонці. */
+  private route: RouteProgress | null = null;
   /** Відлік до старту, с (світлофор над стартом, як в оригіналі: червоний → три спалахи жовтого → зелений). */
   private countdown = START_COUNTDOWN;
   /** Поточна лампа стартового світлофора; null — ще не вмикали. */
@@ -916,6 +919,7 @@ export class DriveSession {
     this.wayNet ??= new WayNet(this.built.assembler.b3d);
     const start = this.wayNet.nearest(this.spawn.position, this.spawn.forward);
     if (!start) return;
+    this.route = new RouteProgress(this.wayNet, this.spawn.position, this.spawn.forward);
     defs.forEach((def, i) => {
       const model = buildTruckModel(this.built.assembler, def, true);
       if (!model) return;
@@ -951,7 +955,7 @@ export class DriveSession {
         st.brake = 0;
       }
       o.truck.update(dt, st);
-      o.odo.update(pos, this.wayNet);
+      o.odo.update(pos, this.route);
       if (tp.y < this.fallY) o.truck.reset(this.spawn);
       // Перекинувся (лежить на боці довше OPPONENT_RECOVER с) — назад на дорогу: найближча лінія way_* за її напрямком.
       o.flippedFor = isFlipped(o.truck) ? o.flippedFor + dt : 0;
@@ -995,7 +999,7 @@ export class DriveSession {
     if (this.raceKind !== 'free') this.updateStartLight();
     if (this.opponents.length) {
       const tp = this.truck.body.translation();
-      this.playerOdo.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.wayNet);
+      this.playerOdo.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.route);
     }
   }
 
@@ -1393,19 +1397,13 @@ function fmtTime(t: number): string {
 }
 
 /** Пройдена вздовж мережі доріг відстань (для визначення місця в гонці). */
+/** Положення машини в гонці — відстань від старту вздовж маршруту з колами (RouteProgress), раз на 6 кроків. */
 class Odometer {
   distance = 0;
-  private prev: THREE.Vector3 | null = null;
-  private dir = new THREE.Vector3();
   private n = 0;
 
-  update(pos: THREE.Vector3, net: WayNet | null): void {
-    if (!net) return;
-    if (this.n++ % 15 === 0) {
-      const near = net.nearest(pos);
-      if (near) this.dir.subVectors(near.line.pts[near.seg + 1], near.line.pts[near.seg]).setY(0).normalize();
-    }
-    if (this.prev) this.distance += pos.clone().sub(this.prev).dot(this.dir);
-    this.prev = pos.clone();
+  update(pos: THREE.Vector3, route: RouteProgress | null): void {
+    if (!route || this.n++ % 6) return;
+    this.distance = route.update(pos, this.distance);
   }
 }

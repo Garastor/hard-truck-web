@@ -473,17 +473,29 @@ body.driving .touch-btn.horn {
   width: min(520px, 100%);
   max-height: 100%;
   overflow: auto;
-  padding: 14px 16px;
-  background: var(--bg);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 12px;
-  font: 15px/1.4 system-ui, sans-serif;
+  padding: 12px 16px;
+  /* Як кнопки й таблички табло: тонка сіра рамка, темна лінія всередині, темний напівпрозорий фон. */
+  background: rgba(16, 18, 20, 0.86);
+  border: 1px solid #8c8c8c;
+  border-radius: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.8);
+  color: rgb(123, 255, 255);
+  font: 12px/16px Tahoma, Arial, sans-serif;
 }
 
 .career-box h2 {
-  margin: 0 0 8px;
-  font-size: 18px;
-  color: var(--accent);
+  margin: 0 0 10px;
+  font: 700 14px/18px Tahoma, Arial, sans-serif;
+  color: #fff;
+  line-height: 0;
+}
+
+.career-box h2:not(:has(canvas)) {
+  line-height: 18px;
+}
+
+.career-box canvas.career-pixel-text {
+  display: block;
 }
 
 .career-box .career-actions {
@@ -492,6 +504,34 @@ body.driving .touch-btn.horn {
 
 .career-box .career-actions button {
   flex: 1 1 auto;
+  border-radius: 0;
+  padding: 0 12px;
+  color: rgb(123, 255, 255);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.career-box .career-actions button.primary {
+  border-color: rgb(123, 255, 255);
+}
+
+.career-box .career-form label {
+  color: rgb(123, 255, 255);
+}
+
+.career-box .career-form input,
+.career-box .career-form select {
+  border-radius: 0;
+  border: 1px solid #8c8c8c;
+  background: rgba(0, 0, 0, 0.4);
+  color: rgb(123, 255, 255);
+  font: 12px Tahoma, Arial, sans-serif;
+}
+
+.career-box .career-table th,
+.career-box .career-table td {
+  border-bottom-color: rgba(140, 140, 140, 0.35);
 }
 
 .career-form {
@@ -530,10 +570,17 @@ body.driving .touch-btn.horn {
   width: max-content;
   max-width: min(520px, calc(100vw - 32px));
   padding: 8px 14px;
-  background: var(--panel);
-  border-radius: 10px;
-  font: 14px/1.4 system-ui, sans-serif;
+  background: rgba(16, 18, 20, 0.86);
+  border: 1px solid #8c8c8c;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.8);
+  color: rgb(123, 255, 255);
+  font: 12px/16px Tahoma, Arial, sans-serif;
+  line-height: 0;
   text-align: center;
+}
+
+.career-toast:not(:has(canvas)) {
+  line-height: 16px;
 }
 
 

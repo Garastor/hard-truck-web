@@ -14,7 +14,7 @@ import { buildTruckModel, parseTrucks, type TruckDef } from './game/trucks';
 import type { DriveSession } from './modes/drive';
 import type { TruckSetup } from './game/truckVehicle';
 import { currentDriver, listCareers, loadCareer, newCareer, setCurrentDriver, truckSpec, type Career } from './game/career';
-import { CareerGame, modal, type LevelKind } from './ui/careerUi';
+import { CareerGame, modal, setHudFont, type LevelKind } from './ui/careerUi';
 import {
   MenuArt, driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
   type ControlMode, type OptionsState, type QualityLevel,
@@ -526,6 +526,7 @@ async function hudFonts(): Promise<[PixelFont | null, PixelFont | null]> {
   const load = (name: string) => source.read(name).then((b) => new PixelFont(parseFon(b))).catch(() => null);
   if (hudFont === undefined) hudFont = await load('MENU.FON');
   if (largeFont === undefined) largeFont = await load('large.fon');
+  setHudFont(hudFont);
   return [hudFont, largeFont];
 }
 
@@ -599,6 +600,7 @@ const OPTION_DEFAULTS: OptionsState = { control: 'buttons', quality: 'balance', 
 
 /** Налаштування (ОПЦИИ) — екран оригіналу з LOAD.RES; без нього — простий діалог. */
 async function optionsDialog(): Promise<void> {
+  await hudFonts();
   if (menuArt === undefined) menuArt = await MenuArt.load((n) => source.read(n));
   if (menuArt) {
     const st: OptionsState = {
@@ -682,6 +684,7 @@ const HELP = [
 async function menuLoop(): Promise<void> {
   history.replaceState(null, '', location.pathname);
   stopDrive();
+  await hudFonts(); // шрифт табло — і для вікон меню
   if (menuArt === undefined) menuArt = await MenuArt.load((n) => source.read(n));
   if (!menuArt) return fallbackMenu();
   const choice = await mainMenu(menuArt, {
