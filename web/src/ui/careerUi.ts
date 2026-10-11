@@ -91,6 +91,8 @@ export function callSign(): HTMLImageElement {
   img.width = size;
   img.height = size;
   img.style.display = 'block';
+  // Напівпрозорий, як фон табличок, — не так різко вирізняється на тлі сцени.
+  img.style.opacity = '0.75';
   return img;
 }
 
