@@ -252,12 +252,15 @@ body.bar-open #fps {
 .touch-ui {
   position: absolute;
   inset: 0;
-  display: none;
 }
 
-@media (pointer: coarse) {
-  .touch-ui {
-    display: block;
+/* На ПК — лише верхня група (вид, сигнал, відновитися, «•••»): рух — з клавіатури. */
+@media not (pointer: coarse) {
+  .touch-btn.left,
+  .touch-btn.right,
+  .touch-btn.brake,
+  .touch-btn.gas {
+    display: none;
   }
 }
 
@@ -872,10 +875,11 @@ body.driving.bar-open .nav-map {
 }
 
 /*
- * На телефоні: табло гравця — ліворуч угорі, на рівні вікна закупівлі, а вікна й кнопки кар'єри — праворуч
- * (на прохання користувача); мінікарта — ліворуч під згорнутим табло гравця. Тап по табло згортає його до значка.
+ * Табло гравця — ліворуч угорі, на рівні вікна закупівлі, а вікна й кнопки кар'єри — праворуч (на прохання
+ * користувача: спершу на телефоні, потім і на ПК); мінікарта — ліворуч під згорнутим табло гравця. Тап (клік) по
+ * табло згортає його до значка.
  */
-@media (pointer: coarse) {
+@media all {
   .hud-player {
     top: calc(max(8px, env(safe-area-inset-top)) + 52px * var(--ui, 1) - var(--frame-top, 0px));
     bottom: auto;

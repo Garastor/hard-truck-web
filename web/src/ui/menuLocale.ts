@@ -38,12 +38,13 @@ export const BUTTON_UK: Record<string, string> = {
 
 /** Кольори тексту оригіналу за станами: заливка й тінь/контур (виміряно з масок). */
 const STYLE: Record<string, { fill: string; edge: string }> = {
-  b: { fill: 'rgb(228,196,252)', edge: 'rgb(116,88,48)' },
-  a: { fill: 'rgb(228,196,252)', edge: 'rgb(28,20,12)' },
-  p: { fill: 'rgb(252,228,136)', edge: 'rgb(28,20,12)' },
-  bp: { fill: 'rgb(252,228,136)', edge: 'rgb(28,20,12)' },
-  /** Недоступна кнопка — той самий текст, лише темніший. */
-  off: { fill: 'rgb(132,114,146)', edge: 'rgb(40,30,20)' },
+  // На прохання користувача — жовтий текст (в оригіналі звичайний стан фіолетовий); натиснута / вибрана — світліша.
+  b: { fill: 'rgb(252,228,136)', edge: 'rgb(116,88,48)' },
+  a: { fill: 'rgb(252,228,136)', edge: 'rgb(28,20,12)' },
+  p: { fill: 'rgb(255,250,226)', edge: 'rgb(28,20,12)' },
+  bp: { fill: 'rgb(255,250,226)', edge: 'rgb(28,20,12)' },
+  /** Недоступна кнопка (режим не підтримується) — сірий текст. */
+  off: { fill: 'rgb(120,120,120)', edge: 'rgb(30,30,30)' },
 };
 
 const FONT = '"Arial Narrow", "Roboto Condensed", Arial, sans-serif';
@@ -53,7 +54,10 @@ const CAP: Record<string, number> = { m: 11, n: 12, d: 12, o: 9, l: 12 };
 /** Підписи на фонах — тонкий геометричний шрифт, як в оригіналі. */
 const LABEL_FONT = '"Century Gothic", "Futura", "Trebuchet MS", Arial, sans-serif';
 
-/** Маска тексту: пікселі, що відрізняються між станами, розширені на 1 піксель (контур). */
+/** Розширення маски тексту, пікселів. */
+const GROW = 3;
+
+/** Маска тексту: пікселі, що відрізняються між станами, розширені на GROW пікселів (контур і тінь). */
 function textMask(states: ImageData[]): Uint8Array {
   const { width: w, height: h } = states[0];
   const m = new Uint8Array(w * h);
@@ -68,12 +72,14 @@ function textMask(states: ImageData[]): Uint8Array {
       }
     }
   }
+  // Розширення на GROW пікселів: тінь/ореол старого напису однакові в усіх станах (у різницю не потрапляють) і
+  // лишались темними плямами поруч із новим написом.
   const out = m.slice();
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++)
       if (m[y * w + x])
-        for (let dy = -1; dy <= 1; dy++)
-          for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -GROW; dy <= GROW; dy++)
+          for (let dx = -GROW; dx <= GROW; dx++) {
             const xx = x + dx;
             const yy = y + dy;
             if (xx >= 0 && yy >= 0 && xx < w && yy < h) out[yy * w + xx] = 1;
@@ -187,7 +193,7 @@ export function localizeButton(base: string, states: Record<string, HTMLCanvasEl
   if (!box) return null;
   // Текст оригіналу притиснутий праворуч (головне меню, рівні) або по центру (великі кнопки).
   const align = box.x1 > w * 0.75 && box.x0 > w * 0.3 ? 'right' : 'center';
-  const tight = { x0: box.x0 + 1, y0: box.y0 + 1, x1: box.x1 - 1, y1: box.y1 - 1 };
+  const tight = { x0: box.x0 + GROW, y0: box.y0 + GROW, x1: box.x1 - GROW, y1: box.y1 - GROW };
   const maxW = align === 'right' ? tight.x1 - 8 : w - 10;
   const out: Record<string, HTMLCanvasElement> = {};
   const make = (key: string, from: ImageData, style: { fill: string; edge: string }, underline = false) => {
