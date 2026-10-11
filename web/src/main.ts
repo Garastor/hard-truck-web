@@ -301,6 +301,13 @@ $('menu').addEventListener('click', () => document.body.classList.toggle('bar-op
 truckSel.addEventListener('change', () => (tab === 'drive' ? void startDrive() : showTruck()));
 modeSel.addEventListener('change', open);
 $('fullscreen').addEventListener('click', () => void toggleFullscreen());
+// Вихід із пробного заїзду / переглядача в головне меню (у кар'єрі — кнопка «МЕНЮ» табло).
+$('toMenu').addEventListener('click', () => {
+  document.body.classList.remove('bar-open');
+  stopDrive();
+  selectTab('scene');
+  void menuLoop();
+});
 
 // Якість рендера: щільність пікселів і частота кадрів змінюються одразу, згладжування — з перезавантаженням.
 const qualitySel = $<HTMLSelectElement>('quality');

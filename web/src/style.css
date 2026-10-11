@@ -590,6 +590,7 @@ body.career #level,
 body.career #mode,
 body.career #truck,
 body.career #weather,
+body.career #toMenu,
 body.career #stats {
   display: none;
 }
