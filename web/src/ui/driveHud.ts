@@ -16,6 +16,11 @@ export interface HudData {
   cargo: number | null;
   /** Рядок гонки: баланс, коло, час, місце, відлік, фініш; порожній — без нижньої панелі. */
   line: string;
+  /**
+   * Найширший типовий рядок цього заїзду (база — лише баланс, гонка — коло, час, кращий, місце): ширина табло
+   * фіксована за ним і за всіма значками, щоб табло не «дихало» з кожною зміною значень.
+   */
+  template?: string;
 }
 
 /** Висота цифр швидкості відносно цифри передачі (на прохання користувача — трохи більші). */
@@ -163,7 +168,7 @@ export class DriveHud {
     const pct = (f: number) => `${Math.round(Math.max(0, Math.min(1, f)) * 100)}%`;
     const truck = d.truck !== null ? pct(d.truck) : null;
     const cargo = d.cargo !== null ? pct(d.cargo) : null;
-    const key = [speed, gear, truck, cargo, d.line, window.innerHeight].join('|');
+    const key = [speed, gear, truck, cargo, d.line, d.template, window.innerHeight, window.innerWidth].join('|');
     if (key === this.key) return;
     this.key = key;
 
@@ -189,7 +194,9 @@ export class DriveHud {
     if (truck) rowW += 12 + item(TRUCK_ICON);
     if (cargo) rowW += 10 + item(BOXES_ICON);
     const lineW = S.measure(d.line);
-    const innerW = Math.max(rowW, lineW) + 8;
+    // Ширина — з запасом під усі значки (міцність, вантаж) і типовий найширший рядок: не змінюється на ходу.
+    const reservedW = speedW + 8 + gearW + 12 + item(TRUCK_ICON) + 10 + item(BOXES_ICON);
+    const innerW = Math.max(reservedW, rowW, lineW, d.template ? S.measure(d.template) : 0) + 8;
     const W = innerW + 4;
     const top1 = 2;
     const h1 = lh + 6;

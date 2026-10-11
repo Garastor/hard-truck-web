@@ -268,15 +268,15 @@ body.bar-open #fps {
   touch-action: none;
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: calc(44px * var(--ui, 1));
+  height: calc(44px * var(--ui, 1));
   padding: 0;
   border-radius: 0;
   border: 1px solid #8c8c8c;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.8);
   background: rgba(16, 18, 20, 0.62);
   color: rgb(123, 255, 255);
-  font: 700 12px Tahoma, Arial, sans-serif;
+  font: 700 calc(12px * var(--ui, 1)) Tahoma, Arial, sans-serif;
   letter-spacing: 0.02em;
   user-select: none;
   -webkit-user-select: none;
@@ -291,8 +291,8 @@ body.bar-open #fps {
 .touch-btn.right,
 .touch-btn.brake,
 .touch-btn.gas {
-  width: 80px;
-  height: 80px;
+  width: calc(80px * var(--ui, 1));
+  height: calc(80px * var(--ui, 1));
   bottom: max(20px, env(safe-area-inset-bottom));
 }
 
@@ -301,7 +301,7 @@ body.bar-open #fps {
 }
 
 .touch-btn.right {
-  left: calc(var(--sl) + 92px);
+  left: calc(var(--sl) + 92px * var(--ui, 1));
 }
 
 .touch-btn.gas {
@@ -309,7 +309,7 @@ body.bar-open #fps {
 }
 
 .touch-btn.brake {
-  right: calc(var(--sr) + 92px);
+  right: calc(var(--sr) + 92px * var(--ui, 1));
 }
 
 /* Угорі праворуч: вид, відновитися, сигнал, група «ще». */
@@ -324,22 +324,22 @@ body.bar-open #fps {
 }
 
 .touch-btn.reset {
-  right: calc(var(--sr) + 52px);
+  right: calc(var(--sr) + 52px * var(--ui, 1));
 }
 
 .touch-btn.horn {
-  right: calc(var(--sr) + 104px);
+  right: calc(var(--sr) + 104px * var(--ui, 1));
 }
 
 /* Група «ще»: кнопка-перемикач поруч із сигналом, під нею — стовпчик функцій. */
 .touch-btn.more {
-  right: calc(var(--sr) + 156px);
+  right: calc(var(--sr) + 156px * var(--ui, 1));
 }
 
 .touch-more {
   position: absolute;
-  right: calc(var(--sr) + 156px);
-  top: calc(max(8px, env(safe-area-inset-top)) + 52px);
+  right: calc(var(--sr) + 156px * var(--ui, 1));
+  top: calc(max(8px, env(safe-area-inset-top)) + 52px * var(--ui, 1));
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -361,7 +361,7 @@ body.bar-open #fps {
 /* Налаштування «поміняти місцями»: кермо праворуч, педалі ліворуч (гальмо — ближче до краю). */
 body.swap-controls .touch-btn.left {
   left: auto;
-  right: calc(var(--sr) + 92px);
+  right: calc(var(--sr) + 92px * var(--ui, 1));
 }
 
 body.swap-controls .touch-btn.right {
@@ -376,7 +376,7 @@ body.swap-controls .touch-btn.brake {
 
 body.swap-controls .touch-btn.gas {
   right: auto;
-  left: calc(var(--sl) + 92px);
+  left: calc(var(--sl) + 92px * var(--ui, 1));
 }
 
 
@@ -405,8 +405,8 @@ body.driving.bar-open .drive-hud {
   z-index: 3;
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: calc(44px * var(--ui, 1));
+  height: calc(44px * var(--ui, 1));
   min-height: 0;
   padding: 0;
   border-radius: 0;
@@ -877,8 +877,12 @@ body.driving.bar-open .nav-map {
  */
 @media (pointer: coarse) {
   .hud-player {
-    top: calc(max(8px, env(safe-area-inset-top)) + 52px);
+    top: calc(max(8px, env(safe-area-inset-top)) + 52px * var(--ui, 1) - var(--frame-top, 0px));
     bottom: auto;
+  }
+
+  .career-hud {
+    top: calc(max(8px, env(safe-area-inset-top)) + 52px * var(--ui, 1));
   }
 
   .career-hud {
@@ -894,7 +898,7 @@ body.driving.bar-open .nav-map {
   .nav-map {
     right: auto;
     left: var(--sl);
-    top: calc(max(8px, env(safe-area-inset-top)) + 112px);
+    top: calc(max(8px, env(safe-area-inset-top)) + 112px * var(--ui, 1));
   }
 }
 

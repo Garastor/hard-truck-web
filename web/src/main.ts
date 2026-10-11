@@ -21,7 +21,7 @@ import {
   MenuArt, driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
   type ControlMode, type OptionsState, type QualityLevel,
 } from './ui/menuScreens';
-import { HUD_CYAN, PixelFont, box, pixelCanvas } from './ui/pixelFont';
+import { HUD_CYAN, PixelFont, box, pixelCanvas, uiScale } from './ui/pixelFont';
 import { parseFon } from './formats/fon';
 import { installDevTools } from './dev/devTools';
 
@@ -84,6 +84,8 @@ modeSel.value = params.get('mode') ?? 'hw';
 function resize(): void {
   const w = window.innerWidth;
   const h = window.innerHeight;
+  // Сенсорні кнопки й відступи на малому екрані — пропорційно менші (style.css: var(--ui)).
+  document.documentElement.style.setProperty('--ui', String(uiScale()));
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();

@@ -602,7 +602,7 @@ export class CareerGame {
     const s = this.spec;
     const cargo = this.cargoValue();
     const truck = Math.max(0, truckValue(c, s));
-    const key = [c.money, cargo, truck, cargoWeight(c), cargoVolume(c), c.condition.tech, c.condition.tires, c.condition.brakes, c.parts.join(), window.innerHeight, this.playerCollapsed].join();
+    const key = [c.money, cargo, truck, cargoWeight(c), cargoVolume(c), c.condition.tech, c.condition.tires, c.condition.brakes, c.parts.join(), window.innerHeight, window.innerWidth, this.playerCollapsed].join();
     if (key === this.playerKey) return;
     this.playerKey = key;
     const CYAN = HUD_CYAN;
@@ -619,6 +619,7 @@ export class CareerGame {
         ctx.fillRect(6, 6 + i * 4, Math.max(1, Math.round(19 * f)), 3);
       });
       this.player.replaceChildren(canvas);
+      this.player.style.setProperty('--frame-top', '0px');
       return;
     }
     // Розмітка виміряна зі скріншота оригіналу: одна рамка на все табло, усередині дві втиснуті панелі
@@ -628,6 +629,8 @@ export class CareerGame {
     const o = (cargoLine ? 11 : 0) + 5;
     const H = o + 114;
     const { canvas, ctx } = pixelCanvas(W, H);
+    // Рамка — на o нижче верху полотна (над нею підпис вантажу й «гроші»): на телефоні табло вирівнюється за рамкою.
+    this.player.style.setProperty('--frame-top', `${o * hudScale()}px`);
     frame(ctx, 0, o, W, H - o);
     if (cargoLine) this.text(ctx, cargoLine, 2, 0, CYAN);
     const boxX = 10;

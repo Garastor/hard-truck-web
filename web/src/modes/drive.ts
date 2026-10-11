@@ -1390,7 +1390,13 @@ export class DriveSession {
           `${this.lapsToFinish ? '/' + this.lapsToFinish : ''}: ${lap}${best}${place}${start}${fin}`;
     const raceLine = [money, race].filter(Boolean).join('   ');
     if (this.pixelHud) {
-      this.pixelHud.update({ speedKmh: t.speedKmh, gear: t.gear, truck: status.truck, cargo: status.cargo, line: raceLine });
+      // Типовий найширший рядок цього заїзду — для незмінної ширини табло.
+      const tplRace =
+        this.raceKind === 'free'
+          ? ''
+          : `коло 9${this.lapsToFinish ? '/9' : ''}: 9:59.9` + (this.lapsToFinish > 1 ? '   кращий 9:59.9' : '') + (this.opponents.length ? '   місце 9/9' : '');
+      const template = [status.money !== null ? '$999999' : '', tplRace].filter(Boolean).join('   ');
+      this.pixelHud.update({ speedKmh: t.speedKmh, gear: t.gear, truck: status.truck, cargo: status.cargo, line: raceLine, template });
       return;
     }
     // Без шрифтів оригіналу — текстом.
