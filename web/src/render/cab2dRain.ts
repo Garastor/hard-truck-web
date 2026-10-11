@@ -28,8 +28,11 @@ const WIPE_STEP = 0.0031415926;
 /** Нових крапель за секунду (поле +0x20 = 50) і крапель, що стікають (50 / 10, 0x54626c). */
 const DROPS_PER_SEC = 50;
 const RUNNERS_PER_SEC = DROPS_PER_SEC / 10;
-/** Швидкість стікання, px/с: в оригіналі 50 (0x546254); у порті вдвічі повільніше — на прохання користувача. */
-const RUN_SPEED = 25;
+/**
+ * Швидкість стікання, px кадру/с: в оригіналі 50 (0x546254); у порті 15 — на прохання користувача (удвічі, потім
+ * ще на 40 % повільніше).
+ */
+const RUN_SPEED = 15;
 /**
  * Крок краплі, що стікає, px. В оригіналі — round(dt·50) за кадр його ж рушія; рахувати щокадру при 60 кадр/с
  * давало б 0–1 px униз і ±4 px убік — сліди надто звивисті. 2 px — як оригінал при ≈ 25 кадр/с (гіпотеза).
@@ -54,9 +57,11 @@ const BLADE_COLOR = 0x141414;
  * Заломлення: зсув картинки, пікселі кадру 640×480 на одиницю нахилу профілю (нахил — різниця рівнів 0…1 через
  * REFRACT_SPAN пікселів буфера), і найбільший зсув. Підібрано на око (гіпотеза).
  */
-const REFRACT = 40;
-const REFRACT_MAX = 6;
+const REFRACT = 20;
+const REFRACT_MAX = 3;
 const REFRACT_SPAN = 3;
+/** Частка заломленої картинки (решта — вид без води): краплі трохи прозоріші (на прохання користувача). */
+const WATER = 0.75;
 /** Світло й тінь на воді: зміна яскравості на одиницю нахилу (на око). */
 const SHADE = 2.5;
 /** Найбільший крок часу оновлення, с: після паузи (прихована вкладка) двірник проскочив би межу помаху. */
@@ -67,6 +72,12 @@ const MAX_DT = 0.1;
  * Що буфер оригіналу — саме ця смуга, гіпотеза: розмір береться з поверхні виду (param_2 + 0xc), не розібрано.
  */
 export const RAIN_VIEW = { x: 0, y: 44, w: 640, h: 250 };
+/**
+ * Буфер детальніший за кадр у BUF_SCALE разів: маски штампуються у своєму розмірі, тож краплі й сліди дрібніші, ніж в
+ * оригіналі (на прохання користувача — «зменшити масштаб»); осі, радіуси й швидкості — у пікселях кадру × BUF_SCALE.
+ */
+const BUF_SCALE = 2;
+const BUF = { w: RAIN_VIEW.w * BUF_SCALE, h: RAIN_VIEW.h * BUF_SCALE };
 
 /** Маска рівнів (MSKR): ширина, висота, рівень кожного пікселя (0 — прозоро). */
 interface Levels {
@@ -83,7 +94,7 @@ export class Cab2dRain {
   /** Буфер крапель і лопаті — у сцені 2D-кабіни (кадр 640×480, y униз), під маскою панелі. */
   readonly root = new THREE.Group();
 
-  private readonly levels = new Uint8Array(RAIN_VIEW.w * RAIN_VIEW.h);
+  private readonly levels = new Uint8Array(BUF.w * BUF.h);
   private readonly texture: THREE.DataTexture;
   /** Копія кадру зі світом (під кабіною) — для заломлення; розмір — буфер малювання. */
   private sceneTex: THREE.FramebufferTexture | null = null;
@@ -110,9 +121,10 @@ export class Cab2dRain {
    */
   constructor(drop: RgbaImage | null, runner: RgbaImage | null, blade: RgbaImage | null = null) {
     const { w, h } = RAIN_VIEW;
+    const S = BUF_SCALE;
     this.drop = drop && toLevels(drop);
     this.runner = runner && toLevels(runner);
-    this.texture = new THREE.DataTexture(this.levels, w, h, THREE.RedFormat, THREE.UnsignedByteType);
+    this.texture = new THREE.DataTexture(this.levels, BUF.w, BUF.h, THREE.RedFormat, THREE.UnsignedByteType);
     this.texture.flipY = false;
     // Плавні рівні — плавний нахил профілю для заломлення.
     this.texture.magFilter = THREE.LinearFilter;
@@ -123,16 +135,18 @@ export class Cab2dRain {
       color: { value: DROP_COLOR },
       scene: { value: null },
       res: { value: new THREE.Vector2(1, 1) },
-      span: { value: new THREE.Vector2(REFRACT_SPAN / w, REFRACT_SPAN / h) },
+      span: { value: new THREE.Vector2(REFRACT_SPAN / BUF.w, REFRACT_SPAN / BUF.h) },
+      water: { value: WATER },
       k: { value: 0 },
       kMax: { value: 0 },
       shade: { value: SHADE },
       refract: { value: 0 },
     };
-    // Осі двірників (0x462f38): (200, h + 10) і (200 + 1,5·h, h + 10) — трохи нижче краю буфера.
+    // Осі двірників (0x462f38): (200, h + 10) і (200 + 1,5·h, h + 10) пікселів кадру — трохи нижче краю буфера; тут —
+    // у пікселях буфера.
     this.pivots = [
-      [PIVOT_X, h + 10],
-      [PIVOT_X + 1.5 * h, h + 10],
+      [PIVOT_X * S, (h + 10) * S],
+      [(PIVOT_X + 1.5 * h) * S, (h + 10) * S],
     ];
     // Лопаті: смужка від осі (x = 0) до кінця (x = 1), поперек — y −0,5…0,5; UV — як у моделі Wiper: біля осі v = 1,
     // на кінці v = 0, поперек u 0,996…0,875.
@@ -164,7 +178,7 @@ export class Cab2dRain {
           uniform sampler2D levels, scene;
           uniform vec3 color;
           uniform vec2 res, span;
-          uniform float k, kMax, shade, refract;
+          uniform float k, kMax, shade, water, refract;
           varying vec2 vUv;
           void main() {
             float a = texture2D(levels, vUv).r;
@@ -176,9 +190,10 @@ export class Cab2dRain {
             float l = length(off);
             if (l > kMax) off *= kMax / l;
             vec3 bg = texture2D(scene, (gl_FragCoord.xy + off) / res).rgb;
+            vec3 clear = texture2D(scene, gl_FragCoord.xy / res).rgb;
             // gy > 0 — поверхня піднімається донизу (нижній край краплі): світліше; верхній край — темніше.
             float light = clamp(1.0 + shade * (gy - 0.3 * gx), 0.6, 1.5);
-            gl_FragColor = vec4(bg * light, 1.0);
+            gl_FragColor = vec4(mix(clear, bg * light, water), 1.0);
           }`,
         transparent: true,
         depthTest: false,
@@ -230,7 +245,7 @@ export class Cab2dRain {
 
   /** Нові краплі (0x462f38): drop7 — у випадкові місця; drop10 — початок краплі, що стікає. */
   private spawn(dt: number): void {
-    const { w, h } = RAIN_VIEW;
+    const { w, h } = BUF;
     if (this.drop) {
       this.dropAcc += DROPS_PER_SEC * dt;
       for (; this.dropAcc >= 1; this.dropAcc--) this.stamp(this.drop, rand(w), rand(h));
@@ -247,7 +262,7 @@ export class Cab2dRain {
     if (!m) return;
     for (let i = this.runners.length - 1; i >= 0; i--) {
       const r = this.runners[i];
-      r.acc += RUN_SPEED * dt;
+      r.acc += RUN_SPEED * BUF_SCALE * dt;
       for (; r.acc >= RUN_TICK; r.acc -= RUN_TICK) {
         const step = RUN_TICK;
         const dx = Math.floor(Math.random() * 8) - 4;
@@ -257,13 +272,13 @@ export class Cab2dRain {
         r.x += dx;
         r.y += step;
       }
-      if (r.y >= RAIN_VIEW.h) this.runners.splice(i, 1);
+      if (r.y >= BUF.h) this.runners.splice(i, 1);
     }
   }
 
   /** Відбиток маски рівнів у буфер (перезапис непрозорих пікселів, як копіювання маски в оригіналі). */
   private stamp(m: Levels, x0: number, y0: number): void {
-    const { w, h } = RAIN_VIEW;
+    const { w, h } = BUF;
     for (let y = 0; y < m.h; y++) {
       const by = y0 + y;
       if (by < 0 || by >= h) continue;
@@ -314,14 +329,16 @@ export class Cab2dRain {
    */
   private wipe(a0: number, a1: number): void {
     if (this.empty || a0 === a1) return;
-    const { w, h } = RAIN_VIEW;
+    const { w, h } = BUF;
     const lo = Math.min(a0, a1);
     const hi = Math.max(a0, a1);
-    for (let a = lo; a <= hi + WIPE_STEP / 2; a += WIPE_STEP) {
+    // Крок кута — як в оригіналі на його буфері; на детальнішому — дрібніший, щоб лінії не лишали щілин.
+    const step = WIPE_STEP / BUF_SCALE;
+    for (let a = lo; a <= hi + step / 2; a += step) {
       const s = Math.sin(a);
       const c = Math.cos(a);
       for (const [px, py] of this.pivots) {
-        for (let r = HUB; r <= h; r++) {
+        for (let r = HUB * BUF_SCALE; r <= h; r++) {
           const x = Math.round(px + r * s);
           const y = Math.round(py - r * c);
           if (x >= 0 && x < w && y >= 0 && y < h) this.levels[y * w + x] = 0;
@@ -358,7 +375,9 @@ export class Cab2dRain {
     const dy = -Math.cos(this.angle);
     this.pivots.forEach(([x, y], i) => {
       // Стовпці матриці: x — уздовж лопаті (довжина), y — поперек (ширина), зсув — вісь.
-      this.blades[i].matrix.set(dx * len, -dy * wid, 0, RAIN_VIEW.x + x, dy * len, dx * wid, 0, RAIN_VIEW.y + y, 0, 0, 1, 0, 0, 0, 0, 1);
+      const fx = RAIN_VIEW.x + x / BUF_SCALE;
+      const fy = RAIN_VIEW.y + y / BUF_SCALE;
+      this.blades[i].matrix.set(dx * len, -dy * wid, 0, fx, dy * len, dx * wid, 0, fy, 0, 0, 1, 0, 0, 0, 0, 1);
       this.blades[i].matrixWorldNeedsUpdate = true;
     });
   }
