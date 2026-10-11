@@ -13,6 +13,7 @@ import { WetReflections } from '../render/wetReflections';
 import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import { SKY_FOG, type BuiltScene } from '../render/sceneBuilder';
+import { cabMode, setCabMode, type CabMode } from '../game/viewSettings';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
 import { EngineAudio, type LoopSound } from '../audio/engineAudio';
@@ -123,6 +124,9 @@ const CRASH_SOUNDS = ['crash2', 'crash4a', 'crash9'];
 /** Тестовий режим: сила ударів, після якої машина вибухає (у кар'єрі техстан 0 — це 250 при зносі 0,004 за одиницю). */
 const WRECK_HITS = 250;
 /** Туман під дощем: початок і повна непрозорість, м (гіпотеза). */
+/** Вертикальне поле зору в режимі «панель»: піраміда 1.6×1.2 (HTruck.exe 0x4851ac) → 2·atan(0,6). */
+const PANEL_FOV = THREE.MathUtils.radToDeg(2 * Math.atan(0.6));
+
 /** Туман: колір, початок і кінець, м (гіпотеза). */
 const RAIN_FOG: [number, number, number] = [0x8d959d, 40, 420];
 const NIGHT_FOG: [number, number, number] = [0x10141a, 80, 600];
@@ -815,21 +819,37 @@ export class DriveSession {
     return { position: this.groundAt(new THREE.Vector3(t.x, t.y, t.z)), forward: this.truck.forward() };
   }
 
-  /** Кабіна `<Prefix>Cab` у системі «очей водія» (y — уперед, z — угору) з кермом і стрілками. */
+  /**
+   * Вид з кабіни: кабіна `<Prefix>Cab` у системі «очей водія» (y — уперед, z — угору) з кермом і стрілками, або —
+   * у режимі «панель» (налаштування; в оригіналі — коли у відеорежимі не вибрано кабіну, HTruck.exe 0x4e8ddc) —
+   * спільна для всіх машин приладова панель `Panel`: прилади без стійок і даху, вужче поле зору (піраміда 1.6×1.2,
+   * 0x4851ac). Панель закріплена в кадрі внизу по центру (як рушій її розміщує, не розібрано — гіпотеза).
+   */
   private buildCab(): void {
-    const dyn = this.built.assembler.dynamicObject(`${this.def.prefix}Cab`);
+    const panel = cabMode() === 'panel';
+    const dyn = panel ? this.built.assembler.dynamicObject('Panel') : this.built.assembler.dynamicObject(`${this.def.prefix}Cab`);
     if (!dyn) return;
+    this.panelMode = panel;
     this.cabSwitch = dyn.setSwitch;
     const inner = dyn.root;
     inner.rotation.x = -Math.PI / 2;
     this.cab = new THREE.Group();
     this.cab.add(inner);
     this.overlayScene.add(this.cab);
-    // Деталі шукаємо за простором (імена стрілок у різних кабінах різняться: ZilStr1, FreiCabStr1…).
+    if (panel) {
+      // Площина панелі — на відстані y від ока; нижній край — на нижньому краю кадру.
+      inner.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(inner);
+      const depth = -box.min.z;
+      inner.position.y = -depth * Math.tan(THREE.MathUtils.degToRad(PANEL_FOV / 2)) - box.min.y;
+    }
+    // Деталі шукаємо за простором (імена стрілок у різних кабінах різняться: ZilStr1, FreiCabStr1…; у панелі —
+    // без префікса).
+    const prefix = panel ? '' : this.def.prefix;
     const bySpace = (sp: string) => {
       let found: THREE.Object3D | undefined;
       inner.traverse((o) => {
-        if (!found && o.userData.space === `${this.def.prefix}${sp}`.toLowerCase()) found = o;
+        if (!found && o.userData.space === `${prefix}${sp}`.toLowerCase()) found = o;
       });
       return found;
     };
@@ -851,8 +871,11 @@ export class DriveSession {
       });
     });
     // Скло (GlassKey, група 1) показуємо завжди: його текстуру — краплі — малює GlassRain, суха — прозора.
-    dyn.setSwitch('GlassKey', 1);
-    this.glassRain = new GlassRain(inner, this.dropSprites);
+    if (!panel) {
+      dyn.setSwitch('GlassKey', 1);
+      this.glassRain = new GlassRain(inner, this.dropSprites);
+      this.glassRain.raining = this.glassRain.wipersOn = this.raining;
+    }
     // Кермо частково «втоплене» в панель: оригінал малює його після кабіни, поверх неї.
     // Відтворюємо це окремим шаром, який рендериться після очищення глибини.
     this.cabParts.rule?.traverse((o) => o.layers.set(CAB_TOP_LAYER));
@@ -891,6 +914,21 @@ export class DriveSession {
     cam.updateProjectionMatrix();
   }
 
+  /** Режим «панель» замість кабіни (див. buildCab). */
+  private panelMode = false;
+
+  /** Перемикач «Кабіна: повна / панель» з «Опцій» — перебудувати вид з кабіни на ходу. */
+  setCabMode(mode: CabMode): void {
+    setCabMode(mode);
+    if (this.cab) this.overlayScene.remove(this.cab);
+    this.cab = null;
+    this.cabSwitch = null;
+    this.cabParts = {};
+    this.glassRain = null;
+    this.buildCab();
+    if (this.hudFonts) this.setHudFonts(...this.hudFonts);
+  }
+
   private updateCab(state: { steer: number }): void {
     // З кабіни зовнішній корпус власної вантажівки не малюємо (як в оригіналі).
     this.truck.visual.visible = this.camMode !== 'cockpit' || !this.cab;
@@ -898,7 +936,8 @@ export class DriveSession {
     this.cab.visible = this.camMode === 'cockpit';
     if (!this.cab.visible) return;
     this.cab.position.copy(this.camera.position);
-    this.cab.quaternion.copy(this.cabQuat);
+    // Кабіна — разом із машиною (погляд з інерцією повертається в ній), панель — нерухомо в кадрі.
+    this.cab.quaternion.copy(this.panelMode ? this.camera.quaternion : this.cabQuat);
     const rot = (o: THREE.Object3D | undefined, axis: THREE.Vector3, angle: number, scale = 1) => {
       if (!o) return;
       o.matrix.copy(o.userData.baseMatrix as THREE.Matrix4).multiply(new THREE.Matrix4().makeRotationAxis(axis, angle));
@@ -1170,7 +1209,9 @@ export class DriveSession {
   }
 
   /** Шрифти оригіналу для табло (MENU.FON, large.fon); без них — текст системним шрифтом. */
+  private hudFonts: [PixelFont | null, PixelFont | null] | null = null;
   setHudFonts(small: PixelFont | null, large: PixelFont | null): void {
+    this.hudFonts = [small, large];
     this.pixelHud?.dispose();
     this.pixelHud = small ? new DriveHud(this.hud, small, large, this.cab ? odometerDigits(this.cab) : null) : null;
   }
@@ -1354,12 +1395,20 @@ export class DriveSession {
     this.prevPos.copy(cur);
   }
 
+  private baseFov: number | undefined;
   private updateCamera(dt: number): void {
     const v = this.truck.visual;
     const fwd = this.truck.forward();
     const up = new THREE.Vector3(0, 1, 0);
     this.updateCamYaw(fwd, dt);
     const lag = new THREE.Quaternion().setFromAxisAngle(up, this.camYaw);
+    // Поле зору: з панеллю — вужче (як в оригіналі), інакше — звичайне (truck.ini, див. main.ts).
+    this.baseFov ??= this.camera.fov;
+    const fov = this.camMode === 'cockpit' && this.panelMode ? PANEL_FOV : this.baseFov;
+    if (this.camera.fov !== fov) {
+      this.camera.fov = fov;
+      this.camera.updateProjectionMatrix();
+    }
     if (this.camMode === 'cockpit') {
       // Камера в кабіні: орієнтація вантажівки + нахил погляду tangViewer; поворот погляду — з інерцією.
       const eye = this.cockpit.clone().applyQuaternion(v.quaternion).add(v.position);
@@ -1404,6 +1453,10 @@ export class DriveSession {
   }
 
   dispose(): void {
+    if (this.baseFov !== undefined) {
+      this.camera.fov = this.baseFov;
+      this.camera.updateProjectionMatrix();
+    }
     this.roomVis?.showAll();
     this.scene.remove(this.truck.visual);
     for (const o of this.opponents) this.scene.remove(o.truck.visual);

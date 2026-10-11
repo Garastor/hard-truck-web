@@ -1,3 +1,4 @@
+import { cabMode, setCabMode } from './game/viewSettings';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LEVELS, devServerSource, loadLevel, type FileSource, type LevelId, type LoadedLevel } from './assets/loader';
@@ -409,7 +410,7 @@ document.addEventListener('visibilitychange', () => {
 });
 function loop(now: number): void {
   if (!limiter.ready(now)) return;
-  if (showFps && fpsMeter.tick(now)) showFpsValue(`${fpsMeter.value} к/с`);
+  if (showFps && fpsMeter.tick(now)) showFpsValue(`${fpsMeter.value} fps`);
   const dt = clock.getDelta();
   if (tab === 'drive') {
     drive?.update(dt);
@@ -600,7 +601,7 @@ function saveControl(c: ControlMode): void {
   }
 }
 
-const OPTION_DEFAULTS: OptionsState = { control: 'buttons', quality: 'balance', fullscreen: false, swap: false, fps: false };
+const OPTION_DEFAULTS: OptionsState = { control: 'buttons', quality: 'balance', fullscreen: false, swap: false, fps: false, cab: 'full' };
 
 /** Налаштування (ОПЦИИ) — екран оригіналу з LOAD.RES; без нього — простий діалог. */
 async function optionsDialog(): Promise<void> {
@@ -613,6 +614,7 @@ async function optionsDialog(): Promise<void> {
       fullscreen: isFullscreen(),
       swap: loadSwap(),
       fps: showFps,
+      cab: cabMode(),
     };
     await optionsScreen(
       menuArt,
@@ -644,6 +646,10 @@ async function optionsDialog(): Promise<void> {
         setSwap: setSwap,
         setFps(on) {
           if (on !== showFps) $('fpsToggle').click();
+        },
+        setCab(mode) {
+          setCabMode(mode);
+          drive?.setCabMode(mode);
         },
       },
       OPTION_DEFAULTS,
