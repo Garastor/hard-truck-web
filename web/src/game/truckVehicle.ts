@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { LightGeometry } from '../render/truckLights';
 import { GROUP_BUMPER, GROUP_MOVABLE, g2t, groups } from '../physics/world';
 import type { ControlState } from '../input/input';
-import type { TruckDef, TruckModel } from './trucks';
+import { visibleBox, type TruckDef, type TruckModel } from './trucks';
 import { Engine, GEAR_R } from './engine';
 
 /**
@@ -158,7 +158,7 @@ export class TruckVehicle {
 
     // Габарити кузова в локальних координатах Three.js.
     gameFrame.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(model.body);
+    const box = visibleBox(model.body);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
 
@@ -410,3 +410,4 @@ export class TruckVehicle {
     this.world.removeRigidBody(this.body);
   }
 }
+

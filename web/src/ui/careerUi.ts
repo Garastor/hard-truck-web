@@ -11,7 +11,7 @@ import {
   ROAD_REPAIR_TARGET, applyWear, damageEffects, formatMoney as money, loadGood, recoverCost, repair, repairCost,
   roadRepairStep, saveCareer, settleTrip, truckSetup, truckValue, unloadGood, type Career, type TrackId, type TruckSpec,
 } from '../game/career';
-import { buildTruckModel, type TruckDef } from '../game/trucks';
+import { buildTruckModel, visibleBox, type TruckDef } from '../game/trucks';
 import type { TruckSetup } from '../game/truckVehicle';
 import type { Room } from '../game/track';
 import type { DriveSession } from '../modes/drive';
@@ -216,13 +216,13 @@ export class CareerGame {
         if (/shadow$/i.test(o.name)) o.visible = false;
       });
       model.root.updateMatrixWorld(true);
-      const len = new THREE.Box3().setFromObject(model.root);
+      const len = visibleBox(model.root);
       model.root.position.y += Math.max(0, SHOWROOM_REAR - len.min.y);
       holder.add(model.root);
       frame.add(holder);
       // Колеса — на підлогу подіуму (простір space_pod_n задає точку на подіумі, не висоту коліс).
       frame.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(frame);
+      const box = visibleBox(frame);
       const at = new THREE.Vector3().setFromMatrixPosition(holder.matrixWorld);
       // Подіум — видима геометрія (у колізіях його немає): промінь згори вниз від точки трохи вище подіуму.
       const ray = new THREE.Raycaster(new THREE.Vector3(at.x, at.y + 3, at.z), new THREE.Vector3(0, -1, 0), 0, 10);

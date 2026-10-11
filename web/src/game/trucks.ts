@@ -186,3 +186,24 @@ export function buildTruckModel(asm: SceneAssembler, def: TruckDef, dynamic = fa
   });
   return { root, body, wheels, wheelBase, setSwitch: dyn?.setSwitch, switchStates: dyn?.states };
 }
+
+/**
+ * Габарити видимої геометрії моделі: без білбордів (відблиски фар бувають у кілька метрів) і схованих варіантів
+ * (рівні деталізації, вмʼятини, гілки перемикачів) — інакше коробка колізії росте й не пролазить у тунелі.
+ */
+export function visibleBox(root: THREE.Object3D): THREE.Box3 {
+  const box = new THREE.Box3();
+  const tmp = new THREE.Box3();
+  root.updateWorldMatrix(true, true);
+  const walk = (o: THREE.Object3D): void => {
+    if (!o.visible) return;
+    const mesh = o as THREE.Mesh;
+    if (mesh.isMesh) {
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      box.union(tmp.copy(mesh.geometry.boundingBox!).applyMatrix4(mesh.matrixWorld));
+    }
+    for (const c of o.children) walk(c);
+  };
+  walk(root);
+  return box;
+}

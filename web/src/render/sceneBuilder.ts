@@ -30,7 +30,17 @@ interface VertexSource {
   uvs: Float32Array;
 }
 
-type Batches = Map<number, { pos: number[]; uv: number[] }>;
+/** Полігони за матеріалом; ord — порядковий номер полігона в даних для кожного трикутника. */
+type Batches = Map<number, { pos: number[]; uv: number[]; ord: number[] }>;
+
+/**
+ * Шари в одній площині (фасад тунелю на суцільній стіні лісу): оригінал малює полігони по черзі й пізніший
+ * перекриває ранішній; з буфером глибини вони мерехтять. Пізніший трикутник, що справді перекривається з
+ * ранішнім у тій самій площині й з того самого боку, зсуваємо до глядача на LAYER_STEP за кожен шар під ним.
+ * Лише текстуровані: однотонні (розмітка) у даних ідуть раніше за асфальт, а малюються поверх — для них зсув
+ * глибини матеріалу (polygonOffset).
+ */
+const LAYER_STEP = 0.04;
 
 export class MaterialLibrary {
   private readonly cache = new Map<number, THREE.Material>();
@@ -56,7 +66,10 @@ export class MaterialLibrary {
     if (mat) return mat;
     const name = this.b3d.materials[index]?.toLowerCase() ?? '';
     const def = this.rmpByName.get(name) ?? (this.rmp.materials[index] ? parseMaterial(this.rmp.materials[index]) : null);
-    const params: THREE.MeshBasicMaterialParameters = { side: THREE.DoubleSide };
+    // Однобічні полігони, як в оригіналі: дані мають явні зворотні копії там, де видно обидва боки (дерева —
+    // 308 з 362 трикутників, знаки), а стіни лісу на межах кімнат — пари в одній площині, повернуті в різні боки
+    // (кожна видна лише зі своєї кімнати; двобічні — мерехтіли одна крізь одну).
+    const params: THREE.MeshBasicMaterialParameters = { side: THREE.FrontSide };
     if (def && def.tex > 0) {
       const tex = this.texture(def.tex, def.flags.has('notile'), def.transparentTex);
       if (tex) {
@@ -212,7 +225,7 @@ export class DistanceSwitch extends THREE.Object3D {
 
 export class SceneAssembler {
   readonly lib: MaterialLibrary;
-  readonly stats = { rooms: 0, meshes: 0, triangles: 0, instances: 0, sprites: 0, missingTextures: 0 };
+  readonly stats = { rooms: 0, meshes: 0, triangles: 0, instances: 0, sprites: 0, layered: 0, missingTextures: 0 };
   private readonly topByName = new Map<string, Block>();
   /** Усі простори (24), включно з вкладеними, з композицією матриць батьків. */
   private readonly spaces = new Map<string, THREE.Matrix4>();
@@ -321,7 +334,12 @@ export class SceneAssembler {
     return rooms;
   }
 
+  private polyOrder = 0;
+
   private flush(batches: Batches, into: THREE.Object3D): void {
+    if (this.buildingRooms) this.stats.layered += separateLayers(
+        [...batches].filter(([m]) => !!(this.lib.material(m) as THREE.MeshBasicMaterial).map).map(([, b]) => b),
+      );
     for (const [matIndex, b] of batches) {
       if (!b.pos.length) continue;
       const g = new THREE.BufferGeometry();
@@ -339,7 +357,8 @@ export class SceneAssembler {
   private addPolys(polys: Polygon[], vs: VertexSource, batches: Batches): void {
     for (const p of polys) {
       let b = batches.get(p.material);
-      if (!b) batches.set(p.material, (b = { pos: [], uv: [] }));
+      if (!b) batches.set(p.material, (b = { pos: [], uv: [], ord: [] }));
+      const ord = this.polyOrder++;
       const idx = p.indices;
       for (let k = 1; k + 1 < idx.length; k++) {
         for (const corner of [0, k, k + 1]) {
@@ -348,6 +367,7 @@ export class SceneAssembler {
           if (p.uvs) b.uv.push(p.uvs[corner * 2], p.uvs[corner * 2 + 1]);
           else b.uv.push(vs.uvs[vi * 2], vs.uvs[vi * 2 + 1]);
         }
+        b.ord.push(ord);
       }
     }
   }
@@ -651,6 +671,8 @@ function buildSky(asm: SceneAssembler): THREE.Group | null {
     m.depthWrite = false;
     m.depthTest = false;
     m.fog = false;
+    // Купол видно зсередини.
+    m.side = THREE.DoubleSide;
     o.material = m;
     o.renderOrder = -1000;
     o.frustumCulled = false;
@@ -684,4 +706,63 @@ function lampCenter(top: Block): [number, number, number] | null {
     }
   }
   return n ? [sum[0] / n, sum[1] / n, sum[2] / n] : null;
+}
+
+/** Див. LAYER_STEP. Повертає кількість зсунутих трикутників. */
+function separateLayers(batches: { pos: number[]; ord: number[] }[]): number {
+  interface Tri { b: { pos: number[] }; at: number; ord: number; n: THREE.Vector3; d: number; pts: THREE.Vector3[]; layer: number }
+  const groups = new Map<string, Tri[]>();
+  for (const b of batches) {
+    for (let t = 0; t < b.ord.length; t++) {
+      const at = t * 9;
+      const pts = [0, 1, 2].map((k) => new THREE.Vector3(b.pos[at + k * 3], b.pos[at + k * 3 + 1], b.pos[at + k * 3 + 2]));
+      const n = new THREE.Vector3().subVectors(pts[1], pts[0]).cross(new THREE.Vector3().subVectors(pts[2], pts[0]));
+      if (n.lengthSq() < 1e-6) continue;
+      n.normalize();
+      const d = n.dot(pts[0]);
+      // Кошик площини (грубо; сусідні кошики теж перевіряються через допуски нижче — тут достатньо одного).
+      const key = `${Math.round(n.x * 20)},${Math.round(n.y * 20)},${Math.round(n.z * 20)},${Math.round(d * 2)}`;
+      let g = groups.get(key);
+      if (!g) groups.set(key, (g = []));
+      g.push({ b, at, ord: b.ord[t], n, d, pts, layer: 0 });
+    }
+  }
+  let moved = 0;
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    g.sort((a, c) => a.ord - c.ord);
+    for (let i = 1; i < g.length; i++) {
+      const top = g[i];
+      for (let j = 0; j < i; j++) {
+        const low = g[j];
+        if (low.ord === top.ord || top.n.dot(low.n) < 0.999 || Math.abs(top.d - low.d) > 0.05) continue;
+        if (overlapInPlane(top.pts, low.pts, top.n)) top.layer = Math.max(top.layer, low.layer + 1);
+      }
+      if (!top.layer) continue;
+      const off = top.n.clone().multiplyScalar(top.layer * LAYER_STEP);
+      for (let k = 0; k < 3; k++) {
+        top.b.pos[top.at + k * 3] += off.x;
+        top.b.pos[top.at + k * 3 + 1] += off.y;
+        top.b.pos[top.at + k * 3 + 2] += off.z;
+      }
+      moved++;
+    }
+  }
+  return moved;
+}
+
+/** Чи перекриваються два трикутники в спільній площині (а не лише торкаються краєм) — тест розділювальних осей. */
+function overlapInPlane(a: THREE.Vector3[], b: THREE.Vector3[], n: THREE.Vector3): boolean {
+  const EPS = 0.02;
+  for (const tri of [a, b]) {
+    for (let k = 0; k < 3; k++) {
+      const axis = new THREE.Vector3().subVectors(tri[(k + 1) % 3], tri[k]).cross(n);
+      let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+      for (const p of a) { const v = axis.dot(p); a0 = Math.min(a0, v); a1 = Math.max(a1, v); }
+      for (const p of b) { const v = axis.dot(p); b0 = Math.min(b0, v); b1 = Math.max(b1, v); }
+      const len = axis.length();
+      if (Math.min(a1, b1) - Math.max(a0, b0) <= EPS * len) return false;
+    }
+  }
+  return true;
 }

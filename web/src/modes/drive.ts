@@ -190,6 +190,8 @@ export class DriveSession {
             m.transparent = true;
             m.depthWrite = false;
             if (def?.flags.has('noz')) m.depthTest = false;
+            // Циліндр дощу видно зсередини.
+            m.side = THREE.DoubleSide;
             mesh.material = m;
             mesh.renderOrder = 10;
             tex.push({ map: m.map, move: def?.params.move ?? [0, -1] });

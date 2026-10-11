@@ -68,7 +68,7 @@ export function levelCollision(b3d: B3d): LevelCollision {
           if (d.shape.kind === 6) emitted = d.shape.polys.filter((p) => p.length >= 3);
           break;
         case 20:
-          for (let i = 0; i + 1 < d.points.length; i++) emitted.push(fence(d.points[i], d.points[i + 1]));
+          for (let i = 0; i + 1 < d.points.length; i++) emitted.push(fence(d.points[i], d.points[i + 1], box));
           break;
         case 12:
           // Площина з нормаллю вниз — стеля (вільний простір під нею). Колізії Rapier двосторонні,
@@ -108,8 +108,21 @@ export function levelCollision(b3d: B3d): LevelCollision {
   return { floors, floorRoom, walls, wallRoom, hasFloor: floors.length > walls.length / 4, stats };
 }
 
-/** Вертикальна огорожа вздовж відрізка ламаної. */
-function fence(a: number[], b: number[]): Poly {
+/**
+ * Вертикальна огорожа вздовж відрізка ламаної. Ламані з нульовою висотою (усі на COUNT) — межі на плані:
+ * стіна на всю висоту кімнати (інакше огорожа опинялася під землею і з траси можна було виїхати й провалитися).
+ */
+function fence(a: number[], b: number[], box: Box | null): Poly {
+  if (box && Math.abs(a[2]) < 0.01 && Math.abs(b[2]) < 0.01) {
+    const z0 = box.min[2] - FENCE_DEPTH;
+    const z1 = box.max[2] + FENCE_HEIGHT;
+    return [
+      [a[0], a[1], z0],
+      [b[0], b[1], z0],
+      [b[0], b[1], z1],
+      [a[0], a[1], z1],
+    ];
+  }
   return [
     [a[0], a[1], a[2] - FENCE_DEPTH],
     [b[0], b[1], b[2] - FENCE_DEPTH],
