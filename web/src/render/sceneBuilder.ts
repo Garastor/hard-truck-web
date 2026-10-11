@@ -152,7 +152,9 @@ export class MaterialLibrary {
  * Вузол «поділ площиною» (тип 9): показує групу 0, якщо камера з додатного боку площини (n·p + d ≥ 0, система
  * вузла), інакше групу 1. Оновлюється рендерером щокадру (як THREE.LOD — через isLOD/update).
  */
-export class SideSwitch extends THREE.Group {
+// Перемикачі — від Object3D, не Group: рендерер Three.js викликає update(camera) для isLOD лише в об'єктів,
+// що не є групами (для груп ця гілка пропускається) — інакше обидві гілки лишалися видимими.
+export class SideSwitch extends THREE.Object3D {
   readonly isLOD = true;
   autoUpdate = true;
   readonly plane: THREE.Vector4;
@@ -165,6 +167,8 @@ export class SideSwitch extends THREE.Group {
 
   update(camera: THREE.Camera): void {
     const p = this.worldToLocal(camera.getWorldPosition(SideSwitch.tmp));
+    // Група 0 — камера з боку нормалі (n·p + d ≥ 0), як у деревах колізій. Перевірено на відблисках задніх
+    // ліхтарів: їх видно ззаду машини (нормаль площини ліхтаря дивиться назад).
     const front = this.plane.x * p.x + this.plane.y * p.y + this.plane.z * p.z + this.plane.w >= 0;
     if (this.children[0]) this.children[0].visible = front;
     if (this.children[1]) this.children[1].visible = !front;
@@ -177,8 +181,8 @@ export class SideSwitch extends THREE.Group {
   }
 }
 
-/** Тип 10 (форма 1 — сфера [x, y, z, r]): група 0 — камера в межах r від центру, група 1 — далі. */
-export class DistanceSwitch extends THREE.Group {
+/** Тип 10 (форма 1 — сфера [x, y, z, r]): група 0 — камера далі за r від центру, група 1 — ближче. */
+export class DistanceSwitch extends THREE.Object3D {
   readonly isLOD = true;
   autoUpdate = true;
   readonly sphere: THREE.Vector4;
@@ -191,9 +195,10 @@ export class DistanceSwitch extends THREE.Group {
 
   update(camera: THREE.Camera): void {
     const p = this.worldToLocal(camera.getWorldPosition(DistanceSwitch.tmp));
+    // Група 0 — камера ДАЛІ за r, група 1 — ближче (перевірено: з протилежним вибором зникали дорога й машини).
     const near = Math.hypot(p.x - this.sphere.x, p.y - this.sphere.y, p.z - this.sphere.z) < this.sphere.w;
-    if (this.children[0]) this.children[0].visible = near;
-    if (this.children[1]) this.children[1].visible = !near;
+    if (this.children[0]) this.children[0].visible = !near;
+    if (this.children[1]) this.children[1].visible = near;
   }
 
   override copy(source: this, recursive?: boolean): this {
@@ -467,11 +472,12 @@ export class SceneAssembler {
       // Вибір за боком площини: група 0 — камера там, де n·p + d ≥ 0, група 1 — з іншого боку (варіанти
       // геометрії, що збігаються в просторі; обидві разом — подвійні трикутники й мерехтіння).
       const sw = new SideSwitch(d.shape.v as [number, number, number, number]);
-      for (const g of block.groups.slice(0, 2)) {
+      for (const [gi, g] of block.groups.slice(0, 2).entries()) {
         const go = new THREE.Group();
         const b: Batches = new Map();
         for (const child of g) this.visit(child, cur, b, go, depth + 1);
         this.flush(b, go);
+        go.visible = gi === 0;
         sw.add(go);
       }
       into.add(sw);
@@ -479,14 +485,15 @@ export class SceneAssembler {
     } else if (d.t === 9) {
       groups = [block.groups[0] ?? []];
     } else if (d.t === 10 && d.shape.kind === 1 && block.groups.length >= 2) {
-      // Перемикач за відстанню: група 0 — камера ближче за r до центру сфери, група 1 — далі (відблиски фар:
-      // ближче 9 м — нічого, далі — варіанти білборду за відстанню).
+      // Перемикач за відстанню: група 0 — камера далі за r від центру сфери, група 1 — ближче (LOD машин і
+      // обʼєктів трас; з протилежним вибором зникали дорога й машини).
       const sw = new DistanceSwitch(d.shape.v as [number, number, number, number]);
-      for (const g of block.groups.slice(0, 2)) {
+      for (const [gi, g] of block.groups.slice(0, 2).entries()) {
         const go = new THREE.Group();
         const b: Batches = new Map();
         for (const child of g) this.visit(child, cur, b, go, depth + 1);
         this.flush(b, go);
+        go.visible = gi === 0;
         sw.add(go);
       }
       into.add(sw);

@@ -144,6 +144,8 @@ export function buildTruckModel(asm: SceneAssembler, def: TruckDef, dynamic = fa
   const wheelNames = new Set(def.wheelNodes.map((n) => n.toLowerCase()));
   body.traverse((o) => {
     if (wheelNames.has(o.name.toLowerCase())) o.visible = false;
+    // Вогонь (Flame/SwitchFlame) у моделі — для палаючих уламків; на справній машині не показуємо.
+    if (o.name === 'Flame') o.visible = false;
   });
   root.add(body);
   const wheels: THREE.Object3D[] = [];

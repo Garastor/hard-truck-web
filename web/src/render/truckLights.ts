@@ -1,4 +1,4 @@
-import type * as THREE from 'three';
+import * as THREE from 'three';
 
 /**
  * Світло вантажівки — лише перемикачі моделей, як в оригіналі (відблиски — білборди ReflFara* біля кожної фари й
@@ -38,5 +38,51 @@ export class TruckLights {
     // ReflFaraKey — спільне імʼя для відблисків фар і стоп-сигналу.
     sw('ReflFaraKey', lights || braking ? 1 : 0);
     sw('ReflFaraKeyBG', lights ? 1 : 0);
+  }
+}
+
+/**
+ * Відблиски фар і ліхтарів на мокрому асфальті (білборди refl_r / refl_w у блоках *FFara*, *BFara*): як в
+ * оригіналі — смужка на дорозі між машиною й глядачем, тобто віддзеркалення ліхтаря в площині дороги.
+ * Дзеркальна точка лежить під дорогою (асфальт би її закрив), тож щокадру ставимо білборд туди, де промінь
+ * «камера → дзеркальна точка» перетинає дорогу, і зменшуємо пропорційно — на екрані те саме місце й розмір, а
+ * перевірка глибини працює (кузови відблиск закривають).
+ */
+/** Наскільки над оцінкою дороги ставити відблиск, м (дорога під колесами трохи вища за розрахункову). */
+const REFLECTION_LIFT = 0.15;
+
+export class LampReflections {
+  private readonly items: { sprite: THREE.Sprite; mirror: THREE.Vector3; scale: THREE.Vector2 }[] = [];
+  private readonly tmp = new THREE.Vector3();
+
+  /** root — модель у системі гри (z угору), groundZ — висота дороги в цій системі. */
+  constructor(
+    private readonly root: THREE.Object3D,
+    private readonly groundZ: number,
+  ) {
+    root.traverse((o) => {
+      const sp = o as THREE.Sprite;
+      if (!sp.isSprite || !/refl_[rw]/.test((sp.material.map as THREE.Texture | null)?.name ?? '')) return;
+      const m = sp.position.clone();
+      m.z = 2 * groundZ - m.z;
+      this.items.push({ sprite: sp, mirror: m, scale: new THREE.Vector2(sp.scale.x, sp.scale.y) });
+      // Нижнім краєм — на дорозі (інакше нижня половина білборду ховається під асфальтом).
+      sp.center.y = 0;
+    });
+  }
+
+  update(camera: THREE.Camera): void {
+    if (!this.items.length) return;
+    this.root.updateWorldMatrix(true, false);
+    // Камера в системі моделі (батьки білбордів — без власних зсувів, тож система моделі = їхня).
+    const c = this.root.worldToLocal(camera.getWorldPosition(this.tmp));
+    for (const it of this.items) {
+      const m = it.mirror;
+      const g = this.groundZ + REFLECTION_LIFT;
+      if (c.z <= g) continue;
+      const t = (c.z - g) / (c.z - m.z);
+      it.sprite.position.set(c.x + (m.x - c.x) * t, c.y + (m.y - c.y) * t, g);
+      it.sprite.scale.set(it.scale.x * t, it.scale.y * t, 1);
+    }
   }
 }

@@ -8,7 +8,7 @@ import { GlassRain } from '../render/glassRain';
 import { parseMsk } from '../formats/msk';
 import { Movables } from '../game/movables';
 import { Effects } from '../render/effects';
-import { TruckLights } from '../render/truckLights';
+import { LampReflections, TruckLights } from '../render/truckLights';
 import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import type { BuiltScene } from '../render/sceneBuilder';
@@ -80,6 +80,8 @@ const IMPACT_CRASH = 6;
 const CRASH_SOUNDS = ['crash2', 'crash4a', 'crash9'];
 /** Тестовий режим: сила ударів, після якої машина вибухає (у кар'єрі техстан 0 — це 250 при зносі 0,004 за одиницю). */
 const WRECK_HITS = 250;
+/** Туман під дощем: початок і повна непрозорість, м (гіпотеза). */
+const RAIN_FOG: [number, number] = [40, 420];
 /** Швидкість «стікання» текстури струменів дощу, повторів текстури за секунду (гіпотеза). */
 const RAIN_SPEED = 2.5;
 /** Зони вмʼятин за годинниковою стрілкою від переду — суфікси перемикачів `Damage<зона>Key` у моделях. */
@@ -197,6 +199,14 @@ export class DriveSession {
     }
     // RainKey: група 0 — струмені, група 1 — порожня.
     this.rain?.setSwitch('RainKey', on ? 0 : 1);
+    // Під дощем далечінь у димці (як в оригіналі): ближчий і сіріший туман; вночі — темний.
+    if (on) {
+      this.dryFog ??= this.scene.fog as THREE.Fog | null;
+      this.scene.fog = new THREE.Fog(this.night ? 0x0b0d10 : 0x8d959d, RAIN_FOG[0], RAIN_FOG[1]);
+    } else if (this.dryFog !== undefined) {
+      this.scene.fog = this.dryFog;
+      this.dryFog = undefined;
+    }
     if (this.rain) this.rain.root.visible = on;
     if (this.glassRain) {
       this.glassRain.raining = on;
@@ -210,6 +220,7 @@ export class DriveSession {
   }
   /** Оригінальні спрайти крапель на склі (txr/glass_1.msk, glass_2.msk з архіву траси). */
   private dropSprites: HTMLCanvasElement[] = [];
+  private dryFog: THREE.Fog | null | undefined;
   /** Краплі на склі кабіни й двірники. */
   private glassRain: GlassRain | null = null;
   /** Вмʼятини кузова: накопичена сила ударів за зонами (FC, FR, R, BR, BC, BL, L, FL). */
@@ -397,6 +408,8 @@ export class DriveSession {
   /** Нічна траса: фари світять на дорогу (задає main за локацією). */
   night = false;
   private lights: TruckLights | null = null;
+  /** Відблиски ліхтарів на дорозі (позиція залежить від камери — оновлюємо перед кадром). */
+  private readonly reflections: LampReflections[] = [];
   private updateLights(state: { throttle: number; brake: number }): void {
     const wet = this.raining && (this.glassRain?.raining ?? true);
     const reverse = this.truck.gear < 0;
@@ -515,6 +528,7 @@ export class DriveSession {
     for (const r of s.track.rooms.values()) for (const e of r.events) if (e.type === EVENT_CHECKPOINT) s.checkpoints.add(e.param);
     s.truck = new TruckVehicle(s.world, def, model, s.spawn, setup);
     s.lights = new TruckLights(model.setSwitch, s.truck.visual, s.truck.lightGeometry);
+    s.reflections.push(new LampReflections(model.root, s.truck.lightGeometry.groundY));
     scene.add(s.truck.visual);
     s.spawnOpponents(rivals);
     s.roomVis = new RoomVisibility(s.track, built.rooms);
@@ -747,6 +761,7 @@ export class DriveSession {
       const pilot = new AutoPilot(this.wayNet!);
       pilot.cruise = 58 + ((i * 7) % 18);
       const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
+      this.reflections.push(new LampReflections(model.root, truck.lightGeometry.groundY));
       this.opponents.push({ truck, pilot, odo: new Odometer(), lights });
     });
   }
@@ -857,6 +872,7 @@ export class DriveSession {
     this.odometer += (this.truck.speedKmh / 3.6) * dt;
     this.updateCab(state);
     this.updateLights(state);
+    for (const r of this.reflections) r.update(this.camera);
     this.updateSurface(dt);
     this.checkDeath(dt);
     this.effects?.update(dt);
@@ -1106,6 +1122,7 @@ ${raceLine}`;
     this.hud?.remove();
     this.navMap?.dispose();
     this.effects?.dispose();
+    if (this.dryFog !== undefined) this.scene.fog = this.dryFog;
     for (const s of this.oppSounds ?? []) s?.stop();
     this.wiperSound?.stop();
     this.stonesSound?.stop();

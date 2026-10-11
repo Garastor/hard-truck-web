@@ -189,8 +189,8 @@ async function startDrive(): Promise<void> {
     // Тестовий режим: мінікарта завжди (у кар'єрі — лише з навігаційною системою «НС»).
     if (!cfg && id !== 'MENU3D') drive.showMap(true);
     if (loadControl() === 'tilt') drive.setTilt(true);
-    if (!cfg) drive.setWeather(weatherSel.value === 'rain');
     drive.night = id === 'NIGHT';
+    if (!cfg) drive.setWeather(weatherSel.value === 'rain');
     setStatus(null);
   } catch (e) {
     console.error(e);
