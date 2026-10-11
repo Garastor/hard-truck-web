@@ -13,7 +13,7 @@ export interface HudData {
   truck: number | null;
   /** Цілість вантажу 0…1; null — вантажу немає. */
   cargo: number | null;
-  /** Рядок гонки: баланс, коло, час, місце, відлік, фініш. */
+  /** Рядок гонки: баланс, коло, час, місце, відлік, фініш; порожній — без нижньої панелі. */
   line: string;
 }
 
@@ -102,13 +102,13 @@ export class DriveHud {
     const top1 = 5;
     const h1 = lh + 8;
     const top2 = top1 + h1 + 3;
-    const h2 = sh + 7;
-    const H = top2 + h2 + 4;
+    const h2 = d.line ? sh + 7 : 0;
+    const H = d.line ? top2 + h2 + 4 : top1 + h1 + 4;
 
     const { canvas, ctx } = pixelCanvas(W, H);
     frame(ctx, 0, 0, W, H);
     inset(ctx, 5, top1, innerW, h1);
-    inset(ctx, 5, top2, innerW, h2);
+    if (d.line) inset(ctx, 5, top2, innerW, h2);
 
     // Рядок 1 — посередині першої панелі.
     let x = 5 + Math.floor((innerW - rowW) / 2);
@@ -128,7 +128,7 @@ export class DriveHud {
     if (truck) stat(TRUCK_ICON, truck, 12);
     if (cargo) stat(BOXES_ICON, cargo, 10);
 
-    S.draw(ctx, d.line, 5 + Math.floor((innerW - lineW) / 2), top2 + 4, HUD_CYAN);
+    if (d.line) S.draw(ctx, d.line, 5 + Math.floor((innerW - lineW) / 2), top2 + 4, HUD_CYAN);
     this.host.replaceChildren(canvas);
   }
 

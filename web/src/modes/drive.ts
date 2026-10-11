@@ -1114,9 +1114,7 @@ export class DriveSession {
     const money = status.money !== null ? `$${Math.round(status.money)}` : '';
     const race =
       this.raceKind === 'free'
-        ? money
-          ? ''
-          : 'вільна їзда'
+        ? ''
         : `коло ${Math.min(this.laps + 1, this.lapsToFinish || Infinity)}` +
           `${this.lapsToFinish ? '/' + this.lapsToFinish : ''}: ${lap}${best}${place}${start}${fin}`;
     const raceLine = [money, race].filter(Boolean).join('   ');
@@ -1126,8 +1124,7 @@ export class DriveSession {
     }
     // Без шрифтів оригіналу — текстом.
     const pct = (f: number | null) => (f === null ? '' : `   ${Math.round(f * 100)}%`);
-    const text = `${t.speedKmh.toFixed(0)}   ${t.gear < 0 ? 'R' : t.gear === 0 ? 'N' : t.gear}${pct(status.truck)}${pct(status.cargo)}
-${raceLine}`;
+    const text = `${t.speedKmh.toFixed(0)}   ${t.gear < 0 ? 'R' : t.gear === 0 ? 'N' : t.gear}${pct(status.truck)}${pct(status.cargo)}${raceLine ? `\n${raceLine}` : ''}`;
     if (this.hud.textContent !== text) this.hud.textContent = text;
   }
 
