@@ -32,8 +32,46 @@ const DROWN_HEIGHT = 1.3;
 /** Звідки над тілом пускаємо промінь до поверхні, м. */
 const SURFACE_RAY_UP = 6;
 const FALL_DEATH_TIME = 3;
-/** Ґрунт під колесами (звук гравію stones): матеріали поза дорогою (гіпотеза за назвами матеріалів трас). */
-const OFFROAD = /grass|beach|sand|dirt|gravel|ground|field|earth|mud|forest|cobble/i;
+/**
+ * Покриття під колесами — за матеріалом поверхні (розібрано за текстурами трас; у файлах гри типу покриття
+ * немає, тож це класифікація порту): гравій COUNT (road_20/28/29, cobble — щебінь), MOUNT (roadsd0, stones0,
+ * stream0 — камʼянисте русло); ґрунт — трава, пісок, ґрунт полігону; вода. Змішані текстури (асфальт із травою
+ * по краях) — за кольором текселя під колесами: зелений — трава.
+ */
+type Surface = 'asphalt' | 'gravel' | 'dirt' | 'water';
+const SURFACE_GRAVEL = /^(road_2[089]|cobble|roadsd\d*|stones\d*|stream0)$/i;
+const SURFACE_DIRT = /grass|beach|sand|grnd|ground|dirt|mud|field|forest/i;
+const SURFACE_WATER = /water|river|stream[1-9]/i;
+/** [зчеплення, опір кочення] відносно асфальту — гіпотеза (симулятор; аркада — без впливу). */
+const SURFACE_FX: Record<Surface, [number, number]> = { asphalt: [1, 1], gravel: [0.8, 2], dirt: [0.6, 3.5], water: [0.5, 4] };
+
+function classifySurface(name: string, texel: [number, number, number] | null): Surface {
+  if (SURFACE_WATER.test(name)) return 'water';
+  if (SURFACE_GRAVEL.test(name)) return 'gravel';
+  if (SURFACE_DIRT.test(name)) return 'dirt';
+  if (texel) {
+    const [r, g, b] = texel;
+    if (g > 50 && g > r * 1.15 && g > b * 1.15) return 'dirt';
+  }
+  return 'asphalt';
+}
+
+/** Колір текстури в точці UV (текстури оригіналу — RGBA у памʼяті, рядок 0 — v = 0). */
+function texelAt(map: THREE.Texture | null | undefined, uv: THREE.Vector2 | undefined): [number, number, number] | null {
+  const img = map?.image as { data?: Uint8Array | Uint8ClampedArray; width: number; height: number } | undefined;
+  if (!img?.data || !uv) return null;
+  // Середнє по хресту 5 текселів (±3) — окремий темний піксель трави не робить її «асфальтом».
+  const cx = Math.floor((((uv.x % 1) + 1) % 1) * img.width);
+  const cy = Math.floor((((uv.y % 1) + 1) % 1) * img.height);
+  const sum = [0, 0, 0];
+  for (const [dx, dy] of [[0, 0], [3, 0], [-3, 0], [0, 3], [0, -3]]) {
+    const x = (cx + dx + img.width) % img.width;
+    const y = (cy + dy + img.height) % img.height;
+    const i = (y * img.width + x) * 4;
+    for (let k = 0; k < 3; k++) sum[k] += img.data[i + k];
+  }
+  return [sum[0] / 5, sum[1] / 5, sum[2] / 5];
+}
 /** Звуки ударів: тихіші за IMPACT_SOUND_MIN (м/с за крок) не чути; від IMPACT_CRASH — аварія (гіпотеза). */
 const IMPACT_SOUND_MIN = 1.5;
 const IMPACT_CRASH = 6;
@@ -226,10 +264,16 @@ export class DriveSession {
       return;
     }
     const mesh = hit.object as THREE.Mesh;
-    const mat = Array.isArray(mesh.material) ? mesh.material[hit.face?.materialIndex ?? 0] : mesh.material;
-    this.offRoad = OFFROAD.test(mat?.name ?? '');
-    this.overWater = /water|river/i.test(mat?.name ?? '');
+    const mat = (Array.isArray(mesh.material) ? mesh.material[hit.face?.materialIndex ?? 0] : mesh.material) as THREE.MeshBasicMaterial;
+    this.surface = classifySurface(mat?.name ?? '', texelAt(mat?.map, hit.uv));
+    this.offRoad = this.surface === 'gravel' || this.surface === 'dirt';
+    this.overWater = this.surface === 'water';
+    const [grip, roll] = SURFACE_FX[this.surface];
+    // У повітрі (далеко над поверхнею) покриття не діє.
+    if (this.surfaceHeight < 2.5) this.truck.setSurface(grip, roll);
   }
+  /** Покриття під машиною (за матеріалом і кольором текстури). */
+  surface: Surface = 'asphalt';
   private overWater = false;
   private surfaceHeight = Infinity;
   private deathCooldown = 0;
@@ -281,7 +325,9 @@ export class DriveSession {
     const kmh = this.truck.speedKmh;
     const gravel = this.offRoad && kmh > 3;
     if (gravel && this.stonesSound === undefined) this.stonesSound = a.loopSound('stones');
-    this.stonesSound?.set(gravel ? Math.min(0.6, kmh / 100) : 0, 0.8 + Math.min(0.6, kmh / 150));
+    // Гравій — на повну, трава й пісок — тихіше.
+    const loud = this.surface === 'gravel' ? 1 : 0.5;
+    this.stonesSound?.set(gravel ? loud * Math.min(0.6, kmh / 100) : 0, 0.8 + Math.min(0.6, kmh / 150));
     // Двигуни суперників: тихішають з відстанню, панорама — за положенням відносно камери.
     this.oppSounds ??= this.opponents.map(() => a.loopSound('extcar'));
     const cam = this.camera.position;

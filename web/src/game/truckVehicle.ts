@@ -73,6 +73,8 @@ export interface TruckSetup {
   tractionControl?: boolean;
   /** Регульоване сидіння (РС): очі водія вище на стільки метрів. */
   seatRaise?: number;
+  /** Покриття дороги впливає на зчеплення й опір (симулятор; в аркаді — ні). */
+  surfaceEffects?: boolean;
 }
 
 export class TruckVehicle {
@@ -103,6 +105,15 @@ export class TruckVehicle {
   /** Пошкодження гальм: множник сили (1 — справні). */
   private brakeFactor = 1;
   private readonly tractionControl: boolean;
+  /** Покриття під колесами: множники зчеплення й опору кочення (1 — асфальт). Аркада — без впливу. */
+  private surfaceGrip = 1;
+  private surfaceRoll = 1;
+  private readonly surfaceEffects: boolean;
+  setSurface(grip: number, roll: number): void {
+    if (!this.surfaceEffects) return;
+    this.surfaceGrip = grip;
+    this.surfaceRoll = roll;
+  }
 
   /** Вплив пошкоджень (режим «симулятор»): момент, недоступні верхні передачі, сила гальм. */
   setDamage(d: { power: number; lostGears: number; brakes: number }): void {
@@ -121,6 +132,7 @@ export class TruckVehicle {
     const tech = def.tech;
     this.grip = setup.grip ?? 1;
     this.tractionControl = setup.tractionControl ?? false;
+    this.surfaceEffects = setup.surfaceEffects ?? true;
     this.wheelRadius = tech.wheelRadius;
     this.driven = [0, 1, 2, 3].map((i) => (tech.drivingWheels[i] ?? 1) !== 0);
     this.engine = new Engine({
@@ -279,14 +291,14 @@ export class TruckVehicle {
     const engineBrakes = gas === 0;
     // Межа зчеплення Rapier спільна для повороту, тяги й гальмування; під час гальмування — вища
     // (оригінал гальмує до ≈ 0,55 g незалежно від бічного зчеплення).
-    const grip = (TIRE_GRIP + (TIRE_GRIP_BRAKING - TIRE_GRIP) * brakePedal) * this.grip;
+    const grip = (TIRE_GRIP + (TIRE_GRIP_BRAKING - TIRE_GRIP) * brakePedal) * this.grip * this.surfaceGrip;
     for (let i = 0; i < 4; i++) {
       this.ctrl.setWheelFrictionSlip(i, grip);
       let engine = this.driven[i] ? eng.force / nDriven : 0;
       // АПС: не більше 90 % межі зчеплення колеса (гіпотеза) — колесо не зривається в буксування.
       if (this.tractionControl && engine > 0) engine = Math.min(engine, 0.9 * grip * wheelLoad);
       const share = i < 2 ? BRAKE_FRONT : BRAKE_REAR;
-      const rolling = ROLLING_RESISTANCE * wheelLoad;
+      const rolling = ROLLING_RESISTANCE * this.surfaceRoll * wheelLoad;
       let force = brakePedal * share * tech.brakePower * this.brakeFactor + rolling;
       if (input.handbrake && i >= 2) force += tech.brakePower;
       if (engineBrakes) {
@@ -328,14 +340,14 @@ export class TruckVehicle {
       const x = alpha / TIRE.slip_peak;
       const mu = x <= 1 ? x : Math.max(TIRE.slide, 1 - (1 - TIRE.slide) * (x - 1) * 0.5);
       // Бічна сила (перпендикулярно колесу): росте з кутом проковзування до межі, у заносі — TIRE.slide.
-      let force = mu * TIRE.mu * this.grip * load;
+      let force = mu * TIRE.mu * this.grip * this.surfaceGrip * load;
       // Не «перестрибувати» нуль бокової швидкості за один крок (стійкість на малій швидкості).
       force = Math.min(force, (wheelMass * Math.abs(vLat)) / dt);
       const impulse = right.multiplyScalar(-Math.sign(vLat) * force * dt);
       if (x > 1) {
         // Занос: колесо ще й гальмує вздовж руху — тим сильніше, чим глибший занос; вантажівка
         // втрачає швидкість, доки шина знову не зачепиться (тоді — різкий доворот).
-        const drag = Math.min(TIRE.slide_drag_max, TIRE.slide_drag * (x - 1)) * TIRE.mu * this.grip * load;
+        const drag = Math.min(TIRE.slide_drag_max, TIRE.slide_drag * (x - 1)) * TIRE.mu * this.grip * this.surfaceGrip * load;
         const limited = Math.min(drag, (wheelMass * Math.abs(vLong)) / dt);
         impulse.addScaledVector(fwd, -Math.sign(vLong) * limited * dt);
       }
