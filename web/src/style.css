@@ -339,13 +339,19 @@ body.bar-open #fps {
   right: calc(var(--sr) + 156px * var(--ui, 1));
 }
 
+/*
+ * Розгорнута група — дві колонки під «•••» і праворуч від неї (під сигналом), на рядок нижче верхніх кнопок і
+ * рядка кнопок кар'єри (Рейтинг, Меню, Ремонт…), щоб нічого не накладалося: спершу 4 кнопки ліворуч, далі праворуч.
+ */
 .touch-more {
   position: absolute;
-  right: calc(var(--sr) + 156px * var(--ui, 1));
-  top: calc(max(8px, env(safe-area-inset-top)) + 52px * var(--ui, 1));
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  right: calc(var(--sr) + 104px * var(--ui, 1));
+  top: calc(max(8px, env(safe-area-inset-top)) + 104px * var(--ui, 1));
+  display: grid;
+  grid-template-columns: repeat(2, calc(44px * var(--ui, 1)));
+  grid-template-rows: repeat(4, calc(44px * var(--ui, 1)));
+  grid-auto-flow: column;
+  gap: calc(8px * var(--ui, 1));
 }
 
 .touch-more[hidden] {
@@ -354,6 +360,11 @@ body.bar-open #fps {
 
 .touch-more .touch-btn {
   position: static;
+}
+
+/* Недоступні функції (навігація без «НС», двірники без скла) — сховані: display:grid кнопки перекривав hidden. */
+.touch-btn[hidden] {
+  display: none;
 }
 
 /* Увімкнене (фари, дзеркало…) — світла рамка кольору тексту. */
@@ -997,6 +1008,17 @@ canvas.pixel {
 
 .hud-player {
   pointer-events: auto;
+}
+
+/* Квадратні кнопки табло (Рейтинг, Меню, згорнути) — розміру сенсорних кнопок. */
+.hud-btn.hud-square {
+  width: calc(44px * var(--ui, 1));
+  height: calc(44px * var(--ui, 1));
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: rgb(123, 255, 255);
 }
 
 /* Значок згорнутої групи кнопок — без рамки кнопки (рамка намальована на значку, як у табло гравця). */

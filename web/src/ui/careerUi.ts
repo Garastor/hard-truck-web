@@ -164,6 +164,10 @@ export function callSign(): HTMLImageElement {
   return img;
 }
 
+/** Значок «Рейтинг» — дві постаті (на прохання користувача, за його зразком), однотонний контур кольору тексту. */
+const RATING_SVG =
+  '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="16.5" cy="7" r="3"/><path d="M14.5 13.6c.6-.3 1.3-.4 2-.4 2.8 0 4.5 2.2 4.5 5.3"/><circle cx="9" cy="9.5" r="3.5"/><path d="M3 21c0-3.8 2.6-6.4 6-6.4s6 2.6 6 6.4"/></svg>';
+
 /** Стрілка «згорнути» (вліво) кольору тексту табло. */
 export function collapseArrow(): HTMLCanvasElement {
   const { canvas, ctx } = pixelCanvas(9, 9, hudScale() * 1.25);
@@ -711,9 +715,35 @@ export class CareerGame {
         this.zoneKey = '';
         this.refresh();
       });
-    this.button('РЕЙТИНГ', () => void this.rating());
-    this.button('МЕНЮ', () => void this.quit());
+    this.ratingButton();
+    this.square('МЕНЮ', this.pixelLabel('МЕНЮ'), () => void this.quit());
     this.collapsible();
+  }
+
+  /**
+   * Квадратна кнопка стандартного розміру (як сенсорні кнопки): «Рейтинг» (значок), «Меню», «згорнути».
+   */
+  private square(label: string, content: Node, onClick: () => void): HTMLButtonElement {
+    const b = el('button', 'hud-btn hud-square');
+    b.setAttribute('aria-label', label);
+    b.append(content);
+    b.addEventListener('click', onClick);
+    this.actions.append(b);
+    return b;
+  }
+
+  private ratingButton(): void {
+    const icon = document.createElement('span');
+    icon.innerHTML = RATING_SVG;
+    icon.style.display = 'grid';
+    this.square('Рейтинг', icon, () => void this.rating());
+  }
+
+  /** Напис піксельним шрифтом табло (крупніший, як на кнопках). */
+  private pixelLabel(t: string): HTMLCanvasElement {
+    const { canvas, ctx } = pixelCanvas(this.measure(t), this.host.font?.height ?? 8, hudScale() * BUTTON_ZOOM);
+    this.text(ctx, t, 0, 0, HUD_CYAN);
+    return canvas;
   }
 
   /**
@@ -723,7 +753,7 @@ export class CareerGame {
    */
   private collapsible(keep: HTMLElement[] = []): void {
     const collapsed = this.actionsCollapsed;
-    const toggle = el('button', collapsed ? 'hud-btn hud-toggle' : 'hud-btn');
+    const toggle = el('button', collapsed ? 'hud-btn hud-toggle' : 'hud-btn hud-square');
     toggle.setAttribute('aria-label', collapsed ? 'Кнопки: розгорнути' : 'Кнопки: згорнути');
     toggle.append(collapsed ? callSign() : collapseArrow());
     toggle.addEventListener('click', () => {
@@ -739,7 +769,7 @@ export class CareerGame {
 
   private trackZone(): void {
     this.button('НА БАЗУ', () => void this.leaveTrack());
-    this.button('РЕЙТИНГ', () => void this.rating());
+    this.ratingButton();
     // Ремонт у дорозі: утримувати кнопку, доки машина не прийде в задовільний стан (лише на місці).
     if (this.needsRoadRepair())
       this.button(
