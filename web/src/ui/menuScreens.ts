@@ -379,7 +379,8 @@ export function optionsScreen(art: MenuArt, st: OptionsState, act: OptionsAction
     scr.keys(ok, ok);
 
     // Таблиця (рамка ≈ 27…445 × 107…325): угорі — перемикачі (тап змінює), нижче — клавіші.
-    const table = scr.place(document.createElement('div'), 32, 110, 408, 212);
+    // Смуги рядків сітки фону: 108…125, 128…145 … 308…325 (11 видно, решта — прокруткою).
+    const table = scr.place(document.createElement('div'), 32, 108, 408, 220);
     table.className += ' menu-list menu-table';
     function renderRows(): void {
       table.replaceChildren();

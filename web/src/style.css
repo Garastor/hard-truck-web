@@ -730,20 +730,32 @@ body.career #stats {
   background: rgba(255, 220, 120, 0.25);
 }
 
-/* Таблиця «Опцій»: рядки — по лініях рамки фону (≈ 13,6 px), назва ліворуч, значення праворуч. */
+/*
+ * Таблиця «Опцій»: рядки — між лініями сітки фону (виміряно: лінії через 20 px, y = 126, 146 … 306; смуга рядка —
+ * 18 px над лінією), значення — у колонці з x = 307. Рядків більше, ніж смуг (11), — прокрутка з прив'язкою до рядків.
+ */
 .menu-table {
-  line-height: 13.6px;
-  overflow: hidden;
+  line-height: 18px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+
+.menu-table::-webkit-scrollbar {
+  display: none;
 }
 
 .menu-trow {
   display: flex;
-  height: 13.6px;
+  height: 20px;
   white-space: nowrap;
+  scroll-snap-align: start;
 }
 
 .menu-trow span:first-child {
-  width: 228px;
+  width: 281px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
