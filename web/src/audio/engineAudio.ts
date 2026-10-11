@@ -6,6 +6,11 @@ import type { RmpArchive } from '../formats/rmp';
  * gearSound — перемикання, startSound — запуск двигуна. Висота тону ∝ обертам.
  * iOS/Chrome дозволяють звук лише після жесту користувача — контекст відновлюється на першому дотику.
  */
+export interface LoopSound {
+  set(volume: number, rate?: number, balance?: number): void;
+  stop(): void;
+}
+
 export class EngineAudio {
   private readonly ctx: AudioContext;
   private readonly master: GainNode;
@@ -58,6 +63,40 @@ export class EngineAudio {
     src.connect(gain).connect(this.master);
     src.start();
     return { src, gain };
+  }
+
+  /**
+   * Звук, що повторюється (двигуни суперників, двірники): гучність, висота тону й панорама (−1 ліво … 1 право)
+   * змінюються плавно. Без такого файлу — null.
+   */
+  loopSound(name: string): LoopSound | null {
+    const buf = this.buffers.get(name);
+    if (!buf) return null;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    // Різні суперники — з різного місця запису, щоб не звучали в унісон.
+    const gain = this.ctx.createGain();
+    gain.gain.value = 0;
+    const pan = this.ctx.createStereoPanner();
+    src.connect(gain).connect(pan).connect(this.master);
+    src.start(0, Math.random() * buf.duration);
+    const k = 0.1;
+    return {
+      set: (volume, rate = 1, balance = 0) => {
+        const t = this.ctx.currentTime;
+        gain.gain.setTargetAtTime(volume, t, k);
+        src.playbackRate.setTargetAtTime(rate, t, k);
+        pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, balance)), t, k);
+      },
+      stop: () => {
+        try {
+          src.stop();
+        } catch {
+          /* уже зупинено */
+        }
+      },
+    };
   }
 
   /** Одноразовий звук. */

@@ -12,7 +12,7 @@ import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import type { BuiltScene } from '../render/sceneBuilder';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
-import { EngineAudio } from '../audio/engineAudio';
+import { EngineAudio, type LoopSound } from '../audio/engineAudio';
 import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, EVENT_RAIN, Track, type Room } from '../game/track';
 import { AutoPilot, WayNet } from '../game/autopilot';
 import { RoomVisibility } from '../render/roomVisibility';
@@ -27,6 +27,10 @@ if (import.meta.env.DEV) Object.assign(window, { RAPIER });
 /** Шар Three.js для деталей кабіни, що малюються поверх решти кабіни (кермо). */
 const CAB_TOP_LAYER = 1;
 
+/** Звуки ударів: тихіші за IMPACT_SOUND_MIN (м/с за крок) не чути; від IMPACT_CRASH — аварія (гіпотеза). */
+const IMPACT_SOUND_MIN = 1.5;
+const IMPACT_CRASH = 6;
+const CRASH_SOUNDS = ['crash2', 'crash4a', 'crash9'];
 /** Тестовий режим: сила ударів, після якої машина вибухає (у кар'єрі техстан 0 — це 250 при зносі 0,004 за одиницю). */
 const WRECK_HITS = 250;
 /** Швидкість «стікання» текстури струменів дощу, повторів текстури за секунду (гіпотеза). */
@@ -166,6 +170,50 @@ export class DriveSession {
   get flipped(): boolean {
     const q = this.truck.body.rotation();
     return new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w)).y < 0.5;
+  }
+  /** Одноразовий звук з архіву траси (repair, alarm…). */
+  sound(name: string, volume = 1): void {
+    this.audio?.play(name, volume);
+  }
+  /** Звуки поза двигуном: двигуни суперників (extcar), двірники, грім; пауза між звуками ударів. */
+  private oppSounds: (LoopSound | null)[] | null = null;
+  private wiperSound: LoopSound | null | undefined;
+  private thunderIn = 20;
+  private impactCooldown = 0;
+  /** Удар: легкий — hit, сильний — один із crash* (гучність за силою). */
+  private impactSound(dv: number): void {
+    if (!this.audio || this.impactCooldown > 0 || dv < IMPACT_SOUND_MIN) return;
+    this.impactCooldown = 0.25;
+    if (dv < IMPACT_CRASH) this.audio.play('hit', Math.min(1, dv / IMPACT_CRASH));
+    else this.audio.play(CRASH_SOUNDS[Math.floor(Math.random() * CRASH_SOUNDS.length)], Math.min(1, dv / 15));
+  }
+  private updateSounds(dt: number): void {
+    const a = this.audio;
+    if (!a) return;
+    this.impactCooldown -= dt;
+    // Двигуни суперників: тихішають з відстанню, панорама — за положенням відносно камери.
+    this.oppSounds ??= this.opponents.map(() => a.loopSound('extcar'));
+    const cam = this.camera.position;
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    this.opponents.forEach((o, i) => {
+      const snd = this.oppSounds![i];
+      if (!snd) return;
+      const p = o.truck.body.translation();
+      const rel = new THREE.Vector3(p.x - cam.x, p.y - cam.y, p.z - cam.z);
+      const d = rel.length();
+      const vol = d > 150 ? 0 : 0.5 / (1 + (d / 15) ** 2);
+      snd.set(vol, Math.min(2, Math.max(0.6, o.truck.rpm / 1500)), d > 0.1 ? rel.dot(right) / d : 0);
+    });
+    // Двірники — поки працюють; грім — зрідка, коли дощ не під дахом.
+    const wipers = this.glassRain?.wipersOn ?? false;
+    if (wipers && this.wiperSound === undefined) this.wiperSound = a.loopSound('wipers');
+    this.wiperSound?.set(wipers ? 0.35 : 0);
+    if (this.raining && this.glassRain?.raining) {
+      if ((this.thunderIn -= dt) <= 0) {
+        this.thunderIn = 15 + Math.random() * 30;
+        a.play('thunder', 0.5 + Math.random() * 0.4);
+      }
+    }
   }
   /** Вибухи й вогонь. */
   private effects: Effects | null = null;
@@ -651,6 +699,7 @@ export class DriveSession {
     this.updateCab(state);
     this.updateLights(state);
     this.effects?.update(dt);
+    this.updateSounds(dt);
     if (this.autoWreck && !this.exploded && this.hits >= WRECK_HITS) {
       this.explode();
       window.setTimeout(() => {
@@ -750,6 +799,7 @@ ${raceLine}`;
     const v = this.truck.body.linvel();
     const dv = Math.hypot(v.x - this.prevVel.x, v.y - this.prevVel.y, v.z - this.prevVel.z);
     if (dv > 0.8) this.hits += dv;
+    this.impactSound(dv);
     // Вмʼятина — у зоні, звідки прийшов удар (протилежно до зміни швидкості), у системі машини.
     if (dv > DENT_MIN_HIT) {
       const f = this.truck.forward().setY(0).normalize();
@@ -906,6 +956,8 @@ ${raceLine}`;
     this.hud?.remove();
     this.navMap?.dispose();
     this.effects?.dispose();
+    for (const s of this.oppSounds ?? []) s?.stop();
+    this.wiperSound?.stop();
     this.audio?.dispose();
     void this.wakeLock?.release().catch(() => {});
     this.world.free();

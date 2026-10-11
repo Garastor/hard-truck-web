@@ -105,6 +105,7 @@ export class CareerGame {
   private wornHits = 0;
   private wornDist = 0;
   private damageKey = '';
+  private repairSoundAt = 0;
 
   private constructor(
     private readonly host: CareerHost,
@@ -593,6 +594,12 @@ export class CareerGame {
         () => {
           if ((this.drive?.speedKmh ?? 99) > 2) return toastIn(this.host.overlay, 'Ремонт — лише на місці: зупиніться.', 2000);
           if (!roadRepairStep(this.c, this.spec)) return;
+          // Звук ремонту — не частіше ніж раз на ~0,8 с (кнопку утримують).
+          const now = performance.now();
+          if (now - this.repairSoundAt > 800) {
+            this.repairSoundAt = now;
+            this.drive?.sound('repair', 0.8);
+          }
           this.renderPlayer();
           if (!this.needsRoadRepair()) {
             this.save();
