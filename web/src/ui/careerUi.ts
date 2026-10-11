@@ -278,6 +278,7 @@ export class CareerGame {
       this.drive.applyDents(this.c.dents);
       this.playerCollapsed = true;
       this.drive.onDeath = () => void this.fatal();
+      this.drive.autoWreck = false;
       this.drive.onResetRequest = () => void this.askRecover();
       this.wornHits = this.wornDist = 0;
       this.damageKey = '';
@@ -341,6 +342,13 @@ export class CareerGame {
     this.wornHits = d.hits;
     this.wornDist = d.distance;
     this.c.dents = { ...d.dents };
+    // Техстан 0 — машина вибухає; далі — лише на базу (ремонт) чи в меню.
+    if (this.c.condition.tech <= 0 && !d.exploded) {
+      d.explode();
+      window.setTimeout(() => void this.fatal('Машина вибухнула. Її відтягнуть на базу — там можна відремонтуватися.', false), 2500);
+      return;
+    }
+    if (d.exploded) return;
     const fx = damageEffects(this.c);
     const key = `${fx.power}/${fx.lostGears}/${fx.brakes}`;
     if (key !== this.damageKey) {
@@ -358,6 +366,7 @@ export class CareerGame {
   /** Перевернулися — «Відновитися» (платно; довідка: «как и в реальной жизни, эта операция достаточно дорогая»). */
   private async askRecover(): Promise<void> {
     if (this.busy || !this.drive || this.level === 'MENU3D') return;
+    if (this.drive.exploded) return;
     const cost = recoverCost(this.spec);
     if (this.c.money < cost) return this.fatal(`На відновлення (${money(cost)}) бракує грошей.`);
     const i = await modal(this.host.overlay, 'Відновитися', `Поставити машину на дорогу за ${money(cost)}?`, ['Відновитися', 'Скасувати']);
@@ -369,13 +378,15 @@ export class CareerGame {
   }
 
   /** Фатальна ситуація (утонули, впали в прірву) чи нема грошей на відновлення — вибір, як в оригіналі. */
-  private async fatal(reason = 'Машину вже не врятувати.'): Promise<void> {
+  private async fatal(reason = 'Машину вже не врятувати.', canRestart = true): Promise<void> {
     if (this.busy || !this.drive || this.level === 'MENU3D') return;
     this.busy = true;
     const track = this.level;
     let i: number;
     try {
-      i = await modal(this.host.overlay, 'Аварія', reason, ['Почати заїзд заново', 'На базу', 'Головне меню']);
+      const opts = ['Почати заїзд заново', 'На базу', 'Головне меню'];
+      i = await modal(this.host.overlay, 'Аварія', reason, canRestart ? opts : opts.slice(1));
+      if (!canRestart) i++;
     } finally {
       this.busy = false;
     }

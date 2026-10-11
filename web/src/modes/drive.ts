@@ -6,6 +6,7 @@ import { Input } from '../input/input';
 import { TruckVehicle, type TruckSetup } from '../game/truckVehicle';
 import { GlassRain } from '../render/glassRain';
 import { Movables } from '../game/movables';
+import { Effects } from '../render/effects';
 import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import type { BuiltScene } from '../render/sceneBuilder';
@@ -26,6 +27,8 @@ if (import.meta.env.DEV) Object.assign(window, { RAPIER });
 /** Шар Three.js для деталей кабіни, що малюються поверх решти кабіни (кермо). */
 const CAB_TOP_LAYER = 1;
 
+/** Тестовий режим: сила ударів, після якої машина вибухає (у кар'єрі техстан 0 — це 250 при зносі 0,004 за одиницю). */
+const WRECK_HITS = 250;
 /** Швидкість «стікання» текстури струменів дощу, повторів текстури за секунду (гіпотеза). */
 const RAIN_SPEED = 2.5;
 /** Зони вмʼятин за годинниковою стрілкою від переду — суфікси перемикачів `Damage<зона>Key` у моделях. */
@@ -164,6 +167,25 @@ export class DriveSession {
     const q = this.truck.body.rotation();
     return new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w)).y < 0.5;
   }
+  /** Вибухи й вогонь. */
+  private effects: Effects | null = null;
+  /** Машина вибухнула (до відновлення). */
+  exploded = false;
+  /**
+   * Тестовий режим: вибух, коли сила ударів сягне WRECK_HITS (як техстан 0 у кар'єрі), і за 4 с — знову на дорогу.
+   * Кар'єра вимикає й вирішує сама (за станом «машина»).
+   */
+  autoWreck = true;
+  /** Вибух машини гравця: кадри explosion, вогонь на уламках, звук explos; кузов — найбільші вмʼятини. */
+  explode(): void {
+    if (this.exploded) return;
+    this.exploded = true;
+    const t = this.truck.body.translation();
+    this.effects?.explode(new THREE.Vector3(t.x, t.y, t.z), this.truck.visual);
+    this.audio?.play('explos', 1);
+    this.applyDents(Object.fromEntries(DENT_ZONES.map((z) => [z, 999])));
+    this.truck.setDamage({ power: 0, lostGears: 0, brakes: 1 });
+  }
   /** Рухомі предмети траси (ящики, блоки — AnmObj). */
   private movables: Movables | null = null;
   /** Навігаційна система (НС): мінікарта з суперниками. */
@@ -290,6 +312,7 @@ export class DriveSession {
     }
     s.world.step(); // колайдери потрапляють у структури запитів (castRay) лише після кроку
     s.movables = new Movables(s.world, built.assembler.b3d, built.rooms);
+    s.effects = new Effects(built.assembler, scene);
 
     const model = buildTruckModel(built.assembler, def, true);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня в цій локації`);
@@ -627,6 +650,17 @@ export class DriveSession {
     this.odometer += (this.truck.speedKmh / 3.6) * dt;
     this.updateCab(state);
     this.updateLights(state);
+    this.effects?.update(dt);
+    if (this.autoWreck && !this.exploded && this.hits >= WRECK_HITS) {
+      this.explode();
+      window.setTimeout(() => {
+        this.hits = 0;
+        this.exploded = false;
+        this.applyDents({});
+        this.truck.setDamage({ power: 1, lostGears: 0, brakes: 1 });
+        this.recover();
+      }, 4000);
+    }
     if (this.navMap) {
       const p = (t: TruckVehicle) => {
         const v = t.body.translation();
@@ -871,6 +905,7 @@ ${raceLine}`;
     this.touchUi?.remove();
     this.hud?.remove();
     this.navMap?.dispose();
+    this.effects?.dispose();
     this.audio?.dispose();
     void this.wakeLock?.release().catch(() => {});
     this.world.free();
