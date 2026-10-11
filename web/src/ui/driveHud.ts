@@ -4,7 +4,7 @@
  * R червона, N біла, передачі зелені), міцність машини й цілість вантажу у відсотках; нижче — баланс і рядок гонки.
  */
 import type * as THREE from 'three';
-import { HUD_CYAN, PixelFont, box, drawBitmap, hudScale, pixelCanvas } from './pixelFont';
+import { HUD_CYAN, PixelFont, box, hudScale, pixelCanvas } from './pixelFont';
 
 export interface HudData {
   speedKmh: number;
@@ -107,7 +107,10 @@ export function odometerDigits(cab: THREE.Object3D): HTMLCanvasElement[] | null 
 }
 
 function icon(ctx: CanvasRenderingContext2D, rows: string[], x: number, y: number, color: string): number {
-  drawBitmap(ctx, rows.join('/'), rows[0].length, rows.length, (i, j) => rows[j][i] === 'X', x, y, color);
+  ctx.fillStyle = color;
+  rows.forEach((r, j) => {
+    for (let i = 0; i < r.length; i++) if (r[i] === 'X') ctx.fillRect(x + i, y + j, 1, 1);
+  });
   return x + rows[0].length;
 }
 
