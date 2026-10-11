@@ -194,8 +194,12 @@ export function mainMenu(
     maskButton(scr, art, 'm/help', 0, y(6), later(opts.onHelp));
     maskButton(scr, art, 'm/reels', 0, y(7), () => {}, { disabled: true });
     maskButton(scr, art, 'm/exit', 0, y(8), () => done('viewer'), { disabled: !opts.viewer });
-    const who = scr.place(document.createElement('div'), 390, 450, 240);
+    // Водій — по центру під стовпчиком кнопок (раніше — у вузькому проміжку перед правою панеллю фону, наїжджав на неї).
+    const who = scr.place(document.createElement('div'), 0, 460, 376);
     who.className += ' menu-note';
+    who.style.whiteSpace = 'nowrap';
+    who.style.textAlign = 'center';
+    who.style.textShadow = '0 0 2px #000, 0 0 4px #000';
     who.textContent = `За кермом: ${opts.driver}`;
     // Присвята (на прохання користувача) — одним рядком над написом «Дальнобойщики», від його лівого краю.
     const engine = scr.place(document.createElement('div'), 14, 12, 472);
