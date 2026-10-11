@@ -117,7 +117,7 @@ export class WetReflections {
   /**
    * root — модель у системі гри (z угору); groundZ — висота дороги під машиною в цій системі (запасний варіант);
    * groundAt — висота дороги у світі під точкою (x, z), шукаючи вниз від y (Three.js); glossAt — чи блищить
-   * поверхня там (1 — асфальт, бетон, тротуар; 0 — трава, ґрунт, гравій).
+   * поверхня там (0…1: асфальт, бетон, тротуар — за текстурою; 0 — трава, ґрунт, гравій).
    */
   constructor(
     private readonly root: THREE.Object3D,
@@ -247,7 +247,7 @@ export class WetReflections {
       const g0 = shine(start + length * 0.1, 0);
       const gm = shine(start + length / 2, riseMid);
       const gf = shine(start + length * 0.9, riseFar);
-      if (g0 + gm + gf === 0) {
+      if (g0 + gm + gf < 0.01) {
         l.out.visible = false;
         continue;
       }

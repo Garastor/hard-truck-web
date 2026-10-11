@@ -59,6 +59,44 @@ function classifySurface(name: string, texel: [number, number, number] | null): 
   return 'asphalt';
 }
 
+/**
+ * Блискучість мокрої поверхні за її текстурою (на око): темний рівний асфальт — найбільше, світлий бетон і
+ * плитка — менше, різке зерно (шорстка поверхня) — менше; однотонні (розмітка) — за кольором. Раз на матеріал.
+ */
+const glossCache = new WeakMap<THREE.Material, number>();
+function surfaceGloss(mat: THREE.MeshBasicMaterial | undefined): number {
+  if (!mat) return 0;
+  const known = glossCache.get(mat);
+  if (known !== undefined) return known;
+  let mean = mat.color ? (mat.color.r + mat.color.g + mat.color.b) / 3 : 0.5;
+  let spread = 0;
+  const img = mat.map?.image as { data?: Uint8Array | Uint8ClampedArray; width: number; height: number } | undefined;
+  if (img?.data && img.width && img.height) {
+    // Сітка 24×24 текселів: середня яскравість і розкид.
+    let sum = 0;
+    let sq = 0;
+    let n = 0;
+    for (let y = 0; y < 24; y++) {
+      for (let x = 0; x < 24; x++) {
+        const i = (Math.floor(((y + 0.5) / 24) * img.height) * img.width + Math.floor(((x + 0.5) / 24) * img.width)) * 4;
+        const l = (img.data[i] + img.data[i + 1] + img.data[i + 2]) / (3 * 255);
+        sum += l;
+        sq += l * l;
+        n++;
+      }
+    }
+    mean = sum / n;
+    spread = Math.sqrt(Math.max(0, sq / n - mean * mean));
+  }
+  // Шкала під покриття трас: асфальт — яскравість 0,17…0,31, тротуари й бордюри — 0,20…0,34; розкид 0,02…0,14
+  // (частина — намальована розмітка, тож вага зерна мала).
+  const dark = Math.min(1, Math.max(0.3, 1 - (mean - 0.15) * 2.2));
+  const smooth = Math.min(1, Math.max(0.55, 1 - (spread - 0.04) * 2.5));
+  const g = dark * smooth;
+  glossCache.set(mat, g);
+  return g;
+}
+
 /** Колір текстури в точці UV (текстури оригіналу — RGBA у памʼяті, рядок 0 — v = 0). */
 function texelAt(map: THREE.Texture | null | undefined, uv: THREE.Vector2 | undefined): [number, number, number] | null {
   const img = map?.image as { data?: Uint8Array | Uint8ClampedArray; width: number; height: number } | undefined;
@@ -1028,8 +1066,8 @@ ${raceLine}`;
 
   /** Висота підлоги (Three.js y) під точкою — за полігонами колізій усіх кімнат. */
   /**
-   * Чи блищить поверхня під точкою (асфальт, бетон, тротуар — клас «асфальт» класифікатора покриття; трава,
-   * ґрунт, гравій, вода — ні): 1 або 0. Світ нерухомий — кеш за клітинками 2 м.
+   * Наскільки блищить мокра поверхня під точкою, 0…1: трава, ґрунт, гравій, вода — 0; асфальт, бетон, тротуар —
+   * за текстурою (surfaceGloss). Світ нерухомий — кеш за клітинками 2 м.
    */
   glossAt(x: number, y: number, z: number): number {
     const key = `${Math.round(x / 2)},${Math.round(y / 2)},${Math.round(z / 2)}`;
@@ -1044,7 +1082,7 @@ ${raceLine}`;
     if (hit) {
       const mesh = hit.object as THREE.Mesh;
       const mat = (Array.isArray(mesh.material) ? mesh.material[hit.face?.materialIndex ?? 0] : mesh.material) as THREE.MeshBasicMaterial;
-      v = classifySurface(mat?.name ?? '', texelAt(mat?.map, hit.uv)) === 'asphalt' ? 1 : 0;
+      v = classifySurface(mat?.name ?? '', texelAt(mat?.map, hit.uv)) === 'asphalt' ? surfaceGloss(mat) : 0;
     }
     if (this.glossCache.size > 50000) this.glossCache.clear();
     this.glossCache.set(key, v);
