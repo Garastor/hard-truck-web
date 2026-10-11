@@ -79,19 +79,22 @@ function wrapText(f: PixelFont, t: string, w: number): string[] {
   return out;
 }
 
+/** Збільшення піксельного шрифту на кнопках (табло й вікон) відносно решти тексту. */
+const BUTTON_ZOOM = 1.35;
+
 /**
  * Текст піксельним шрифтом табло (бірюзовий) з переносом за шириною в CSS-пікселях; без шрифту — звичайний
  * текст. line — крок рядків у пікселях шрифту.
  */
-function pixelText(t: string, cssWidth: number, color = HUD_CYAN, line = 12): HTMLElement {
+function pixelText(t: string, cssWidth: number, color = HUD_CYAN, line = 12, zoom = 1): HTMLElement {
   const f = uiFont;
   if (!f) return el('p', 'career-text', t);
-  const s = hudScale();
+  const s = hudScale() * zoom;
   // У MENU.FON немає «ялинок» і кривих лапок — прямі.
   const text = t.replace(/[«»„“”]/g, '"');
   const lines = wrapText(f, text, Math.max(40, Math.floor(cssWidth / s)));
   const w = Math.max(1, ...lines.map((l) => f.measure(l)));
-  const { canvas, ctx } = pixelCanvas(w, lines.length * line - (line - f.height));
+  const { canvas, ctx } = pixelCanvas(w, lines.length * line - (line - f.height), s);
   lines.forEach((l, i) => f.draw(ctx, l, 0, i * line, color));
   canvas.setAttribute('aria-label', t);
   canvas.classList.add('career-pixel-text');
@@ -132,7 +135,8 @@ export function modal(overlay: HTMLElement, title: string, body: string | HTMLEl
     buttons.forEach((b, i) => {
       const btn = el('button', i === 0 ? 'hud-btn primary' : 'hud-btn');
       btn.setAttribute('aria-label', b);
-      if (uiFont) btn.append(pixelText(b, 400));
+      // Напис кнопки — крупніший за текст вікна (на прохання користувача).
+      if (uiFont) btn.append(pixelText(b, 400, HUD_CYAN, 12, BUTTON_ZOOM));
       else btn.textContent = b;
       btn.addEventListener('click', () => close(i));
       row.append(btn);
@@ -625,14 +629,17 @@ export class CareerGame {
     // Розмітка виміряна зі скріншота оригіналу: одна рамка на все табло, усередині дві втиснуті панелі
     // (смуги й «За кермом»), підписи смуг — праворуч від панелі; «гроші» лежать на верхній лінії рамки.
     const W = 262;
-    const cargoLine = c.cargo.length ? this.wrap(c.cargo.map((i) => i.good.name).join(', '), W)[0] : '';
-    const o = (cargoLine ? 11 : 0) + 5;
-    const H = o + 114;
+    // «гроші» лежать на верхній лінії рамки (o); перелік вантажу — окрема втиснута секція між смугами й «За кермом»
+    // (раніше рядок над рамкою налазив на кнопку ☰).
+    const boxW0 = 200;
+    const cargoLines = c.cargo.length ? this.wrap(c.cargo.map((i) => i.good.name).join(', '), boxW0 - 10).slice(0, 2) : [];
+    const cargoH = cargoLines.length ? cargoLines.length * 10 + 6 : 0;
+    const o = 5;
+    const H = o + 114 + (cargoH ? cargoH + 4 : 0);
     const { canvas, ctx } = pixelCanvas(W, H);
     // Рамка — на o нижче верху полотна (над нею підпис вантажу й «гроші»): на телефоні табло вирівнюється за рамкою.
     this.player.style.setProperty('--frame-top', `${o * hudScale()}px`);
     frame(ctx, 0, o, W, H - o);
-    if (cargoLine) this.text(ctx, cargoLine, 2, 0, CYAN);
     const boxX = 10;
     const boxW = 200;
     inset(ctx, boxX, o + 2, boxW, 74);
@@ -661,15 +668,21 @@ export class CareerGame {
       }
       this.text(ctx, label, boxX + boxW + 4, y - 2, CYAN);
     });
-    inset(ctx, boxX, o + 80, boxW, 30);
-    this.text(ctx, `За кермом ${c.name}${c.parts.length ? '  ' + c.parts.join(' ') : ''}`, boxX + 6, o + 91, CYAN);
+    let y = o + 80;
+    if (cargoH) {
+      inset(ctx, boxX, y, boxW, cargoH);
+      cargoLines.forEach((l, i) => this.text(ctx, l, boxX + 5, y + 4 + i * 10, CYAN));
+      y += cargoH + 4;
+    }
+    inset(ctx, boxX, y, boxW, 30);
+    this.text(ctx, `За кермом ${c.name}${c.parts.length ? '  ' + c.parts.join(' ') : ''}`, boxX + 6, y + 11, CYAN);
     this.player.replaceChildren(canvas);
   }
 
   private button(label: string, onClick: () => void, repeat = false): HTMLButtonElement {
     const b = el('button', 'hud-btn');
     b.setAttribute('aria-label', label);
-    const { canvas, ctx } = pixelCanvas(this.measure(label), this.host.font?.height ?? 8);
+    const { canvas, ctx } = pixelCanvas(this.measure(label), this.host.font?.height ?? 8, hudScale() * BUTTON_ZOOM);
     this.text(ctx, label, 0, 0, HUD_CYAN);
     b.append(canvas);
     if (!repeat) b.addEventListener('click', onClick);
