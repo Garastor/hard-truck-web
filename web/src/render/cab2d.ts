@@ -35,7 +35,8 @@ const TILE = 460;
  * Кермо: кадр 19 ± g(|a|), a = round(−кермо·90) — кадри густіші біля центру (таблиця порогів 0x547ab1).
  */
 function wheelFrame(steer: number): number {
-  const a = Math.round(-steer * 90);
+  // Знак — під кермо порту (−1 — ліворуч): кадри з меншим номером — кермо повернуте праворуч.
+  const a = Math.round(steer * 90);
   const m = Math.abs(a);
   let g: number;
   if (m <= 5) g = m;
@@ -98,17 +99,18 @@ export class Cab2d {
     const v = st.local;
     let tx = 0;
     let ty = 0;
-    if (Math.abs(v.z) > 0.01) {
-      tx = Math.round((-v.x / v.z) * 100);
+    // На малій швидкості відношення шумне — розгойдування лише в русі.
+    if (Math.abs(v.z) > 2) {
+      tx = (-v.x / v.z) * 100;
       ty = (v.y / v.z) * 70;
     }
     tx = THREE.MathUtils.clamp(tx, -SWAY, SWAY);
     ty = THREE.MathUtils.clamp(ty, -SWAY, SWAY);
-    if (Math.abs(ty) > Math.abs(this.sy)) ty = (this.sy + ty) / 2;
-    // Крок — до ≈ 60 px/с (в оригіналі round(dt·20) за кадр; одиниці dt не розібрано — гіпотеза).
-    const step = Math.max(1, dt * 60);
-    this.sx += THREE.MathUtils.clamp(tx - this.sx, -step, step);
-    this.sy += THREE.MathUtils.clamp(ty - this.sy, -step, step);
+    // Плавно, без цілих пікселів (в оригіналі — крок до round(dt·20) px за кадр; на збільшеному екрані телефона
+    // цілі кроки маски помітно смикались).
+    const k = 1 - Math.exp(-dt * 4);
+    this.sx += (tx - this.sx) * k;
+    this.sy += (ty - this.sy) * k;
     this.state = st;
   }
   private state: Cab2dState | null = null;
@@ -169,8 +171,8 @@ export class Cab2d {
     const size = renderer.getSize(new THREE.Vector2());
     this.layout(size.x, size.y);
     this.used = 0;
-    const X = Math.round(this.sx) - 80;
-    const Y = Math.round(this.sy) - 30;
+    const X = this.sx - 80;
+    const Y = this.sy - 30;
     this.quad('panel', X, Y);
     // Прилади (0x48f770): P = (X + 172, Y + 356).
     const px = X + 172;

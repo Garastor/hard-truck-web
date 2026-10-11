@@ -133,6 +133,8 @@ const MIRROR_ASPECT = 3.2;
 const MIRROR_FOV = 22;
 const NEXT_CAM: Record<CamMode, CamMode> = { cockpit: 'first', first: 'chase', chase: 'far', far: 'cockpit' };
 /** Вертикальне поле зору виду від першої особи: піраміда 1.6×1.2 (HTruck.exe 0x4851ac) → 2·atan(0,6). */
+/** Збільшення приладів Panel на сенсорному екрані. */
+const PANEL_TOUCH_SCALE = 1.8;
 const PANEL_FOV = THREE.MathUtils.radToDeg(2 * Math.atan(0.6));
 
 /** Туман: колір, початок і кінець, м (гіпотеза). */
@@ -863,7 +865,10 @@ export class DriveSession {
     this.cab.add(inner);
     this.overlayScene.add(this.cab);
     if (panel) {
-      // Площина панелі — на відстані y від ока; нижній край — на нижньому краю кадру.
+      // Площина панелі — на відстані y від ока; нижній край — на нижньому краю кадру. На телефоні прилади
+      // збільшені (на прохання користувача: інакше дрібні) — масштаб у площині панелі, глибина та сама.
+      const k = matchMedia('(pointer: coarse)').matches ? PANEL_TOUCH_SCALE : 1;
+      inner.scale.set(k, 1, k);
       inner.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(inner);
       const depth = -box.min.z;
