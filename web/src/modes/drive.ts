@@ -1119,8 +1119,9 @@ export class DriveSession {
     // пристрої, імпортованому до цього, їх немає — тоді двірники ходять, але крапель не буде (повторний імпорт додасть).
     const drops = await this.cab2dLoader!(['drop7.msk', 'drop10.msk'], true).catch(() => null);
     const blade = (await this.wiperTextureLoader?.().catch(() => null)) ?? null;
+    const streaks = await this.cab2dLoader!(['rain.msk']).catch(() => null);
     if (token !== this.cab2dToken || !this.cab2d) return;
-    const rain = new Cab2dRain(drops?.get('drop7.msk') ?? null, drops?.get('drop10.msk') ?? null, blade);
+    const rain = new Cab2dRain(drops?.get('drop7.msk') ?? null, drops?.get('drop10.msk') ?? null, blade, streaks?.get('rain.msk') ?? null);
     rain.onStroke = () => this.audio?.play('wipers', 0.9);
     rain.raining = this.raining;
     rain.wipersOn = this.wipersManual ?? this.raining;

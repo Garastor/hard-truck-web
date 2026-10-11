@@ -46,6 +46,10 @@ const HUB = 10;
 const BLADE_WIDTH = 0.08 / 0.85;
 /** Без текстури (імпорт до її появи) — темна смужка. */
 const BLADE_COLOR = 0x141414;
+/** Смуги дощу надворі (rain.msk): прозорість і швидкість — як RainStreaks (оригінал, 0x4638c4); запас по боках кадру. */
+const STREAK_OPACITY = 0.1;
+const STREAK_SPEED = 400;
+const STREAK_MARGIN = 200;
 /** Нахил поверхні води — різниця рівнів через стільки пікселів буфера. */
 const SLOPE_SPAN = 3;
 /** Найбільший крок часу оновлення, с: після паузи (прихована вкладка) двірник проскочив би межу помаху. */
@@ -86,12 +90,16 @@ export class Cab2dRain {
   private moving = false;
   private dropAcc = 0;
   private runAcc = 0;
+  /** Смуги дощу надворі (rain.msk) у вікні. */
+  private streakMesh: THREE.Mesh | null = null;
+  private streakTex: THREE.DataTexture | null = null;
+  private streakSize: [number, number] = [1, 1];
 
   /**
    * drop, runner — маски drop7 і drop10, розкодовані без палітри (рівень — у червоному каналі); blade — текстура
    * flash.txr (лопать — її смуга u 0,875…0,996).
    */
-  constructor(drop: RgbaImage | null, runner: RgbaImage | null, blade: RgbaImage | null = null) {
+  constructor(drop: RgbaImage | null, runner: RgbaImage | null, blade: RgbaImage | null = null, streaks: RgbaImage | null = null) {
     const { w, h } = RAIN_VIEW;
     const S = BUF_SCALE;
     this.drop = drop && toLevels(drop);
@@ -120,6 +128,35 @@ export class Cab2dRain {
       m.frustumCulled = false;
       this.blades.push(m);
       this.root.add(m);
+    }
+    // Дощ надворі, видимий крізь вікно, — смуги rain.msk, як для зовнішніх камер (RainStreaks): в оригіналі з
+    // кабіни їх немає (лише вода на склі); у порті — на прохання користувача. Під лопатями й водою на склі.
+    if (streaks) {
+      const t = new THREE.DataTexture(new Uint8Array(streaks.data), streaks.width, streaks.height, THREE.RGBAFormat);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.magFilter = t.minFilter = THREE.LinearFilter;
+      t.flipY = false;
+      t.needsUpdate = true;
+      this.streakTex = t;
+      this.streakSize = [streaks.width, streaks.height];
+      // Смуга на всю ширину кадру з запасом (вікна ширшого екрана), висотою — до низу вікна; панель закриває решту.
+      const sx0 = -STREAK_MARGIN;
+      const sw = RAIN_VIEW.w + 2 * STREAK_MARGIN;
+      const sh = RAIN_VIEW.y + RAIN_VIEW.h;
+      const g = new THREE.PlaneGeometry(sw, sh).translate(sx0 + sw / 2, sh / 2, 0);
+      // UV у пікселях малюнка: u = x / ширина, v = y / висота (камера 2D-кабіни — y униз).
+      const uv = g.attributes.uv;
+      const pos = g.attributes.position;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, pos.getX(i) / streaks.width, pos.getY(i) / streaks.height);
+      this.streakMesh = new THREE.Mesh(
+        g,
+        new THREE.MeshBasicMaterial({ map: t, transparent: true, opacity: STREAK_OPACITY, depthTest: false, depthWrite: false, side: THREE.DoubleSide }),
+      );
+      this.streakMesh.renderOrder = -30;
+      this.streakMesh.frustumCulled = false;
+      this.streakMesh.visible = false;
+      this.root.add(this.streakMesh);
     }
     // Вода — поверх лопатей (в оригіналі буфер накладається на вид після світу). Камера 2D-кабіни — y униз: v = 0
     // PlaneGeometry — верх смуги на екрані, як рядок 0 буфера.
@@ -165,6 +202,11 @@ export class Cab2dRain {
   update(dt: number, _speedKmh = 0): void {
     dt = Math.min(dt, MAX_DT);
     this.updateWipers(dt);
+    if (this.streakMesh && this.streakTex) {
+      this.streakMesh.visible = this.raining;
+      // Падають униз 400 px кадру/с (як RainStreaks): зсув v на -швидкість/висоту.
+      if (this.raining) this.streakTex.offset.y = (this.streakTex.offset.y - (STREAK_SPEED * dt) / this.streakSize[1]) % 1;
+    }
     if (this.raining) {
       this.water.wet();
       this.spawn(dt);
@@ -296,6 +338,7 @@ export class Cab2dRain {
   dispose(): void {
     this.water.dispose();
     this.copy.dispose();
+    this.streakTex?.dispose();
     (this.blades[0].material as THREE.MeshBasicMaterial).map?.dispose();
     for (const o of this.root.children) {
       const m = o as THREE.Mesh;
