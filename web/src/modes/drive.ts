@@ -82,8 +82,6 @@ const CRASH_SOUNDS = ['crash2', 'crash4a', 'crash9'];
 const WRECK_HITS = 250;
 /** Туман під дощем: початок і повна непрозорість, м (гіпотеза). */
 const RAIN_FOG: [number, number] = [40, 420];
-/** Швидкість «стікання» текстури струменів дощу, повторів текстури за секунду (гіпотеза). */
-const RAIN_SPEED = 2.5;
 /** Зони вмʼятин за годинниковою стрілкою від переду — суфікси перемикачів `Damage<зона>Key` у моделях. */
 const DENT_ZONES = ['FC', 'FR', 'R', 'BR', 'BC', 'BL', 'L', 'FL'];
 /** Удари слабші за це (м/с за крок) вмʼятин не лишають; пороги рівнів — за накопиченою силою (гіпотеза). */
@@ -161,7 +159,7 @@ export class DriveSession {
     return this.room ? (this.track.rooms.get(this.room) ?? null) : null;
   }
   /** Дощ: струмені навколо камери (Foreground_object → RainNode/RainKey) і краплі на склі кабіни (GlassKey). */
-  private rain: { root: THREE.Group; setSwitch: (n: string, s: number) => void; tex: THREE.Texture[] } | null = null;
+  private rain: { root: THREE.Group; setSwitch: (n: string, s: number) => void; tex: { map: THREE.Texture; move: number[] }[] } | null = null;
   raining = false;
   setRain(on: boolean): void {
     this.raining = on;
@@ -171,7 +169,7 @@ export class DriveSession {
         const wrap = new THREE.Group();
         dyn.root.rotation.x = -Math.PI / 2;
         wrap.add(dyn.root);
-        const tex: THREE.Texture[] = [];
+        const tex: { map: THREE.Texture; move: number[] }[] = [];
         wrap.traverse((o) => {
           const mesh = o as THREE.Mesh;
           if (!mesh.isMesh) return;
@@ -180,7 +178,9 @@ export class DriveSession {
           // Там же відблиски сонця в обʼєктиві (lens0…7) — їх оригінал ставить за сонцем; поки не малюємо.
           if (mat.map?.name.startsWith('txr/lens')) mesh.visible = false;
           else if (mat.map) {
-            // Струмені: текстура «тече» вниз (своя копія з повтором).
+            // Струмені (матеріал rainout: `move 0 -1 noz`): текстура тече вниз — зсув UV за секунду з `move`;
+            // `noz` — без перевірки глибини: циліндр навколо камери не обрізається землею (інакше видно коло).
+            const def = mat.userData.def as { params: Record<string, number[]>; flags: Set<string> } | null;
             const m = mat.clone();
             m.map = mat.map.clone();
             m.map.wrapS = m.map.wrapT = THREE.RepeatWrapping;
@@ -189,8 +189,10 @@ export class DriveSession {
             m.alphaTest = 0;
             m.transparent = true;
             m.depthWrite = false;
+            if (def?.flags.has('noz')) m.depthTest = false;
             mesh.material = m;
-            tex.push(m.map);
+            mesh.renderOrder = 10;
+            tex.push({ map: m.map, move: def?.params.move ?? [0, -1] });
           }
         });
         this.scene.add(wrap);
@@ -903,7 +905,10 @@ export class DriveSession {
     if (this.cab?.visible) this.glassRain?.update(dt, this.truck.speedKmh);
     if (this.rain?.root.visible) {
       this.rain.root.position.copy(this.camera.position);
-      for (const t of this.rain.tex) t.offset.y = (t.offset.y + dt * RAIN_SPEED) % 1;
+      for (const t of this.rain.tex) {
+        t.map.offset.x = (t.map.offset.x + dt * t.move[0]) % 1;
+        t.map.offset.y = (t.map.offset.y + dt * t.move[1]) % 1;
+      }
     }
     const t = this.truck;
     if (this.audio) {

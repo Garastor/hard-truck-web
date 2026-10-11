@@ -96,6 +96,8 @@ export class MaterialLibrary {
     }
     mat = new THREE.MeshBasicMaterial(params);
     mat.name = name;
+    // Опис матеріалу з архіву — для ефектів, що читають параметри (move, noz).
+    mat.userData.def = def;
     this.cache.set(index, mat);
     return mat;
   }
@@ -468,6 +470,10 @@ export class SceneAssembler {
       const start = block.groups[d.i1] ?? [];
       const sky = block.name === 'SkyDomeKey';
       groups = [sky && !start.length ? (block.groups.find((g) => g.length) ?? []) : start];
+    } else if (d.t === 9 && d.shape.kind === 5 && block.groups.length >= 2 && this.buildingRooms) {
+      // У геометрії трас тип 9 — дерево поділу простору: обидві половини видимі (як було до перемикачів у
+      // моделях); вибір за боком камери ховав частини траси — мерехтіння й «невидимі» стіни з колізією.
+      groups = block.groups.slice(0, 2);
     } else if (d.t === 9 && d.shape.kind === 5 && block.groups.length >= 2) {
       // Вибір за боком площини: група 0 — камера там, де n·p + d ≥ 0, група 1 — з іншого боку (варіанти
       // геометрії, що збігаються в просторі; обидві разом — подвійні трикутники й мерехтіння).
@@ -484,7 +490,7 @@ export class SceneAssembler {
       return;
     } else if (d.t === 9) {
       groups = [block.groups[0] ?? []];
-    } else if (d.t === 10 && d.shape.kind === 1 && block.groups.length >= 2) {
+    } else if (d.t === 10 && d.shape.kind === 1 && block.groups.length >= 2 && !this.buildingRooms) {
       // Перемикач за відстанню: група 0 — камера далі за r від центру сфери, група 1 — ближче (LOD машин і
       // обʼєктів трас; з протилежним вибором зникали дорога й машини).
       const sw = new DistanceSwitch(d.shape.v as [number, number, number, number]);
