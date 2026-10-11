@@ -102,8 +102,15 @@ export class LampReflections {
     });
   }
 
+  /** false — оригінальні білборди сховані (режим власних відблисків, WetReflections). */
+  enabled = true;
+
   update(camera: THREE.Camera): void {
     if (!this.items.length) return;
+    if (!this.enabled) {
+      for (const it of this.items) it.sprite.visible = false;
+      return;
+    }
     this.root.updateWorldMatrix(true, false);
     // Камера в системі моделі.
     const c = this.root.worldToLocal(camera.getWorldPosition(this.tmp));

@@ -9,6 +9,7 @@ import { parseMsk } from '../formats/msk';
 import { Movables } from '../game/movables';
 import { Effects } from '../render/effects';
 import { LampReflections, TruckLights } from '../render/truckLights';
+import { WetReflections, reflectionMode, setReflectionMode, type ReflectionMode } from '../render/wetReflections';
 import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import type { BuiltScene } from '../render/sceneBuilder';
@@ -416,6 +417,16 @@ export class DriveSession {
   private lights: TruckLights | null = null;
   /** Відблиски ліхтарів на дорозі (позиція залежить від камери — оновлюємо перед кадром). */
   private readonly reflections: LampReflections[] = [];
+  /** Власні відблиски у формі ліхтарів (див. WetReflections); режим — перемикач «власні / оригінальні». */
+  private readonly wetReflections: WetReflections[] = [];
+  private reflMode: ReflectionMode = reflectionMode();
+  get reflectionMode(): ReflectionMode {
+    return this.reflMode;
+  }
+  set reflectionMode(mode: ReflectionMode) {
+    this.reflMode = mode;
+    setReflectionMode(mode);
+  }
   private updateLights(state: { throttle: number; brake: number }): void {
     const wet = this.raining && (this.glassRain?.raining ?? true);
     const reverse = this.truck.gear < 0;
@@ -535,6 +546,7 @@ export class DriveSession {
     s.truck = new TruckVehicle(s.world, def, model, s.spawn, setup);
     s.lights = new TruckLights(model.setSwitch, s.truck.visual, s.truck.lightGeometry);
     s.reflections.push(new LampReflections(model.root, () => s.truck.groundHeight()));
+    s.wetReflections.push(new WetReflections(model.root, () => s.truck.groundHeight()));
     scene.add(s.truck.visual);
     s.spawnOpponents(rivals);
     s.roomVis = new RoomVisibility(s.track, built.rooms);
@@ -768,6 +780,7 @@ export class DriveSession {
       pilot.cruise = 58 + ((i * 7) % 18);
       const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
       this.reflections.push(new LampReflections(model.root, () => truck.groundHeight()));
+      this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight()));
       this.opponents.push({ truck, pilot, odo: new Odometer(), lights });
     });
   }
@@ -878,7 +891,13 @@ export class DriveSession {
     this.odometer += (this.truck.speedKmh / 3.6) * dt;
     this.updateCab(state);
     this.updateLights(state);
-    for (const r of this.reflections) r.update(this.camera);
+    const own = this.reflMode === 'own';
+    for (const r of this.reflections) {
+      r.enabled = !own;
+      r.update(this.camera);
+    }
+    const wet = this.raining && (this.glassRain?.raining ?? true);
+    for (const r of this.wetReflections) r.update(this.camera, this.night || wet, wet, own);
     this.updateSurface(dt);
     this.checkDeath(dt);
     this.effects?.update(dt);
@@ -1138,6 +1157,7 @@ ${raceLine}`;
     this.effects?.dispose();
     // Циліндр дощу — у спільній сцені: без цього лишався стояти там, де була камера попереднього заїзду.
     if (this.rain) this.scene.remove(this.rain.root);
+    for (const r of this.wetReflections) r.dispose();
     if (this.dryFog !== undefined) this.scene.fog = this.dryFog;
     for (const s of this.oppSounds ?? []) s?.stop();
     this.wiperSound?.stop();
