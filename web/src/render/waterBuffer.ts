@@ -21,9 +21,13 @@ export function toLevels(img: RgbaImage, channel = 0): Levels {
   return { w: img.width, h: img.height, a };
 }
 
-/** Висихання: рівні убувають FADE_STEPS кроками за FADE_TIME с (тривалість — гіпотеза). */
-const FADE_STEPS = 15;
-const FADE_TIME = 0.5;
+/**
+ * Висихання без дощу (у тунелі): рівні убувають FADE_STEPS кроками за FADE_TIME с. Тривалість і кроки — на око
+ * (на прохання користувача: за 0,5 с, як було, вода в тунелі зникала одразу); кроки дрібні, щоб убування було
+ * плавним, і рідкі (≈ 4 за секунду), бо кожен крок — вивантаження всієї текстури.
+ */
+const FADE_STEPS = 32;
+const FADE_TIME = 8;
 /** Більше змінених прямокутників за кадр — оновлюємо всю текстуру. */
 const MAX_RECTS = 48;
 
@@ -128,7 +132,8 @@ export class WaterBuffer {
     this.fadeAcc += dt;
     const step = FADE_TIME / FADE_STEPS;
     if (this.fadeAcc < step) return;
-    this.fadeAcc = 0;
+    // Залишок — у наступний крок (обнулення розтягувало висихання на частку кадру за крок).
+    this.fadeAcc = Math.min(this.fadeAcc - step, step);
     if (++this.fadeStep >= FADE_STEPS) {
       this.levels.fill(0);
       this.empty = true;
