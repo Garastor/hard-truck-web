@@ -817,3 +817,12 @@ canvas.pixel {
 .hud-player {
   pointer-events: auto;
 }
+
+/* Значок згорнутої групи кнопок — без рамки кнопки (рамка намальована на значку, як у табло гравця). */
+.hud-btn.hud-toggle {
+  min-height: 0;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  background: none;
+}

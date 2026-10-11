@@ -242,14 +242,26 @@ export class DriveHud {
     ctx.globalAlpha = 1;
     const g = L.glyph(gear);
     if (g) {
-      // Гліф великого шрифту в окремому полотні, зменшений плавно на шарі повної роздільності.
+      // Гліф великого шрифту в окремому полотні, зменшений плавно на шарі повної роздільності; по горизонталі —
+      // за стовпчиками з пікселями (у клітинці шрифту праворуч бувають порожні стовпчики — літера зсувалась уліво).
+      const cw = L.font.cellW;
+      let x0 = g.width;
+      let x1 = -1;
+      for (let yy = 0; yy < L.height; yy++)
+        for (let xx = 0; xx < g.width; xx++)
+          if (g.bits[yy * cw + xx]) {
+            x0 = Math.min(x0, xx);
+            x1 = Math.max(x1, xx);
+          }
+      if (x1 < x0) [x0, x1] = [0, g.width - 1];
+      const inkW = x1 - x0 + 1;
       const src = document.createElement('canvas');
-      src.width = g.width;
+      src.width = inkW;
       src.height = gi.h;
-      const sc = src.getContext('2d')!;
-      L.draw(sc, gear, 0, -gi.top, gearColor);
-      const gwS = Math.round(g.width * GEAR_SIZE);
-      layers.push(hiRes(x + Math.round((gearW - gwS) / 2), by + 3, gwS, gScaledH, (lc, w, h) => lc.drawImage(src, 0, 0, w, h)));
+      L.draw(src.getContext('2d')!, gear, -x0, -gi.top, gearColor);
+      const wS = inkW * GEAR_SIZE;
+      const bx = x + (gearW - wS) / 2;
+      layers.push(hiRes(bx, by + 3, wS, gScaledH, (lc, w, h) => lc.drawImage(src, 0, 0, w, h)));
     }
     x += gearW;
     const stat = (rows: string[], text: string, gap: number) => {

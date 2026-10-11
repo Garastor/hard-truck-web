@@ -101,6 +101,8 @@ export class CareerGame {
   private busy = false;
   /** Табло гравця згорнуте до значка (на трасах — за замовчуванням). */
   private playerCollapsed = false;
+  /** Група кнопок бази/траси («Ремонт», «Рейтинг», «Меню»…) згорнута до значка (на трасах — за замовчуванням). */
+  private actionsCollapsed = false;
   /** Удари й пробіг, за які знос уже нараховано (знос рахується під час заїзду). */
   private wornHits = 0;
   private wornDist = 0;
@@ -162,6 +164,7 @@ export class CareerGame {
     this.drive.hudStatus = () => this.hudStatus(0);
     this.drive.applyDents(this.c.dents);
     this.playerCollapsed = false;
+    this.actionsCollapsed = false;
     this.setupBase();
     this.zoneKey = '';
     this.refresh();
@@ -280,6 +283,7 @@ export class CareerGame {
       this.drive.onFinish = () => void this.finishTrip(true);
       this.drive.applyDents(this.c.dents);
       this.playerCollapsed = true;
+      this.actionsCollapsed = true;
       this.drive.onDeath = () => void this.fatal();
       this.drive.autoWreck = false;
       this.drive.onResetRequest = () => void this.askRecover();
@@ -595,6 +599,34 @@ export class CareerGame {
       });
     this.button('РЕЙТИНГ', () => void this.rating());
     this.button('МЕНЮ', () => void this.quit());
+    this.collapsible();
+  }
+
+  /**
+   * Згортання групи кнопок до значка (як табло гравця): значок — остання кнопка групи; згорнуто — лише він
+   * і кнопки keep (те, що не можна сховати, — «Відновитися» перекинутої машини).
+   */
+  private collapsible(keep: HTMLElement[] = []): void {
+    const toggle = el('button', 'hud-btn hud-toggle');
+    toggle.setAttribute('aria-label', this.actionsCollapsed ? 'Кнопки: розгорнути' : 'Кнопки: згорнути');
+    // Значок: рамка табло з трьома «кнопками» (сірі рамки, як у кнопок табло).
+    const { canvas, ctx } = pixelCanvas(30, 22, hudScale() * 1.5);
+    frame(ctx, 0, 0, 30, 22);
+    inset(ctx, 4, 4, 23, 15);
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = 'rgb(140, 140, 140)';
+      ctx.fillRect(7, 6 + i * 4, 17, 3);
+      ctx.fillStyle = HUD_CYAN;
+      ctx.fillRect(8, 7 + i * 4, 15, 1);
+    }
+    toggle.append(canvas);
+    toggle.addEventListener('click', () => {
+      this.actionsCollapsed = !this.actionsCollapsed;
+      this.zoneKey = '';
+      this.refresh();
+    });
+    if (this.actionsCollapsed) this.actions.replaceChildren(toggle, ...keep);
+    else this.actions.append(toggle);
   }
 
   private trackZone(): void {
@@ -622,7 +654,8 @@ export class CareerGame {
         },
         true,
       );
-    if (this.drive?.flipped) this.button(`ВІДНОВИТИСЯ ${money(recoverCost(this.spec))}`, () => void this.askRecover());
+    const recover = this.drive?.flipped ? this.button(`ВІДНОВИТИСЯ ${money(recoverCost(this.spec))}`, () => void this.askRecover()) : null;
+    this.collapsible(recover ? [recover] : []);
   }
 
   /** Завантаження/повернення товару: утримання кнопки, як утримання клавіші в оригіналі; з клавіатури — + і −. */
