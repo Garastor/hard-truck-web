@@ -1,5 +1,5 @@
 /**
- * Власне освітлення світу фарами гравця вночі (на прохання користувача; в оригіналі фари світ не освітлюють —
+ * Власне освітлення світу фарами гравця вночі й слабше в денний дощ (на прохання користувача; в оригіналі фари світ не освітлюють —
  * re/notes/headlights.md). Дві «прожекторні» фари у фрагментному шейдері незасвічених матеріалів світу й машин:
  * конус уздовж напрямку руху з м'яким краєм, затухання з відстанню, яскравість за кутом падіння (нормаль — з похідних
  * позиції, у даних нормалей немає). Додається до кольору текстури: темні нічні текстури стають видимішими, чорне лишається
@@ -52,11 +52,11 @@ float hlSpot(vec3 lp, vec3 n) {
 `;
 
 const FRAG_APPLY = /* glsl */ `
-if (hlOn > 0.5) {
+if (hlOn > 0.0) {
   vec3 hlN = normalize(cross(dFdx(vHlWorld), dFdy(vHlWorld)));
   if (dot(hlN, cameraPosition - vHlWorld) < 0.0) hlN = -hlN;
   float hl = hlSpot(hlPos0, hlN) + hlSpot(hlPos1, hlN);
-  outgoingLight += diffuseColor.rgb * hlColor * hl;
+  outgoingLight += diffuseColor.rgb * hlColor * (hl * hlOn);
 }
 #include <opaque_fragment>`;
 
@@ -117,10 +117,10 @@ export class Headlights {
     for (const b of bySide.values()) this.lamps.push(b.getCenter(new THREE.Vector3()));
   }
 
-  /** on — фари ввімкнені й ніч; forward — напрямок руху машини (одиничний). */
-  update(on: boolean, forward: THREE.Vector3): void {
-    U.hlOn.value = on ? 1 : 0;
-    if (!on) return;
+  /** strength — сила світла (0 — вимкнено, 1 — ніч); forward — напрямок руху машини (одиничний). */
+  update(strength: number, forward: THREE.Vector3): void {
+    U.hlOn.value = strength;
+    if (strength <= 0) return;
     const v = this.visual;
     v.updateWorldMatrix(true, false);
     const pts = this.lamps.map((l) => l.clone().applyMatrix4(v.matrixWorld));

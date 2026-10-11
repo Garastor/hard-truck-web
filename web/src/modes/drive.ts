@@ -1388,7 +1388,7 @@ export class DriveSession {
     const wet = this.raining && (this.glassRain?.raining ?? true);
     this.syncToggles();
     this.wetReflections.forEach((r, i) => r.update(this.camera, i === 0 ? this.headlights : this.night || wet, wet));
-    this.headlightsFx?.update(this.night && this.headlights, this.truck.forward());
+    this.headlightsFx?.update(this.headlights ? (this.night ? 1 : wet ? DAY_RAIN_HEADLIGHTS : 0) : 0, this.truck.forward());
     this.updateSurface(dt);
     this.checkDeath(dt);
     this.effects?.update(dt);
@@ -1767,6 +1767,9 @@ export class DriveSession {
     this.world.free();
   }
 }
+
+/** Сила власного світла фар у денний дощ відносно ночі (на око: помітне на темному асфальті, не засвічує). */
+const DAY_RAIN_HEADLIGHTS = 0.45;
 
 function fmtTime(t: number): string {
   const m = Math.floor(t / 60);
