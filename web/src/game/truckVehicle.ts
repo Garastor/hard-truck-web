@@ -49,15 +49,15 @@ export const TIRE = {
   /**
    * Наскільки піднімати точку прикладання бічної сили до центру мас (0 — земля, 1 — центр мас). Відгук
    * користувача: в оригіналі кузов помітно кренить у поворотах, а іноді вантажівка перекидається на бік.
-   * 0,12 (ЗіЛ, порожній, кермо до упору): 25 км/год — крен ≈ 5°, 35 — ≈ 7°, 50 — на межі перекидання;
-   * з вантажем центр мас вищий — перекидається раніше. Підбір, не формула оригіналу.
+   * 0,1 разом із відбійником підвіски (SUSPENSION.bump_*) — крен див. там; різке кермо на швидкості чи нахилений
+   * гребінь — перекидання; з вантажем центр мас вищий — перекидається раніше. Підбір, не формула оригіналу.
    */
-  roll_lift: 0.12,
+  roll_lift: 0.1,
 };
 
 /**
  * Підвіска (Rapier: жорсткість і демпфування на одиницю маси кузова). М'яка, щоб кузов кренився й погойдувався,
- * як в оригіналі; хід 0,3 м = hmax − hmin з TRUCK.TCH (0,4 − 0,1). Демпфування — та сама частка критичного
+ * як в оригіналі. Демпфування — та сама частка критичного
  * (≈ 0,4 стиснення, ≈ 0,2 відбій), що й до пом'якшення. ks/cs з TCH (у файлі закоментовані — діють типові 12500 / 1)
  * в одиницях оригіналу не розібрані — гіпотеза.
  */
@@ -65,7 +65,22 @@ export const SUSPENSION = {
   stiffness: 15,
   compression: 3.2,
   relaxation: 1.7,
-  travel: 0.3,
+  /**
+   * Довжина пружини у спокої й хід, м: м'яка пружина просідає під вагою на ≈ 0,17 м (жорсткість 28 — на 0,09), тож
+   * довжину й хід збільшено на різницю — машина стоїть на тій самій висоті й має той самий запас до упору (≈ 0,21 м),
+   * що й до пом'якшення. З ходом 0,3 при довжині 0,35 підвіска «пробивалась» на крутих перепадах COUNT (187 разів за
+   * 2 хв автопроходу проти 4) — колеса й низ машини провалювались в асфальт.
+   */
+  rest: 0.43,
+  travel: 0.38,
+  /**
+   * Відбійник: після bump_from м стиснення (≈ 14 см понад просідання в спокої) — жорстка додаткова пружина (на
+   * одиницю маси, як stiffness) і демпфер: гасить «пробої» на перепадах (COUNT, 2 хв автопроходу: 6 замість 187),
+   * а крен лишає (кермо до упору, ЗіЛ: 25 км/год — 6°, 35 — 9°, 40 — 21°). Нижчий поріг (0,25) з'їдав крен до 6°.
+   */
+  bump_from: 0.31,
+  bump_stiffness: 500,
+  bump_damping: 12,
 };
 
 /** Частки breakpower на колесо: передні / задні (телеметрія ЗіЛ, s6) — гіпотеза для інших вантажівок. */
@@ -108,11 +123,15 @@ export class TruckVehicle {
   readonly engine: Engine;
   /** Параметри шин (спільні для всіх вантажівок) — для підбору в консолі. */
   readonly tire = TIRE;
+  /** Параметри підвіски (спільні) — для підбору в консолі. */
+  readonly suspension = SUSPENSION;
 
   private readonly wheelRadius: number;
   private readonly driven: boolean[];
   private readonly wheelVisual: { obj: THREE.Object3D; base: THREE.Matrix4 }[];
-  private readonly suspRest = 0.35;
+  private readonly suspRest = SUSPENSION.rest;
+  /** Висота кріплення підвіски над центром колеса моделі, м (незмінна: від неї — посадка кузова й колеса). */
+  private readonly suspAnchor = 0.175;
   private steerAngle = 0;
   /** Задній хід: гравець утримує гальмо на місці (тоді «гальмо» — це газ назад). */
   private reverseMode = false;
@@ -229,7 +248,7 @@ export class TruckVehicle {
     for (let i = 0; i < 4; i++) {
       const p = new THREE.Vector3().setFromMatrixPosition(model.wheelBase[i]);
       const c = g2t(p);
-      this.ctrl.addWheel({ x: c.x, y: c.y + this.suspRest * 0.5, z: c.z }, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, this.suspRest, this.wheelRadius);
+      this.ctrl.addWheel({ x: c.x, y: c.y + this.suspAnchor, z: c.z }, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, this.suspRest, this.wheelRadius);
       this.ctrl.setWheelSuspensionStiffness(i, SUSPENSION.stiffness);
       this.ctrl.setWheelSuspensionCompression(i, SUSPENSION.compression);
       this.ctrl.setWheelSuspensionRelaxation(i, SUSPENSION.relaxation);
@@ -244,7 +263,7 @@ export class TruckVehicle {
     // блоки) проходили під кузовом і колеса на них заїжджали. Низькі коробки спереду й ззаду без маси —
     // до BUMPER_CLEARANCE над дорогою (дорога — низ коліс у спокої).
     const wy = g2t(new THREE.Vector3().setFromMatrixPosition(model.wheelBase[0])).y;
-    const ground = wy + this.suspRest * 0.5 - this.suspRest - this.wheelRadius;
+    const ground = wy - this.suspAnchor - this.wheelRadius;
     this.lightGeometry = { groundY: ground, frontZ: box.min.z, backZ: box.max.z, width: size.x };
     const bottom = ground + BUMPER_CLEARANCE;
     const top = colliderAt.y - size.y * 0.4 + 0.2;
@@ -335,8 +354,32 @@ export class TruckVehicle {
       this.ctrl.setWheelBrake(i, force * dt);
     }
     this.ctrl.updateVehicle(dt);
+    this.applyBumpStops(dt);
     this.applyTireLateral(dt);
   }
+
+  /** Відбійники підвіски (див. SUSPENSION.bump_*): сила вгору в точці кріплення колеса, коли стиснення велике. */
+  private applyBumpStops(dt: number): void {
+    const S = SUSPENSION;
+    const r = this.body.rotation();
+    const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    const t = this.body.translation();
+    for (let i = 0; i < 4; i++) {
+      if (!this.ctrl.wheelIsInContact(i)) continue;
+      const excess = this.suspRest - (this.ctrl.wheelSuspensionLength(i) ?? this.suspRest) - S.bump_from;
+      if (excess <= 0) continue;
+      const c = this.ctrl.wheelChassisConnectionPointCs(i);
+      if (!c) continue;
+      const at = new THREE.Vector3(c.x, c.y, c.z).applyQuaternion(q).add(new THREE.Vector3(t.x, t.y, t.z));
+      const v = this.body.velocityAtPoint(at);
+      const closing = -(v.x * up.x + v.y * up.y + v.z * up.z); // > 0 — кузов іде вниз, підвіска стискається
+      const force = (this.mass / 4) * (S.bump_stiffness * excess + S.bump_damping * Math.max(0, closing));
+      this.body.applyImpulseAtPoint({ x: up.x * force * dt, y: up.y * force * dt, z: up.z * force * dt }, at, true);
+    }
+  }
+
+
 
   /**
    * Бічні сили шин: кут проковзування α кожного колеса → сила до межі «тертя × навантаження» на α ≈ 7°,
@@ -393,7 +436,7 @@ export class TruckVehicle {
   groundHeight(): number {
     let sum = 0;
     for (let i = 0; i < 4; i++) {
-      const anchor = g2t(new THREE.Vector3().setFromMatrixPosition(this.wheelVisual[i].base)).y + this.suspRest * 0.5;
+      const anchor = g2t(new THREE.Vector3().setFromMatrixPosition(this.wheelVisual[i].base)).y + this.suspAnchor;
       sum += anchor - (this.ctrl.wheelSuspensionLength(i) ?? this.suspRest) - this.wheelRadius;
     }
     return sum / 4;
@@ -411,7 +454,7 @@ export class TruckVehicle {
       const steer = this.ctrl.wheelSteering(i) ?? 0;
       const spin = this.ctrl.wheelRotation(i) ?? 0;
       const m = w.base.clone();
-      m.multiply(new THREE.Matrix4().makeTranslation(0, 0, this.suspRest * 0.5 - len));
+      m.multiply(new THREE.Matrix4().makeTranslation(0, 0, this.suspAnchor - len));
       m.multiply(new THREE.Matrix4().makeRotationZ(steer));
       m.multiply(new THREE.Matrix4().makeRotationX(-spin));
       w.obj.matrix.copy(m);
