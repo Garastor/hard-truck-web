@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { B3d, Block, Polygon } from '../formats/b3d';
+import { walk, type B3d, type Block, type Polygon } from '../formats/b3d';
 import { parseMaterial, type Material, type RmpArchive } from '../formats/rmp';
 import { parseTxr } from '../formats/txr';
 import { parsePlm } from '../formats/plm';
@@ -36,7 +36,7 @@ export class MaterialLibrary {
   private readonly cache = new Map<number, THREE.Material>();
   private readonly texCache = new Map<string, THREE.Texture | null>();
   private readonly rmpByName = new Map<string, Material>();
-  private readonly palette: Uint8Array | null;
+  readonly palette: Uint8Array | null;
   missingTextures = 0;
 
   constructor(
@@ -173,6 +173,32 @@ export class SideSwitch extends THREE.Group {
   override copy(source: this, recursive?: boolean): this {
     super.copy(source, recursive);
     this.plane.copy(source.plane);
+    return this;
+  }
+}
+
+/** Тип 10 (форма 1 — сфера [x, y, z, r]): група 0 — камера в межах r від центру, група 1 — далі. */
+export class DistanceSwitch extends THREE.Group {
+  readonly isLOD = true;
+  autoUpdate = true;
+  readonly sphere: THREE.Vector4;
+  private static readonly tmp = new THREE.Vector3();
+
+  constructor(sphere: [number, number, number, number] = [0, 0, 0, 0]) {
+    super();
+    this.sphere = new THREE.Vector4(...sphere);
+  }
+
+  update(camera: THREE.Camera): void {
+    const p = this.worldToLocal(camera.getWorldPosition(DistanceSwitch.tmp));
+    const near = Math.hypot(p.x - this.sphere.x, p.y - this.sphere.y, p.z - this.sphere.z) < this.sphere.w;
+    if (this.children[0]) this.children[0].visible = near;
+    if (this.children[1]) this.children[1].visible = !near;
+  }
+
+  override copy(source: this, recursive?: boolean): this {
+    super.copy(source, recursive);
+    this.sphere.copy(source.sphere);
     return this;
   }
 }
@@ -322,6 +348,26 @@ export class SceneAssembler {
   /** Обходить піддерево, збираючи полігони в batches; посилання (18) додає як дочірні обʼєкти в `into`. */
   private visit(block: Block, vs: VertexSource | null, batches: Batches, into: THREE.Object3D, depth: number): void {
     if (depth > 64) return;
+    // Фари й ліхтарі вантажівок (`<Prefix>FFaraL/R`, `<Prefix>BFaraL/R` — імена з TRUCK.TCH): білборди-відблиски
+    // всередині мають центр (0, 0, 0) — ставимо їх у центр скла ліхтаря (вершини геометрії блоку). Гіпотеза: як
+    // саме гра розміщує відблиски, у даних не записано.
+    if (/[FB]Fara[LR]$/i.test(block.name)) {
+      const prev = this.spriteOrigin;
+      this.spriteOrigin = lampCenter(block);
+      try {
+        this.visitInner(block, vs, batches, into, depth);
+      } finally {
+        this.spriteOrigin = prev;
+      }
+      return;
+    }
+    this.visitInner(block, vs, batches, into, depth);
+  }
+
+  /** Центр відблисків поточного ліхтаря (див. visit). */
+  private spriteOrigin: [number, number, number] | null = null;
+
+  private visitInner(block: Block, vs: VertexSource | null, batches: Batches, into: THREE.Object3D, depth: number): void {
     const d = block.data;
     let cur = vs;
     switch (d.t) {
@@ -432,6 +478,19 @@ export class SceneAssembler {
       return;
     } else if (d.t === 9) {
       groups = [block.groups[0] ?? []];
+    } else if (d.t === 10 && d.shape.kind === 1 && block.groups.length >= 2) {
+      // Перемикач за відстанню: група 0 — камера ближче за r до центру сфери, група 1 — далі (відблиски фар:
+      // ближче 9 м — нічого, далі — варіанти білборду за відстанню).
+      const sw = new DistanceSwitch(d.shape.v as [number, number, number, number]);
+      for (const g of block.groups.slice(0, 2)) {
+        const go = new THREE.Group();
+        const b: Batches = new Map();
+        for (const child of g) this.visit(child, cur, b, go, depth + 1);
+        this.flush(b, go);
+        sw.add(go);
+      }
+      into.add(sw);
+      return;
     } else if (d.t === 10 || d.t === 11 || d.t === 22 || d.t === 29) {
       groups = [block.groups[Math.min(this.switchGroup, block.groups.length - 1)] ?? []];
     }
@@ -458,7 +517,8 @@ export class SceneAssembler {
       if (k < 3) continue;
       const sprite = this.sprite(material, pts);
       if (!sprite) continue;
-      sprite.position.set(...center);
+      const atOrigin = center[0] === 0 && center[1] === 0 && center[2] === 0;
+      sprite.position.set(...(atOrigin && this.spriteOrigin ? this.spriteOrigin : center));
       into.add(sprite);
     }
   }
@@ -476,15 +536,17 @@ export class SceneAssembler {
       for (const q of pts) if (Math.hypot(q[0] - x, q[1] - y) < Math.hypot(best[0] - x, best[1] - y)) best = q;
       return [best[2], best[3]];
     };
+    // UV кутів прямокутника: у даних текстура буває повернута на 90° (відблиски фар: u іде вздовж висоти),
+    // тож задаємо повне афінне перетворення UV спрайта (s, t ∈ 0…1) → UV текстури.
     const [ubl, vbl] = uvAt(x0, y0);
-    const [ubr] = uvAt(x1, y0);
-    const [, vtl] = uvAt(x0, y1);
-    const key = `${material}|${ubl},${vbl},${ubr},${vtl}`;
+    const [ubr, vbr] = uvAt(x1, y0);
+    const [utl, vtl] = uvAt(x0, y1);
+    const key = `${material}|${ubl},${vbl},${ubr},${vbr},${utl},${vtl}`;
     let mat = this.spriteMats.get(key);
     if (!mat) {
       const map = base.map.clone();
-      map.offset.set(ubl, vbl);
-      map.repeat.set(ubr - ubl, vtl - vbl);
+      map.matrixAutoUpdate = false;
+      map.matrix.set(ubr - ubl, utl - ubl, ubl, vbr - vbl, vtl - vbl, vbl, 0, 0, 1);
       map.needsUpdate = true;
       mat = new THREE.SpriteMaterial({ map, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
       this.spriteMats.set(key, mat);
@@ -590,4 +652,23 @@ export function spaceMatrix(block: Block): THREE.Matrix4 {
   const m = new THREE.Matrix4().makeBasis(new THREE.Vector3(...x), new THREE.Vector3(...y), new THREE.Vector3(...z));
   m.setPosition(...block.data.position);
   return m;
+}
+
+/** Центр вершин (блоки 7/37) усередині блоку — скло ліхтаря. */
+function lampCenter(top: Block): [number, number, number] | null {
+  let n = 0;
+  const sum = [0, 0, 0];
+  for (const [blk] of walk([top])) {
+    const d = blk.data;
+    if ((d.t === 7 || d.t === 37) && d.positions) {
+      const p = d.positions as ArrayLike<number>;
+      for (let i = 0; i + 2 < p.length; i += 3) {
+        sum[0] += p[i];
+        sum[1] += p[i + 1];
+        sum[2] += p[i + 2];
+        n++;
+      }
+    }
+  }
+  return n ? [sum[0] / n, sum[1] / n, sum[2] / n] : null;
 }

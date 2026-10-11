@@ -2,8 +2,8 @@ import * as THREE from 'three';
 
 /**
  * Краплі на лобовому склі й двірники. В оригіналі текстура скла `glass.txr` позначена `noload` — гра заповнює її
- * сама (спрайти крапель `glass_1/2.msk` 5×5), а двірники її протирають. Тут — власна реалізація: краплі
- * малюються на полотні в координатах текстури скла, двірник стирає сектор, який замів за кадр.
+ * сама (спрайти крапель `glass_1/2.msk` 5×5), а двірники її протирають. Тут так само: оригінальні спрайти
+ * крапель штампуються на полотно 256×256 у координатах текстури скла, двірник стирає сектор, який замів за кадр.
  * Геометрію (вісь, довжину двірника, площину й UV скла) беремо з моделі кабіни.
  */
 
@@ -40,7 +40,11 @@ export class GlassRain {
   raining = false;
 
   /** cabRoot — внутрішня група кабіни (система моделі), у якій шукаємо скло й двірники. */
-  constructor(cabRoot: THREE.Object3D) {
+  /** sprites — оригінальні краплі (txr/glass_1.msk, glass_2.msk); без них — власний кружок. */
+  constructor(
+    cabRoot: THREE.Object3D,
+    private readonly sprites: HTMLCanvasElement[] = [],
+  ) {
     this.canvas.width = this.canvas.height = SIZE;
     this.ctx = this.canvas.getContext('2d')!;
     this.texture = new THREE.CanvasTexture(this.canvas);
@@ -87,7 +91,7 @@ export class GlassRain {
     return this.wipers.length > 0;
   }
 
-  update(dt: number): void {
+  update(dt: number, _speedKmh = 0): void {
     const ctx = this.ctx;
     // Двірники: косинусний помах; вимкнені — доходять до положення спокою.
     const prev = this.angle;
@@ -122,9 +126,14 @@ export class GlassRain {
     if (dirty) this.texture.needsUpdate = true;
   }
 
-  /** Крапля: світлий напівпрозорий кружок з темнішим краєм (як заломлення). */
+  /** Крапля: оригінальний спрайт (здебільшого glass_1), у рідному розмірі. */
   private drop(x: number, y: number): void {
     const ctx = this.ctx;
+    if (this.sprites.length) {
+      const sp = this.sprites[Math.random() < 0.75 ? 0 : this.sprites.length - 1];
+      ctx.drawImage(sp, Math.floor(x), Math.floor(y));
+      return;
+    }
     const r = 1.5 + Math.random() * 3;
     const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, 0, x, y, r);
     g.addColorStop(0, 'rgba(235,240,245,0.55)');

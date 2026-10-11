@@ -5,6 +5,7 @@ import { floorAt, levelCollision, roomAt, type LevelCollision } from '../game/co
 import { Input } from '../input/input';
 import { TruckVehicle, type TruckSetup } from '../game/truckVehicle';
 import { GlassRain } from '../render/glassRain';
+import { parseMsk } from '../formats/msk';
 import { Movables } from '../game/movables';
 import { Effects } from '../render/effects';
 import { TruckLights } from '../render/truckLights';
@@ -207,6 +208,8 @@ export class DriveSession {
     this.setRain(rain);
     this.truck.weatherGrip = rain ? 0.8 : 1;
   }
+  /** Оригінальні спрайти крапель на склі (txr/glass_1.msk, glass_2.msk з архіву траси). */
+  private dropSprites: HTMLCanvasElement[] = [];
   /** Краплі на склі кабіни й двірники. */
   private glassRain: GlassRain | null = null;
   /** Вмʼятини кузова: накопичена сила ударів за зонами (FC, FR, R, BR, BC, BL, L, FL). */
@@ -521,6 +524,17 @@ export class DriveSession {
     // Очі водія: OV з [TECHn] (система вантажівки), як в оригіналі; вид з кабіни — за замовчуванням.
     s.cockpit = g2t(def.tech.viewer);
     s.cockpit.y += setup?.seatRaise ?? 0;
+    // Оригінальні краплі на склі — маски архіву траси (кольори масок — з палітри траси).
+    for (const n of ['txr/glass_1.msk', 'txr/glass_2.msk']) {
+      const b = rmp?.masks.get(n);
+      if (!b) continue;
+      const img = parseMsk(b, built.assembler.lib.palette ?? undefined);
+      const c = document.createElement('canvas');
+      c.width = img.width;
+      c.height = img.height;
+      c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), 0, 0);
+      s.dropSprites.push(c);
+    }
     s.buildCab();
     s.camMode = 'cockpit';
 
@@ -640,7 +654,7 @@ export class DriveSession {
     this.cabParts = { rule: bySpace('RuleSpace'), tacho: bySpace('TachoSpace'), speed: bySpace('SpeedSpace') };
     // Скло (GlassKey, група 1) показуємо завжди: його текстуру — краплі — малює GlassRain, суха — прозора.
     dyn.setSwitch('GlassKey', 1);
-    this.glassRain = new GlassRain(inner);
+    this.glassRain = new GlassRain(inner, this.dropSprites);
     // Кермо частково «втоплене» в панель: оригінал малює його після кабіни, поверх неї.
     // Відтворюємо це окремим шаром, який рендериться після очищення глибини.
     this.cabParts.rule?.traverse((o) => o.layers.set(CAB_TOP_LAYER));
@@ -870,7 +884,7 @@ export class DriveSession {
       if (this.rain) this.rain.root.visible = !sheltered;
       if (this.glassRain) this.glassRain.raining = !sheltered;
     }
-    if (this.cab?.visible) this.glassRain?.update(dt);
+    if (this.cab?.visible) this.glassRain?.update(dt, this.truck.speedKmh);
     if (this.rain?.root.visible) {
       this.rain.root.position.copy(this.camera.position);
       for (const t of this.rain.tex) t.offset.y = (t.offset.y + dt * RAIN_SPEED) % 1;
