@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { walk, type B3d, type Block, type Polygon } from '../formats/b3d';
+import type { B3d, Block, Polygon } from '../formats/b3d';
 import { parseMaterial, type Material, type RmpArchive } from '../formats/rmp';
 import { parseTxr } from '../formats/txr';
 import { parsePlm } from '../formats/plm';
@@ -380,7 +380,7 @@ export class SceneAssembler {
     // саме гра розміщує відблиски, у даних не записано.
     if (/[FB]Fara[LR]$/i.test(block.name)) {
       const prev = this.spriteOrigin;
-      this.spriteOrigin = lampCenter(block);
+      this.spriteOrigin = lampCenter(block, vs);
       try {
         this.visitInner(block, vs, batches, into, depth);
       } finally {
@@ -550,8 +550,11 @@ export class SceneAssembler {
       if (k < 3) continue;
       const sprite = this.sprite(material, pts);
       if (!sprite) continue;
-      const atOrigin = center[0] === 0 && center[1] === 0 && center[2] === 0;
-      sprite.position.set(...(atOrigin && this.spriteOrigin ? this.spriteOrigin : center));
+      // Біля ліхтаря центр у даних — нуль або малий зсув (Renault: ±0,1 м) відносно скла.
+      const lamp = this.spriteOrigin;
+      const near = Math.hypot(...center) < 0.5;
+      if (lamp && near) sprite.position.set(lamp[0] + center[0], lamp[1] + center[1], lamp[2] + center[2]);
+      else sprite.position.set(...center);
       into.add(sprite);
     }
   }
@@ -689,22 +692,31 @@ export function spaceMatrix(block: Block): THREE.Matrix4 {
   return m;
 }
 
-/** Центр вершин (блоки 7/37) усередині блоку — скло ліхтаря. */
-function lampCenter(top: Block): [number, number, number] | null {
+/**
+ * Центр скла ліхтаря: вершини, на які посилаються полігони (8/35) усередині блоку. Вершини беремо з власних
+ * блоків 7/37 або — як у Renault — з батьківського джерела вершин vs.
+ */
+function lampCenter(top: Block, vs: VertexSource | null): [number, number, number] | null {
   let n = 0;
   const sum = [0, 0, 0];
-  for (const [blk] of walk([top])) {
-    const d = blk.data;
-    if ((d.t === 7 || d.t === 37) && d.positions) {
-      const p = d.positions as ArrayLike<number>;
-      for (let i = 0; i + 2 < p.length; i += 3) {
-        sum[0] += p[i];
-        sum[1] += p[i + 1];
-        sum[2] += p[i + 2];
-        n++;
-      }
+  const add = (p: ArrayLike<number>, i: number) => {
+    sum[0] += p[i * 3];
+    sum[1] += p[i * 3 + 1];
+    sum[2] += p[i * 3 + 2];
+    n++;
+  };
+  const visit = (b: Block, src: VertexSource | null): void => {
+    const d = b.data;
+    let cur = src;
+    if ((d.t === 7 || d.t === 37) && d.positions) cur = { positions: d.positions, uvs: d.uvs };
+    if ((d.t === 8 || d.t === 35) && cur) {
+      const used = new Set<number>();
+      for (const poly of d.polys) for (const i of poly.indices) used.add(i);
+      for (const i of used) if (i * 3 + 2 < cur.positions.length) add(cur.positions, i);
     }
-  }
+    for (const g of b.groups ?? []) for (const c of g) visit(c, cur);
+  };
+  visit(top, vs);
   return n ? [sum[0] / n, sum[1] / n, sum[2] / n] : null;
 }
 

@@ -52,7 +52,7 @@ export class TruckLights {
 const REFLECTION_LIFT = 0.15;
 
 export class LampReflections {
-  private readonly items: { sprite: THREE.Sprite; mirror: THREE.Vector3; scale: THREE.Vector2 }[] = [];
+  private readonly items: { sprite: THREE.Sprite; mirror: THREE.Vector3; scale: THREE.Vector2; front: boolean }[] = [];
   private readonly tmp = new THREE.Vector3();
 
   /** root — модель у системі гри (z угору), groundZ — висота дороги в цій системі. */
@@ -65,7 +65,16 @@ export class LampReflections {
       if (!sp.isSprite || !/refl_[rw]/.test((sp.material.map as THREE.Texture | null)?.name ?? '')) return;
       const m = sp.position.clone();
       m.z = 2 * groundZ - m.z;
-      this.items.push({ sprite: sp, mirror: m, scale: new THREE.Vector2(sp.scale.x, sp.scale.y) });
+      // Передня фара (*FFara*) чи задній ліхтар (*BFara*) — за назвою блоку-предка.
+      let front = false;
+      for (let p: THREE.Object3D | null = sp.parent; p; p = p.parent) {
+        const f = /([FB])Fara[LR]$/i.exec(p.name);
+        if (f) {
+          front = f[1].toUpperCase() === 'F';
+          break;
+        }
+      }
+      this.items.push({ sprite: sp, mirror: m, scale: new THREE.Vector2(sp.scale.x, sp.scale.y), front });
       // Нижнім краєм — на дорозі (інакше нижня половина білборду ховається під асфальтом).
       sp.center.y = 0;
     });
@@ -79,7 +88,11 @@ export class LampReflections {
     for (const it of this.items) {
       const m = it.mirror;
       const g = this.groundZ + REFLECTION_LIFT;
-      if (c.z <= g) continue;
+      // Віддзеркалення видно лише з боку, куди світить ліхтар (задній — ззаду машини, фара — спереду; вісь y
+      // моделі — вперед); інакше точка на дорозі виходила з протилежного боку — «рентген» крізь машину.
+      const facing = it.front ? c.y > m.y : c.y < m.y;
+      it.sprite.visible = facing && c.z > g;
+      if (!it.sprite.visible) continue;
       const t = (c.z - g) / (c.z - m.z);
       it.sprite.position.set(c.x + (m.x - c.x) * t, c.y + (m.y - c.y) * t, g);
       it.sprite.scale.set(it.scale.x * t, it.scale.y * t, 1);

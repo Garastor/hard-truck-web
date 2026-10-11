@@ -82,6 +82,8 @@ const CRASH_SOUNDS = ['crash2', 'crash4a', 'crash9'];
 const WRECK_HITS = 250;
 /** Туман під дощем: початок і повна непрозорість, м (гіпотеза). */
 const RAIN_FOG: [number, number] = [40, 420];
+/** Розтяг циліндра дощу по висоті (гіпотеза, див. update). */
+const RAIN_STRETCH = 1.6;
 /** Зони вмʼятин за годинниковою стрілкою від переду — суфікси перемикачів `Damage<зона>Key` у моделях. */
 const DENT_ZONES = ['FC', 'FR', 'R', 'BR', 'BC', 'BL', 'L', 'FL'];
 /** Удари слабші за це (м/с за крок) вмʼятин не лишають; пороги рівнів — за накопиченою силою (гіпотеза). */
@@ -906,7 +908,12 @@ export class DriveSession {
     }
     if (this.cab?.visible) this.glassRain?.update(dt, this.truck.speedKmh);
     if (this.rain?.root.visible) {
+      // Foreground_object — «передній план» біля глядача: повертаємо разом із камерою (вісь циліндра — вгору
+      // в кадрі), тож його верхній і нижній край (±8 м на 15 м) не потрапляють у кадр навіть з камери позаду.
+      // Висоту ×RAIN_STRETCH — гіпотеза: з кутом огляду порту 60° край інакше видно смужкою внизу.
       this.rain.root.position.copy(this.camera.position);
+      this.rain.root.quaternion.copy(this.camera.quaternion);
+      this.rain.root.scale.set(1, RAIN_STRETCH, 1);
       for (const t of this.rain.tex) {
         t.map.offset.x = (t.map.offset.x + dt * t.move[0]) % 1;
         t.map.offset.y = (t.map.offset.y + dt * t.move[1]) % 1;
@@ -1129,6 +1136,8 @@ ${raceLine}`;
     this.hud?.remove();
     this.navMap?.dispose();
     this.effects?.dispose();
+    // Циліндр дощу — у спільній сцені: без цього лишався стояти там, де була камера попереднього заїзду.
+    if (this.rain) this.scene.remove(this.rain.root);
     if (this.dryFog !== undefined) this.scene.fog = this.dryFog;
     for (const s of this.oppSounds ?? []) s?.stop();
     this.wiperSound?.stop();
