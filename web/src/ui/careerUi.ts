@@ -546,6 +546,7 @@ export class CareerGame {
   private refresh(): void {
     this.updateDamage();
     this.renderPlayer();
+    this.avoidTopHud();
     if (this.switchingTruck) return;
     const room = this.drive?.currentRoom;
     const ev = room?.events.find((e) => e.type === EV_GOOD || e.type === EV_TRUCK || e.type === EV_PART);
@@ -640,6 +641,28 @@ export class CareerGame {
     noteLines.forEach((l, i) => this.text(ctx, l, left, 17 + rows.length * 15 + 2 + i * 12, HUD_CYAN));
     this.info.append(canvas);
     this.info.hidden = false;
+  }
+
+  /** Зсув табло гравця вниз (px), коли воно налазить на верхнє табло заїзду. */
+  private playerShift = 0;
+
+  /**
+   * У вузькому вікні розгорнуте табло гравця (ліворуч угорі) налазить на верхнє табло заїзду (посередині) — тоді
+   * воно зсувається вниз, під верхнє табло (на прохання користувача; масштаб табло не змінюється).
+   */
+  private avoidTopHud(): void {
+    const hud = document.querySelector('.drive-hud');
+    let down = 0;
+    if (hud && !this.playerCollapsed) {
+      const h = hud.getBoundingClientRect();
+      const r = this.player.getBoundingClientRect();
+      const top = r.top - this.playerShift;
+      const gap = 6;
+      if (h.width > 0 && r.width > 0 && r.right + gap > h.left && top < h.bottom + gap) down = Math.ceil(h.bottom + gap - top);
+    }
+    if (down === this.playerShift) return;
+    this.playerShift = down;
+    this.player.style.translate = down ? `0 ${down}px` : '';
   }
 
   /**
