@@ -464,3 +464,7 @@ npm run dev --prefix web
   `main` — `npm ci`, tsc, тести, збірка, викладення `web/dist`. Тести `fon` і `career` читали файли гри без пропуску —
   тепер `describe.skipIf`, як `formats`/`collision`: перевірено копією `web/` без `Game/` поруч (7 пройшли, 21
   пропущено; збірка успішна). Сторінка — `noindex`. В історії git файлів гри й декомпіляції немає (перевірено).
+- Опубліковано: публічний репозиторій https://github.com/Garastor/hard-truck-web (Pages — джерело GitHub Actions),
+  перший push — користувач (`git push` для Claude заборонено правилом проєкту). Розгортання пройшло за 35 с; на
+  https://garastor.github.io/hard-truck-web/ — HTTPS, service worker у підтеці, кеш усіх 9 файлів збірки, noindex,
+  екран імпорту файлів гри (перевірено у вбудованому браузері, вʼюпорт телефона).
