@@ -474,6 +474,33 @@ body.driving.bar-open .drive-hud {
   display: none;
 }
 
+/* Значок технічного меню: на ПК — три смужки, на сенсорному екрані — телефон із шестернею. Кнопка «поміняти
+   місцями кермо й педалі» в технічному меню — лише на сенсорному екрані (на ПК кнопок руху немає). */
+@media not (pointer: coarse) {
+  #menu .icon-touch,
+  #swapToggle {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) {
+  #menu .icon-desktop {
+    display: none;
+  }
+}
+
+#swapToggle {
+  min-width: calc(44px * var(--ui, 1));
+  padding: 0;
+  place-items: center;
+}
+
+@media (pointer: coarse) {
+  #swapToggle {
+    display: grid;
+  }
+}
+
 #menu:active {
   background: rgba(224, 32, 224, 0.45);
 }

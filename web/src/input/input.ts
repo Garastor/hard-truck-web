@@ -218,7 +218,7 @@ export class Input {
       more.hidden = !more.hidden;
       toggle.classList.toggle('on', !more.hidden);
     });
-    const items: [string, Command][] = [['lights', 'lights'], ['mirror', 'mirror'], ['map', 'map'], ['wipers', 'wipers'], ['engine', 'engine'], ['cab', 'cab'], ['swap', 'swap'], ['horn', 'horn']];
+    const items: [string, Command][] = [['lights', 'lights'], ['mirror', 'mirror'], ['map', 'map'], ['wipers', 'wipers'], ['engine', 'engine'], ['cab', 'cab'], ['horn', 'horn']];
     for (const [cls, cmd] of items) {
       btn(cls === 'horn' ? 'horn-in-group' : cls, '', undefined, cmd, cls === 'horn' ? HORN_SVG : ICONS[cls as keyof typeof ICONS]);
       const b = ui.lastElementChild as HTMLElement;
