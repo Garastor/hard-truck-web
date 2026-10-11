@@ -45,6 +45,9 @@ const MAX_STRETCH = 12;
 const SEGMENTS = 8;
 /** Над дорогою, м (щоб не потонув в асфальті). */
 const LIFT = 0.05;
+/** Згасання з відстанню до глядача: повна яскравість до FADE_FROM м, далі ~1/(1 + (Δ/FADE_SCALE)^1,5). */
+const FADE_FROM = 12;
+const FADE_SCALE = 45;
 /** Суха нічна дорога відбиває слабше за мокру. */
 const DRY_FACTOR = 0.3;
 
@@ -59,10 +62,13 @@ const KIND: Record<Kind, { color: THREE.Color; gain: number; needsLights: boolea
 
 const VERTEX = /* glsl */ `
 attribute vec2 band;
+attribute float gloss;
 varying vec2 vBand;
+varying float vGloss;
 varying float vDist;
 void main() {
   vBand = band;
+  vGloss = gloss;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   vDist = -mv.z;
   gl_Position = projectionMatrix * mv;
@@ -72,6 +78,7 @@ const FRAGMENT = /* glsl */ `
 uniform vec3 color;
 uniform float gain;
 varying vec2 vBand;
+varying float vGloss;
 varying float vDist;
 void main() {
   // Поперек — гаусів спад, уздовж — швидке наростання на початку й плавне згасання до кінця.
@@ -79,7 +86,7 @@ void main() {
   float v = vBand.y;
   float along = smoothstep(0.0, 0.18, v) * pow(1.0 - v, 1.4);
   float fade = 1.0 - smoothstep(80.0, 220.0, vDist);
-  vec3 c = color * gain * across * along * fade;
+  vec3 c = color * gain * across * along * fade * vGloss;
   // Шум ±0,5/255 — без сходинок на плавному градієнті.
   float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
   gl_FragColor = vec4(c + n / 255.0, 1.0);
@@ -94,6 +101,7 @@ interface Lamp {
   halfWidth: number;
   out: THREE.Mesh;
   pos: THREE.BufferAttribute;
+  gloss: THREE.BufferAttribute;
   material: THREE.ShaderMaterial;
 }
 
@@ -108,12 +116,14 @@ export class WetReflections {
 
   /**
    * root — модель у системі гри (z угору); groundZ — висота дороги під машиною в цій системі (запасний варіант);
-   * groundAt — висота дороги у світі під точкою (x, z), шукаючи вниз від y (Three.js).
+   * groundAt — висота дороги у світі під точкою (x, z), шукаючи вниз від y (Three.js); glossAt — чи блищить
+   * поверхня там (1 — асфальт, бетон, тротуар; 0 — трава, ґрунт, гравій).
    */
   constructor(
     private readonly root: THREE.Object3D,
     private readonly groundZ: () => number,
     private readonly groundAt?: (x: number, y: number, z: number) => number | null,
+    private readonly glossAt?: (x: number, y: number, z: number) => number,
   ) {
     root.updateWorldMatrix(true, true);
     const rootInv = root.matrixWorld.clone().invert();
@@ -141,6 +151,9 @@ export class WetReflections {
       pos.setUsage(THREE.DynamicDrawUsage);
       geo.setAttribute('position', pos);
       geo.setAttribute('band', new THREE.BufferAttribute(band, 2));
+      const gloss = new THREE.BufferAttribute(new Float32Array(rows * 2).fill(1), 1);
+      gloss.setUsage(THREE.DynamicDrawUsage);
+      geo.setAttribute('gloss', gloss);
       geo.setIndex(index);
       const material = new THREE.ShaderMaterial({
         vertexShader: VERTEX,
@@ -166,6 +179,7 @@ export class WetReflections {
         halfWidth: (box.max.x - box.min.x) / 2,
         out,
         pos,
+        gloss,
         material,
       });
     });
@@ -220,16 +234,32 @@ export class WetReflections {
       const mirror = (Math.hypot(cam.x - lamp.x, cam.z - lamp.z) * h) / (cam.y - near + h);
       const start = shape.start + Math.min(MAX_SHIFT, mirror * SHIFT);
       const length = shape.length + Math.min(MAX_STRETCH, mirror * STRETCH);
+      // Блиск поверхні на початку, посередині й на кінці плями: на траві, ґрунті й гравії відблиску немає.
+      const shine = (d: number, rise: number) => {
+        if (!this.glossAt) return 1;
+        const q = along(d, this.tmp);
+        return this.glossAt(q.x, q.y + rise, q.z);
+      };
       const pm = along(start + length / 2, this.p);
       const riseMid = rel(pm.x, pm.z);
       const pf = along(start + length, this.p);
       const riseFar = rel(pf.x, pf.z);
+      const g0 = shine(start + length * 0.1, 0);
+      const gm = shine(start + length / 2, riseMid);
+      const gf = shine(start + length * 0.9, riseFar);
+      if (g0 + gm + gf === 0) {
+        l.out.visible = false;
+        continue;
+      }
       const halfW0 = Math.max(shape.minHalfWidth, l.halfWidth * shape.width);
       for (let r = 0; r <= SEGMENTS; r++) {
         const u = r / SEGMENTS;
         const p = along(start + length * u, this.p);
         p.y += u < 0.5 ? riseMid * u * 2 : riseMid + (riseFar - riseMid) * (u - 0.5) * 2;
         const halfW = halfW0 * (1 + shape.spread * u);
+        const gl = u < 0.5 ? g0 + (gm - g0) * u * 2 : gm + (gf - gm) * (u - 0.5) * 2;
+        l.gloss.setX(r * 2, gl);
+        l.gloss.setX(r * 2 + 1, gl);
         for (const [i, sgn] of [
           [0, -1],
           [1, 1],
@@ -240,10 +270,13 @@ export class WetReflections {
         }
       }
       l.pos.needsUpdate = true;
+      l.gloss.needsUpdate = true;
       // Під пологим кутом мокра дорога відбиває сильніше (Френель, на око).
       const dist = Math.hypot(lamp.x - cam.x, lamp.z - cam.z);
       const grazing = 1 - Math.min(1, (cam.y - near) / Math.max(1, dist));
-      l.material.uniforms.gain.value = k.gain * surface * (0.45 + 0.55 * grazing);
+      // Що далі машина, то слабше світіння (на око).
+      const far = 1 / (1 + Math.pow(Math.max(0, dist - FADE_FROM) / FADE_SCALE, 1.5));
+      l.material.uniforms.gain.value = k.gain * surface * (0.45 + 0.55 * grazing) * far;
     }
   }
 

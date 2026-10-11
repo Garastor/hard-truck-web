@@ -549,7 +549,7 @@ export class DriveSession {
     s.truck = new TruckVehicle(s.world, def, model, s.spawn, setup);
     s.lights = new TruckLights(model.setSwitch, s.truck.visual, s.truck.lightGeometry);
     s.reflections.push(new LampReflections(model.root, () => s.truck.groundHeight()));
-    s.wetReflections.push(new WetReflections(model.root, () => s.truck.groundHeight(), (x, y, z) => s.roadBelow(x, y, z)));
+    s.wetReflections.push(new WetReflections(model.root, () => s.truck.groundHeight(), (x, y, z) => s.roadBelow(x, y, z), (x, y, z) => s.glossAt(x, y, z)));
     scene.add(s.truck.visual);
     s.spawnOpponents(rivals);
     s.roomVis = new RoomVisibility(s.track, built.rooms);
@@ -783,7 +783,7 @@ export class DriveSession {
       pilot.cruise = 58 + ((i * 7) % 18);
       const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
       this.reflections.push(new LampReflections(model.root, () => truck.groundHeight()));
-      this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z)));
+      this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z), (x, y, z) => this.glossAt(x, y, z)));
       this.opponents.push({ truck, pilot, odo: new Odometer(), lights });
     });
   }
@@ -1027,6 +1027,32 @@ ${raceLine}`;
   }
 
   /** Висота підлоги (Three.js y) під точкою — за полігонами колізій усіх кімнат. */
+  /**
+   * Чи блищить поверхня під точкою (асфальт, бетон, тротуар — клас «асфальт» класифікатора покриття; трава,
+   * ґрунт, гравій, вода — ні): 1 або 0. Світ нерухомий — кеш за клітинками 2 м.
+   */
+  glossAt(x: number, y: number, z: number): number {
+    const key = `${Math.round(x / 2)},${Math.round(y / 2)},${Math.round(z / 2)}`;
+    const known = this.glossCache.get(key);
+    if (known !== undefined) return known;
+    this.glossRay.set(new THREE.Vector3(x, y + 1.5, z), new THREE.Vector3(0, -1, 0));
+    this.glossRay.far = 4;
+    this.glossRay.camera = this.camera; // білборди (тип 28) без камери кидають виняток
+    const rooms = this.built.rooms.filter((r) => r.visible);
+    const hit = this.glossRay.intersectObjects(rooms, true).find((h) => (h.object as THREE.Mesh).isMesh);
+    let v = 0;
+    if (hit) {
+      const mesh = hit.object as THREE.Mesh;
+      const mat = (Array.isArray(mesh.material) ? mesh.material[hit.face?.materialIndex ?? 0] : mesh.material) as THREE.MeshBasicMaterial;
+      v = classifySurface(mat?.name ?? '', texelAt(mat?.map, hit.uv)) === 'asphalt' ? 1 : 0;
+    }
+    if (this.glossCache.size > 50000) this.glossCache.clear();
+    this.glossCache.set(key, v);
+    return v;
+  }
+  private readonly glossCache = new Map<string, number>();
+  private readonly glossRay = new THREE.Raycaster();
+
   /** Висота дороги (нерухомі колізії) під точкою, шукаючи вниз від y на 8 м; null — немає. */
   roadBelow(x: number, y: number, z: number): number | null {
     const hit = this.world.castRay(
