@@ -71,18 +71,22 @@ export class PixelFont {
 
   /** Малює текст; (x, y) — лівий верхній кут. */
   draw(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color: string): number {
-    ctx.fillStyle = color;
     const w = this.font.cellW;
     for (const ch of text) {
       const g = this.glyph(ch);
-      if (g) {
-        for (let gy = 0; gy < this.font.height; gy++)
-          for (let gx = 0; gx < g.width; gx++) if (g.bits[gy * w + gx]) ctx.fillRect(x + gx, y + gy, 1, 1);
-      }
+      if (g) drawBitmap(ctx, `${this.ids.get(g) ?? this.id(g)}`, g.width, this.font.height, (gx, gy) => g.bits[gy * w + gx] === 1, x, y, color);
       x += (g?.width ?? 3) + 1;
     }
     return x;
   }
+
+  private readonly ids = new Map<Glyph, string>();
+  private id(g: Glyph): string {
+    const v = `g${PixelFont.next++}`;
+    this.ids.set(g, v);
+    return v;
+  }
+  private static next = 0;
 }
 
 /**
@@ -93,19 +97,88 @@ export function hudScale(): number {
   return Math.max(1, Math.floor(window.innerHeight / 400));
 }
 
-/** Полотно в «пікселях оригіналу», показане з масштабом без згладжування. */
+/**
+ * Експеримент «hud=smooth» (параметр адреси, запамʼятовується): табло в повній роздільності екрана, текст і
+ * значки — як цифри одометра кабіни (плавне збільшення + відсікання прозорості 0,5, alphaTest); інакше — пікселі.
+ */
+export const HUD_SMOOTH = (() => {
+  try {
+    const p = new URLSearchParams(location.search).get('hud');
+    if (p) localStorage.setItem('ht.hud', p);
+    return (p ?? localStorage.getItem('ht.hud')) === 'smooth';
+  } catch {
+    return false;
+  }
+})();
+
+/** Полотно в «пікселях оригіналу», показане з масштабом без згладжування (або в повній роздільності — HUD_SMOOTH). */
 export function pixelCanvas(
   w: number,
   h: number,
   s = hudScale(),
 ): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
   const canvas = document.createElement('canvas');
-  canvas.width = Math.ceil(w);
-  canvas.height = Math.ceil(h);
-  canvas.style.width = `${canvas.width * s}px`;
-  canvas.style.height = `${canvas.height * s}px`;
+  const cw = Math.ceil(w);
+  const ch = Math.ceil(h);
+  const k = HUD_SMOOTH ? s * (window.devicePixelRatio || 1) : 1;
+  canvas.width = Math.round(cw * k);
+  canvas.height = Math.round(ch * k);
+  canvas.style.width = `${cw * s}px`;
+  canvas.style.height = `${ch * s}px`;
   canvas.className = 'pixel';
-  return { canvas, ctx: canvas.getContext('2d')! };
+  const ctx = canvas.getContext('2d')!;
+  ctx.scale(canvas.width / cw, canvas.height / ch);
+  return { canvas, ctx };
+}
+
+const smoothCache = new Map<string, HTMLCanvasElement>();
+
+/**
+ * Однобітний малюнок (w×h, ink(x, y)) кольором color у точці (x, y) одиниць табло. На полотні HUD_SMOOTH —
+ * як текстура з alphaTest 0,5: плавно збільшений до роздільності полотна і відсічений, інакше — пікселями.
+ */
+export function drawBitmap(
+  ctx: CanvasRenderingContext2D,
+  key: string,
+  w: number,
+  h: number,
+  ink: (x: number, y: number) => boolean,
+  x: number,
+  y: number,
+  color: string,
+): void {
+  const k = ctx.getTransform().a;
+  if (!HUD_SMOOTH || k <= 1.01) {
+    ctx.fillStyle = color;
+    for (let gy = 0; gy < h; gy++) for (let gx = 0; gx < w; gx++) if (ink(gx, gy)) ctx.fillRect(x + gx, y + gy, 1, 1);
+    return;
+  }
+  const id = `${key}|${color}|${k.toFixed(3)}`;
+  let img = smoothCache.get(id);
+  if (!img) {
+    // Поле 1 піксель: інакше плавне збільшення обрізало б краї.
+    const src = document.createElement('canvas');
+    src.width = w + 2;
+    src.height = h + 2;
+    const sctx = src.getContext('2d')!;
+    sctx.fillStyle = color;
+    for (let gy = 0; gy < h; gy++) for (let gx = 0; gx < w; gx++) if (ink(gx, gy)) sctx.fillRect(gx + 1, gy + 1, 1, 1);
+    img = document.createElement('canvas');
+    img.width = Math.round((w + 2) * k);
+    img.height = Math.round((h + 2) * k);
+    const ictx = img.getContext('2d')!;
+    ictx.imageSmoothingEnabled = true;
+    ictx.imageSmoothingQuality = 'high';
+    ictx.drawImage(src, 0, 0, img.width, img.height);
+    const d = ictx.getImageData(0, 0, img.width, img.height);
+    for (let i = 3; i < d.data.length; i += 4) d.data[i] = d.data[i] >= 128 ? 255 : 0;
+    ictx.putImageData(d, 0, 0);
+    smoothCache.set(id, img);
+  }
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, x - 1, y - 1, w + 2, h + 2);
+  ctx.restore();
 }
 
 /** Колір тексту табло оригіналу (виміряно зі скріншота). */
