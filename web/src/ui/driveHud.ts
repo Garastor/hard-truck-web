@@ -137,11 +137,13 @@ export class DriveHud {
     const S = this.small;
     const L = this.large ?? S;
     const dg = this.digits;
-    // Швидкість — цифрами одометра (у клітинці цифри є поля: обрізаємо на 2 px згори й знизу).
-    const lh = dg ? Math.max(L.height, dg[0].height - 4) : L.height;
+    // Швидкість — цифрами одометра, масштабованими до висоти індикатора передачі (за рядками з пікселями).
+    const ink = dg ? this.digitInk(L) : null;
+    const lh = L.height;
     const sh = S.height;
     // Ширини — за найширшими значеннями, щоб табло не «дихало» з кожною цифрою.
-    const speedW = dg ? dg[0].width * 3 : L.measure('000');
+    const step = dg && ink ? Math.round(dg[0].width * ink.scale) : 0;
+    const speedW = dg ? step * 3 : L.measure('000');
     const gearW = Math.max(L.measure('R'), L.measure('N'), L.measure('8'));
     const pctW = S.measure('100%');
     const item = (rows: string[]) => rows[0].length + 4 + pctW;
@@ -170,12 +172,14 @@ export class DriveHud {
     const y = top1 + 3;
     const ly = y + Math.round((lh - L.height) / 2);
     const ys = y + Math.round((lh - sh) / 2);
-    if (dg) {
-      let dx = x + speedW - dg[0].width * speed.length;
+    if (dg && ink) {
+      let dx = x + speedW - step * speed.length;
+      const sh0 = ink.bottom - ink.top + 1;
       for (const ch of speed) {
         const c = dg[Number(ch)];
-        ctx.drawImage(c, 0, 2, c.width, c.height - 4, dx, y + Math.round((lh - (c.height - 4)) / 2), c.width, c.height - 4);
-        dx += dg[0].width;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(c, 0, ink.top, c.width, sh0, dx, ly + ink.gearTop, Math.round(c.width * ink.scale), ink.gearH);
+        dx += step;
       }
     } else L.draw(ctx, speed, x + speedW - L.measure(speed), y, HUD_CYAN);
     x += speedW + 8;
@@ -193,6 +197,32 @@ export class DriveHud {
 
     if (d.line) S.draw(ctx, d.line, 2 + Math.floor((innerW - lineW) / 2), top2 + 3, HUD_CYAN);
     this.host.replaceChildren(canvas);
+  }
+
+  private ink: { top: number; bottom: number; scale: number; gearTop: number; gearH: number } | null = null;
+
+  /** Рядки з пікселями цифр одометра і цифри «8» великого шрифту — масштаб, щоб висоти збігались. */
+  private digitInk(L: PixelFont): { top: number; bottom: number; scale: number; gearTop: number; gearH: number } {
+    if (this.ink) return this.ink;
+    const dg = this.digits!;
+    let top = Infinity;
+    let bottom = -1;
+    for (const c of dg) {
+      const a = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+      for (let y = 0; y < c.height; y++)
+        for (let x = 0; x < c.width; x++)
+          if (a[(y * c.width + x) * 4 + 3] > 0) {
+            top = Math.min(top, y);
+            bottom = Math.max(bottom, y);
+          }
+    }
+    const g = L.glyph('8');
+    const w = L.font.cellW;
+    const rows = g ? Array.from({ length: L.height }, (_, y) => g.bits.slice(y * w, y * w + w).some((b) => b === 1)) : [];
+    const gearTop = Math.max(0, rows.indexOf(true));
+    const gearH = rows.length ? rows.lastIndexOf(true) - gearTop + 1 : L.height;
+    this.ink = { top, bottom, scale: gearH / (bottom - top + 1), gearTop, gearH };
+    return this.ink;
   }
 
   dispose(): void {
