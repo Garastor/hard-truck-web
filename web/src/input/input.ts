@@ -15,13 +15,13 @@ const HORN_SVG =
   '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M2.5 8.6v4.6M2.5 10.9H5"/><path d="M5 9h7.5c3.2 0 6-1.6 8-4.3.6-.8 1.5-.4 1.5.5v13.4c0 .9-.9 1.3-1.5.5-2-2.4-3.5-3.6-5.6-4.2"/><path d="M5 12.9h1.4"/><path d="M6.4 12.9c0 2.4 1.2 3.8 3.4 3.8h3.4"/><rect x="8.6" y="12.6" width="6.4" height="2.9" rx="1.45"/></svg>';
 
 /** Значки групи «ще» (однотонні, як сигнал). */
-const svg = (body: string) =>
-  `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">${body}</svg>`;
+const svg = (body: string, width = 2) =>
+  `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="${width}" stroke-linejoin="round" stroke-linecap="round">${body}</svg>`;
 /** Значки — за зразками користувача, контуром кольору тексту. */
 const ICONS = {
   more: svg('<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>'),
   // Фара з променями ліворуч.
-  lights: svg('<path d="M13.5 5.5c4.5 0 7.5 2.9 7.5 6.5s-3 6.5-7.5 6.5z"/><path d="M3 8.2l7.5-1.6M3 11.4l7.5-1.2M3 14.6l7.5-.9M3 17.8l7.5-.6"/>'),
+  lights: svg('<path d="M13.5 5.5c4.5 0 7.5 2.9 7.5 6.5s-3 6.5-7.5 6.5z"/><path d="M3 8l7.5-1M3 11l7.5-1M3 14l7.5-1M3 17l7.5-1"/>'),
   // Салонне дзеркало заднього огляду на кріпленні, з відблиском.
   mirror: svg('<path d="M9.3 3.5h5.4l-1.3 2h-.6l-.4 3.6h-.8l-.4-3.6h-.6z" fill="currentColor"/><path d="M6.1 9.4h11.8c.8 0 1.4.5 1.6 1.2l1.5 5.5c.3.8-.3 1.6-1.2 1.6H4.2c-.9 0-1.5-.8-1.2-1.6l1.5-5.5c.2-.7.8-1.2 1.6-1.2z"/><path d="M10 15.6l2.6-2.8M12.2 16l2.6-2.8" stroke-width="1"/>'),
   map: svg('<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>'),
@@ -31,8 +31,10 @@ const ICONS = {
   engine: svg('<path d="M6.5 9.5V8h3V6h5v2h2.5l1.5 2h1.5V8.5h1.5v7h-1.5V14H18.5l-1.5 3.5H9.5L7.5 15H6.5v-1.5H3.5v2H2v-6h1.5v2h3z"/>'),
   // Приладова панель — вид кабіни 2D / 3D.
   cab: svg('<path d="M6 18.5A7.5 7.5 0 1 1 18 18.5z"/><path d="M12 14.6l3.4-4.6"/><circle cx="12" cy="14.8" r="1.1"/><path d="M12 8.7v1.3M7.6 13.4h1.2M15.2 13.4h1.2M8.4 10l.8.8"/><path d="M3.6 11.6a2.6 2.6 0 0 0 0 5.2M20.4 11.6a2.6 2.6 0 0 1 0 5.2"/>'),
-  swap: svg('<path d="M4 8h14l-3-3M20 16H6l3 3"/>'),
-  cam: svg('<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+  // Клавіші-стрілки — поміняти місцями кермо й педалі.
+  swap: svg('<g transform="translate(0 2)"><rect x="9" y="3" width="6" height="6" rx="1.2"/><rect x="2" y="11" width="6" height="6" rx="1.2"/><rect x="9" y="11" width="6" height="6" rx="1.2"/><rect x="16" y="11" width="6" height="6" rx="1.2"/><path d="M12 4.9l1.3 2.1h-2.6zM12 15.1l1.3-2.1h-2.6zM3.9 14l2.1-1.3v2.6zM20.1 14l-2.1-1.3v2.6z" fill="currentColor" stroke-width="1"/></g>', 1.6),
+  // Відеокамера — перемикання виду.
+  cam: svg('<rect x="2" y="6" width="13.5" height="12" rx="2.5"/><path d="M15.5 10.5l6-3.5v10l-6-3.5z"/>'),
   // Кругова стрілка за годинниковою — відновитися.
   reset: svg('<path d="M17.2 16.8A6.8 6.8 0 1 1 18.3 9"/><path d="M15.6 9.6h5.2l-2.6 3.6z" fill="currentColor"/>'),
   left: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M17 4L6 12l11 8z"/></svg>',
