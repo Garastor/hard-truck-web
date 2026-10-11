@@ -58,6 +58,10 @@ const LABEL_FONT = '"Century Gothic", "Futura", "Trebuchet MS", Arial, sans-seri
 const GROW = 1;
 /** Запас навколо старого напису, що замінюється фоном (тінь напису зміщена вниз-праворуч), пікселів. */
 const PAD = 5;
+/** Зсув тіні старого напису вниз-праворуч, пікселів. */
+const SHADOW = 5;
+/** Рамка кнопки (не замальовувати), пікселів від краю. */
+const FRAME = 3;
 
 /** Маска тексту: пікселі, що відрізняються між станами, розширені на GROW пікселів (контур і тінь). */
 function textMask(states: ImageData[]): Uint8Array {
@@ -207,6 +211,14 @@ export function localizeButton(
   const maxW = align === 'right' ? tight.x1 - 8 : w - 10;
   // По центру — за шириною кнопки (старий напис бував зсунутий).
   const place = align === 'center' ? { ...tight, x0: 0, x1: w - 1 } : tight;
+  // Для замальовування — маска з тінню: тінь напису оригіналу розмита й зміщена вниз-праворуч на 3–4 px і однакова в
+  // усіх станах (у різницю не потрапляє); без неї замальовування розтягувало темні плями.
+  const shadowMask = mask.slice();
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      if (mask[y * w + x])
+        for (let dy = 0; dy <= SHADOW; dy++)
+          for (let dx = 0; dx <= SHADOW; dx++) if (x + dx < w - FRAME && y + dy < h - FRAME) shadowMask[(y + dy) * w + x + dx] = 1;
   // Чи збігається стан кнопки поза текстом із фоном під нею (вибраний / натиснутий стан буває підсвічений).
   const matches = (from: ImageData) => {
     if (!under || under.width !== w || under.height !== h) return false;
@@ -236,7 +248,7 @@ export function localizeButton(
           img.data[i + 1] = under.data[i + 1];
           img.data[i + 2] = under.data[i + 2];
         }
-    } else inpaint(img, mask);
+    } else inpaint(img, shadowMask);
     const c = document.createElement('canvas');
     c.width = w;
     c.height = h;
@@ -263,10 +275,10 @@ const BACKGROUND_UK: Record<string, [number, number, number, number, string, ('l
   ],
   'o/back_opt.txr': [
     [254, 96, 446, 106, 'НАЛАШТУВАННЯ ТА КЛАВІШІ', 'above'],
-    // Заголовки колонок кнопок — по центру колонки (стовпчики x = 27, 150, 273, кнопка ≈ 113 px).
-    [48, 355, 128, 366, 'КЕРУВАННЯ', 'above', [27, 140]],
-    [162, 355, 250, 366, 'ЯКІСТЬ', 'above', [150, 263]],
-    [286, 355, 375, 366, 'ВІДЕОРЕЖИМ', 'above', [273, 386]],
+    // Заголовки колонок кнопок — по центру колонки (стовпчики x = 27, 150, 273, кнопка 99 px).
+    [48, 355, 128, 366, 'КЕРУВАННЯ', 'above', [27, 125]],
+    [162, 355, 250, 366, 'ЯКІСТЬ', 'above', [150, 248]],
+    [286, 355, 375, 366, 'ВІДЕОРЕЖИМ', 'above', [273, 371]],
   ],
   'd/back_dri.txr': [
     [232, 152, 294, 166, 'ЗА КЕРМОМ'],
