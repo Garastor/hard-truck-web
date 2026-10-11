@@ -158,6 +158,8 @@ export class CareerGame {
     this.drive = await this.host.play('MENU3D', { truck: this.c.truck, rivals: [], kind: 'free', setup: {} });
     if (!this.drive) return;
     this.drive.onRoomEnter = (room) => this.onBaseRoom(room);
+    // На базі вантаж не бʼється (удари рахуються лише в рейсі).
+    this.drive.hudStatus = () => this.hudStatus(0);
     this.drive.applyDents(this.c.dents);
     this.playerCollapsed = false;
     this.setupBase();
@@ -282,11 +284,7 @@ export class CareerGame {
       this.drive.autoWreck = false;
       this.drive.onResetRequest = () => void this.askRecover();
       const d = this.drive;
-      this.drive.hudStatus = () => ({
-        truck: this.c.condition.tech,
-        cargo: this.c.cargo.length ? 1 - cargoBroken(this.c, d.hits) : null,
-        money: this.c.money,
-      });
+      this.drive.hudStatus = () => this.hudStatus(d.hits);
       this.wornHits = this.wornDist = 0;
       this.damageKey = '';
       this.updateDamage();
@@ -332,6 +330,15 @@ export class CareerGame {
     } finally {
       this.busy = false;
     }
+  }
+
+  /** Табло заїзду: техстан машини, цілість вантажу (якщо є) за ударами рейсу, баланс. */
+  private hudStatus(hits: number): { truck: number; cargo: number | null; money: number } {
+    return {
+      truck: this.c.condition.tech,
+      cargo: this.c.cargo.length ? 1 - cargoBroken(this.c, hits) : null,
+      money: this.c.money,
+    };
   }
 
   private cargoValue(): number {
