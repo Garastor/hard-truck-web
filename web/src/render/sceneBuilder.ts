@@ -31,16 +31,18 @@ interface VertexSource {
 }
 
 /** Полігони за матеріалом; ord — порядковий номер полігона в даних для кожного трикутника. */
-type Batches = Map<number, { pos: number[]; uv: number[]; ord: number[] }>;
+type Batches = Map<number, { pos: number[]; uv: number[]; ord: number[]; layer?: number[] }>;
 
 /**
  * Шари в одній площині (фасад тунелю на суцільній стіні лісу): оригінал малює полігони по черзі й пізніший
  * перекриває ранішній; з буфером глибини вони мерехтять. Пізніший трикутник, що справді перекривається з
- * ранішнім у тій самій площині й з того самого боку, зсуваємо до глядача на LAYER_STEP за кожен шар під ним.
- * Лише текстуровані: однотонні (розмітка) у даних ідуть раніше за асфальт, а малюються поверх — для них зсув
- * глибини матеріалу (polygonOffset).
+ * ранішнім у тій самій площині й з того самого боку, малюємо зі зсувом глибини (polygonOffset) на шар за кожен
+ * шар під ним. Раніше його зсували геометрично на 4 см до глядача — біля краю висунутої панелі відкривалась щілина
+ * (світла смуга під плакатами в залі запчастин бази). Лише текстуровані: однотонні (розмітка) у даних ідуть
+ * раніше за асфальт, а малюються поверх — для них зсув глибини матеріалу.
  */
-const LAYER_STEP = 0.04;
+const LAYER_OFFSET_FACTOR = -1;
+const LAYER_OFFSET_UNITS = -4;
 
 export class MaterialLibrary {
   private readonly cache = new Map<number, THREE.Material>();
@@ -342,16 +344,47 @@ export class SceneAssembler {
       );
     for (const [matIndex, b] of batches) {
       if (!b.pos.length) continue;
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
-      g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
-      g.computeBoundingSphere();
-      const mesh = new THREE.Mesh(g, this.lib.material(matIndex));
-      mesh.matrixAutoUpdate = false;
-      into.add(mesh);
-      this.stats.meshes++;
-      this.stats.triangles += b.pos.length / 9;
+      // Трикутники за шаром: шар 0 — звичайний матеріал, вищі — копія зі зсувом глибини.
+      const byLayer = new Map<number, { pos: number[]; uv: number[] }>();
+      if (!b.layer) byLayer.set(0, b);
+      else
+        for (let t = 0; t < b.pos.length / 9; t++) {
+          const l = b.layer[t] ?? 0;
+          let part = byLayer.get(l);
+          if (!part) byLayer.set(l, (part = { pos: [], uv: [] }));
+          part.pos.push(...b.pos.slice(t * 9, t * 9 + 9));
+          part.uv.push(...b.uv.slice(t * 6, t * 6 + 6));
+        }
+      for (const [layer, part] of byLayer) {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(part.pos, 3));
+        g.setAttribute('uv', new THREE.Float32BufferAttribute(part.uv, 2));
+        g.computeBoundingSphere();
+        const mesh = new THREE.Mesh(g, layer ? this.layerMaterial(matIndex, layer) : this.lib.material(matIndex));
+        mesh.matrixAutoUpdate = false;
+        into.add(mesh);
+        this.stats.meshes++;
+        this.stats.triangles += part.pos.length / 9;
+      }
     }
+  }
+
+  private readonly layerMaterials = new Map<string, THREE.Material>();
+
+  /** Матеріал шару над стіною: та сама текстура, зсув глибини до глядача на layer кроків. */
+  private layerMaterial(matIndex: number, layer: number): THREE.Material {
+    const key = `${matIndex}/${layer}`;
+    let m = this.layerMaterials.get(key);
+    if (!m) {
+      const src = this.lib.material(matIndex) as THREE.Material;
+      m = src.clone();
+      m.userData = src.userData; // clone() копіює userData через JSON — Set прапорців матеріалу пропадав би
+      m.polygonOffset = true;
+      m.polygonOffsetFactor = LAYER_OFFSET_FACTOR * layer;
+      m.polygonOffsetUnits = LAYER_OFFSET_UNITS * layer;
+      this.layerMaterials.set(key, m);
+    }
+    return m;
   }
 
   private addPolys(polys: Polygon[], vs: VertexSource, batches: Batches): void {
@@ -720,9 +753,9 @@ function lampCenter(top: Block, vs: VertexSource | null): [number, number, numbe
   return n ? [sum[0] / n, sum[1] / n, sum[2] / n] : null;
 }
 
-/** Див. LAYER_STEP. Повертає кількість зсунутих трикутників. */
-function separateLayers(batches: { pos: number[]; ord: number[] }[]): number {
-  interface Tri { b: { pos: number[] }; at: number; ord: number; n: THREE.Vector3; d: number; pts: THREE.Vector3[]; layer: number }
+/** Шари в одній площині (див. LAYER_OFFSET_*): номер шару трикутника — у b.layer. Повертає кількість трикутників над шаром 0. */
+function separateLayers(batches: { pos: number[]; ord: number[]; layer?: number[] }[]): number {
+  interface Tri { b: { pos: number[]; layer?: number[] }; at: number; ord: number; n: THREE.Vector3; d: number; pts: THREE.Vector3[]; layer: number }
   const groups = new Map<string, Tri[]>();
   for (const b of batches) {
     for (let t = 0; t < b.ord.length; t++) {
@@ -751,12 +784,7 @@ function separateLayers(batches: { pos: number[]; ord: number[] }[]): number {
         if (overlapInPlane(top.pts, low.pts, top.n)) top.layer = Math.max(top.layer, low.layer + 1);
       }
       if (!top.layer) continue;
-      const off = top.n.clone().multiplyScalar(top.layer * LAYER_STEP);
-      for (let k = 0; k < 3; k++) {
-        top.b.pos[top.at + k * 3] += off.x;
-        top.b.pos[top.at + k * 3 + 1] += off.y;
-        top.b.pos[top.at + k * 3 + 2] += off.z;
-      }
+      (top.b.layer ??= [])[top.at / 9] = top.layer;
       moved++;
     }
   }
