@@ -491,7 +491,15 @@ body.driving .touch-btn.repair {
   top: max(8px, env(safe-area-inset-top));
 }
 
-/* База (кар'єра): сигнал — у групі «•••», на його місці — «Головне меню»; «Ремонт» — праворуч від кнопки меню. */
+/* База (кар'єра): сигнал — у групі «•••», на його місці — «Головне меню»; «Ремонт» — праворуч від кнопки меню.
+   Розкрита група — одразу під «•••» або ліворуч від вікна закупівлі; колонки — справа наліво (careerUi). */
+.touch-ui.base-layout .touch-more {
+  left: auto;
+  right: var(--base-group-right, calc(var(--sr) + 156px * var(--ui, 1)));
+  top: calc(max(8px, env(safe-area-inset-top)) + 52px * var(--ui, 1));
+  direction: rtl;
+}
+
 .touch-ui.base-layout > .touch-btn.horn {
   display: none;
 }

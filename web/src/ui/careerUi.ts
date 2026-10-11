@@ -17,7 +17,7 @@ import type { TruckSetup } from '../game/truckVehicle';
 import type { Room } from '../game/track';
 import type { DriveSession } from '../modes/drive';
 import type { BuiltScene } from '../render/sceneBuilder';
-import { HUD_CYAN, PixelFont, frame, hudScale, inset, panel, pixelCanvas } from './pixelFont';
+import { HUD_CYAN, PixelFont, frame, hudScale, inset, panel, pixelCanvas, uiScale } from './pixelFont';
 
 export type LevelKind = 'laps' | 'route' | 'free';
 
@@ -237,6 +237,7 @@ export class CareerGame {
     });
     this.panel.append(this.info, this.actions, this.player);
     window.addEventListener('keydown', this.onKey);
+    window.addEventListener('resize', this.placeBaseGroup);
   }
 
   static async start(host: CareerHost, c: Career, specs: TruckSpec[]): Promise<CareerGame> {
@@ -251,6 +252,7 @@ export class CareerGame {
   dispose(): void {
     clearInterval(this.timer);
     window.removeEventListener('keydown', this.onKey);
+    window.removeEventListener('resize', this.placeBaseGroup);
     this.clearShowroom();
     this.panel.remove();
   }
@@ -552,11 +554,29 @@ export class CareerGame {
       return this.trackZone();
     }
     this.baseButtons();
-    if (!ev) return;
-    if (ev.type === EV_GOOD) this.goodZone(ev.param);
-    else if (ev.type === EV_TRUCK) this.truckZone(ev.param);
-    else this.partZone(ev.param);
+    if (ev) {
+      if (ev.type === EV_GOOD) this.goodZone(ev.param);
+      else if (ev.type === EV_TRUCK) this.truckZone(ev.param);
+      else this.partZone(ev.param);
+    }
+    requestAnimationFrame(this.placeBaseGroup);
   }
+
+  /**
+   * База: розкрита група «•••» — одразу під «•••» (рядка кнопок кар'єри тут немає), а якщо праворуч відкрите вікно
+   * закупівлі — ліворуч від нього; колонки додаються від вікна вліво (--base-group-right, style.css).
+   */
+  private readonly placeBaseGroup = () => {
+    if (this.level !== 'MENU3D') return;
+    const more = document.querySelector('.touch-btn.more');
+    if (!more) return;
+    let right = window.innerWidth - more.getBoundingClientRect().right;
+    if (!this.info.hidden) {
+      const r = this.panel.getBoundingClientRect();
+      if (r.width) right = Math.max(right, window.innerWidth - r.left + 8 * uiScale());
+    }
+    document.documentElement.style.setProperty('--base-group-right', `${Math.round(right)}px`);
+  };
 
   /** Текст піксельним шрифтом оригіналу (або системним, якщо MENU.FON недоступний). */
   private text(ctx: CanvasRenderingContext2D, t: string, x: number, y: number, color: string): void {
