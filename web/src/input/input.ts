@@ -41,6 +41,9 @@ const ICONS = {
   reset: svg('<path d="M17.2 16.8A6.8 6.8 0 1 1 18.3 9"/><path d="M15.6 9.6h5.2l-2.6 3.6z" fill="currentColor"/>'),
   left: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M17 4L6 12l11 8z"/></svg>',
   right: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M7 4l11 8-11 8z"/></svg>',
+  // Газ і гальмо (на прохання користувача — стрілки вперед і назад замість написів), як стрілки керма.
+  gas: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M4 17l8-11 8 11z"/></svg>',
+  brake: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M4 7l8 11 8-11z"/></svg>',
 };
 
 type Command = 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror' | 'cab' | 'swap';
@@ -205,8 +208,8 @@ export class Input {
     };
     btn('left', '', 'left', undefined, ICONS.left);
     btn('right', '', 'right', undefined, ICONS.right);
-    btn('brake', 'ГАЛЬМО', 'brake');
-    btn('gas', 'ГАЗ', 'gas');
+    btn('brake', '', 'brake', undefined, ICONS.brake);
+    btn('gas', '', 'gas', undefined, ICONS.gas);
     btn('cam', '', undefined, 'camera', ICONS.cam);
     btn('reset', '', undefined, 'reset', ICONS.reset);
     btn('horn', '', undefined, 'horn', HORN_SVG);
