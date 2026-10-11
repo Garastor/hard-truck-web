@@ -27,6 +27,8 @@ if (import.meta.env.DEV) Object.assign(window, { RAPIER });
 /** Шар Three.js для деталей кабіни, що малюються поверх решти кабіни (кермо). */
 const CAB_TOP_LAYER = 1;
 
+/** Ґрунт під колесами (звук гравію stones): матеріали поза дорогою (гіпотеза за назвами матеріалів трас). */
+const OFFROAD = /grass|beach|sand|dirt|gravel|ground|field|earth|mud|forest|cobble/i;
 /** Звуки ударів: тихіші за IMPACT_SOUND_MIN (м/с за крок) не чути; від IMPACT_CRASH — аварія (гіпотеза). */
 const IMPACT_SOUND_MIN = 1.5;
 const IMPACT_CRASH = 6;
@@ -187,10 +189,52 @@ export class DriveSession {
     if (dv < IMPACT_CRASH) this.audio.play('hit', Math.min(1, dv / IMPACT_CRASH));
     else this.audio.play(CRASH_SOUNDS[Math.floor(Math.random() * CRASH_SOUNDS.length)], Math.min(1, dv / 15));
   }
+  /** Гравій: поверхня під машиною — ґрунт (за матеріалом), звук stones ∝ швидкості. */
+  private stonesSound: LoopSound | null | undefined;
+  private surfaceTimer = 0;
+  private offRoad = false;
+  private readonly ray = new THREE.Raycaster();
+  /** Матеріал поверхні під машиною — промінь у видиму геометрію поточної кімнати (раз на 0,2 с). */
+  private updateSurface(dt: number): void {
+    if ((this.surfaceTimer -= dt) > 0) return;
+    this.surfaceTimer = 0.2;
+    const room = this.room ? this.built.rooms.find((r) => r.name === this.room) : null;
+    if (!room) return;
+    const t = this.truck.body.translation();
+    this.ray.set(new THREE.Vector3(t.x, t.y + 1, t.z), new THREE.Vector3(0, -1, 0));
+    this.ray.far = 6;
+    this.ray.camera = this.camera; // білборди (тип 28) без камери кидають виняток
+    const hit = this.ray.intersectObject(room, true).find((h) => (h.object as THREE.Mesh).isMesh);
+    if (!hit) return;
+    const mesh = hit.object as THREE.Mesh;
+    const mat = Array.isArray(mesh.material) ? mesh.material[hit.face?.materialIndex ?? 0] : mesh.material;
+    this.offRoad = OFFROAD.test(mat?.name ?? '');
+  }
+  /** Кімнати з водою (матеріали water/river) — для звуку падіння у воду. */
+  private waterRooms: Set<string> | null = null;
+  private isWaterRoom(name: string): boolean {
+    if (!this.waterRooms) {
+      this.waterRooms = new Set();
+      for (const r of this.built.rooms) {
+        let wet = false;
+        r.traverse((o) => {
+          const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+          if (!wet && (o as THREE.Mesh).isMesh && m && /water|river/i.test(m.name)) wet = true;
+        });
+        if (wet) this.waterRooms.add(r.name);
+      }
+    }
+    return this.waterRooms.has(name);
+  }
   private updateSounds(dt: number): void {
     const a = this.audio;
     if (!a) return;
     this.impactCooldown -= dt;
+    this.updateSurface(dt);
+    const kmh = this.truck.speedKmh;
+    const gravel = this.offRoad && kmh > 3;
+    if (gravel && this.stonesSound === undefined) this.stonesSound = a.loopSound('stones');
+    this.stonesSound?.set(gravel ? Math.min(0.6, kmh / 100) : 0, 0.8 + Math.min(0.6, kmh / 150));
     // Двигуни суперників: тихішають з відстанню, панорама — за положенням відносно камери.
     this.oppSounds ??= this.opponents.map(() => a.loopSound('extcar'));
     const cam = this.camera.position;
@@ -860,6 +904,8 @@ ${raceLine}`;
         // Вода, прірва (подія 3264) — лише рестарт на точці кімнати, з якої впали.
         if (room.events.some((e) => e.type === EVENT_DEATH)) {
           this.hits += 10;
+          // Утонули — сплеск; прірва — удар.
+          this.audio?.play(this.isWaterRoom(next) ? 'water' : 'crash9', 1);
           this.prevPos.copy(cur);
           if (this.onDeath) {
             this.onDeath();
@@ -958,6 +1004,7 @@ ${raceLine}`;
     this.effects?.dispose();
     for (const s of this.oppSounds ?? []) s?.stop();
     this.wiperSound?.stop();
+    this.stonesSound?.stop();
     this.audio?.dispose();
     void this.wakeLock?.release().catch(() => {});
     this.world.free();
