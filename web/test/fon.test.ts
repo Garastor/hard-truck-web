@@ -23,5 +23,10 @@ describe('FON', () => {
       expect(g!.bits.some((b) => b === 1), ch).toBe(true);
     }
     expect(f.glyphs[32]).not.toBeNull(); // пробіл має ширину
+    // Орієнтація: у «Т» найповніший рядок — верхній (large.fon зберігає рядки згори вниз, MENU.FON — знизу вгору).
+    const t = f.glyphs[cp('Т')]!;
+    const rows = Array.from({ length: f.height }, (_, y) => t.bits.slice(y * cellW, y * cellW + cellW).reduce((a, b) => a + b, 0));
+    const firstInked = rows.findIndex((n) => n > 0);
+    expect(rows[firstInked]).toBe(Math.max(...rows));
   });
 });

@@ -16,6 +16,8 @@ import type { BuiltScene } from '../render/sceneBuilder';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
 import { EngineAudio, type LoopSound } from '../audio/engineAudio';
+import { DriveHud } from '../ui/driveHud';
+import type { PixelFont } from '../ui/pixelFont';
 import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, EVENT_RAIN, Track, type Room } from '../game/track';
 import { AutoPilot, WayNet } from '../game/autopilot';
 import { RoomVisibility } from '../render/roomVisibility';
@@ -182,6 +184,9 @@ export class DriveSession {
   /** Висота (Three.js y), нижче якої вантажівка вважається такою, що випала зі світу. */
   private fallY = -200;
   private hudTimer = 0;
+  private pixelHud: DriveHud | null = null;
+  /** Міцність машини й цілість вантажу (0…1), баланс гравця (null — не показувати) для табло; без обробника — тестовий режим. */
+  hudStatus: (() => { truck: number | null; cargo: number | null; money: number | null }) | null = null;
   private cab: THREE.Group | null = null;
   private cabParts: { rule?: THREE.Object3D; tacho?: THREE.Object3D; speed?: THREE.Object3D } = {};
   private cabSwitch: ((n: string, state: number) => void) | null = null;
@@ -1099,23 +1104,37 @@ export class DriveSession {
     const lap = this.lapStart !== null ? fmtTime(this.clock - this.lapStart) : '—';
     const best = this.bestLap !== null ? `   кращий ${fmtTime(this.bestLap)}` : '';
     const place = this.opponents.length ? `   місце ${this.racePosition()}/${this.opponents.length + 1}` : '';
-    const start = this.countdown > 0 ? `
-${this.lamp === 'r' ? 'ЧЕРВОНИЙ' : 'ЖОВТИЙ'}  ${Math.ceil(this.countdown)}` : '';
-    const fin = this.finished ? `
-ФІНІШ!  місце ${this.finished.place}, час ${fmtTime(this.finished.time)}` : '';
-    const speedLine = `${t.speedKmh.toFixed(0)} км/год   ${t.gear < 0 ? 'R' : t.gear === 0 ? 'N' : t.gear}   ${t.rpm.toFixed(0)} об/хв`;
-    const raceLine =
-      this.raceKind === 'free'
-        ? 'вільна їзда'
-        : `${(this.room ?? '?').replace('room_', 'сектор ')}   коло ${Math.min(this.laps + 1, this.lapsToFinish || Infinity)}` +
-          `${this.lapsToFinish ? '/' + this.lapsToFinish : ''}: ${lap}${best}${place}${start}${fin}`;
-    // Табло — 10 разів на секунду: оновлення тексту щокадру змушує браузер перераховувати верстку.
+    const start = this.countdown > 0 ? `   ${this.lamp === 'r' ? 'ЧЕРВОНИЙ' : 'ЖОВТИЙ'} ${Math.ceil(this.countdown)}` : '';
+    const fin = this.finished ? `   ФІНІШ! місце ${this.finished.place}, час ${fmtTime(this.finished.time)}` : '';
+    // Табло — 10 разів на секунду: оновлення щокадру змушує браузер перераховувати верстку.
     this.hudTimer -= dt;
     if (this.hudTimer > 0) return;
     this.hudTimer = 0.1;
-    const text = `${speedLine}
+    const status = this.hudStatus?.() ?? { truck: Math.max(0, 1 - this.hits / WRECK_HITS), cargo: null, money: null };
+    const money = status.money !== null ? `$${Math.round(status.money)}` : '';
+    const race =
+      this.raceKind === 'free'
+        ? money
+          ? ''
+          : 'вільна їзда'
+        : `коло ${Math.min(this.laps + 1, this.lapsToFinish || Infinity)}` +
+          `${this.lapsToFinish ? '/' + this.lapsToFinish : ''}: ${lap}${best}${place}${start}${fin}`;
+    const raceLine = [money, race].filter(Boolean).join('   ');
+    if (this.pixelHud) {
+      this.pixelHud.update({ speedKmh: t.speedKmh, gear: t.gear, truck: status.truck, cargo: status.cargo, line: raceLine });
+      return;
+    }
+    // Без шрифтів оригіналу — текстом.
+    const pct = (f: number | null) => (f === null ? '' : `   ${Math.round(f * 100)}%`);
+    const text = `${t.speedKmh.toFixed(0)}   ${t.gear < 0 ? 'R' : t.gear === 0 ? 'N' : t.gear}${pct(status.truck)}${pct(status.cargo)}
 ${raceLine}`;
     if (this.hud.textContent !== text) this.hud.textContent = text;
+  }
+
+  /** Шрифти оригіналу для табло (MENU.FON, large.fon); без них — текст системним шрифтом. */
+  setHudFonts(small: PixelFont | null, large: PixelFont | null): void {
+    this.pixelHud?.dispose();
+    this.pixelHud = small ? new DriveHud(this.hud, small, large) : null;
   }
 
   /** Увімкнути колізії лише кімнат з машинами та їхніх сусідів через портали (решта — вимкнені). */

@@ -227,6 +227,15 @@ body.bar-open #fps {
   white-space: pre;
 }
 
+/* Табло намальоване на canvas у стилі табличок оригіналу — без власного фону. */
+.drive-hud.pixel-hud {
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  line-height: 0;
+  pointer-events: none;
+}
+
 .touch-ui {
   position: absolute;
   inset: 0;

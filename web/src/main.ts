@@ -188,6 +188,8 @@ async function startDrive(): Promise<void> {
     const kind = cfg?.kind ?? (id === 'CIRCUIT' ? 'laps' : id === 'MENU3D' ? 'free' : 'route');
     const rivals = cfg?.rivals ?? (id === 'TRIAL' || id === 'MENU3D' ? [] : trucks.filter((t) => t !== def).slice(0, nAi));
     drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup);
+    const [small, large] = await hudFonts();
+    drive.setHudFonts(small, large);
     // Тестовий режим: мінікарта завжди (у кар'єрі — лише з навігаційною системою «НС»).
     if (!cfg && id !== 'MENU3D') drive.showMap(true);
     if (loadControl() === 'tilt') drive.setTilt(true);
@@ -501,11 +503,20 @@ async function play(id: LevelId, cfg: NonNullable<typeof careerCfg>): Promise<Dr
 }
 
 let hudFont: PixelFont | null | undefined;
+let largeFont: PixelFont | null | undefined;
+
+/** Растрові шрифти оригіналу для табло: MENU.FON (6×9) і large.fon (12×17); недоступний — null. */
+async function hudFonts(): Promise<[PixelFont | null, PixelFont | null]> {
+  const load = (name: string) => source.read(name).then((b) => new PixelFont(parseFon(b))).catch(() => null);
+  if (hudFont === undefined) hudFont = await load('MENU.FON');
+  if (largeFont === undefined) largeFont = await load('large.fon');
+  return [hudFont, largeFont];
+}
 
 async function startCareer(c: Career): Promise<void> {
   playModeSel.value = 'career';
   await ensureTrucks();
-  if (hudFont === undefined) hudFont = await source.read('MENU.FON').then((b) => new PixelFont(parseFon(b))).catch(() => null);
+  await hudFonts();
   const specs = trucks.map(truckSpec);
   document.body.classList.add('career');
   career = await CareerGame.start(
@@ -515,7 +526,7 @@ async function startCareer(c: Career): Promise<void> {
       defs: async () => (await ensureTrucks(), trucks),
       play,
       built: () => built,
-      font: hudFont,
+      font: hudFont ?? null,
       exit: () => {
         career = null;
         careerCfg = null;

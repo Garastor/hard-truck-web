@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import {
   PARTS, TRACKS, TUNNELS, autoLoad, buyPart, buyTruck, canLoad, cargoVolume, cargoWeight, fmt,
-  ROAD_REPAIR_TARGET, applyWear, damageEffects, formatMoney as money, loadGood, recoverCost, repair, repairCost,
+  ROAD_REPAIR_TARGET, applyWear, cargoBroken, damageEffects, formatMoney as money, loadGood, recoverCost, repair, repairCost,
   roadRepairStep, saveCareer, settleTrip, truckSetup, truckValue, unloadGood, type Career, type TrackId, type TruckSpec,
 } from '../game/career';
 import { buildTruckModel, visibleBox, type TruckDef } from '../game/trucks';
@@ -281,6 +281,12 @@ export class CareerGame {
       this.drive.onDeath = () => void this.fatal();
       this.drive.autoWreck = false;
       this.drive.onResetRequest = () => void this.askRecover();
+      const d = this.drive;
+      this.drive.hudStatus = () => ({
+        truck: this.c.condition.tech,
+        cargo: this.c.cargo.length ? 1 - cargoBroken(this.c, d.hits) : null,
+        money: this.c.money,
+      });
       this.wornHits = this.wornDist = 0;
       this.damageKey = '';
       this.updateDamage();

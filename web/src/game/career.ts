@@ -392,6 +392,14 @@ export function truckSetup(c: Career, spec: TruckSpec, track: TrackId) {
 
 const money = (n: number) => `${Math.round(n).toLocaleString('uk-UA')} $`;
 
+/** Частка побитого вантажу від сили ударів за рейс: крихкість товару, пневмопідвіска (ПП) — удвічі менше. */
+export function cargoBroken(c: Career, hits: number): number {
+  const value = cargoValue(c);
+  const fragility = c.cargo.length ? c.cargo.reduce((s, i) => s + i.good.fragility * i.qty * i.good.price, 0) / Math.max(1, value) : 0;
+  const suspension = c.parts.includes('ПП') ? 0.5 : 1;
+  return Math.min(0.9, (hits / 60) * fragility * suspension);
+}
+
 /**
  * Розрахунок після заїзду: виручка, знос, гроші суперників, нові ринок і погода.
  * Комерційні: продаж вантажу = вартість × (1 + надбавка за маршрут) × (1 − побите) × бонуси за місце й дощ.
@@ -406,9 +414,7 @@ export function settleTrip(c: Career, specs: TruckSpec[], res: TripResult): stri
 
   if (info.kind === 'commercial') {
     const value = cargoValue(c);
-    const fragility = c.cargo.length ? c.cargo.reduce((s, i) => s + i.good.fragility * i.qty * i.good.price, 0) / Math.max(1, value) : 0;
-    const suspension = c.parts.includes('ПП') ? 0.5 : 1;
-    const broken = Math.min(0.9, (res.hits / 60) * fragility * suspension);
+    const broken = cargoBroken(c, res.hits);
     if (res.finished && value > 0) {
       const markup = 0.1 + info.difficulty * 0.03;
       income = value * (1 + markup) * (1 - broken) * (1 + 0.15 * placeBonus) * (rain ? 1.3 : 1);
