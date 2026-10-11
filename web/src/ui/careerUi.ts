@@ -168,6 +168,10 @@ export function callSign(): HTMLImageElement {
 const RATING_SVG =
   '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="16.5" cy="7" r="3"/><path d="M14.5 13.6c.6-.3 1.3-.4 2-.4 2.8 0 4.5 2.2 4.5 5.3"/><circle cx="9" cy="9.5" r="3.5"/><path d="M3 21c0-3.8 2.6-6.4 6-6.4s6 2.6 6 6.4"/></svg>';
 
+/** Значок «Меню» — будинок (головне меню); напис на телефоні в квадратну кнопку не вміщався. */
+const HOME_SVG =
+  '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7.5 9 7.5"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5.5h4V20"/></svg>';
+
 /** Стрілка «згорнути» (вліво) кольору тексту табло. */
 export function collapseArrow(): HTMLCanvasElement {
   const { canvas, ctx } = pixelCanvas(9, 9, hudScale() * 1.25);
@@ -716,7 +720,10 @@ export class CareerGame {
         this.refresh();
       });
     this.ratingButton();
-    this.square('МЕНЮ', this.pixelLabel('МЕНЮ'), () => void this.quit());
+    const home = document.createElement('span');
+    home.innerHTML = HOME_SVG;
+    home.style.display = 'grid';
+    this.square('Меню', home, () => void this.quit());
     this.collapsible();
   }
 
@@ -739,12 +746,6 @@ export class CareerGame {
     this.square('Рейтинг', icon, () => void this.rating());
   }
 
-  /** Напис піксельним шрифтом табло (крупніший, як на кнопках). */
-  private pixelLabel(t: string): HTMLCanvasElement {
-    const { canvas, ctx } = pixelCanvas(this.measure(t), this.host.font?.height ?? 8, hudScale() * BUTTON_ZOOM);
-    this.text(ctx, t, 0, 0, HUD_CYAN);
-    return canvas;
-  }
 
   /**
    * Згортання групи кнопок до значка (як табло гравця). Згорнуто — значок «телефон екстреного виклику» (як

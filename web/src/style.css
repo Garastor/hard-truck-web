@@ -340,16 +340,17 @@ body.bar-open #fps {
 }
 
 /*
- * Розгорнута група — дві колонки під «•••» і праворуч від неї (під сигналом), на рядок нижче верхніх кнопок і
- * рядка кнопок кар'єри (Рейтинг, Меню, Ремонт…), щоб нічого не накладалося: спершу 4 кнопки ліворуч, далі праворуч.
+ * Розгорнута група — колонки не вищі за 3 кнопки: перша під «•••», наступні праворуч; на рядок нижче верхніх
+ * кнопок і рядка кнопок кар'єри (Рейтинг, Меню, Ремонт…), щоб нічого не накладалося.
  */
 .touch-more {
   position: absolute;
-  right: calc(var(--sr) + 104px * var(--ui, 1));
+  /* Ліва межа — під «•••»; колонки по 3 кнопки додаються праворуч. */
+  left: calc(100% - var(--sr) - 200px * var(--ui, 1));
   top: calc(max(8px, env(safe-area-inset-top)) + 104px * var(--ui, 1));
   display: grid;
-  grid-template-columns: repeat(2, calc(44px * var(--ui, 1)));
-  grid-template-rows: repeat(4, calc(44px * var(--ui, 1)));
+  grid-template-rows: repeat(3, calc(44px * var(--ui, 1)));
+  grid-auto-columns: calc(44px * var(--ui, 1));
   grid-auto-flow: column;
   gap: calc(8px * var(--ui, 1));
 }
