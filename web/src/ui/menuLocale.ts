@@ -263,6 +263,9 @@ export function localizeButton(
   const shadowMask = mask.slice();
   for (let y = Math.max(FRAME, box.y0 - 1); y <= Math.min(h - 1 - FRAME, box.y1 + SHADOW); y++)
     for (let x = Math.max(FRAME, box.x0 - 1); x <= Math.min(w - 1 - FRAME, box.x1 + SHADOW + 1); x++) shadowMask[y * w + x] = 1;
+  // Кнопки «Опцій»: фон екрана має під ними чисті плитки (без візерунка кнопки) — беремо плитку цілком, стан
+  // кнопки показує колір напису.
+  const whole = !!under && under.width === w && under.height === h && base.startsWith('o/');
   // Чи збігається стан кнопки поза текстом із фоном під нею (вибраний / натиснутий стан буває підсвічений).
   const matches = (from: ImageData) => {
     if (!under || under.width !== w || under.height !== h) return false;
@@ -279,7 +282,15 @@ export function localizeButton(
   const out: Record<string, HTMLCanvasElement> = {};
   const make = (key: string, from: ImageData, style: { fill: string; edge: string }, underline = false) => {
     const img = new ImageData(new Uint8ClampedArray(from.data), w, h);
-    if (under && matches(from)) {
+    if (under && whole) {
+      // Уся плитка — з фону екрана (на фоні «Опцій» під кнопками лежать чисті плитки без написів).
+      for (let i = 0; i < w * h; i++) {
+        if (img.data[i * 4 + 3] === 0) continue;
+        img.data[i * 4] = under.data[i * 4];
+        img.data[i * 4 + 1] = under.data[i * 4 + 1];
+        img.data[i * 4 + 2] = under.data[i * 4 + 2];
+      }
+    } else if (under && matches(from)) {
       const x0 = Math.max(0, box.x0 - PAD);
       const y0 = Math.max(0, box.y0 - PAD);
       const x1 = Math.min(w - 1, box.x1 + PAD);
