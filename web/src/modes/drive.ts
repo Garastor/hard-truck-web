@@ -10,6 +10,7 @@ import { Movables } from '../game/movables';
 import { Effects } from '../render/effects';
 import { TruckLights, hideLampReflections } from '../render/truckLights';
 import { WetReflections } from '../render/wetReflections';
+import { Headlights, litByHeadlights } from '../render/headlights';
 import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import { SKY_FOG, type BuiltScene } from '../render/sceneBuilder';
@@ -538,6 +539,8 @@ export class DriveSession {
   private lights: TruckLights | null = null;
   /** Відблиски ліхтарів на дорозі — власні, у формі ліхтарів (див. WetReflections; оригінальні білборди сховані). */
   private readonly wetReflections: WetReflections[] = [];
+  /** Власне освітлення світу фарами гравця вночі (в оригіналі немає; див. render/headlights.ts). */
+  private headlightsFx: Headlights | null = null;
   /** Фари гравця вручну (L): null — як в оригіналі, самі вночі й у дощ. */
   private lightsOverride: boolean | null = null;
   private get headlights(): boolean {
@@ -667,6 +670,8 @@ export class DriveSession {
     s.wetReflections.push(new WetReflections(model.root, () => s.truck.groundHeight(), (x, y, z) => s.roadBelow(x, y, z), (x, y, z) => s.glossAt(x, y, z), (f, t) => s.lampSeen(f, t)));
     scene.add(s.truck.visual);
     s.spawnOpponents(rivals);
+    s.headlightsFx = new Headlights(s.truck.visual, model.root);
+    litByHeadlights(scene);
     s.roomVis = new RoomVisibility(s.track, built.rooms);
     s.updateOpponentRooms();
     s.updateActiveRooms();
@@ -1383,6 +1388,7 @@ export class DriveSession {
     const wet = this.raining && (this.glassRain?.raining ?? true);
     this.syncToggles();
     this.wetReflections.forEach((r, i) => r.update(this.camera, i === 0 ? this.headlights : this.night || wet, wet));
+    this.headlightsFx?.update(this.night && this.headlights, this.truck.forward());
     this.updateSurface(dt);
     this.checkDeath(dt);
     this.effects?.update(dt);
@@ -1748,6 +1754,7 @@ export class DriveSession {
     // Циліндр дощу — у спільній сцені: без цього лишався стояти там, де була камера попереднього заїзду.
     if (this.rain) this.scene.remove(this.rain.root);
     for (const r of this.wetReflections) r.dispose();
+    this.headlightsFx?.dispose();
     if (this.baseFog) {
       this.scene.fog = this.baseFog.fog;
       this.scene.background = this.baseFog.bg;
