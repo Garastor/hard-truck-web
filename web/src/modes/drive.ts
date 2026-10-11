@@ -515,6 +515,10 @@ export class DriveSession {
       pos = g2t(obs.data.position);
       fwd = g2t(obs.data.matrix[1]).setY(0).normalize();
     } else {
+      // Без Observer (COUNT, MOUNT — маршрути з бази): старт — точка рестарту першої кімнати маршруту room_001
+      // (кімнати пронумеровано від початку до фінішу room_999).
+      const first = this.track.rooms.get('room_001')?.restart;
+      if (first) return { position: this.groundAt(first.position), forward: first.forward.clone() };
       new THREE.Box3().setFromObject(this.built.root).getCenter(pos);
     }
     let best = Infinity;
