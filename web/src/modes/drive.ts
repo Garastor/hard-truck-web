@@ -817,6 +817,22 @@ export class DriveSession {
       return found;
     };
     this.cabParts = { rule: bySpace('RuleSpace'), tacho: bySpace('TachoSpace'), speed: bySpace('SpeedSpace') };
+    // Цифри одометра (KMeter*Key) — змішування замість порогу alphaTest 0,5: поріг спотворював контури цифр.
+    inner.traverse((o) => {
+      if (!/^KMeter\dKey#/.test(o.name)) return;
+      o.traverse((g) => {
+        const mesh = g as THREE.Mesh;
+        if (!mesh.material) return;
+        mesh.material = ([] as THREE.Material[]).concat(mesh.material).map((mat) => {
+          const m = mat.clone();
+          m.alphaTest = 0;
+          m.transparent = true;
+          m.depthWrite = false;
+          return m;
+        });
+        if ((mesh.material as THREE.Material[]).length === 1) mesh.material = (mesh.material as THREE.Material[])[0];
+      });
+    });
     // Скло (GlassKey, група 1) показуємо завжди: його текстуру — краплі — малює GlassRain, суха — прозора.
     dyn.setSwitch('GlassKey', 1);
     this.glassRain = new GlassRain(inner, this.dropSprites);

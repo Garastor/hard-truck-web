@@ -799,10 +799,10 @@ body.driving.bar-open .hud-player {
   visibility: hidden;
 }
 
-/* Табло намальоване піксельним шрифтом оригіналу — масштаб без згладжування. */
+/* Табло намальоване піксельним шрифтом оригіналу. */
 canvas.pixel {
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
+  /* Плавне збільшення (м'які контури, як цифри одометра без alphaTest) — на прохання користувача. */
+  image-rendering: auto;
 }
 
 .hud-info {
