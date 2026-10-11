@@ -194,6 +194,8 @@ export class Cab2d {
         .multiply(new THREE.Matrix4().makeTranslation(-c.x, -c.y, 0));
       q.matrix.premultiply(r);
     }
+    // Матриця задана вручну — світову перерахувати (інакше лишалась перша: ні доповороту, ні розгойдування).
+    q.matrixWorldNeedsUpdate = true;
   }
 
   render(renderer: THREE.WebGLRenderer): void {
