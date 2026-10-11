@@ -1,6 +1,8 @@
 import { parseMsk, type Msk } from '../formats/msk';
 import { parsePlm } from '../formats/plm';
 import { parseRmp } from '../formats/rmp';
+import { parseTxr } from '../formats/txr';
+import type { RgbaImage } from '../formats/binary';
 import type { FileSource } from './loader';
 
 /**
@@ -8,7 +10,8 @@ import type { FileSource } from './loader';
  * (*.RMP без «3»): порт бере на пристрій лише апаратний набір, тож маски кабін (9 штук) і її приладів (кермо
  * m_rul_01…39, цифри big/small/smallr, тахометр rpm00…16, передачі gear_r/gear00…09, autogear, park; разом ≈ 2 МБ)
  * витягуємо з COUNT.RMP під час імпорту й зберігаємо окремо (`CAB2D/<імʼя>.msk` і палітру `CAB2D/palette.plm`).
- * Там же дощ 2D-кабіни: краплі `msk\drop7.msk`, `drop10.msk` і смуги `rain.msk` (render/cab2dRain.ts).
+ * Там же дощ 2D-кабіни: краплі `msk\drop7.msk`, `drop10.msk`, смуги `rain.msk` і текстура лопатей двірників
+ * `txr\flash.txr` (матеріал `wiper ttx 1` — перша текстура набору; render/cab2dRain.ts).
  */
 export const CAB2D_SOURCE = 'COUNT/COUNT.RMP';
 export const CAB2D_DIR = 'CAB2D/';
@@ -28,7 +31,36 @@ export function extractCab2d(rmpBytes: Uint8Array): [string, Uint8Array][] {
   }
   const plm = [...rmp.palettes.values()][0];
   if (plm) out.push([PALETTE, plm]);
+  const wiper = rmp.textures.get(`txr/${WIPER_TXR}`);
+  if (wiper) out.push([`${CAB2D_DIR}${WIPER_TXR}`, wiper]);
   return out;
+}
+
+/** Текстура лопатей двірників 2D-кабіни (програмний набір). */
+export const WIPER_TXR = 'flash.txr';
+
+/**
+ * Текстура програмного набору (CAB2D/<імʼя>.txr): зі сховища, інакше (dev-сервер ПК) — з COUNT.RMP із записом у
+ * сховище. null — немає (імпорт до появи цієї текстури: потрібен повторний).
+ */
+export async function loadCab2dTexture(
+  src: FileSource,
+  name: string,
+  store?: (name: string, data: Uint8Array) => Promise<void>,
+): Promise<RgbaImage | null> {
+  const path = `${CAB2D_DIR}${name}`;
+  try {
+    return parseTxr(await src.read(path));
+  } catch {
+    try {
+      const files = extractCab2d(await src.read(CAB2D_SOURCE));
+      if (store) await Promise.all(files.map(([n, b]) => store(n, b).catch(() => {})));
+      const f = files.find(([n]) => n === path);
+      return f ? parseTxr(f[1]) : null;
+    } catch {
+      return null;
+    }
+  }
 }
 
 /** Шлях у сховищі для `panel_mask` (msk\kam_pan.msk → CAB2D/kam_pan.msk). */

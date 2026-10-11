@@ -1141,7 +1141,7 @@ body.driving.bar-open .hud-player {
 }
 
 .rain-streaks > div {
-  background-repeat: repeat-x;
+  background-repeat: repeat-y;
   will-change: transform;
 }
 

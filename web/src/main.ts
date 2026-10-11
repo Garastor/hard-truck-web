@@ -5,7 +5,7 @@ import { LEVELS, devServerSource, loadLevel, type FileSource, type LevelId, type
 import { REQUIRED, cachedSource, idbSource, importFiles, importZip, missingFiles, prefetchMissing, storageInfo, storeFile } from './assets/gameFiles';
 import { isIos, isStandalone, registerServiceWorker } from './ui/pwa';
 import { setSoftFont, soften } from './ui/softUi';
-import { loadCab2d } from './assets/cab2d';
+import { WIPER_TXR, loadCab2d, loadCab2dTexture } from './assets/cab2d';
 import { FpsMeter, FrameLimiter, QUALITY, loadQuality, loadShowFps, saveQuality, saveShowFps, type QualityId } from './ui/quality';
 import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from './ui/mobile';
 import { buildScene, type BuiltScene } from './render/sceneBuilder';
@@ -212,6 +212,7 @@ async function startDrive(): Promise<void> {
     };
     // Маски 2D-кабіни: з файлів на пристрої; якщо їх імпортовано раніше без масок — з ПК (dev-сервер), із записом.
     drive.setCab2dLoader(async (mask, raw) => (await loadCab2d(source, mask, storeFile, raw)) ?? (source === devServerSource ? null : loadCab2d(devServerSource, mask, storeFile, raw)));
+    drive.setWiperTextureLoader(async () => (await loadCab2dTexture(source, WIPER_TXR, storeFile)) ?? (source === devServerSource ? null : loadCab2dTexture(devServerSource, WIPER_TXR, storeFile)));
     const [small, large] = await hudFonts();
     drive.setHudFonts(small, large);
     // Тестовий режим: мінікарта завжди (у кар'єрі — лише з навігаційною системою «НС»).

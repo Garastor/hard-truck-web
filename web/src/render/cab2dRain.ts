@@ -10,9 +10,9 @@ import type { RgbaImage } from '../formats/binary';
  * - краплі, що стікають, `msk\drop10.msk`: 5/с, кожна 50 px/с униз зі зсувом убік −4…3 за крок, три відбитки на крок
  *   (0x473560) — лишає слід;
  * - двірники стирають буфер лініями з кроком 0,00314 рад від радіуса 10 до висоти буфера (0x462f38).
- * Лопаті — смужки за формою моделі `Wiper` (COUNT.B3D). Текстуру лопаті не з'ясовано: у програмному наборі матеріал
- * `wiper ttx 1`, але перша текстура COUNT.RMP (flash.txr) у смузі UV лопаті — шматок спалаху; тому лопать — темна
- * суцільна смужка (гіпотеза). Інтерфейс — як у GlassRain (3D-скло).
+ * Лопаті — модель `Wiper` (COUNT.B3D): смужка 0,85 × 0,08 з матеріалом `wiper ttx 1` — перша текстура набору
+ * (`txr\flash.txr`, «ttx» — текстура з прозорим чорним, 0x4530d0), смуга u 0,875…0,996 — намальований двірник
+ * (важіль і щітка). Інтерфейс — як у GlassRain (3D-скло).
  */
 
 /** Швидкість помаху, рад/с (0x54625c), положення спокою (0x546264) і нижня межа помаху (поле +0x9c), рад. */
@@ -42,8 +42,9 @@ const DROP_COLOR = new THREE.Color(191 / 255, 191 / 255, 191 / 255);
  */
 const FADE_STEPS = 15;
 const FADE_TIME = 0.5;
-/** Ширина лопаті до довжини — як у моделі `Wiper` (COUNT.B3D: 0,08 × 0,85); колір — гіпотеза (див. вище). */
+/** Ширина лопаті до довжини — як у моделі `Wiper` (COUNT.B3D: 0,08 × 0,85). */
 const BLADE_WIDTH = 0.08 / 0.85;
+/** Без текстури (імпорт до її появи) — темна смужка. */
 const BLADE_COLOR = 0x141414;
 /** Найбільший крок часу оновлення, с: після паузи (прихована вкладка) двірник проскочив би межу помаху. */
 const MAX_DT = 0.1;
@@ -87,8 +88,11 @@ export class Cab2dRain {
   private dirty = false;
   private empty = true;
 
-  /** drop, runner — маски drop7 і drop10, розкодовані без палітри (рівень — у червоному каналі). */
-  constructor(drop: RgbaImage | null, runner: RgbaImage | null) {
+  /**
+   * drop, runner — маски drop7 і drop10, розкодовані без палітри (рівень — у червоному каналі); blade — текстура
+   * flash.txr (лопать — її смуга u 0,875…0,996).
+   */
+  constructor(drop: RgbaImage | null, runner: RgbaImage | null, blade: RgbaImage | null = null) {
     const { w, h } = RAIN_VIEW;
     this.drop = drop && toLevels(drop);
     this.runner = runner && toLevels(runner);
@@ -100,12 +104,18 @@ export class Cab2dRain {
       [PIVOT_X, h + 10],
       [PIVOT_X + 1.5 * h, h + 10],
     ];
-    // Лопаті: смужка від осі (x = 0) до кінця (x = 1), поперек — y −0,5…0,5.
+    // Лопаті: смужка від осі (x = 0) до кінця (x = 1), поперек — y −0,5…0,5; UV — як у моделі Wiper: біля осі v = 1,
+    // на кінці v = 0, поперек u 0,996…0,875.
+    const map = blade ? bladeTexture(blade) : null;
     for (let i = 0; i < 2; i++) {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute([0, -0.5, 0, 1, -0.5, 0, 1, 0.5, 0, 0, 0.5, 0], 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute([0.996, 1, 0.996, 0, 0.875, 0, 0.875, 1], 2));
       g.setIndex([0, 1, 2, 0, 2, 3]);
-      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: BLADE_COLOR, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
+      const mat = map
+        ? new THREE.MeshBasicMaterial({ map, alphaTest: 0.5, depthTest: false, depthWrite: false, side: THREE.DoubleSide })
+        : new THREE.MeshBasicMaterial({ color: BLADE_COLOR, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
+      const m = new THREE.Mesh(g, mat);
       m.matrixAutoUpdate = false;
       m.renderOrder = -20;
       m.frustumCulled = false;
@@ -118,9 +128,9 @@ export class Cab2dRain {
       new THREE.ShaderMaterial({
         uniforms: { levels: { value: this.texture }, color: { value: DROP_COLOR } },
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-        // PlaneGeometry: v = 1 угорі; рядок 0 буфера — верх смуги.
+        // Камера 2D-кабіни — y униз: v = 0 PlaneGeometry — верх смуги на екрані, як рядок 0 буфера.
         fragmentShader:
-          'uniform sampler2D levels; uniform vec3 color; varying vec2 vUv; void main() { float a = texture2D(levels, vec2(vUv.x, 1.0 - vUv.y)).r; if (a <= 0.0) discard; gl_FragColor = vec4(color, a); }',
+          'uniform sampler2D levels; uniform vec3 color; varying vec2 vUv; void main() { float a = texture2D(levels, vUv).r; if (a <= 0.0) discard; gl_FragColor = vec4(color, a); }',
         transparent: true,
         depthTest: false,
         depthWrite: false,
@@ -284,6 +294,7 @@ export class Cab2dRain {
 
   dispose(): void {
     this.texture.dispose();
+    (this.blades[0].material as THREE.MeshBasicMaterial).map?.dispose();
     for (const o of this.root.children) {
       const m = o as THREE.Mesh;
       m.geometry.dispose();
@@ -294,14 +305,15 @@ export class Cab2dRain {
 
 /**
  * Смуги дощу `msk\rain.msk` (800×900, власна палітра) для зовнішніх камер у режимі 2D-кабіни (біт 0x10 у 0x4d0180:
- * дощ і камера не з кабіни; 0x4638c4): поверх виду з прозорістю 0,1, двома копіями поруч, зсув 400 px/с праворуч.
+ * дощ і камера не з кабіни; 0x4638c4): поверх виду з прозорістю 0,1, двома копіями одна над одною — у (0, y) і
+ * (0, y − висота маски), y += 400 px/с mod висоти: дощ падає вниз (зсув +0xac — аргумент y функції 0x415d44).
  * У програмному наборі тривимірного дощу (Foreground_object / RainKey) немає — смуги його й заміняють.
  * Кадр виду 640×480 розтягнуто на екран (гіпотеза щодо масштабу на широкому екрані).
  */
 export class RainStreaks {
   readonly el = document.createElement('div');
   private readonly strip = document.createElement('div');
-  private x = 0;
+  private y = 0;
   private scale = 0;
   private readonly w: number;
   private readonly h: number;
@@ -326,12 +338,25 @@ export class RainStreaks {
     const s = Math.max(window.innerWidth / 640, window.innerHeight / 480);
     if (s !== this.scale) {
       this.scale = s;
-      Object.assign(this.strip.style, { width: `${this.w * s * 2}px`, height: `${this.h * s}px`, backgroundSize: `${this.w * s}px ${this.h * s}px` });
+      Object.assign(this.strip.style, { width: `${this.w * s}px`, height: `${this.h * s * 2}px`, backgroundSize: `${this.w * s}px ${this.h * s}px` });
     }
-    this.x = (this.x + 400 * Math.min(dt, MAX_DT)) % this.w;
-    // Копії в x і x − ширина: смуга вдвічі ширша за малюнок, зсунута на (x − ширина).
-    this.strip.style.transform = `translateX(${(this.x - this.w) * s}px)`;
+    this.y = (this.y + 400 * Math.min(dt, MAX_DT)) % this.h;
+    // Копії в y і y − висота: смуга вдвічі вища за малюнок, зсунута на (y − висота).
+    this.strip.style.transform = `translateY(${(this.y - this.h) * s}px)`;
   }
+}
+
+/** Текстура лопаті: чорне — прозоре (матеріал «ttx»), рядок 0 — v = 0. */
+function bladeTexture(img: RgbaImage): THREE.DataTexture {
+  const d = new Uint8Array(img.data);
+  for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] === 0) d[i + 3] = 0;
+  const t = new THREE.DataTexture(d, img.width, img.height, THREE.RGBAFormat);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearFilter;
+  t.flipY = false;
+  t.needsUpdate = true;
+  return t;
 }
 
 function rand(n: number): number {

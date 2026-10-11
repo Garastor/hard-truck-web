@@ -15,6 +15,7 @@ import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import { SKY_FOG, type BuiltScene } from '../render/sceneBuilder';
 import { CAB2D_PARTS, Cab2d } from '../render/cab2d';
 import { Cab2dRain, RainStreaks } from '../render/cab2dRain';
+import type { RgbaImage } from '../formats/binary';
 import { cabStyle, type CabStyle } from '../game/viewSettings';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
@@ -1063,6 +1064,12 @@ export class DriveSession {
     if (this.cabStyleNow === '2d' && !this.panelMode) this.rebuildCab(false);
   }
 
+  /** Текстура лопатей двірників 2D-кабіни (txrlash.txr програмного набору, main.ts). */
+  private wiperTextureLoader: (() => Promise<RgbaImage | null>) | null = null;
+  setWiperTextureLoader(load: () => Promise<RgbaImage | null>): void {
+    this.wiperTextureLoader = load;
+  }
+
   /** Шар інтерфейсу заїзду (кнопки, табло) — сюди ж смуги дощу 2D-режиму, під кнопки. */
   private overlayEl: HTMLElement | null = null;
   /**
@@ -1109,8 +1116,9 @@ export class DriveSession {
     // Дощ і двірники 2D-кабіни (як в оригіналі). Маски крапель — окремо й без палітри (рівні прозорості): на
     // пристрої, імпортованому до цього, їх немає — тоді двірники ходять, але крапель не буде (повторний імпорт додасть).
     const drops = await this.cab2dLoader!(['drop7.msk', 'drop10.msk'], true).catch(() => null);
+    const blade = (await this.wiperTextureLoader?.().catch(() => null)) ?? null;
     if (token !== this.cab2dToken || !this.cab2d) return;
-    const rain = new Cab2dRain(drops?.get('drop7.msk') ?? null, drops?.get('drop10.msk') ?? null);
+    const rain = new Cab2dRain(drops?.get('drop7.msk') ?? null, drops?.get('drop10.msk') ?? null, blade);
     rain.onStroke = () => this.audio?.play('wipers', 0.9);
     rain.raining = this.raining;
     rain.wipersOn = this.wipersManual ?? this.raining;
