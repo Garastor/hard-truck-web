@@ -1,6 +1,7 @@
 import { Unzip, UnzipInflate } from 'fflate';
 import { LEVELS } from './loader';
 import type { FileSource } from './loader';
+import { CAB2D_DIR, CAB2D_SOURCE, extractCab2d } from './cab2d';
 
 /**
  * Файли гри на пристрої гравця (Фаза 7): імпорт з HardTruck.zip або теки гри → IndexedDB.
@@ -40,6 +41,8 @@ async function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBReq
 
 /** Зіставляє довільний шлях з архіву/теки з канонічним (без урахування регістру, за останніми сегментами). */
 export function canonical(path: string): string | null {
+  // Витягнуті маски 2D-кабіни (див. cab2d.ts) — під власними іменами.
+  if (path.startsWith(CAB2D_DIR)) return path;
   const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
   const last = parts[parts.length - 1]?.toUpperCase();
   const parent = parts[parts.length - 2]?.toUpperCase();
@@ -60,6 +63,20 @@ export async function missingFiles(): Promise<string[]> {
   return REQUIRED.filter((r) => !have.has(r));
 }
 
+/** Архів програмного набору, з якого при імпорті беремо лише маски 2D-кабіни. */
+function isCab2dSource(path: string): boolean {
+  const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
+  return parts.slice(-2).join('/').toUpperCase() === CAB2D_SOURCE;
+}
+
+async function putCab2d(data: Blob): Promise<void> {
+  for (const [n, b] of extractCab2d(new Uint8Array(await data.arrayBuffer()))) await put(n, b);
+}
+
+export async function storeFile(name: string, data: Uint8Array): Promise<void> {
+  await put(name, data);
+}
+
 async function put(name: string, data: Uint8Array | Blob): Promise<void> {
   const blob = data instanceof Blob ? data : new Blob([data as BlobPart]);
   await tx('readwrite', (s) => s.put(blob, name));
@@ -72,7 +89,13 @@ export async function importFiles(files: FileList | File[], progress: Progress):
   let n = 0;
   const list = [...files];
   for (const [i, f] of list.entries()) {
-    const c = canonical(f.webkitRelativePath || f.name);
+    const path = f.webkitRelativePath || f.name;
+    if (isCab2dSource(path)) {
+      progress('Витягую 2D-кабіни', i / list.length);
+      await putCab2d(f).catch(() => {});
+      continue;
+    }
+    const c = canonical(path);
     if (!c) continue;
     progress(`Копіюю ${c}`, i / list.length);
     await put(c, f);
@@ -89,6 +112,24 @@ export async function importZip(zip: File, progress: Progress): Promise<number> 
   const unzip = new Unzip();
   unzip.register(UnzipInflate);
   unzip.onfile = (file) => {
+    if (isCab2dSource(file.name) && !wanted.has(CAB2D_SOURCE)) {
+      const chunks: Uint8Array[] = [];
+      wanted.set(CAB2D_SOURCE, chunks);
+      done.push(
+        new Promise<void>((resolve) => {
+          file.ondata = (err, data, final) => {
+            if (err) return resolve();
+            chunks.push(data);
+            if (final) {
+              putCab2d(new Blob(chunks as BlobPart[])).then(resolve, () => resolve());
+              chunks.length = 0;
+            }
+          };
+          file.start();
+        }),
+      );
+      return;
+    }
     const c = canonical(file.name);
     if (!c || wanted.has(c)) return;
     const chunks: Uint8Array[] = [];

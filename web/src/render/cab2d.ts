@@ -1,0 +1,212 @@
+import * as THREE from 'three';
+import type { Msk } from '../formats/msk';
+
+/**
+ * 2D-кабіна, як у режимі оригіналу без 3D-кабіни (HTruck.exe 0x48fefc; розбір — re/notes/cab2d.md): растр
+ * `panel_mask` з TRUCK.TCH поверх світу (прозорі серії маски — вікна), на ньому цифрові прилади й кермо-спрайт.
+ * Усе — в координатах екрана оригіналу 640×480: маска в (sx − 80, sy − 30), де sx/sy — розгойдування ±30 px;
+ * прилади від опорної точки P = (X + 172, Y + 356); кермо в (X + 115, Y + 325); вище маски й нижче за Y + 460 —
+ * чорне. Малюється квадами в ортографічній сцені (без оновлення великої текстури щокадру).
+ */
+
+/** Імена масок 2D-кабіни, крім самої панелі (у сховищі — CAB2D/<імʼя>, див. assets/cab2d.ts). */
+export const CAB2D_PARTS: string[] = [
+  ...Array.from({ length: 39 }, (_, i) => `m_rul_${String(i + 1).padStart(2, '0')}.msk`),
+  ...Array.from({ length: 10 }, (_, i) => `big${i}.msk`),
+  ...Array.from({ length: 10 }, (_, i) => `small${i}.msk`),
+  ...Array.from({ length: 10 }, (_, i) => `smallr${i}.msk`),
+  ...Array.from({ length: 17 }, (_, i) => `rpm${String(i).padStart(2, '0')}.msk`),
+  'gear_r.msk',
+  ...Array.from({ length: 10 }, (_, i) => `gear${String(i).padStart(2, '0')}.msk`),
+  'autogear.msk',
+  'park.msk',
+];
+
+/**
+ * Картинка-в-картинці праворуч на панелі, кадр 640×480 — виміряно зі знімка оригіналу користувача (у коді
+ * оригіналу не знайдено; клавіша M там — «Switch TV Camera On/Off»). У порті — дзеркало заднього огляду.
+ */
+const PIP = { x: 449, y: 291, w: 167, h: 125 };
+/** Межа розгойдування маски, px (0x48952c: 0x1e). */
+const SWAY = 30;
+/** Висота маски від її верху до чорної заливки внизу, px (truck.ini maskYtile для виду прямо). */
+const TILE = 460;
+/**
+ * Кермо: кадр 19 ± g(|a|), a = round(−кермо·90) — кадри густіші біля центру (таблиця порогів 0x547ab1).
+ */
+function wheelFrame(steer: number): number {
+  const a = Math.round(-steer * 90);
+  const m = Math.abs(a);
+  let g: number;
+  if (m <= 5) g = m;
+  else if (m <= 13) g = 5 + Math.floor((m - 5) / 2);
+  else {
+    const i = [16, 20, 25, 31, 38, 46, 55, 65, 76].findIndex((t) => m <= t);
+    g = i < 0 ? 19 : 10 + i;
+  }
+  return Math.max(0, Math.min(38, 19 + Math.sign(a) * g));
+}
+
+export interface Cab2dState {
+  speedKmh: number;
+  /** Пробіг, м. */
+  odometer: number;
+  /** Частка обертів до кінця шкали тахометра (0…1). */
+  rpm: number;
+  /** −1 — R, 0 — N, 1… */
+  gear: number;
+  handbrake: boolean;
+  /** Кермо −1…1. */
+  steer: number;
+  /** Швидкість машини в її системі: x — праворуч, y — угору, z — уперед, м/с (для розгойдування). */
+  local: THREE.Vector3;
+}
+
+export class Cab2d {
+  private readonly scene = new THREE.Scene();
+  private readonly cam = new THREE.OrthographicCamera(0, 640, 0, 480, -1, 1);
+  private readonly tex = new Map<string, THREE.Texture>();
+  private readonly size = new Map<string, [number, number]>();
+  private readonly quads: THREE.Mesh[] = [];
+  private used = 0;
+  private sx = 0;
+  private sy = 0;
+  /** Видима область кадру 640×480 на екрані (оновлює render): масштаб і зсув. */
+  private view = { s: 1, ox: 0, oy: 0, w: 640, h: 480 };
+
+  constructor(
+    private readonly panel: Msk,
+    parts: Map<string, Msk>,
+  ) {
+    this.add('panel', panel);
+    for (const [n, m] of parts) this.add(n.replace(/\.msk$/, ''), m);
+  }
+
+  private add(name: string, m: Msk): void {
+    const t = new THREE.DataTexture(new Uint8Array(m.data.buffer, m.data.byteOffset, m.data.byteLength), m.width, m.height);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.magFilter = THREE.LinearFilter;
+    t.minFilter = THREE.LinearFilter;
+    t.flipY = false;
+    t.needsUpdate = true;
+    this.tex.set(name, t);
+    this.size.set(name, [m.width, m.height]);
+  }
+
+  /** Розгойдування маски (0x48bc44): за кутом ковзання й вертикальною швидкістю, з обмеженням кроку за кадр. */
+  update(dt: number, st: Cab2dState): void {
+    const v = st.local;
+    let tx = 0;
+    let ty = 0;
+    if (Math.abs(v.z) > 0.01) {
+      tx = Math.round((-v.x / v.z) * 100);
+      ty = (v.y / v.z) * 70;
+    }
+    tx = THREE.MathUtils.clamp(tx, -SWAY, SWAY);
+    ty = THREE.MathUtils.clamp(ty, -SWAY, SWAY);
+    if (Math.abs(ty) > Math.abs(this.sy)) ty = (this.sy + ty) / 2;
+    // Крок — до ≈ 60 px/с (в оригіналі round(dt·20) за кадр; одиниці dt не розібрано — гіпотеза).
+    const step = Math.max(1, dt * 60);
+    this.sx += THREE.MathUtils.clamp(tx - this.sx, -step, step);
+    this.sy += THREE.MathUtils.clamp(ty - this.sy, -step, step);
+    this.state = st;
+  }
+  private state: Cab2dState | null = null;
+
+  /**
+   * Кадр 640×480 на екрані: масштаб за висотою, але не менше ширини 800 (маска 985 px покриває 80 px ліворуч від
+   * кадру): на широкому екрані телефона обрізаються дах і низ під приладами, на 4:3 — нічого. Гіпотеза порту.
+   */
+  private layout(w: number, h: number): void {
+    const s = Math.max(h / 480, w / 800);
+    const vw = w / s;
+    const vh = h / s;
+    const ox = (vw - 640) / 2;
+    // Знизу — край маски (Y + 460 = 430): по висоті кадр притиснутий до нього, якщо не вміщається.
+    const oy = vh >= 480 ? (vh - 480) / 2 : Math.min(0, vh - 430);
+    this.view = { s, ox, oy, w: vw, h: vh };
+    this.cam.left = -ox;
+    this.cam.right = vw - ox;
+    this.cam.top = -oy;
+    this.cam.bottom = vh - oy;
+    this.cam.updateProjectionMatrix();
+  }
+
+  /** Прямокутник дзеркала (картинки-в-картинці) в пікселях екрана (CSS). */
+  mirrorOnScreen(): { x: number; y: number; w: number; h: number } {
+    const { s, ox, oy } = this.view;
+    const r = PIP;
+    return { x: (r.x + ox) * s, y: (r.y + oy) * s, w: r.w * s, h: r.h * s };
+  }
+
+  private quad(name: string | null, x: number, y: number, w?: number, h?: number, color?: number): void {
+    let q = this.quads[this.used];
+    if (!q) {
+      q = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ transparent: true, alphaTest: 0.5, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
+      q.renderOrder = this.used;
+      this.quads.push(q);
+      this.scene.add(q);
+    }
+    this.used++;
+    const m = q.material as THREE.MeshBasicMaterial;
+    const [tw, th] = name ? (this.size.get(name) ?? [0, 0]) : [w ?? 0, h ?? 0];
+    const tex = name ? (this.tex.get(name) ?? null) : null;
+    if (m.map !== tex) {
+      m.map = tex;
+      m.needsUpdate = true;
+    }
+    m.color.set(color ?? 0xffffff);
+    m.alphaTest = tex ? 0.5 : 0;
+    q.visible = !!tex || color !== undefined;
+    // Площина 1×1 з центром у нулі; камера — y униз (top < bottom), рядок 0 маски (flipY = false) — угорі.
+    q.scale.set(tw, th, 1);
+    q.position.set(x + tw / 2, y + th / 2, 0);
+  }
+
+  render(renderer: THREE.WebGLRenderer): void {
+    const st = this.state;
+    if (!st) return;
+    const size = renderer.getSize(new THREE.Vector2());
+    this.layout(size.x, size.y);
+    this.used = 0;
+    const X = Math.round(this.sx) - 80;
+    const Y = Math.round(this.sy) - 30;
+    this.quad('panel', X, Y);
+    // Прилади (0x48f770): P = (X + 172, Y + 356).
+    const px = X + 172;
+    const py = Y + 356;
+    const speed = Math.min(999, Math.round(Math.abs(st.speedKmh)));
+    const sd = String(speed).padStart(3, ' ');
+    for (let i = 0; i < 3; i++) if (sd[i] !== ' ') this.quad(`big${sd[i]}`, px + 10 * i, py);
+    const m = Math.max(0, Math.round(st.odometer));
+    for (let k = 0; k < 5; k++) {
+      const d = Math.floor(m / 10 ** (5 - k)) % 10;
+      this.quad(k < 3 ? `small${d}` : `smallr${d}`, px + 8 * k + (k < 3 ? 0 : 2), py + 15);
+    }
+    this.quad(`rpm${String(Math.min(16, Math.floor(Math.max(0, st.rpm) * 17))).padStart(2, '0')}`, px + 45, py - 6);
+    this.quad(st.gear < 0 ? 'gear_r' : `gear${String(Math.min(9, st.gear)).padStart(2, '0')}`, px + 65, py + 5);
+    this.quad('autogear', px + 96, py - 8);
+    if (st.handbrake) this.quad('park', px + 39, py - 5);
+    this.quad(`m_rul_${String(wheelFrame(st.steer) + 1).padStart(2, '0')}`, X + 115, Y + 325);
+    // Чорне поза маскою: над нею й нижче за Y + 460, а також боки, якщо екран ширший за маску.
+    const { ox, oy, w, h } = this.view;
+    const left = -ox;
+    const top = -oy;
+    const black = 0x000000;
+    if (Y > top) this.quad(null, left, top, w, Y - top, black);
+    if (Y + TILE < top + h) this.quad(null, left, Y + TILE, w, top + h - Y - TILE, black);
+    if (X > left) this.quad(null, left, top, X - left, h, black);
+    const right = X + this.panel.width;
+    if (right < left + w) this.quad(null, right, top, left + w - right, h, black);
+    for (let i = this.used; i < this.quads.length; i++) this.quads[i].visible = false;
+    renderer.render(this.scene, this.cam);
+  }
+
+  dispose(): void {
+    for (const t of this.tex.values()) t.dispose();
+    for (const q of this.quads) {
+      q.geometry.dispose();
+      (q.material as THREE.Material).dispose();
+    }
+  }
+}

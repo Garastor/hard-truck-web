@@ -1,7 +1,9 @@
+import { cabStyle, setCabStyle } from './game/viewSettings';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LEVELS, devServerSource, loadLevel, type FileSource, type LevelId, type LoadedLevel } from './assets/loader';
-import { REQUIRED, cachedSource, idbSource, importFiles, importZip, missingFiles, prefetchMissing } from './assets/gameFiles';
+import { REQUIRED, cachedSource, idbSource, importFiles, importZip, missingFiles, prefetchMissing, storeFile } from './assets/gameFiles';
+import { loadCab2d } from './assets/cab2d';
 import { FpsMeter, FrameLimiter, QUALITY, loadQuality, loadShowFps, saveQuality, saveShowFps, type QualityId } from './ui/quality';
 import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from './ui/mobile';
 import { buildScene, type BuiltScene } from './render/sceneBuilder';
@@ -193,6 +195,8 @@ async function startDrive(): Promise<void> {
     const kind = cfg?.kind ?? (id === 'CIRCUIT' ? 'laps' : id === 'MENU3D' ? 'free' : 'route');
     const rivals = cfg?.rivals ?? (id === 'TRIAL' || id === 'MENU3D' ? [] : trucks.filter((t) => t !== def).slice(0, nAi));
     drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup);
+    // Маски 2D-кабіни: з файлів на пристрої; якщо їх імпортовано раніше без масок — з ПК (dev-сервер), із записом.
+    drive.setCab2dLoader(async (mask) => (await loadCab2d(source, mask, storeFile)) ?? (source === devServerSource ? null : loadCab2d(devServerSource, mask, storeFile)));
     const [small, large] = await hudFonts();
     drive.setHudFonts(small, large);
     // Тестовий режим: мінікарта завжди (у кар'єрі — лише з навігаційною системою «НС»).
@@ -600,7 +604,7 @@ function saveControl(c: ControlMode): void {
   }
 }
 
-const OPTION_DEFAULTS: OptionsState = { control: 'buttons', quality: 'balance', fullscreen: false, swap: false, fps: false };
+const OPTION_DEFAULTS: OptionsState = { control: 'buttons', quality: 'balance', fullscreen: false, swap: false, fps: false, cab: '3d' };
 
 /** Налаштування (ОПЦИИ) — екран оригіналу з LOAD.RES; без нього — простий діалог. */
 async function optionsDialog(): Promise<void> {
@@ -613,6 +617,7 @@ async function optionsDialog(): Promise<void> {
       fullscreen: isFullscreen(),
       swap: loadSwap(),
       fps: showFps,
+      cab: cabStyle(),
     };
     await optionsScreen(
       menuArt,
@@ -644,6 +649,10 @@ async function optionsDialog(): Promise<void> {
         setSwap: setSwap,
         setFps(on) {
           if (on !== showFps) $('fpsToggle').click();
+        },
+        setCab(style) {
+          setCabStyle(style);
+          drive?.setCabStyle(style);
         },
 
       },

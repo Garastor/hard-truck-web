@@ -10,6 +10,8 @@ export interface TruckDef {
   wheelSpaces: [string, string, string, string];
   wheelNodes: [string, string, string, string];
   cockpitSpace: string;
+  /** 2D-кабіна (панель) — маска з програмного набору ресурсів, напр. `msk\kam_pan.msk` (див. assets/cab2d.ts). */
+  panelMask: string;
   /** Екранні координати (x, y) 2D-приладів панелі для зовнішньої камери (TachScale/SpeedScale у TCH). */
   tachScale: [number, number];
   speedScale: [number, number];
@@ -56,6 +58,7 @@ export function parseTrucks(tchText: string): TruckDef[] {
       wheelSpaces: [g('wheel_space0'), g('wheel_space1'), g('wheel_space2'), g('wheel_space3')],
       wheelNodes: [g('wheel_node_fl'), g('wheel_node_fr'), g('wheel_node_bl'), g('wheel_node_br')],
       cockpitSpace: g('cockpit_space'),
+      panelMask: g('panel_mask'),
       tachScale: ((v) => [v[0] ?? 50, v[1] ?? 240] as [number, number])(iniNums(ini, n, 'TachScale') ?? []),
       speedScale: ((v) => [v[0] ?? 160, v[1] ?? 240] as [number, number])(iniNums(ini, n, 'SpeedScale') ?? []),
       tech: readTech(ini, `TECH${i}`),

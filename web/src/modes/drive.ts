@@ -5,7 +5,7 @@ import { floorAt, levelCollision, openPortals, roomAt, type LevelCollision } fro
 import { Input } from '../input/input';
 import { TruckVehicle, type TruckSetup } from '../game/truckVehicle';
 import { GlassRain } from '../render/glassRain';
-import { parseMsk } from '../formats/msk';
+import { parseMsk, type Msk } from '../formats/msk';
 import { Movables } from '../game/movables';
 import { Effects } from '../render/effects';
 import { TruckLights, hideLampReflections } from '../render/truckLights';
@@ -13,6 +13,8 @@ import { WetReflections } from '../render/wetReflections';
 import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import { SKY_FOG, type BuiltScene } from '../render/sceneBuilder';
+import { CAB2D_PARTS, Cab2d } from '../render/cab2d';
+import { cabStyle, type CabStyle } from '../game/viewSettings';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
 import { EngineAudio, type LoopSound } from '../audio/engineAudio';
@@ -22,6 +24,7 @@ import type { PixelFont } from '../ui/pixelFont';
 import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, EVENT_RAIN, Track, type Room } from '../game/track';
 import { AutoPilot, WayNet } from '../game/autopilot';
 import { RoomVisibility } from '../render/roomVisibility';
+import { toast } from '../ui/mobile';
 
 /** Камера (C): з кабіни, від першої особи (лише прилади Panel), позаду, здалеку. */
 export type CamMode = 'chase' | 'cockpit' | 'first' | 'far';
@@ -843,6 +846,11 @@ export class DriveSession {
    * внизу по центру (як рушій їх розміщує, не розібрано — гіпотеза).
    */
   private buildCab(panel = false): void {
+    if (!panel && this.cabStyleNow === '2d' && this.cab2dLoader) {
+      this.panelMode = false;
+      void this.build2dCab();
+      return;
+    }
     const dyn = panel ? this.built.assembler.dynamicObject('Panel') : this.built.assembler.dynamicObject(`${this.def.prefix}Cab`);
     if (!dyn) return;
     this.panelMode = panel;
@@ -927,6 +935,7 @@ export class DriveSession {
       renderer.render(this.overlayScene, camera);
       camera.layers.mask = mask;
     }
+    if (this.cab2d && this.camMode === 'cockpit') this.cab2d.render(renderer);
     renderer.autoClear = autoClear;
     cam.near = near;
     cam.updateProjectionMatrix();
@@ -947,10 +956,12 @@ export class DriveSession {
 
   private renderMirror(renderer: THREE.WebGLRenderer): void {
     const size = renderer.getSize(new THREE.Vector2());
-    const w = Math.round(Math.min(size.x * MIRROR_WIDTH, 420));
-    const h = Math.round(w / MIRROR_ASPECT);
-    const x = Math.round((size.x - w) / 2);
-    const top = Math.round((this.hud?.getBoundingClientRect().bottom ?? 0) + 6);
+    // У 2D-кабіні — у чорне вікно на панелі (як на знімку оригіналу), інакше — віконце вгорі по центру.
+    const inPanel = this.camMode === 'cockpit' ? (this.cab2d?.mirrorOnScreen() ?? null) : null;
+    const w = Math.round(inPanel ? inPanel.w : Math.min(size.x * MIRROR_WIDTH, 420));
+    const h = Math.round(inPanel ? inPanel.h : w / MIRROR_ASPECT);
+    const x = Math.round(inPanel ? inPanel.x : (size.x - w) / 2);
+    const top = Math.round(inPanel ? inPanel.y : (this.hud?.getBoundingClientRect().bottom ?? 0) + 6);
     const ratio = renderer.getPixelRatio();
     if (!this.mirror) {
       const rt = new THREE.WebGLRenderTarget(1, 1, { colorSpace: THREE.SRGBColorSpace });
@@ -966,6 +977,8 @@ export class DriveSession {
       this.mirror = { rt, cam: new THREE.PerspectiveCamera(MIRROR_FOV, MIRROR_ASPECT, 1, this.camera.far), scene, ortho: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), material, frame };
     }
     const m = this.mirror;
+    m.cam.aspect = w / h;
+    m.cam.updateProjectionMatrix();
     if (m.rt.width !== Math.round(w * ratio) || m.rt.height !== Math.round(h * ratio)) m.rt.setSize(Math.round(w * ratio), Math.round(h * ratio));
     // Погляд назад з місця водія: орієнтація машини, розвернута на 180° навколо вертикалі.
     m.cam.position.copy(this.camera.position);
@@ -988,7 +1001,7 @@ export class DriveSession {
     renderer.setViewport(0, 0, size.x, size.y);
     renderer.autoClear = autoClear;
     Object.assign(m.frame.style, { left: `${x - 1}px`, top: `${top - 1}px`, width: `${w}px`, height: `${h}px` });
-    m.frame.hidden = false;
+    m.frame.hidden = !!inPanel;
   }
 
   /** Підсвітка кнопок групи «ще» за станом (лише коли змінився). */
@@ -1013,7 +1026,49 @@ export class DriveSession {
   /** Зараз побудовані прилади Panel (вид від першої особи), а не кабіна (див. buildCab). */
   private panelMode = false;
 
+  /** Кабіна: 3D-модель чи 2D-растр panel_mask («Опції»). */
+  setCabStyle(style: CabStyle): void {
+    if (style === this.cabStyleNow) return;
+    this.cabStyleNow = style;
+    this.rebuildCab(this.panelMode);
+  }
+  private cabStyleNow: CabStyle = cabStyle();
+
+  /** Джерело масок 2D-кабіни за іменами (main.ts: файли гри, див. assets/cab2d.ts); без нього — лише 3D. */
+  private cab2dLoader: ((names: string[]) => Promise<Map<string, Msk> | null>) | null = null;
+  setCab2dLoader(load: (names: string[]) => Promise<Map<string, Msk> | null>): void {
+    this.cab2dLoader = load;
+    if (this.cabStyleNow === '2d' && !this.panelMode) this.rebuildCab(false);
+  }
+
+  /** 2D-кабіна: растр panel_mask поверх світу (прозоре — вікна) з приладами й кермом (render/cab2d.ts). */
+  private cab2d: Cab2d | null = null;
+  /** Номер запиту маски: застарілі (кабіну вже перебудовано) відкидаємо. */
+  private cab2dToken = 0;
+
+  private async build2dCab(): Promise<void> {
+    const token = ++this.cab2dToken;
+    const panel = this.def.panelMask.replace(/\\/g, '/').split('/').pop()!.toLowerCase();
+    const masks = await this.cab2dLoader!([panel, ...CAB2D_PARTS]).catch(() => null);
+    if (token !== this.cab2dToken) return;
+    if (!masks) {
+      // Гру імпортовано до появи 2D-кабіни — масок на пристрої немає.
+      toast('2D-кабіна недоступна: повторно імпортуйте файли гри (або відкрийте гру з ПК). Поки що — 3D-кабіна.');
+      this.cabStyleNow = '3d';
+      this.rebuildCab(false);
+      return;
+    }
+    this.cab2d = new Cab2d(masks.get(panel)!, new Map([...masks].filter(([n]) => n !== panel)));
+  }
+
+  private drop2dCab(): void {
+    this.cab2dToken++;
+    this.cab2d?.dispose();
+    this.cab2d = null;
+  }
+
   private rebuildCab(panel: boolean): void {
+    this.drop2dCab();
     if (this.cab) this.overlayScene.remove(this.cab);
     this.cab = null;
     this.cabSwitch = null;
@@ -1026,7 +1081,7 @@ export class DriveSession {
   private updateCab(state: { steer: number }): void {
     // З кабіни зовнішній корпус власної вантажівки не малюємо (як в оригіналі).
     const inside = this.camMode === 'cockpit' || this.camMode === 'first';
-    this.truck.visual.visible = !inside || !this.cab;
+    this.truck.visual.visible = !inside || (!this.cab && !this.cab2d && this.cabStyleNow !== '2d');
     if (!this.cab) return;
     this.cab.visible = inside;
     if (!this.cab.visible) return;
@@ -1238,6 +1293,22 @@ export class DriveSession {
     this.handbrakeOn = state.handbrake;
     this.odometer += (this.truck.speedKmh / 3.6) * dt;
     this.updateCab(state);
+    if (this.cab2d) {
+      const v = this.truck.body.linvel();
+      const vel = new THREE.Vector3(v.x, v.y, v.z);
+      const fwd = this.truck.forward();
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.truck.visual.quaternion);
+      const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
+      this.cab2d.update(dt, {
+        speedKmh: this.truck.speedKmh,
+        odometer: this.odometer,
+        rpm: this.truck.rpm / 60 / this.def.tachScale[0],
+        gear: this.truck.gear,
+        handbrake: this.handbrakeOn,
+        steer: state.steer,
+        local: new THREE.Vector3(vel.dot(right), vel.dot(up), vel.dot(fwd)),
+      });
+    }
     this.updateLights(state);
     const wet = this.raining && (this.glassRain?.raining ?? true);
     this.syncToggles();
@@ -1564,6 +1635,7 @@ export class DriveSession {
   }
 
   dispose(): void {
+    this.drop2dCab();
     this.mirror?.rt.dispose();
     this.mirror?.frame.remove();
     if (this.baseFov !== undefined) {
