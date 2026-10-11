@@ -21,6 +21,9 @@ export interface HudData {
 /** Висота цифр швидкості відносно цифри передачі (на прохання користувача — трохи більші). */
 const SPEED_SIZE = 1.35;
 
+/** Висота цифри передачі відносно великого шрифту (на прохання користувача — трохи менша, у рамці). */
+const GEAR_SIZE = 0.75;
+
 /** Кольори передачі — як світиться індикатор GearKey на приладовій панелі (текстура pribor.txr). */
 const GEAR_R = 'rgb(255,0,0)';
 const GEAR_N = 'rgb(255,255,255)';
@@ -114,6 +117,33 @@ function icon(ctx: CanvasRenderingContext2D, rows: string[], x: number, y: numbe
   return x + rows[0].length;
 }
 
+/** Рядки з пікселями цифри «8» великого шрифту: верх і висота (висота цифр передачі й швидкості). */
+function gearInk(L: PixelFont): { top: number; h: number } {
+  const g = L.glyph('8');
+  const w = L.font.cellW;
+  const rows = g ? Array.from({ length: L.height }, (_, y) => g.bits.slice(y * w, y * w + w).some((b) => b === 1)) : [];
+  const top = Math.max(0, rows.indexOf(true));
+  return { top, h: rows.length ? rows.lastIndexOf(true) - top + 1 : L.height };
+}
+
+/**
+ * Шар повної роздільності екрана поверх піксельного табло: (x, y, w, h) — в одиницях табло; draw малює
+ * з плавним масштабуванням у пікселях шару (w, h).
+ */
+function hiRes(x: number, y: number, w: number, h: number, draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void): HTMLCanvasElement {
+  const s = hudScale();
+  const k = s * (window.devicePixelRatio || 1);
+  const c = document.createElement('canvas');
+  c.width = Math.ceil(w * k);
+  c.height = Math.ceil(h * k);
+  c.style.cssText = `position:absolute;left:${x * s}px;top:${y * s}px;width:${w * s}px;height:${h * s}px`;
+  const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  draw(ctx, c.width, c.height);
+  return c;
+}
+
 export class DriveHud {
   private key = '';
 
@@ -147,7 +177,12 @@ export class DriveHud {
     // Ширини — за найширшими значеннями, щоб табло не «дихало» з кожною цифрою.
     const step = dg && ink ? Math.round(dg[0].width * ink.scale) : 0;
     const speedW = dg ? step * 3 : L.measure('000');
-    const gearW = Math.max(L.measure('R'), L.measure('N'), L.measure('8'));
+    // Передача — трохи менша (GEAR_SIZE) у прямокутній рамці кольору передачі.
+    const gi = gearInk(L);
+    const gw = Math.max(L.measure('R'), L.measure('N'), L.measure('8'));
+    const gScaledW = Math.round(gw * GEAR_SIZE);
+    const gScaledH = Math.round(gi.h * GEAR_SIZE);
+    const gearW = gScaledW + 6;
     const pctW = S.measure('100%');
     const item = (rows: string[]) => rows[0].length + 4 + pctW;
     let rowW = speedW + 8 + gearW;
@@ -173,34 +208,49 @@ export class DriveHud {
     // Рядок 1 — посередині першої панелі.
     let x = 2 + Math.floor((innerW - rowW) / 2);
     const y = top1 + 3;
-    const ly = y + Math.round((lh - L.height) / 2);
     const ys = y + Math.round((lh - sh) / 2);
-    let speedLayer: HTMLCanvasElement | null = null;
+    const layers: HTMLCanvasElement[] = [];
     if (dg && ink) {
-      // Окреме полотно в повній роздільності екрана з плавним масштабуванням (м'які контури); на піксельному
+      // Цифри одометра — на шарі повної роздільності з плавним масштабуванням (м'які контури); на піксельному
       // полотні дрібні цифри з напівпрозорими краями розмивались. Відсікання прозорості (alphaTest 0,5, як у
       // кабіні) спотворювало контури — без нього.
-      const k = hudScale() * (window.devicePixelRatio || 1);
       const sx = x + speedW - step * speed.length;
-      const sy = Math.round(ly + ink.gearTop + ink.gearH / 2 - ink.h / 2);
-      const lw = step * speed.length;
-      speedLayer = document.createElement('canvas');
-      speedLayer.width = Math.ceil(lw * k);
-      speedLayer.height = Math.ceil(ink.h * k);
-      speedLayer.style.cssText = `position:absolute;left:${sx * hudScale()}px;top:${sy * hudScale()}px;width:${lw * hudScale()}px;height:${ink.h * hudScale()}px`;
-      const sctx = speedLayer.getContext('2d')!;
-      sctx.imageSmoothingEnabled = true;
-      sctx.imageSmoothingQuality = 'high';
+      const sy = Math.round(y + lh / 2 - ink.h / 2);
       const sh0 = ink.bottom - ink.top + 1;
-      let dx = 0;
-      for (const ch of speed) {
-        const c = dg[Number(ch)];
-        sctx.drawImage(c, 0, ink.top, c.width, sh0, dx * k, 0, c.width * ink.scale * k, ink.h * k);
-        dx += step;
-      }
+      layers.push(
+        hiRes(sx, sy, step * speed.length, ink.h, (lc, _w, h) => {
+          const k = h / ink.h;
+          let dx = 0;
+          for (const ch of speed) {
+            const c = dg[Number(ch)];
+            lc.drawImage(c, 0, ink.top, c.width, sh0, dx * k, 0, c.width * ink.scale * k, h);
+            dx += step;
+          }
+        }),
+      );
     } else L.draw(ctx, speed, x + speedW - L.measure(speed), y, HUD_CYAN);
     x += speedW + 8;
-    L.draw(ctx, gear, x + Math.floor((gearW - L.measure(gear)) / 2), ly, gear === 'R' ? GEAR_R : gear === 'N' ? GEAR_N : GEAR_D);
+    const gearColor = gear === 'R' ? GEAR_R : gear === 'N' ? GEAR_N : GEAR_D;
+    const boxH = gScaledH + 6;
+    const by = y + Math.round((lh - boxH) / 2);
+    ctx.fillStyle = gearColor;
+    ctx.globalAlpha = 0.7;
+    ctx.fillRect(x, by, gearW, 1);
+    ctx.fillRect(x, by + boxH - 1, gearW, 1);
+    ctx.fillRect(x, by, 1, boxH);
+    ctx.fillRect(x + gearW - 1, by, 1, boxH);
+    ctx.globalAlpha = 1;
+    const g = L.glyph(gear);
+    if (g) {
+      // Гліф великого шрифту в окремому полотні, зменшений плавно на шарі повної роздільності.
+      const src = document.createElement('canvas');
+      src.width = g.width;
+      src.height = gi.h;
+      const sc = src.getContext('2d')!;
+      L.draw(sc, gear, 0, -gi.top, gearColor);
+      const gwS = Math.round(g.width * GEAR_SIZE);
+      layers.push(hiRes(x + Math.round((gearW - gwS) / 2), by + 3, gwS, gScaledH, (lc, w, h) => lc.drawImage(src, 0, 0, w, h)));
+    }
     x += gearW;
     const stat = (rows: string[], text: string, gap: number) => {
       x += gap;
@@ -213,7 +263,7 @@ export class DriveHud {
     if (cargo) stat(BOXES_ICON, cargo, 10);
 
     if (d.line) S.draw(ctx, d.line, 2 + Math.floor((innerW - lineW) / 2), top2 + 3, HUD_CYAN);
-    this.host.replaceChildren(...(speedLayer ? [canvas, speedLayer] : [canvas]));
+    this.host.replaceChildren(canvas, ...layers);
   }
 
   private ink: { top: number; bottom: number; scale: number; h: number; gearTop: number; gearH: number } | null = null;
@@ -233,11 +283,7 @@ export class DriveHud {
             bottom = Math.max(bottom, y);
           }
     }
-    const g = L.glyph('8');
-    const w = L.font.cellW;
-    const rows = g ? Array.from({ length: L.height }, (_, y) => g.bits.slice(y * w, y * w + w).some((b) => b === 1)) : [];
-    const gearTop = Math.max(0, rows.indexOf(true));
-    const gearH = rows.length ? rows.lastIndexOf(true) - gearTop + 1 : L.height;
+    const { top: gearTop, h: gearH } = gearInk(L);
     const h = Math.round(gearH * SPEED_SIZE);
     this.ink = { top, bottom, scale: h / (bottom - top + 1), h, gearTop, gearH };
     return this.ink;
