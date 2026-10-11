@@ -209,6 +209,30 @@ export class DriveSession {
     const mesh = hit.object as THREE.Mesh;
     const mat = Array.isArray(mesh.material) ? mesh.material[hit.face?.materialIndex ?? 0] : mesh.material;
     this.offRoad = OFFROAD.test(mat?.name ?? '');
+    this.overWater = /water|river/i.test(mat?.name ?? '');
+  }
+  private overWater = false;
+  private deathCooldown = 0;
+  /**
+   * Подія 3264 («death_NNN») позначає кімнату без форми й висоти: дорога там іде вздовж річки чи над прірвою.
+   * Загибель — коли в такій кімнаті під машиною вода або зовсім немає підлоги (не сам вʼїзд у кімнату).
+   */
+  private checkDeath(dt: number): void {
+    if ((this.deathCooldown -= dt) > 0) return;
+    const room = this.currentRoom;
+    if (!room || !room.events.some((e) => e.type === EVENT_DEATH)) return;
+    const t = this.truck.body.translation();
+    const p = new THREE.Vector3(t.x, t.y, t.z);
+    const floor = this.floorHeight(p);
+    const water = this.overWater;
+    if (!water && floor !== null) return;
+    this.deathCooldown = 2;
+    this.hits += 10;
+    // Утонули — сплеск; прірва — удар.
+    this.audio?.play(water || this.isWaterRoom(room.name) ? 'water' : 'crash9', 1);
+    if (this.onDeath) return this.onDeath();
+    this.truck.reset(this.restartPoint());
+    this.prevPos.copy(p);
   }
   /** Кімнати з водою (матеріали water/river) — для звуку падіння у воду. */
   private waterRooms: Set<string> | null = null;
@@ -230,7 +254,6 @@ export class DriveSession {
     const a = this.audio;
     if (!a) return;
     this.impactCooldown -= dt;
-    this.updateSurface(dt);
     const kmh = this.truck.speedKmh;
     const gravel = this.offRoad && kmh > 3;
     if (gravel && this.stonesSound === undefined) this.stonesSound = a.loopSound('stones');
@@ -742,6 +765,8 @@ export class DriveSession {
     this.odometer += (this.truck.speedKmh / 3.6) * dt;
     this.updateCab(state);
     this.updateLights(state);
+    this.updateSurface(dt);
+    this.checkDeath(dt);
     this.effects?.update(dt);
     this.updateSounds(dt);
     if (this.autoWreck && !this.exploded && this.hits >= WRECK_HITS) {
@@ -901,19 +926,6 @@ ${raceLine}`;
           this.lapRoom = next;
         }
         const room = this.track.rooms.get(next)!;
-        // Вода, прірва (подія 3264) — лише рестарт на точці кімнати, з якої впали.
-        if (room.events.some((e) => e.type === EVENT_DEATH)) {
-          this.hits += 10;
-          // Утонули — сплеск; прірва — удар.
-          this.audio?.play(this.isWaterRoom(next) ? 'water' : 'crash9', 1);
-          this.prevPos.copy(cur);
-          if (this.onDeath) {
-            this.onDeath();
-            return;
-          }
-          this.truck.reset(this.restartPoint());
-          return;
-        }
         this.room = next;
         this.updateActiveRooms();
         this.visited.add(next);
