@@ -11,8 +11,9 @@ import type { RgbaImage } from '../formats/binary';
  *   (0x473560) — лишає слід;
  * - двірники стирають буфер лініями з кроком 0,00314 рад від радіуса 10 до висоти буфера (0x462f38).
  * Заломлення (власний ефект порту, за згодою користувача; в оригіналі зсуву картинки немає — лише змішування з
- * кольором №3): вода на склі зсуває картинку під собою за нахилом профілю рівнів — «лінза» маски drop7 (13 у
- * центрі → 45 по краю) і сліди drop10; світлі обідки оригіналу лишаються поверх.
+ * кольором №3): рівні масок читаються як форма поверхні води — «лінза» drop7 (13 у центрі → 45 по краю) і сліди
+ * drop10. Вода зсуває картинку під собою за нахилом поверхні й світлішає / темнішає за ним (світло згори: верхній
+ * край краплі темніший, нижній — світліший); сірого кольору оригіналу (обідки) немає — на прохання користувача.
  * Лопаті — модель `Wiper` (COUNT.B3D): смужка 0,85 × 0,08 з матеріалом `wiper ttx 1` — перша текстура набору
  * (`txr\flash.txr`, «ttx» — текстура з прозорим чорним, 0x4530d0), смуга u 0,875…0,996 — намальований двірник
  * (важіль і щітка). Інтерфейс — як у GlassRain (3D-скло).
@@ -56,6 +57,8 @@ const BLADE_COLOR = 0x141414;
 const REFRACT = 40;
 const REFRACT_MAX = 6;
 const REFRACT_SPAN = 3;
+/** Світло й тінь на воді: зміна яскравості на одиницю нахилу (на око). */
+const SHADE = 2.5;
 /** Найбільший крок часу оновлення, с: після паузи (прихована вкладка) двірник проскочив би межу помаху. */
 const MAX_DT = 0.1;
 
@@ -123,6 +126,7 @@ export class Cab2dRain {
       span: { value: new THREE.Vector2(REFRACT_SPAN / w, REFRACT_SPAN / h) },
       k: { value: 0 },
       kMax: { value: 0 },
+      shade: { value: SHADE },
       refract: { value: 0 },
     };
     // Осі двірників (0x462f38): (200, h + 10) і (200 + 1,5·h, h + 10) — трохи нижче краю буфера.
@@ -160,7 +164,7 @@ export class Cab2dRain {
           uniform sampler2D levels, scene;
           uniform vec3 color;
           uniform vec2 res, span;
-          uniform float k, kMax, refract;
+          uniform float k, kMax, shade, refract;
           varying vec2 vUv;
           void main() {
             float a = texture2D(levels, vUv).r;
@@ -172,7 +176,9 @@ export class Cab2dRain {
             float l = length(off);
             if (l > kMax) off *= kMax / l;
             vec3 bg = texture2D(scene, (gl_FragCoord.xy + off) / res).rgb;
-            gl_FragColor = vec4(mix(bg, color, a), 1.0);
+            // gy > 0 — поверхня піднімається донизу (нижній край краплі): світліше; верхній край — темніше.
+            float light = clamp(1.0 + shade * (gy - 0.3 * gx), 0.6, 1.5);
+            gl_FragColor = vec4(bg * light, 1.0);
           }`,
         transparent: true,
         depthTest: false,
