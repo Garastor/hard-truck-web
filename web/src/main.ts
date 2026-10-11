@@ -211,7 +211,7 @@ async function startDrive(): Promise<void> {
       drive?.setCabStyle(style);
     };
     // Маски 2D-кабіни: з файлів на пристрої; якщо їх імпортовано раніше без масок — з ПК (dev-сервер), із записом.
-    drive.setCab2dLoader(async (mask) => (await loadCab2d(source, mask, storeFile)) ?? (source === devServerSource ? null : loadCab2d(devServerSource, mask, storeFile)));
+    drive.setCab2dLoader(async (mask, raw) => (await loadCab2d(source, mask, storeFile, raw)) ?? (source === devServerSource ? null : loadCab2d(devServerSource, mask, storeFile, raw)));
     const [small, large] = await hudFonts();
     drive.setHudFonts(small, large);
     // Тестовий режим: мінікарта завжди (у кар'єрі — лише з навігаційною системою «НС»).

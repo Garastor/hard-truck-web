@@ -1127,6 +1127,24 @@ body.driving.bar-open .hud-player {
   visibility: hidden;
 }
 
+/* Смуги дощу rain.msk (режим 2D-кабіни, зовнішні камери): прозорість 0,1, як в оригіналі; під кнопками. */
+.rain-streaks {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0.1;
+  pointer-events: none;
+}
+
+.rain-streaks[hidden] {
+  display: none;
+}
+
+.rain-streaks > div {
+  background-repeat: repeat-x;
+  will-change: transform;
+}
+
 /* «М'які» значки й написи кнопок (softUi.ts): полотно в пікселях оригіналу як маска, колір — кнопки. */
 .soft {
   display: inline-block;

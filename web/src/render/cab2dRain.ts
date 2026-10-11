@@ -4,29 +4,48 @@ import type { RgbaImage } from '../formats/binary';
 /**
  * Дощ на склі й двірники 2D-кабіни — як в оригіналі (HTruck.exe: об'єкт 0x4caa10, створюється лише в режимі без
  * 3D-кабіни, 0x4c7134; оновлення 0x4d0180, спільна логіка 0x462f38, малювання 0x4638c4; розбір — re/notes/cab2d.md).
- * Буфер крапель — на всю смугу вікна: краплі `msk\drop7.msk` штампуються у випадкові місця, двірники стирають
- * сектор, який замели; лопаті — смужки за формою моделі `Wiper` (COUNT.B3D). Інтерфейс — як у GlassRain (3D-скло).
- * Текстуру лопаті не з'ясовано: у програмному наборі матеріал `wiper ttx 1`, але перша текстура COUNT.RMP
- * (flash.txr) у смузі UV лопаті — шматок спалаху; апаратна `wiper tex 133` — атлас 3D-кабін. Тому лопать — темна
- * суцільна смужка (гіпотеза).
+ * Буфер на всю смугу вікна містить рівні прозорості (0…255): маски крапель MSKR — не кольори, а рівні; на вид буфер
+ * накладається кольором №3 палітри траси (191, 191, 191) з прозорістю пікселя (режим 3, 0x4773d6).
+ * - краплі `msk\drop7.msk`: 50/с у випадкові місця (перезапис рівнів);
+ * - краплі, що стікають, `msk\drop10.msk`: 5/с, кожна 50 px/с униз зі зсувом убік −4…3 за крок, три відбитки на крок
+ *   (0x473560) — лишає слід;
+ * - двірники стирають буфер лініями з кроком 0,00314 рад від радіуса 10 до висоти буфера (0x462f38).
+ * Лопаті — смужки за формою моделі `Wiper` (COUNT.B3D). Текстуру лопаті не з'ясовано: у програмному наборі матеріал
+ * `wiper ttx 1`, але перша текстура COUNT.RMP (flash.txr) у смузі UV лопаті — шматок спалаху; тому лопать — темна
+ * суцільна смужка (гіпотеза). Інтерфейс — як у GlassRain (3D-скло).
  */
 
 /** Швидкість помаху, рад/с (0x54625c), положення спокою (0x546264) і нижня межа помаху (поле +0x9c), рад. */
 const SPEED = 2.35619445;
 const REST = Math.PI / 2;
 const LOW = -Math.PI / 3;
-/** Нових крапель за секунду (поле +0x20 = 50). */
+/** Крок стирання за кутом, рад (0x54627c). */
+const WIPE_STEP = 0.0031415926;
+/** Нових крапель за секунду (поле +0x20 = 50) і крапель, що стікають (50 / 10, 0x54626c). */
 const DROPS_PER_SEC = 50;
+const RUNNERS_PER_SEC = DROPS_PER_SEC / 10;
+/** Швидкість стікання, px/с (0x546254). */
+const RUN_SPEED = 50;
+/**
+ * Крок краплі, що стікає, px. В оригіналі — round(dt·50) за кадр його ж рушія; рахувати щокадру при 60 кадр/с
+ * давало б 0–1 px униз і ±4 px убік — сліди надто звивисті. 2 px — як оригінал при ≈ 25 кадр/с (гіпотеза).
+ */
+const RUN_TICK = 2;
 /** Вісь першого двірника — x = 200 (поле +0x58); стирання від радіуса 10 (поле +0x60) до висоти буфера. */
 const PIVOT_X = 200;
 const HUB = 10;
-/** Висихання без дощу: прозорість убуває 15 кроками (4 біти альфи буфера оригіналу) за FADE_TIME с (гіпотеза). */
+/** Колір крапель — запис №3 палітри траси (на всіх трасах 191, 191, 191). */
+const DROP_COLOR = new THREE.Color(191 / 255, 191 / 255, 191 / 255);
+/**
+ * Висихання без дощу: рівні убувають 15 кроками за FADE_TIME с. В оригіналі так висихає лише 16-бітний буфер
+ * (4-бітна альфа, лічильник +0x90); тривалість — гіпотеза.
+ */
 const FADE_STEPS = 15;
 const FADE_TIME = 0.5;
 /** Ширина лопаті до довжини — як у моделі `Wiper` (COUNT.B3D: 0,08 × 0,85); колір — гіпотеза (див. вище). */
 const BLADE_WIDTH = 0.08 / 0.85;
 const BLADE_COLOR = 0x141414;
-/** Найбільший крок часу оновлення, с. */
+/** Найбільший крок часу оновлення, с: після паузи (прихована вкладка) двірник проскочив би межу помаху. */
 const MAX_DT = 0.1;
 
 /**
@@ -34,6 +53,13 @@ const MAX_DT = 0.1;
  * Що буфер оригіналу — саме ця смуга, гіпотеза: розмір береться з поверхні виду (param_2 + 0xc), не розібрано.
  */
 export const RAIN_VIEW = { x: 0, y: 44, w: 640, h: 250 };
+
+/** Маска рівнів (MSKR): ширина, висота, рівень кожного пікселя (0 — прозоро). */
+interface Levels {
+  w: number;
+  h: number;
+  a: Uint8Array;
+}
 
 export class Cab2dRain {
   raining = false;
@@ -43,10 +69,11 @@ export class Cab2dRain {
   /** Буфер крапель і лопаті — у сцені 2D-кабіни (кадр 640×480, y униз), під маскою панелі. */
   readonly root = new THREE.Group();
 
-  private readonly canvas = document.createElement('canvas');
-  private readonly ctx: CanvasRenderingContext2D;
-  private readonly texture: THREE.CanvasTexture;
-  private readonly drop: HTMLCanvasElement | null;
+  private readonly levels = new Uint8Array(RAIN_VIEW.w * RAIN_VIEW.h);
+  private readonly texture: THREE.DataTexture;
+  private readonly drop: Levels | null;
+  private readonly runner: Levels | null;
+  private readonly runners: { x: number; y: number; acc: number }[] = [];
   private readonly blades: THREE.Mesh[] = [];
   private readonly pivots: [number, number][];
   private angle = REST;
@@ -54,20 +81,20 @@ export class Cab2dRain {
   private down = false;
   private moving = false;
   private dropAcc = 0;
+  private runAcc = 0;
   private fadeStep = 0;
   private fadeAcc = 0;
   private dirty = false;
   private empty = true;
 
-  constructor(drop: RgbaImage | null) {
+  /** drop, runner — маски drop7 і drop10, розкодовані без палітри (рівень — у червоному каналі). */
+  constructor(drop: RgbaImage | null, runner: RgbaImage | null) {
     const { w, h } = RAIN_VIEW;
-    this.canvas.width = w;
-    this.canvas.height = h;
-    this.ctx = this.canvas.getContext('2d', { willReadFrequently: true })!;
-    this.texture = new THREE.CanvasTexture(this.canvas);
-    this.texture.colorSpace = THREE.SRGBColorSpace;
+    this.drop = drop && toLevels(drop);
+    this.runner = runner && toLevels(runner);
+    this.texture = new THREE.DataTexture(this.levels, w, h, THREE.RedFormat, THREE.UnsignedByteType);
     this.texture.flipY = false;
-    this.drop = drop ? toCanvas(drop) : null;
+    this.texture.needsUpdate = true;
     // Осі двірників (0x462f38): (200, h + 10) і (200 + 1,5·h, h + 10) — трохи нижче краю буфера.
     this.pivots = [
       [PIVOT_X, h + 10],
@@ -85,10 +112,20 @@ export class Cab2dRain {
       this.blades.push(m);
       this.root.add(m);
     }
-    // Краплі — поверх лопатей (в оригіналі буфер накладається на вид після світу).
+    // Краплі — поверх лопатей (в оригіналі буфер накладається на вид після світу): колір №3, прозорість — рівень.
     const quad = new THREE.Mesh(
       new THREE.PlaneGeometry(w, h).translate(RAIN_VIEW.x + w / 2, RAIN_VIEW.y + h / 2, 0),
-      new THREE.MeshBasicMaterial({ map: this.texture, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide }),
+      new THREE.ShaderMaterial({
+        uniforms: { levels: { value: this.texture }, color: { value: DROP_COLOR } },
+        vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+        // PlaneGeometry: v = 1 угорі; рядок 0 буфера — верх смуги.
+        fragmentShader:
+          'uniform sampler2D levels; uniform vec3 color; varying vec2 vUv; void main() { float a = texture2D(levels, vec2(vUv.x, 1.0 - vUv.y)).r; if (a <= 0.0) discard; gl_FragColor = vec4(color, a); }',
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
     );
     quad.renderOrder = -10;
     quad.frustumCulled = false;
@@ -97,22 +134,66 @@ export class Cab2dRain {
   }
 
   update(dt: number, _speedKmh = 0): void {
-    // Після паузи (прихована вкладка) крок буває секундами — двірник проскочив би межу помаху.
     dt = Math.min(dt, MAX_DT);
     this.updateWipers(dt);
-    if (this.raining && this.drop) {
+    if (this.raining) {
       this.fadeStep = 0;
-      this.dropAcc += DROPS_PER_SEC * dt;
-      for (; this.dropAcc >= 1; this.dropAcc--) {
-        this.ctx.drawImage(this.drop, Math.floor(Math.random() * RAIN_VIEW.w), Math.floor(Math.random() * RAIN_VIEW.h));
-        this.dirty = true;
-        this.empty = false;
-      }
-    } else if (!this.raining && !this.empty) this.dry(dt);
+      this.spawn(dt);
+    } else if (!this.empty) this.dry(dt);
+    this.run(dt);
     if (this.dirty) {
       this.texture.needsUpdate = true;
       this.dirty = false;
     }
+  }
+
+  /** Нові краплі (0x462f38): drop7 — у випадкові місця; drop10 — початок краплі, що стікає. */
+  private spawn(dt: number): void {
+    const { w, h } = RAIN_VIEW;
+    if (this.drop) {
+      this.dropAcc += DROPS_PER_SEC * dt;
+      for (; this.dropAcc >= 1; this.dropAcc--) this.stamp(this.drop, rand(w), rand(h));
+    }
+    if (this.runner) {
+      this.runAcc += RUNNERS_PER_SEC * dt;
+      for (; this.runAcc >= 1; this.runAcc--) this.runners.push({ x: rand(w), y: rand(h), acc: 0 });
+    }
+  }
+
+  /** Краплі, що стікають (0x473560): крок униз за кадр, зсув убік −4…3, три відбитки вздовж кроку. */
+  private run(dt: number): void {
+    const m = this.runner;
+    if (!m) return;
+    for (let i = this.runners.length - 1; i >= 0; i--) {
+      const r = this.runners[i];
+      r.acc += RUN_SPEED * dt;
+      for (; r.acc >= RUN_TICK; r.acc -= RUN_TICK) {
+        const step = RUN_TICK;
+        const dx = Math.floor(Math.random() * 8) - 4;
+        this.stamp(m, r.x + Math.trunc(dx / 3), r.y + Math.trunc(step / 3));
+        this.stamp(m, r.x + Math.trunc((2 * dx) / 3), r.y + Math.trunc((2 * step) / 3));
+        this.stamp(m, r.x + dx, r.y + step);
+        r.x += dx;
+        r.y += step;
+      }
+      if (r.y >= RAIN_VIEW.h) this.runners.splice(i, 1);
+    }
+  }
+
+  /** Відбиток маски рівнів у буфер (перезапис непрозорих пікселів, як копіювання маски в оригіналі). */
+  private stamp(m: Levels, x0: number, y0: number): void {
+    const { w, h } = RAIN_VIEW;
+    for (let y = 0; y < m.h; y++) {
+      const by = y0 + y;
+      if (by < 0 || by >= h) continue;
+      for (let x = 0; x < m.w; x++) {
+        const v = m.a[y * m.w + x];
+        const bx = x0 + x;
+        if (v && bx >= 0 && bx < w) this.levels[by * w + bx] = v;
+      }
+    }
+    this.dirty = true;
+    this.empty = false;
   }
 
   /** Помах (0x462f38 + 0x4d0180): у спокої при увімкнених двірниках — старт і звук; дійшов до спокою — новий
@@ -145,48 +226,45 @@ export class Cab2dRain {
     this.placeBlades();
   }
 
-  /** Стирає сектор між кутами a0 і a1 від радіуса HUB до висоти буфера в обох двірників. Точка лопаті під кутом a —
-   * (x + r·sin a, y − r·cos a): у спокої (+90°) лопать лежить праворуч від осі, нижче краю буфера. */
+  /**
+   * Стирання (0x462f38): для кожного кроку кута між a0 і a1 — лінія від радіуса HUB до висоти буфера з обох осей.
+   * Точка лопаті під кутом a — (x + r·sin a, y − r·cos a): у спокої (+90°) лопать лежить праворуч від осі, нижче
+   * краю буфера.
+   */
   private wipe(a0: number, a1: number): void {
     if (this.empty || a0 === a1) return;
-    const c = this.ctx;
-    const r = RAIN_VIEW.h;
-    // Кут полотна θ (від +x за годинниковою, y униз) = a − π/2.
-    const t0 = Math.min(a0, a1) - Math.PI / 2;
-    const t1 = Math.max(a0, a1) - Math.PI / 2;
-    c.save();
-    c.globalCompositeOperation = 'destination-out';
-    c.beginPath();
-    for (const [x, y] of this.pivots) {
-      c.moveTo(x + HUB * Math.cos(t0), y + HUB * Math.sin(t0));
-      c.arc(x, y, r, t0, t1);
-      c.arc(x, y, HUB, t1, t0, true);
-      c.closePath();
+    const { w, h } = RAIN_VIEW;
+    const lo = Math.min(a0, a1);
+    const hi = Math.max(a0, a1);
+    for (let a = lo; a <= hi + WIPE_STEP / 2; a += WIPE_STEP) {
+      const s = Math.sin(a);
+      const c = Math.cos(a);
+      for (const [px, py] of this.pivots) {
+        for (let r = HUB; r <= h; r++) {
+          const x = Math.round(px + r * s);
+          const y = Math.round(py - r * c);
+          if (x >= 0 && x < w && y >= 0 && y < h) this.levels[y * w + x] = 0;
+        }
+      }
     }
-    // Лінія завтовшки в піксель, як у стирання оригіналу (0x414bb0): без щілин між кадрами.
-    c.lineWidth = 1.5;
-    c.fill();
-    c.stroke();
-    c.restore();
     this.dirty = true;
   }
 
-  /** Висихання: альфа буфера убуває рівними кроками (у буфері оригіналу — 4-бітна альфа, 15 кроків). */
+  /** Висихання: рівні убувають рівними кроками. */
   private dry(dt: number): void {
     this.fadeAcc += dt;
     const step = FADE_TIME / FADE_STEPS;
     if (this.fadeAcc < step) return;
     this.fadeAcc = 0;
     if (++this.fadeStep >= FADE_STEPS) {
-      this.ctx.clearRect(0, 0, RAIN_VIEW.w, RAIN_VIEW.h);
+      this.levels.fill(0);
+      this.runners.length = 0;
       this.empty = true;
       this.fadeStep = 0;
     } else {
-      const img = this.ctx.getImageData(0, 0, RAIN_VIEW.w, RAIN_VIEW.h);
-      const d = img.data;
       const dec = Math.ceil(255 / FADE_STEPS);
-      for (let i = 3; i < d.length; i += 4) d[i] = d[i] > dec ? d[i] - dec : 0;
-      this.ctx.putImageData(img, 0, 0);
+      const a = this.levels;
+      for (let i = 0; i < a.length; i++) a[i] = a[i] > dec ? a[i] - dec : 0;
     }
     this.dirty = true;
   }
@@ -214,10 +292,55 @@ export class Cab2dRain {
   }
 }
 
-function toCanvas(img: RgbaImage): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  c.width = img.width;
-  c.height = img.height;
-  c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), 0, 0);
-  return c;
+/**
+ * Смуги дощу `msk\rain.msk` (800×900, власна палітра) для зовнішніх камер у режимі 2D-кабіни (біт 0x10 у 0x4d0180:
+ * дощ і камера не з кабіни; 0x4638c4): поверх виду з прозорістю 0,1, двома копіями поруч, зсув 400 px/с праворуч.
+ * У програмному наборі тривимірного дощу (Foreground_object / RainKey) немає — смуги його й заміняють.
+ * Кадр виду 640×480 розтягнуто на екран (гіпотеза щодо масштабу на широкому екрані).
+ */
+export class RainStreaks {
+  readonly el = document.createElement('div');
+  private readonly strip = document.createElement('div');
+  private x = 0;
+  private scale = 0;
+  private readonly w: number;
+  private readonly h: number;
+
+  constructor(img: RgbaImage) {
+    this.w = img.width;
+    this.h = img.height;
+    const c = document.createElement('canvas');
+    c.width = img.width;
+    c.height = img.height;
+    c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), 0, 0);
+    this.el.className = 'rain-streaks';
+    this.el.hidden = true;
+    this.strip.style.backgroundImage = `url(${c.toDataURL()})`;
+    this.el.append(this.strip);
+  }
+
+  /** Кадр: on — показувати смуги. */
+  update(dt: number, on: boolean): void {
+    this.el.hidden = !on;
+    if (!on) return;
+    const s = Math.max(window.innerWidth / 640, window.innerHeight / 480);
+    if (s !== this.scale) {
+      this.scale = s;
+      Object.assign(this.strip.style, { width: `${this.w * s * 2}px`, height: `${this.h * s}px`, backgroundSize: `${this.w * s}px ${this.h * s}px` });
+    }
+    this.x = (this.x + 400 * Math.min(dt, MAX_DT)) % this.w;
+    // Копії в x і x − ширина: смуга вдвічі ширша за малюнок, зсунута на (x − ширина).
+    this.strip.style.transform = `translateX(${(this.x - this.w) * s}px)`;
+  }
+}
+
+function rand(n: number): number {
+  return Math.floor(Math.random() * n);
+}
+
+/** Рівні з маски, розкодованої без палітри: рівень — червоний канал, прозорі пікселі — 0. */
+function toLevels(img: RgbaImage): Levels {
+  const a = new Uint8Array(img.width * img.height);
+  for (let i = 0; i < a.length; i++) a[i] = img.data[i * 4 + 3] ? img.data[i * 4] : 0;
+  return { w: img.width, h: img.height, a };
 }

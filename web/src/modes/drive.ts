@@ -14,7 +14,7 @@ import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import { SKY_FOG, type BuiltScene } from '../render/sceneBuilder';
 import { CAB2D_PARTS, Cab2d } from '../render/cab2d';
-import { Cab2dRain } from '../render/cab2dRain';
+import { Cab2dRain, RainStreaks } from '../render/cab2dRain';
 import { cabStyle, type CabStyle } from '../game/viewSettings';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
@@ -706,6 +706,7 @@ export class DriveSession {
       if (cmd === 'cab') s.onSettingsCommand?.('cab');
       if (cmd === 'swap') s.onSettingsCommand?.('swap');
     };
+    s.overlayEl = overlay;
     s.touchUi = s.input.mountTouch(overlay);
     // Не гасити екран під час їзди (Screen Wake Lock, де підтримується).
     const wl = (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock;
@@ -1056,10 +1057,35 @@ export class DriveSession {
   private cabStyleNow: CabStyle = cabStyle();
 
   /** Джерело масок 2D-кабіни за іменами (main.ts: файли гри, див. assets/cab2d.ts); без нього — лише 3D. */
-  private cab2dLoader: ((names: string[]) => Promise<Map<string, Msk> | null>) | null = null;
-  setCab2dLoader(load: (names: string[]) => Promise<Map<string, Msk> | null>): void {
+  private cab2dLoader: ((names: string[], raw?: boolean) => Promise<Map<string, Msk> | null>) | null = null;
+  setCab2dLoader(load: (names: string[], raw?: boolean) => Promise<Map<string, Msk> | null>): void {
     this.cab2dLoader = load;
     if (this.cabStyleNow === '2d' && !this.panelMode) this.rebuildCab(false);
+  }
+
+  /** Шар інтерфейсу заїзду (кнопки, табло) — сюди ж смуги дощу 2D-режиму, під кнопки. */
+  private overlayEl: HTMLElement | null = null;
+  /**
+   * Смуги дощу rain.msk для зовнішніх камер у режимі 2D-кабіни (render/cab2dRain.ts). Живуть, доки обрано
+   * 2D-кабіну (поза кабіною сама 2D-кабіна розібрана); undefined — ще не вантажили.
+   */
+  private streaks: RainStreaks | null | undefined = undefined;
+  private updateStreaks(dt: number, on: boolean): void {
+    if (this.cabStyleNow !== '2d') {
+      this.streaks?.el.remove();
+      this.streaks = undefined;
+      return;
+    }
+    if (this.streaks === undefined && this.cab2dLoader) {
+      this.streaks = null;
+      void this.cab2dLoader(['rain.msk']).then((m) => {
+        const img = m?.get('rain.msk');
+        if (!img || !this.overlayEl || this.cabStyleNow !== '2d' || this.streaks !== null) return;
+        this.streaks = new RainStreaks(img);
+        this.overlayEl.prepend(this.streaks.el);
+      });
+    }
+    this.streaks?.update(dt, on);
   }
 
   /** 2D-кабіна: растр panel_mask поверх світу (прозоре — вікна) з приладами й кермом (render/cab2d.ts). */
@@ -1080,11 +1106,11 @@ export class DriveSession {
       return;
     }
     this.cab2d = new Cab2d(masks.get(panel)!, new Map([...masks].filter(([n]) => n !== panel)));
-    // Дощ і двірники 2D-кабіни (як в оригіналі). Краплю drop7 — окремо: на пристрої, імпортованому до цього, її
-    // немає — тоді двірники ходять, але крапель не буде (повторний імпорт додасть).
-    const drops = await this.cab2dLoader!(['drop7.msk']).catch(() => null);
+    // Дощ і двірники 2D-кабіни (як в оригіналі). Маски крапель — окремо й без палітри (рівні прозорості): на
+    // пристрої, імпортованому до цього, їх немає — тоді двірники ходять, але крапель не буде (повторний імпорт додасть).
+    const drops = await this.cab2dLoader!(['drop7.msk', 'drop10.msk'], true).catch(() => null);
     if (token !== this.cab2dToken || !this.cab2d) return;
-    const rain = new Cab2dRain(drops?.get('drop7.msk') ?? null);
+    const rain = new Cab2dRain(drops?.get('drop7.msk') ?? null, drops?.get('drop10.msk') ?? null);
     rain.onStroke = () => this.audio?.play('wipers', 0.9);
     rain.raining = this.raining;
     rain.wipersOn = this.wipersManual ?? this.raining;
@@ -1370,11 +1396,17 @@ export class DriveSession {
       this.navMap.update(dt, p(this.truck), this.truck.forward(), this.opponents.map((o) => p(o.truck)));
     }
     // Під дахом (кімнати з подією 4 «tunnel_rain» — тунелі) дощу немає: ні струменів, ні нових крапель.
+    // Режим 2D-кабіни — як програмний набір оригіналу: тривимірного дощу там немає; у кабіні дощ видно краплями на
+    // склі, з інших камер — смугами rain.msk (0x4d0180).
+    const soft = this.cabStyleNow === '2d' && !!this.cab2dLoader;
+    let pouring = false;
     if (this.raining) {
       const sheltered = this.currentRoom?.events.some((e) => e.type === EVENT_RAIN) ?? false;
-      if (this.rain) this.rain.root.visible = !sheltered;
+      pouring = !sheltered;
+      if (this.rain) this.rain.root.visible = !sheltered && !soft;
       if (this.glassRain) this.glassRain.raining = !sheltered;
     }
+    this.updateStreaks(dt, soft && pouring && this.camMode !== 'cockpit');
     // Двірники ходять (і чути) за будь-якої камери.
     this.glassRain?.update(dt, this.truck.speedKmh);
     if (this.rain?.root.visible) {
@@ -1688,6 +1720,8 @@ export class DriveSession {
 
   dispose(): void {
     this.drop2dCab();
+    this.streaks?.el.remove();
+    this.streaks = undefined;
     this.mirror?.rt.dispose();
     this.mirror?.frame.remove();
     if (this.baseFov !== undefined) {
