@@ -490,10 +490,25 @@ body.driving.bar-open .drive-hud {
   }
 }
 
-#swapToggle {
+#swapToggle,
+#toMenu {
   min-width: calc(44px * var(--ui, 1));
   padding: 0;
   place-items: center;
+}
+
+#toMenu {
+  display: grid;
+}
+
+/* Вкладки й список вантажівок тягнуться до кінця рядка — правий край рядків збігається з кнопкою «на весь екран». */
+#bar .tabs,
+#truck {
+  flex-grow: 1;
+}
+
+#bar .tabs > button {
+  flex: 1 0 auto;
 }
 
 @media (pointer: coarse) {
