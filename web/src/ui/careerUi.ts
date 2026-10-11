@@ -149,7 +149,7 @@ export function callSign(): HTMLImageElement {
 
 /** Стрілка «згорнути» (вліво) кольору тексту табло. */
 export function collapseArrow(): HTMLCanvasElement {
-  const { canvas, ctx } = pixelCanvas(9, 9, hudScale() * 2);
+  const { canvas, ctx } = pixelCanvas(9, 9, hudScale() * 1.25);
   ctx.fillStyle = HUD_CYAN;
   // Трикутник вістрям уліво: стовпчик 2 + i заввишки 2i + 1.
   for (let i = 0; i < 5; i++) ctx.fillRect(2 + i, 4 - i, 1, 2 * i + 1);
@@ -697,6 +697,8 @@ export class CareerGame {
     });
     if (this.actionsCollapsed) this.actions.replaceChildren(toggle, ...keep);
     else this.actions.append(toggle);
+    // На трасі розгорнуте меню — пауза (на базі кнопки відкриті завжди — там без паузи).
+    if (this.drive) this.drive.paused = this.level !== 'MENU3D' && !collapsed;
   }
 
   private trackZone(): void {

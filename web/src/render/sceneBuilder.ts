@@ -677,6 +677,7 @@ export function buildScene(b3d: B3d, rmp: RmpArchive, opts: BuildOptions = {}): 
   const rooms = asm.buildRooms();
   for (const r of rooms) root.add(r);
   root.updateMatrixWorld(true);
+  clampUntiled(root);
   const sky = buildSky(asm);
   asm.stats.missingTextures = asm.lib.missingTextures;
   return {
@@ -692,6 +693,43 @@ export function buildScene(b3d: B3d, rmp: RmpArchive, opts: BuildOptions = {}): 
       asm.dispose();
     },
   };
+}
+
+/**
+ * Текстури з прозорістю, які в геометрії трас не повторюються вздовж осі (усі UV у 0…1), — без повтору по цій осі:
+ * інакше лінійна фільтрація на краю підхоплює протилежний край текстури, і над верхівками лісу (forest: дерева
+ * вгорі прозорі, стовбури внизу) видно тонку горизонтальну лінію. Повтори (forest по u до 15, stolb_dn по v до 13)
+ * лишаються.
+ */
+function clampUntiled(root: THREE.Object3D): void {
+  const range = new Map<THREE.Texture, { u: boolean; v: boolean }>();
+  const EPS = 0.01;
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    const uv = mesh.isMesh ? mesh.geometry.getAttribute('uv') : undefined;
+    if (!uv) return;
+    const mats = ([] as THREE.Material[]).concat(mesh.material);
+    const index = mesh.geometry.index;
+    const groups = mesh.geometry.groups.length ? mesh.geometry.groups : [{ start: 0, count: index ? index.count : uv.count, materialIndex: 0 }];
+    for (const g of groups) {
+      const map = (mats[g.materialIndex ?? 0] as THREE.MeshBasicMaterial | undefined)?.map;
+      if (!map || !map.userData.hasAlpha || map.wrapT !== THREE.RepeatWrapping) continue;
+      const r = range.get(map) ?? { u: true, v: true };
+      for (let i = g.start; i < g.start + g.count && (r.u || r.v); i++) {
+        const k = index ? index.getX(i) : i;
+        const u = uv.getX(k);
+        const v = uv.getY(k);
+        if (u < -EPS || u > 1 + EPS) r.u = false;
+        if (v < -EPS || v > 1 + EPS) r.v = false;
+      }
+      range.set(map, r);
+    }
+  });
+  for (const [map, r] of range) {
+    if (r.u) map.wrapS = THREE.ClampToEdgeWrapping;
+    if (r.v) map.wrapT = THREE.ClampToEdgeWrapping;
+    if (r.u || r.v) map.needsUpdate = true;
+  }
 }
 
 /** Частка туману на куполі неба: біля обрію й угорі (виставляє режим їзди за погодою). */

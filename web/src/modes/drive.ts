@@ -1054,7 +1054,19 @@ export class DriveSession {
     }
   }
 
+  /** Пауза (розгорнуте меню кнопок на трасі): світ, час і звук зупинені, кадр лишається. */
+  get paused(): boolean {
+    return this.isPaused;
+  }
+  set paused(on: boolean) {
+    if (on === this.isPaused) return;
+    this.isPaused = on;
+    this.audio?.setMuted(on);
+  }
+  private isPaused = false;
+
   update(dt: number): void {
+    if (this.isPaused) return;
     const state = this.controls(dt);
     this.acc += Math.min(dt, 0.1);
     const step = this.world.timestep;
