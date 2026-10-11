@@ -197,6 +197,11 @@ export function mainMenu(
     const who = scr.place(document.createElement('div'), 390, 450, 240);
     who.className += ' menu-note';
     who.textContent = `За кермом: ${opts.driver}`;
+    // Присвята (на прохання користувача) — одним рядком під кнопками, ліворуч унизу.
+    const engine = scr.place(document.createElement('div'), 6, 461, 370);
+    engine.className += ' menu-note';
+    engine.style.whiteSpace = 'nowrap';
+    engine.textContent = 'Рушій «Клим» — на честь мого друга Клима';
   });
 }
 
