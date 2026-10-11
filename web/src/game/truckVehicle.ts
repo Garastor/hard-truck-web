@@ -109,6 +109,8 @@ export class TruckVehicle {
   private surfaceGrip = 1;
   private surfaceRoll = 1;
   private readonly surfaceEffects: boolean;
+  /** Тестовий режим: дощ (у кар'єрі він уже в setup.grip). */
+  weatherGrip = 1;
   setSurface(grip: number, roll: number): void {
     if (!this.surfaceEffects) return;
     this.surfaceGrip = grip;
@@ -291,7 +293,7 @@ export class TruckVehicle {
     const engineBrakes = gas === 0;
     // Межа зчеплення Rapier спільна для повороту, тяги й гальмування; під час гальмування — вища
     // (оригінал гальмує до ≈ 0,55 g незалежно від бічного зчеплення).
-    const grip = (TIRE_GRIP + (TIRE_GRIP_BRAKING - TIRE_GRIP) * brakePedal) * this.grip * this.surfaceGrip;
+    const grip = (TIRE_GRIP + (TIRE_GRIP_BRAKING - TIRE_GRIP) * brakePedal) * this.grip * this.surfaceGrip * this.weatherGrip;
     for (let i = 0; i < 4; i++) {
       this.ctrl.setWheelFrictionSlip(i, grip);
       let engine = this.driven[i] ? eng.force / nDriven : 0;
@@ -340,14 +342,14 @@ export class TruckVehicle {
       const x = alpha / TIRE.slip_peak;
       const mu = x <= 1 ? x : Math.max(TIRE.slide, 1 - (1 - TIRE.slide) * (x - 1) * 0.5);
       // Бічна сила (перпендикулярно колесу): росте з кутом проковзування до межі, у заносі — TIRE.slide.
-      let force = mu * TIRE.mu * this.grip * this.surfaceGrip * load;
+      let force = mu * TIRE.mu * this.grip * this.surfaceGrip * this.weatherGrip * load;
       // Не «перестрибувати» нуль бокової швидкості за один крок (стійкість на малій швидкості).
       force = Math.min(force, (wheelMass * Math.abs(vLat)) / dt);
       const impulse = right.multiplyScalar(-Math.sign(vLat) * force * dt);
       if (x > 1) {
         // Занос: колесо ще й гальмує вздовж руху — тим сильніше, чим глибший занос; вантажівка
         // втрачає швидкість, доки шина знову не зачепиться (тоді — різкий доворот).
-        const drag = Math.min(TIRE.slide_drag_max, TIRE.slide_drag * (x - 1)) * TIRE.mu * this.grip * this.surfaceGrip * load;
+        const drag = Math.min(TIRE.slide_drag_max, TIRE.slide_drag * (x - 1)) * TIRE.mu * this.grip * this.surfaceGrip * this.weatherGrip * load;
         const limited = Math.min(drag, (wheelMass * Math.abs(vLong)) / dt);
         impulse.addScaledVector(fwd, -Math.sign(vLong) * limited * dt);
       }

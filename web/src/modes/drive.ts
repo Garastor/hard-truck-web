@@ -201,6 +201,11 @@ export class DriveSession {
       this.glassRain.wipersOn = on;
     }
   }
+  /** Тестовий режим: погода — дощ і слизька дорога (×0,8 до зчеплення, як у кар'єрі). */
+  setWeather(rain: boolean): void {
+    this.setRain(rain);
+    this.truck.weatherGrip = rain ? 0.8 : 1;
+  }
   /** Краплі на склі кабіни й двірники. */
   private glassRain: GlassRain | null = null;
   /** Вмʼятини кузова: накопичена сила ударів за зонами (FC, FR, R, BR, BC, BL, L, FL). */

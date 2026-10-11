@@ -189,6 +189,7 @@ async function startDrive(): Promise<void> {
     // Тестовий режим: мінікарта завжди (у кар'єрі — лише з навігаційною системою «НС»).
     if (!cfg && id !== 'MENU3D') drive.showMap(true);
     if (loadControl() === 'tilt') drive.setTilt(true);
+    if (!cfg) drive.setWeather(weatherSel.value === 'rain');
     setStatus(null);
   } catch (e) {
     console.error(e);
@@ -304,6 +305,22 @@ qualitySel.addEventListener('change', () => {
   limiter.fps = QUALITY[next].fps;
   resize();
 });
+// Погода в тестовому режимі (у кар'єрі її задає гра).
+const weatherSel = $<HTMLSelectElement>('weather');
+try {
+  weatherSel.value = localStorage.getItem('ht.testWeather') === 'rain' ? 'rain' : 'dry';
+} catch {
+  /* приватний режим */
+}
+weatherSel.addEventListener('change', () => {
+  try {
+    localStorage.setItem('ht.testWeather', weatherSel.value);
+  } catch {
+    /* приватний режим */
+  }
+  if (drive && !careerCfg) drive.setWeather(weatherSel.value === 'rain');
+});
+
 // Налаштування керування: кермо праворуч, педалі ліворуч (зберігається в цьому браузері).
 const SWAP_KEY = 'ht.swapControls';
 function loadSwap(): boolean {

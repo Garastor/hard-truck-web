@@ -520,6 +520,7 @@ body.career .tabs,
 body.career #level,
 body.career #mode,
 body.career #truck,
+body.career #weather,
 body.career #stats {
   display: none;
 }
