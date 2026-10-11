@@ -1385,7 +1385,6 @@ export class DriveSession {
     const lap = this.lapStart !== null ? fmtTime(this.clock - this.lapStart) : '—';
     const best = this.bestLap !== null ? `   кращий ${fmtTime(this.bestLap)}` : '';
     const place = this.opponents.length ? `   місце ${this.racePosition()}/${this.opponents.length + 1}` : '';
-    const start = this.countdown > 0 ? `   ${this.lamp === 'r' ? 'ЧЕРВОНИЙ' : 'ЖОВТИЙ'} ${Math.ceil(this.countdown)}` : '';
     const fin = this.finished ? `   ФІНІШ! місце ${this.finished.place}, час ${fmtTime(this.finished.time)}` : '';
     // Табло — 10 разів на секунду: оновлення щокадру змушує браузер перераховувати верстку.
     this.hudTimer -= dt;
@@ -1397,7 +1396,7 @@ export class DriveSession {
       this.raceKind === 'free'
         ? ''
         : `коло ${Math.min(this.laps + 1, this.lapsToFinish || Infinity)}` +
-          `${this.lapsToFinish ? '/' + this.lapsToFinish : ''}: ${lap}${best}${place}${start}${fin}`;
+          `${this.lapsToFinish ? '/' + this.lapsToFinish : ''}: ${lap}${best}${place}${fin}`;
     const raceLine = [money, race].filter(Boolean).join('   ');
     if (this.pixelHud) {
       // Типовий найширший рядок цього заїзду — для незмінної ширини табло.

@@ -11,6 +11,9 @@ export interface LoopSound {
   stop(): void;
 }
 
+/** Оберти холостого ходу, об/хв (Engine: idle 5 об/с). */
+const IDLE_RPM = 300;
+
 export class EngineAudio {
   private readonly ctx: AudioContext;
   private readonly master: GainNode;
@@ -136,15 +139,19 @@ export class EngineAudio {
   update(rpm: number, load: number, running = true): void {
     const t = this.ctx.currentTime;
     const k = 0.08;
-    const idleRate = Math.min(2.2, Math.max(0.8, rpm / 800));
+    // Без газу на високих обертах (накат на передачі) — запис full за обертами, тихіше, ніж під газом, а idle
+    // притихає й прискорюється не більше ніж у 1,3 раза: раніше лише idle × rpm / 800 (до 2,2×) звучав як
+    // максимальні оберти. Співвідношення гучностей — гіпотеза порту.
+    const over = Math.min(1, Math.max(0, (rpm - IDLE_RPM) / 1200));
+    const idleRate = 0.8 + 0.5 * over;
     const fullRate = Math.min(2.0, Math.max(0.6, rpm / 1500));
     if (this.idle) {
       this.idle.src.playbackRate.setTargetAtTime(idleRate, t, k);
-      this.idle.gain.gain.setTargetAtTime(running ? 0.55 * (1 - load) + 0.1 : 0, t, k);
+      this.idle.gain.gain.setTargetAtTime(running ? (0.55 * (1 - load) + 0.1) * (1 - 0.6 * over) : 0, t, k);
     }
     if (this.full) {
       this.full.src.playbackRate.setTargetAtTime(fullRate, t, k);
-      this.full.gain.gain.setTargetAtTime(running ? 0.7 * load : 0, t, k);
+      this.full.gain.gain.setTargetAtTime(running ? 0.7 * load + 0.3 * (1 - load) * over : 0, t, k);
     }
   }
 
