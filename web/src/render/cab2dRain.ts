@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { RgbaImage } from '../formats/binary';
+import { SceneCopy, WATER_FRAGMENT, WATER_LOOK, WATER_VERTEX, WaterBuffer, toLevels, waterUniforms, type Levels } from './waterBuffer';
 
 /**
  * Дощ на склі й двірники 2D-кабіни — як в оригіналі (HTruck.exe: об'єкт 0x4caa10, створюється лише в режимі без
@@ -41,29 +42,12 @@ const RUN_TICK = 2;
 /** Вісь першого двірника — x = 200 (поле +0x58); стирання від радіуса 10 (поле +0x60) до висоти буфера. */
 const PIVOT_X = 200;
 const HUB = 10;
-/** Колір крапель — запис №3 палітри траси (на всіх трасах 191, 191, 191). */
-const DROP_COLOR = new THREE.Color(191 / 255, 191 / 255, 191 / 255);
-/**
- * Висихання без дощу: рівні убувають 15 кроками за FADE_TIME с. В оригіналі так висихає лише 16-бітний буфер
- * (4-бітна альфа, лічильник +0x90); тривалість — гіпотеза.
- */
-const FADE_STEPS = 15;
-const FADE_TIME = 0.5;
 /** Ширина лопаті до довжини — як у моделі `Wiper` (COUNT.B3D: 0,08 × 0,85). */
 const BLADE_WIDTH = 0.08 / 0.85;
 /** Без текстури (імпорт до її появи) — темна смужка. */
 const BLADE_COLOR = 0x141414;
-/**
- * Заломлення: зсув картинки, пікселі кадру 640×480 на одиницю нахилу профілю (нахил — різниця рівнів 0…1 через
- * REFRACT_SPAN пікселів буфера), і найбільший зсув. Підібрано на око (гіпотеза).
- */
-const REFRACT = 20;
-const REFRACT_MAX = 3;
-const REFRACT_SPAN = 3;
-/** Частка заломленої картинки (решта — вид без води): краплі трохи прозоріші (на прохання користувача). */
-const WATER = 0.75;
-/** Світло й тінь на воді: зміна яскравості на одиницю нахилу (на око). */
-const SHADE = 2.5;
+/** Нахил поверхні води — різниця рівнів через стільки пікселів буфера. */
+const SLOPE_SPAN = 3;
 /** Найбільший крок часу оновлення, с: після паузи (прихована вкладка) двірник проскочив би межу помаху. */
 const MAX_DT = 0.1;
 
@@ -79,13 +63,6 @@ export const RAIN_VIEW = { x: 0, y: 44, w: 640, h: 250 };
 const BUF_SCALE = 2;
 const BUF = { w: RAIN_VIEW.w * BUF_SCALE, h: RAIN_VIEW.h * BUF_SCALE };
 
-/** Маска рівнів (MSKR): ширина, висота, рівень кожного пікселя (0 — прозоро). */
-interface Levels {
-  w: number;
-  h: number;
-  a: Uint8Array;
-}
-
 export class Cab2dRain {
   raining = false;
   wipersOn = false;
@@ -94,10 +71,9 @@ export class Cab2dRain {
   /** Буфер крапель і лопаті — у сцені 2D-кабіни (кадр 640×480, y униз), під маскою панелі. */
   readonly root = new THREE.Group();
 
-  private readonly levels = new Uint8Array(BUF.w * BUF.h);
-  private readonly texture: THREE.DataTexture;
-  /** Копія кадру зі світом (під кабіною) — для заломлення; розмір — буфер малювання. */
-  private sceneTex: THREE.FramebufferTexture | null = null;
+  private readonly water = new WaterBuffer(BUF.w, BUF.h);
+  /** Копія смуги вікна з кадру (світ під кабіною) — для заломлення. */
+  private readonly copy = new SceneCopy();
   private readonly uniforms: Record<string, THREE.IUniform>;
   private readonly drop: Levels | null;
   private readonly runner: Levels | null;
@@ -110,10 +86,6 @@ export class Cab2dRain {
   private moving = false;
   private dropAcc = 0;
   private runAcc = 0;
-  private fadeStep = 0;
-  private fadeAcc = 0;
-  private dirty = false;
-  private empty = true;
 
   /**
    * drop, runner — маски drop7 і drop10, розкодовані без палітри (рівень — у червоному каналі); blade — текстура
@@ -124,24 +96,7 @@ export class Cab2dRain {
     const S = BUF_SCALE;
     this.drop = drop && toLevels(drop);
     this.runner = runner && toLevels(runner);
-    this.texture = new THREE.DataTexture(this.levels, BUF.w, BUF.h, THREE.RedFormat, THREE.UnsignedByteType);
-    this.texture.flipY = false;
-    // Плавні рівні — плавний нахил профілю для заломлення.
-    this.texture.magFilter = THREE.LinearFilter;
-    this.texture.minFilter = THREE.LinearFilter;
-    this.texture.needsUpdate = true;
-    this.uniforms = {
-      levels: { value: this.texture },
-      color: { value: DROP_COLOR },
-      scene: { value: null },
-      res: { value: new THREE.Vector2(1, 1) },
-      span: { value: new THREE.Vector2(REFRACT_SPAN / BUF.w, REFRACT_SPAN / BUF.h) },
-      water: { value: WATER },
-      k: { value: 0 },
-      kMax: { value: 0 },
-      shade: { value: SHADE },
-      refract: { value: 0 },
-    };
+    this.uniforms = waterUniforms(this.water.texture, SLOPE_SPAN / BUF.w, SLOPE_SPAN / BUF.h);
     // Осі двірників (0x462f38): (200, h + 10) і (200 + 1,5·h, h + 10) пікселів кадру — трохи нижче краю буфера; тут —
     // у пікселях буфера.
     this.pivots = [
@@ -166,35 +121,14 @@ export class Cab2dRain {
       this.blades.push(m);
       this.root.add(m);
     }
-    // Краплі — поверх лопатей (в оригіналі буфер накладається на вид після світу): колір №3, прозорість — рівень.
+    // Вода — поверх лопатей (в оригіналі буфер накладається на вид після світу). Камера 2D-кабіни — y униз: v = 0
+    // PlaneGeometry — верх смуги на екрані, як рядок 0 буфера.
     const quad = new THREE.Mesh(
       new THREE.PlaneGeometry(w, h).translate(RAIN_VIEW.x + w / 2, RAIN_VIEW.y + h / 2, 0),
       new THREE.ShaderMaterial({
         uniforms: this.uniforms,
-        vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-        // Камера 2D-кабіни — y униз: v = 0 PlaneGeometry — верх смуги на екрані, як рядок 0 буфера; у gl_FragCoord
-        // y — угору, тож вертикальний нахил з протилежним знаком.
-        fragmentShader: `
-          uniform sampler2D levels, scene;
-          uniform vec3 color;
-          uniform vec2 res, span;
-          uniform float k, kMax, shade, water, refract;
-          varying vec2 vUv;
-          void main() {
-            float a = texture2D(levels, vUv).r;
-            if (a <= 0.0) discard;
-            if (refract < 0.5) { gl_FragColor = vec4(color, a); return; }
-            float gx = texture2D(levels, vUv + vec2(span.x, 0.0)).r - texture2D(levels, vUv - vec2(span.x, 0.0)).r;
-            float gy = texture2D(levels, vUv + vec2(0.0, span.y)).r - texture2D(levels, vUv - vec2(0.0, span.y)).r;
-            vec2 off = vec2(gx, -gy) * k;
-            float l = length(off);
-            if (l > kMax) off *= kMax / l;
-            vec3 bg = texture2D(scene, (gl_FragCoord.xy + off) / res).rgb;
-            vec3 clear = texture2D(scene, gl_FragCoord.xy / res).rgb;
-            // gy > 0 — поверхня піднімається донизу (нижній край краплі): світліше; верхній край — темніше.
-            float light = clamp(1.0 + shade * (gy - 0.3 * gx), 0.6, 1.5);
-            gl_FragColor = vec4(mix(clear, bg * light, water), 1.0);
-          }`,
+        vertexShader: WATER_VERTEX,
+        fragmentShader: WATER_FRAGMENT,
         transparent: true,
         depthTest: false,
         depthWrite: false,
@@ -208,39 +142,37 @@ export class Cab2dRain {
   }
 
   /**
-   * Перед малюванням 2D-кабіни (у кадрі вже світ): копія кадру для заломлення. pxPerFrame — CSS-пікселів на піксель
-   * кадру 640×480 (масштаб 2D-кабіни).
+   * Перед малюванням 2D-кабіни (у кадрі вже світ): зміни буфера — на відеокарту; копія лише смуги вікна з кадру.
+   * view — масштаб (CSS-пікселів на піксель кадру 640×480) і зсув кадру 2D-кабіни.
    */
-  prepare(renderer: THREE.WebGLRenderer, pxPerFrame: number): void {
-    this.uniforms.refract.value = this.empty ? 0 : 1;
-    if (this.empty) return;
+  prepare(renderer: THREE.WebGLRenderer, view: { s: number; ox: number; oy: number }): void {
+    this.water.upload(renderer);
+    this.uniforms.wet.value = this.water.empty ? 0 : 1;
+    if (this.water.empty) return;
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
-    if (!this.sceneTex || this.sceneTex.image.width !== size.x || this.sceneTex.image.height !== size.y) {
-      this.sceneTex?.dispose();
-      this.sceneTex = new THREE.FramebufferTexture(size.x, size.y);
-      this.sceneTex.magFilter = THREE.LinearFilter;
-      this.sceneTex.minFilter = THREE.LinearFilter;
-      this.uniforms.scene.value = this.sceneTex;
-    }
-    renderer.copyFramebufferToTexture(this.sceneTex);
-    const dev = pxPerFrame * renderer.getPixelRatio();
-    (this.uniforms.res.value as THREE.Vector2).copy(size);
-    this.uniforms.k.value = REFRACT * dev;
-    this.uniforms.kMax.value = REFRACT_MAX * dev;
+    const dev = view.s * renderer.getPixelRatio();
+    const pad = WATER_LOOK.refractMax * dev + 2;
+    // Смуга вікна в пікселях буфера малювання (y — знизу), із запасом на зсув заломлення.
+    const top = (RAIN_VIEW.y + view.oy) * dev - pad;
+    const bottom = (RAIN_VIEW.y + RAIN_VIEW.h + view.oy) * dev + pad;
+    const y0 = Math.max(0, size.y - bottom);
+    const y1 = Math.min(size.y, size.y - top);
+    this.copy.copy(renderer, 0, y0, size.x, y1 - y0, this.uniforms);
+    this.uniforms.k.value = WATER_LOOK.refract * dev;
+    this.uniforms.kMax.value = WATER_LOOK.refractMax * dev;
   }
 
   update(dt: number, _speedKmh = 0): void {
     dt = Math.min(dt, MAX_DT);
     this.updateWipers(dt);
     if (this.raining) {
-      this.fadeStep = 0;
+      this.water.wet();
       this.spawn(dt);
-    } else if (!this.empty) this.dry(dt);
-    this.run(dt);
-    if (this.dirty) {
-      this.texture.needsUpdate = true;
-      this.dirty = false;
+    } else {
+      this.water.dry(dt);
+      if (this.water.empty) this.runners.length = 0;
     }
+    this.run(dt);
   }
 
   /** Нові краплі (0x462f38): drop7 — у випадкові місця; drop10 — початок краплі, що стікає. */
@@ -248,7 +180,7 @@ export class Cab2dRain {
     const { w, h } = BUF;
     if (this.drop) {
       this.dropAcc += DROPS_PER_SEC * dt;
-      for (; this.dropAcc >= 1; this.dropAcc--) this.stamp(this.drop, rand(w), rand(h));
+      for (; this.dropAcc >= 1; this.dropAcc--) this.water.stamp(this.drop, rand(w), rand(h));
     }
     if (this.runner) {
       this.runAcc += RUNNERS_PER_SEC * dt;
@@ -261,7 +193,7 @@ export class Cab2dRain {
     }
   }
 
-  /** Краплі, що стікають (0x473560): крок униз за кадр, зсув убік −4…3, три відбитки вздовж кроку. */
+  /** Краплі, що стікають (0x473560): крок униз, зсув убік −4…3, три відбитки вздовж кроку. */
   private run(dt: number): void {
     const m = this.runner;
     if (!m) return;
@@ -271,30 +203,14 @@ export class Cab2dRain {
       for (; r.acc >= RUN_TICK; r.acc -= RUN_TICK) {
         const step = RUN_TICK;
         const dx = Math.floor(Math.random() * 8) - 4;
-        this.stamp(m, r.x + Math.trunc(dx / 3), r.y + Math.trunc(step / 3));
-        this.stamp(m, r.x + Math.trunc((2 * dx) / 3), r.y + Math.trunc((2 * step) / 3));
-        this.stamp(m, r.x + dx, r.y + step);
+        this.water.stamp(m, r.x + Math.trunc(dx / 3), r.y + Math.trunc(step / 3));
+        this.water.stamp(m, r.x + Math.trunc((2 * dx) / 3), r.y + Math.trunc((2 * step) / 3));
+        this.water.stamp(m, r.x + dx, r.y + step);
         r.x += dx;
         r.y += step;
       }
       if (r.y >= BUF.h) this.runners.splice(i, 1);
     }
-  }
-
-  /** Відбиток маски рівнів у буфер (перезапис непрозорих пікселів, як копіювання маски в оригіналі). */
-  private stamp(m: Levels, x0: number, y0: number): void {
-    const { w, h } = BUF;
-    for (let y = 0; y < m.h; y++) {
-      const by = y0 + y;
-      if (by < 0 || by >= h) continue;
-      for (let x = 0; x < m.w; x++) {
-        const v = m.a[y * m.w + x];
-        const bx = x0 + x;
-        if (v && bx >= 0 && bx < w) this.levels[by * w + bx] = v;
-      }
-    }
-    this.dirty = true;
-    this.empty = false;
   }
 
   /** Помах (0x462f38 + 0x4d0180): у спокої при увімкнених двірниках — старт і звук; дійшов до спокою — новий
@@ -330,46 +246,36 @@ export class Cab2dRain {
   /**
    * Стирання (0x462f38): для кожного кроку кута між a0 і a1 — лінія від радіуса HUB до висоти буфера з обох осей.
    * Точка лопаті під кутом a — (x + r·sin a, y − r·cos a): у спокої (+90°) лопать лежить праворуч від осі, нижче
-   * краю буфера.
+   * краю буфера. На відеокарту — лише прямокутник, який замели.
    */
   private wipe(a0: number, a1: number): void {
-    if (this.empty || a0 === a1) return;
-    const { w, h } = BUF;
+    if (this.water.empty || a0 === a1) return;
+    const h = BUF.h;
     const lo = Math.min(a0, a1);
     const hi = Math.max(a0, a1);
+    const r0 = HUB * BUF_SCALE;
     // Крок кута — як в оригіналі на його буфері; на детальнішому — дрібніший, щоб лінії не лишали щілин.
     const step = WIPE_STEP / BUF_SCALE;
-    for (let a = lo; a <= hi + step / 2; a += step) {
-      const s = Math.sin(a);
-      const c = Math.cos(a);
-      for (const [px, py] of this.pivots) {
-        for (let r = HUB * BUF_SCALE; r <= h; r++) {
-          const x = Math.round(px + r * s);
-          const y = Math.round(py - r * c);
-          if (x >= 0 && x < w && y >= 0 && y < h) this.levels[y * w + x] = 0;
+    for (const [px, py] of this.pivots) {
+      let x0 = Infinity;
+      let y0 = Infinity;
+      let x1 = -Infinity;
+      let y1 = -Infinity;
+      for (let a = lo; a <= hi + step / 2; a += step) {
+        const s = Math.sin(a);
+        const c = Math.cos(a);
+        for (let r = r0; r <= h; r++) this.water.erase(Math.round(px + r * s), Math.round(py - r * c));
+        for (const r of [r0, h]) {
+          const x = px + r * s;
+          const y = py - r * c;
+          x0 = Math.min(x0, x);
+          y0 = Math.min(y0, y);
+          x1 = Math.max(x1, x);
+          y1 = Math.max(y1, y);
         }
       }
+      this.water.mark(x0 - 1, y0 - 1, x1 + 2, y1 + 2);
     }
-    this.dirty = true;
-  }
-
-  /** Висихання: рівні убувають рівними кроками. */
-  private dry(dt: number): void {
-    this.fadeAcc += dt;
-    const step = FADE_TIME / FADE_STEPS;
-    if (this.fadeAcc < step) return;
-    this.fadeAcc = 0;
-    if (++this.fadeStep >= FADE_STEPS) {
-      this.levels.fill(0);
-      this.runners.length = 0;
-      this.empty = true;
-      this.fadeStep = 0;
-    } else {
-      const dec = Math.ceil(255 / FADE_STEPS);
-      const a = this.levels;
-      for (let i = 0; i < a.length; i++) a[i] = a[i] > dec ? a[i] - dec : 0;
-    }
-    this.dirty = true;
   }
 
   /** Лопаті вздовж ліній стирання: від осі до радіуса — висоти буфера, у кадрі 640×480. */
@@ -388,8 +294,8 @@ export class Cab2dRain {
   }
 
   dispose(): void {
-    this.texture.dispose();
-    this.sceneTex?.dispose();
+    this.water.dispose();
+    this.copy.dispose();
     (this.blades[0].material as THREE.MeshBasicMaterial).map?.dispose();
     for (const o of this.root.children) {
       const m = o as THREE.Mesh;
@@ -457,11 +363,4 @@ function bladeTexture(img: RgbaImage): THREE.DataTexture {
 
 function rand(n: number): number {
   return Math.floor(Math.random() * n);
-}
-
-/** Рівні з маски, розкодованої без палітри: рівень — червоний канал, прозорі пікселі — 0. */
-function toLevels(img: RgbaImage): Levels {
-  const a = new Uint8Array(img.width * img.height);
-  for (let i = 0; i < a.length; i++) a[i] = img.data[i * 4 + 3] ? img.data[i * 4] : 0;
-  return { w: img.width, h: img.height, a };
 }

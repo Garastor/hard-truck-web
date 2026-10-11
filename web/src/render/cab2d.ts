@@ -249,12 +249,12 @@ export class Cab2d {
     const right = X + this.panel.width;
     if (right < left + w) this.quad(null, right, top, left + w - right, h, black);
     for (let i = this.used; i < this.quads.length; i++) this.quads[i].visible = false;
-    this.beforeDraw?.(renderer, this.view.s);
+    this.beforeDraw?.(renderer, this.view);
     renderer.render(this.scene, this.cam);
   }
 
-  /** Перед малюванням (у кадрі вже світ): s — CSS-пікселів на піксель кадру 640×480 (заломлення дощу). */
-  beforeDraw: ((renderer: THREE.WebGLRenderer, s: number) => void) | null = null;
+  /** Перед малюванням (у кадрі вже світ): масштаб і зсув кадру 640×480 на екрані (заломлення дощу). */
+  beforeDraw: ((renderer: THREE.WebGLRenderer, view: { s: number; ox: number; oy: number }) => void) | null = null;
 
   /** Додатковий шар під маскою панелі (дощ і двірники — render/cab2dRain.ts), у координатах кадру 640×480. */
   attach(obj: THREE.Object3D): void {

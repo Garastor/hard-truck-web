@@ -320,8 +320,8 @@ export class DriveSession {
     this.setRain(rain);
     this.truck.weatherGrip = rain ? 0.8 : 1;
   }
-  /** Оригінальні спрайти крапель на склі (txr/glass_1.msk, glass_2.msk з архіву траси). */
-  private dropSprites: HTMLCanvasElement[] = [];
+  /** Оригінальні маски води на склі 3D-кабіни: краплі txr/glass_1.msk і сліди glass_2.msk (архів траси). */
+  private glassMasks: { drop: RgbaImage | null; runner: RgbaImage | null } = { drop: null, runner: null };
   /** Туман і фон сцени до заїзду (повертаються в dispose). */
   private baseFog: { fog: THREE.Fog | null; bg: THREE.Scene['background'] } | undefined;
   /**
@@ -679,17 +679,12 @@ export class DriveSession {
     // Очі водія: OV з [TECHn] (система вантажівки), як в оригіналі; вид з кабіни — за замовчуванням.
     s.cockpit = g2t(def.tech.viewer);
     s.cockpit.y += setup?.seatRaise ?? 0;
-    // Оригінальні краплі на склі — маски архіву траси (кольори масок — з палітри траси).
-    for (const n of ['txr/glass_1.msk', 'txr/glass_2.msk']) {
+    // Оригінальні маски води на склі 3D-кабіни (MS16 із прозорістю): краплі й сліди.
+    const glassMask = (n: string) => {
       const b = rmp?.masks.get(n);
-      if (!b) continue;
-      const img = parseMsk(b, built.assembler.lib.palette ?? undefined);
-      const c = document.createElement('canvas');
-      c.width = img.width;
-      c.height = img.height;
-      c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), 0, 0);
-      s.dropSprites.push(c);
-    }
+      return b ? parseMsk(b, built.assembler.lib.palette ?? undefined) : null;
+    };
+    s.glassMasks = { drop: glassMask('txr/glass_1.msk'), runner: glassMask('txr/glass_2.msk') };
     s.buildCab();
     s.camMode = 'cockpit';
 
@@ -918,7 +913,7 @@ export class DriveSession {
     // Скло (GlassKey, група 1) показуємо завжди: його текстуру — краплі — малює GlassRain, суха — прозора.
     if (!panel) {
       dyn.setSwitch('GlassKey', 1);
-      this.glassRain = new GlassRain(inner, this.dropSprites);
+      this.glassRain = new GlassRain(inner, this.glassMasks.drop, this.glassMasks.runner);
       this.glassRain.onStroke = () => this.audio?.play('wipers', 0.9);
       this.glassRain.raining = this.raining;
       this.glassRain.wipersOn = this.wipersManual ?? this.raining;
@@ -949,6 +944,8 @@ export class DriveSession {
     cam.updateProjectionMatrix();
     renderer.autoClear = false;
     renderer.clearDepth();
+    // Вода на склі 3D-кабіни: зміни — на відеокарту, копія кадру зі світом для заломлення (до кабіни).
+    if (this.glassRain instanceof GlassRain && this.cab?.visible) this.glassRain.prepare(renderer);
     renderer.render(this.overlayScene, camera);
     if (this.cabParts.rule && this.cab?.visible) {
       renderer.clearDepth();
@@ -1148,6 +1145,7 @@ export class DriveSession {
     this.cab = null;
     this.cabSwitch = null;
     this.cabParts = {};
+    this.glassRain?.dispose();
     this.glassRain = null;
     this.buildCab(panel);
     if (this.hudFonts) this.setHudFonts(...this.hudFonts);
