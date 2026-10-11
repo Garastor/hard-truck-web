@@ -6,6 +6,7 @@
  * 888/n — вітрина запчастини n, 666/10…50 — тунелі на траси. На трасах 666 — фініш (тунель на базу).
  */
 import * as THREE from 'three';
+import callSignUrl from '../assets/call-sign.png';
 import {
   PARTS, TRACKS, TUNNELS, autoLoad, buyPart, buyTruck, canLoad, cargoVolume, cargoWeight, fmt,
   ROAD_REPAIR_TARGET, applyWear, cargoBroken, damageEffects, formatMoney as money, loadGood, recoverCost, repair, repairCost,
@@ -79,53 +80,18 @@ export function modal(overlay: HTMLElement, title: string, body: string | HTMLEl
 }
 
 /**
- * Знак «телефон» (пункт виклику допомоги): синій квадрат із заокругленими кутами й білою лінією вздовж краю,
- * посередині — біле поле з чорною трубкою по діагоналі. Векторний (у 2 рази дрібнішій сітці,
- * ніж табло), щоб трубка мала форму, а не «пікселі».
+ * Знак «телефон» (пункт виклику допомоги): квадратна версія знака зі зразка користувача, зменшена
+ * (tools/ui/make_call_sign.py); 132 px = 44 CSS-пікселі × 3 (щільність iPhone).
  */
-export function callSign(): HTMLCanvasElement {
-  // Сітка вчетверо дрібніша за табло — векторна трубка без «сходинок».
-  const W = 88;
-  const { canvas, ctx } = pixelCanvas(W, W, hudScale() * 0.5);
-  ctx.fillStyle = 'rgb(0, 122, 194)';
-  ctx.beginPath();
-  ctx.roundRect(0, 0, W, W, 14);
-  ctx.fill();
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  ctx.roundRect(7, 7, W - 14, W - 14, 10);
-  ctx.stroke();
-  // Біле поле посередині.
-  const S = 54;
-  const o = (W - S) / 2;
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(o, o, S, S);
-  const p = (u: number, v: number): [number, number] => [o + u * S, o + v * S];
-  // Ручка — дуга від навушника (вгорі) до мікрофона (праворуч унизу).
-  ctx.strokeStyle = '#000';
-  ctx.lineCap = 'butt';
-  ctx.lineWidth = S * 0.17;
-  ctx.beginPath();
-  ctx.moveTo(...p(0.4, 0.2));
-  ctx.bezierCurveTo(...p(0.12, 0.34), ...p(0.2, 0.62), ...p(0.42, 0.8));
-  ctx.bezierCurveTo(...p(0.52, 0.88), ...p(0.62, 0.84), ...p(0.66, 0.78));
-  ctx.stroke();
-  // Торці (навушник і мікрофон): ширші за ручку, продовжують її за дотичною; від ручки — тонка біла щілина.
-  const cap = (u: number, v: number, dx: number, dy: number) => {
-    const [x, y] = p(u, v);
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(Math.atan2(dx, -dy));
-    ctx.fillStyle = '#000';
-    ctx.fillRect(-S * 0.15, -S * 0.22, S * 0.3, S * 0.24);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(-S * 0.17, -S * 0.04, S * 0.34, S * 0.035);
-    ctx.restore();
-  };
-  cap(0.4, 0.2, 0.28, -0.14);
-  cap(0.66, 0.78, 0.04, -0.06);
-  return canvas;
+export function callSign(): HTMLImageElement {
+  const img = document.createElement('img');
+  img.src = callSignUrl;
+  img.alt = '';
+  const size = 44 * hudScale();
+  img.width = size;
+  img.height = size;
+  img.style.display = 'block';
+  return img;
 }
 
 /** Стрілка «згорнути» (вліво) кольору тексту табло. */
