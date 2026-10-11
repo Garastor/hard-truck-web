@@ -54,6 +54,9 @@ const BRAKE_FRONT = 0.49;
 const BRAKE_REAR = 0.35;
 /** Коефіцієнт опору кочення (накат на 4-й передачі без газу, s7). */
 const ROLLING_RESISTANCE = 0.015;
+/** Бампери: висота низу над дорогою й товщина, м (гіпотеза). */
+const BUMPER_CLEARANCE = 0.35;
+const BUMPER_DEPTH = 0.5;
 /** Утримання гальма на місці до вмикання задньої передачі, с. */
 const REVERSE_HOLD = 0.3;
 
@@ -201,6 +204,24 @@ export class TruckVehicle {
       // Бічні сили шин рахуємо самі (applyTireLateral) — у Rapier вимикаємо.
       this.ctrl.setWheelSideFrictionStiffness(i, 0);
     }
+
+    // Бампери: корпус-колайдер високо (низ ≈ 1 м над дорогою), а колеса — промені, тож низькі предмети (ящики,
+    // блоки) проходили під кузовом і колеса на них заїжджали. Низькі коробки спереду й ззаду без маси —
+    // до BUMPER_CLEARANCE над дорогою (дорога — низ коліс у спокої).
+    const wy = g2t(new THREE.Vector3().setFromMatrixPosition(model.wheelBase[0])).y;
+    const ground = wy + this.suspRest * 0.5 - this.suspRest - this.wheelRadius;
+    const bottom = ground + BUMPER_CLEARANCE;
+    const top = colliderAt.y - size.y * 0.4 + 0.2;
+    if (top > bottom + 0.1)
+      for (const z of [box.min.z + BUMPER_DEPTH / 2, box.max.z - BUMPER_DEPTH / 2])
+        world.createCollider(
+          RAPIER.ColliderDesc.cuboid(size.x / 2 - 0.05, (top - bottom) / 2, BUMPER_DEPTH / 2)
+            .setTranslation(center.x, (top + bottom) / 2, z)
+            .setDensity(0)
+            .setFriction(0.3)
+            .setRestitution(0.1),
+          this.body,
+        );
   }
 
   /** Крок фізики керування (до world.step). */

@@ -5,6 +5,7 @@ import { floorAt, levelCollision, roomAt, type LevelCollision } from '../game/co
 import { Input } from '../input/input';
 import { TruckVehicle, type TruckSetup } from '../game/truckVehicle';
 import { GlassRain } from '../render/glassRain';
+import { Movables } from '../game/movables';
 import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import type { BuiltScene } from '../render/sceneBuilder';
@@ -163,6 +164,8 @@ export class DriveSession {
     const q = this.truck.body.rotation();
     return new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w)).y < 0.5;
   }
+  /** Рухомі предмети траси (ящики, блоки — AnmObj). */
+  private movables: Movables | null = null;
   /** Навігаційна система (НС): мінікарта з суперниками. */
   private navMap: NavMap | null = null;
   showMap(on: boolean): void {
@@ -286,6 +289,7 @@ export class DriveSession {
       s.fallY = minZ - 15;
     }
     s.world.step(); // колайдери потрапляють у структури запитів (castRay) лише після кроку
+    s.movables = new Movables(s.world, built.assembler.b3d, built.rooms);
 
     const model = buildTruckModel(built.assembler, def, true);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня в цій локації`);
@@ -592,6 +596,7 @@ export class DriveSession {
       this.clock += this.world.timestep;
       this.truck.syncVisual();
       for (const o of this.opponents) o.truck.syncVisual();
+    this.movables?.update();
       if (this.truck.body.translation().y < this.fallY) this.truck.reset(this.restartPoint());
       this.updateTrack();
     }
@@ -612,6 +617,7 @@ export class DriveSession {
     }
     this.truck.syncVisual();
     for (const o of this.opponents) o.truck.syncVisual();
+    this.movables?.update();
     // Впав зі світу — на точку рестарту.
     if (this.truck.body.translation().y < this.fallY) this.truck.reset(this.restartPoint());
     this.updateTrack();
