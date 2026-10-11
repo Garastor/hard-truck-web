@@ -10,6 +10,9 @@ import type { RgbaImage } from '../formats/binary';
  * - краплі, що стікають, `msk\drop10.msk`: 5/с, кожна 25 px/с униз (оригінал — 50) зі зсувом убік −4…3 за крок, три відбитки на крок
  *   (0x473560) — лишає слід;
  * - двірники стирають буфер лініями з кроком 0,00314 рад від радіуса 10 до висоти буфера (0x462f38).
+ * Заломлення (власний ефект порту, за згодою користувача; в оригіналі зсуву картинки немає — лише змішування з
+ * кольором №3): вода на склі зсуває картинку під собою за нахилом профілю рівнів — «лінза» маски drop7 (13 у
+ * центрі → 45 по краю) і сліди drop10; світлі обідки оригіналу лишаються поверх.
  * Лопаті — модель `Wiper` (COUNT.B3D): смужка 0,85 × 0,08 з матеріалом `wiper ttx 1` — перша текстура набору
  * (`txr\flash.txr`, «ttx» — текстура з прозорим чорним, 0x4530d0), смуга u 0,875…0,996 — намальований двірник
  * (важіль і щітка). Інтерфейс — як у GlassRain (3D-скло).
@@ -46,6 +49,13 @@ const FADE_TIME = 0.5;
 const BLADE_WIDTH = 0.08 / 0.85;
 /** Без текстури (імпорт до її появи) — темна смужка. */
 const BLADE_COLOR = 0x141414;
+/**
+ * Заломлення: зсув картинки, пікселі кадру 640×480 на одиницю нахилу профілю (нахил — різниця рівнів 0…1 через
+ * REFRACT_SPAN пікселів буфера), і найбільший зсув. Підібрано на око (гіпотеза).
+ */
+const REFRACT = 40;
+const REFRACT_MAX = 6;
+const REFRACT_SPAN = 3;
 /** Найбільший крок часу оновлення, с: після паузи (прихована вкладка) двірник проскочив би межу помаху. */
 const MAX_DT = 0.1;
 
@@ -72,6 +82,9 @@ export class Cab2dRain {
 
   private readonly levels = new Uint8Array(RAIN_VIEW.w * RAIN_VIEW.h);
   private readonly texture: THREE.DataTexture;
+  /** Копія кадру зі світом (під кабіною) — для заломлення; розмір — буфер малювання. */
+  private sceneTex: THREE.FramebufferTexture | null = null;
+  private readonly uniforms: Record<string, THREE.IUniform>;
   private readonly drop: Levels | null;
   private readonly runner: Levels | null;
   private readonly runners: { x: number; y: number; acc: number }[] = [];
@@ -98,7 +111,20 @@ export class Cab2dRain {
     this.runner = runner && toLevels(runner);
     this.texture = new THREE.DataTexture(this.levels, w, h, THREE.RedFormat, THREE.UnsignedByteType);
     this.texture.flipY = false;
+    // Плавні рівні — плавний нахил профілю для заломлення.
+    this.texture.magFilter = THREE.LinearFilter;
+    this.texture.minFilter = THREE.LinearFilter;
     this.texture.needsUpdate = true;
+    this.uniforms = {
+      levels: { value: this.texture },
+      color: { value: DROP_COLOR },
+      scene: { value: null },
+      res: { value: new THREE.Vector2(1, 1) },
+      span: { value: new THREE.Vector2(REFRACT_SPAN / w, REFRACT_SPAN / h) },
+      k: { value: 0 },
+      kMax: { value: 0 },
+      refract: { value: 0 },
+    };
     // Осі двірників (0x462f38): (200, h + 10) і (200 + 1,5·h, h + 10) — трохи нижче краю буфера.
     this.pivots = [
       [PIVOT_X, h + 10],
@@ -126,11 +152,28 @@ export class Cab2dRain {
     const quad = new THREE.Mesh(
       new THREE.PlaneGeometry(w, h).translate(RAIN_VIEW.x + w / 2, RAIN_VIEW.y + h / 2, 0),
       new THREE.ShaderMaterial({
-        uniforms: { levels: { value: this.texture }, color: { value: DROP_COLOR } },
+        uniforms: this.uniforms,
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-        // Камера 2D-кабіни — y униз: v = 0 PlaneGeometry — верх смуги на екрані, як рядок 0 буфера.
-        fragmentShader:
-          'uniform sampler2D levels; uniform vec3 color; varying vec2 vUv; void main() { float a = texture2D(levels, vUv).r; if (a <= 0.0) discard; gl_FragColor = vec4(color, a); }',
+        // Камера 2D-кабіни — y униз: v = 0 PlaneGeometry — верх смуги на екрані, як рядок 0 буфера; у gl_FragCoord
+        // y — угору, тож вертикальний нахил з протилежним знаком.
+        fragmentShader: `
+          uniform sampler2D levels, scene;
+          uniform vec3 color;
+          uniform vec2 res, span;
+          uniform float k, kMax, refract;
+          varying vec2 vUv;
+          void main() {
+            float a = texture2D(levels, vUv).r;
+            if (a <= 0.0) discard;
+            if (refract < 0.5) { gl_FragColor = vec4(color, a); return; }
+            float gx = texture2D(levels, vUv + vec2(span.x, 0.0)).r - texture2D(levels, vUv - vec2(span.x, 0.0)).r;
+            float gy = texture2D(levels, vUv + vec2(0.0, span.y)).r - texture2D(levels, vUv - vec2(0.0, span.y)).r;
+            vec2 off = vec2(gx, -gy) * k;
+            float l = length(off);
+            if (l > kMax) off *= kMax / l;
+            vec3 bg = texture2D(scene, (gl_FragCoord.xy + off) / res).rgb;
+            gl_FragColor = vec4(mix(bg, color, a), 1.0);
+          }`,
         transparent: true,
         depthTest: false,
         depthWrite: false,
@@ -141,6 +184,28 @@ export class Cab2dRain {
     quad.frustumCulled = false;
     this.root.add(quad);
     this.placeBlades();
+  }
+
+  /**
+   * Перед малюванням 2D-кабіни (у кадрі вже світ): копія кадру для заломлення. pxPerFrame — CSS-пікселів на піксель
+   * кадру 640×480 (масштаб 2D-кабіни).
+   */
+  prepare(renderer: THREE.WebGLRenderer, pxPerFrame: number): void {
+    this.uniforms.refract.value = this.empty ? 0 : 1;
+    if (this.empty) return;
+    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+    if (!this.sceneTex || this.sceneTex.image.width !== size.x || this.sceneTex.image.height !== size.y) {
+      this.sceneTex?.dispose();
+      this.sceneTex = new THREE.FramebufferTexture(size.x, size.y);
+      this.sceneTex.magFilter = THREE.LinearFilter;
+      this.sceneTex.minFilter = THREE.LinearFilter;
+      this.uniforms.scene.value = this.sceneTex;
+    }
+    renderer.copyFramebufferToTexture(this.sceneTex);
+    const dev = pxPerFrame * renderer.getPixelRatio();
+    (this.uniforms.res.value as THREE.Vector2).copy(size);
+    this.uniforms.k.value = REFRACT * dev;
+    this.uniforms.kMax.value = REFRACT_MAX * dev;
   }
 
   update(dt: number, _speedKmh = 0): void {
@@ -294,6 +359,7 @@ export class Cab2dRain {
 
   dispose(): void {
     this.texture.dispose();
+    this.sceneTex?.dispose();
     (this.blades[0].material as THREE.MeshBasicMaterial).map?.dispose();
     for (const o of this.root.children) {
       const m = o as THREE.Mesh;

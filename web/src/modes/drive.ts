@@ -1123,6 +1123,7 @@ export class DriveSession {
     rain.raining = this.raining;
     rain.wipersOn = this.wipersManual ?? this.raining;
     this.cab2d.attach(rain.root);
+    this.cab2d.beforeDraw = (r, px) => rain.prepare(r, px);
     this.glassRain = rain;
   }
 
