@@ -33,6 +33,14 @@ export function setReflectionMode(mode: ReflectionMode): void {
  */
 const REAR_PATCH = { start: 0.1, length: 2.6, width: 1.6, minHalfWidth: 0.22, spread: 0.6 };
 const HEAD_PATCH = { start: 0.3, length: 7, width: 1.6, minHalfWidth: 0.3, spread: 2.2 };
+/** Висота ліхтаря для закону дзеркала, м (скло в моделях на 0,7…2,3 м — крайні обмежуємо). */
+const LAMP_H_MIN = 0.5;
+const LAMP_H_MAX = 1.3;
+/** Частка дзеркальної відстані: зсув плями від ліхтаря і подовження; межі, м. */
+const SHIFT = 0.5;
+const MAX_SHIFT = 14;
+const STRETCH = 0.35;
+const MAX_STRETCH = 12;
 /** Відрізків уздовж смуги (щоб вона йшла по дорозі). */
 const SEGMENTS = 8;
 /** Над дорогою, м (щоб не потонув в асфальті). */
@@ -206,14 +214,20 @@ export class WetReflections {
         return r === null || r === undefined ? 0 : Math.max(-1.5, Math.min(1.5, r - near));
       };
       const along = (d: number, out: THREE.Vector3) => out.set(lamp.x, g, lamp.z).addScaledVector(fwd, d);
-      const pm = along(shape.start + shape.length / 2, this.p);
+      // Що далі машина від глядача, то далі від неї точка віддзеркалення (закон дзеркала: D·h / (H + h) — D
+      // відстань, h висота ліхтаря, H висота камери над дорогою) і довший слід; частки й межі — на око.
+      const h = Math.max(LAMP_H_MIN, Math.min(LAMP_H_MAX, lamp.y - near));
+      const mirror = (Math.hypot(cam.x - lamp.x, cam.z - lamp.z) * h) / (cam.y - near + h);
+      const start = shape.start + Math.min(MAX_SHIFT, mirror * SHIFT);
+      const length = shape.length + Math.min(MAX_STRETCH, mirror * STRETCH);
+      const pm = along(start + length / 2, this.p);
       const riseMid = rel(pm.x, pm.z);
-      const pf = along(shape.start + shape.length, this.p);
+      const pf = along(start + length, this.p);
       const riseFar = rel(pf.x, pf.z);
       const halfW0 = Math.max(shape.minHalfWidth, l.halfWidth * shape.width);
       for (let r = 0; r <= SEGMENTS; r++) {
         const u = r / SEGMENTS;
-        const p = along(shape.start + shape.length * u, this.p);
+        const p = along(start + length * u, this.p);
         p.y += u < 0.5 ? riseMid * u * 2 : riseMid + (riseFar - riseMid) * (u - 0.5) * 2;
         const halfW = halfW0 * (1 + shape.spread * u);
         for (const [i, sgn] of [
