@@ -42,6 +42,8 @@ type Batches = Map<number, { pos: number[]; uv: number[]; ord: number[]; layer?:
  * раніше за асфальт, а малюються поверх — для них зсув глибини матеріалу.
  */
 const LAYER_OFFSET_FACTOR = -1;
+/** Розніс площин у даних (м), від якого порядок шарів визначає положення, а не черговість полігонів. */
+const DATA_LAYER_GAP = 0.004;
 const LAYER_OFFSET_UNITS = -4;
 
 export class MaterialLibrary {
@@ -775,7 +777,10 @@ function separateLayers(batches: { pos: number[]; ord: number[]; layer?: number[
   let moved = 0;
   for (const g of groups.values()) {
     if (g.length < 2) continue;
-    g.sort((a, c) => a.ord - c.ord);
+    // Порядок шарів: спершу — розташування в даних уздовж нормалі (автори часто вже кладуть напис на 1 см перед
+    // дошкою: він має бути зверху, хоч у файлі йде раніше — інакше дошка перекривала його здалеку); у точно спільній
+    // площині (до DATA_LAYER_GAP) — порядок полігонів у даних (пізніший — зверху).
+    g.sort((a, c) => Math.round(a.d / DATA_LAYER_GAP) - Math.round(c.d / DATA_LAYER_GAP) || a.ord - c.ord);
     for (let i = 1; i < g.length; i++) {
       const top = g[i];
       for (let j = 0; j < i; j++) {
