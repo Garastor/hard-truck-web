@@ -749,7 +749,6 @@ body.driving.bar-open .touch-more {
 /* У кар'єрі локацію й вантажівку обирає гра — інструменти переглядача ховаємо. */
 body.career .tabs,
 body.career #level,
-body.career #mode,
 body.career #truck,
 body.career #weather,
 body.career #toMenu,

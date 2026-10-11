@@ -27,13 +27,12 @@ import { installDevTools } from './dev/devTools';
 
 /**
  * Переглядач ресурсів (Фази 1–2): обліт локацій, галерея текстур і масок.
- * Стан (локація/вкладка) зберігається в URL: ?level=CIRCUIT&mode=hw&tab=scene
+ * Стан (локація/вкладка) зберігається в URL: ?level=CIRCUIT&tab=scene
  */
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>('view');
 const levelSel = $<HTMLSelectElement>('level');
-const modeSel = $<HTMLSelectElement>('mode');
 const stats = $('stats');
 const gallery = $('gallery');
 const status = $('status');
@@ -79,7 +78,6 @@ scene.add(truckRoot);
 const params = new URLSearchParams(location.search);
 for (const id of Object.keys(LEVELS)) levelSel.add(new Option(id, id));
 levelSel.value = params.get('level') ?? 'CIRCUIT';
-modeSel.value = params.get('mode') ?? 'hw';
 
 function resize(): void {
   const w = window.innerWidth;
@@ -110,7 +108,7 @@ function isStandalone(): boolean {
 function syncUrl(): void {
   if (!debugLink) return history.replaceState(null, '', location.pathname);
   if (career || careerCfg) return history.replaceState(null, '', '?career=1');
-  const p = new URLSearchParams({ level: levelSel.value, mode: modeSel.value, tab });
+  const p = new URLSearchParams({ level: levelSel.value, tab });
   if (tab === 'trucks' || tab === 'drive') p.set('truck', truckSel.value);
   history.replaceState(null, '', `?${p}`);
 }
@@ -127,7 +125,7 @@ async function open(): Promise<void> {
       built = null;
     }
     const t0 = performance.now();
-    level = await loadLevel(source, levelSel.value as LevelId, modeSel.value as 'hw' | 'sw');
+    level = await loadLevel(source, levelSel.value as LevelId);
     const t1 = performance.now();
     built = buildScene(level.b3d, level.rmp, { switchGroup: Number(params.get('lod') ?? 0) });
     const t2 = performance.now();
@@ -321,7 +319,6 @@ levelSel.addEventListener('change', open);
 // У режимі їзди панель згорнута; кнопка ☰ тимчасово її показує.
 $('menu').addEventListener('click', () => document.body.classList.toggle('bar-open'));
 truckSel.addEventListener('change', () => (tab === 'drive' ? void startDrive() : showTruck()));
-modeSel.addEventListener('change', open);
 $('fullscreen').addEventListener('click', () => void toggleFullscreen());
 // Поміняти місцями кермо й педалі (сенсорний екран; те саме, що «Кермо й педалі» в «Опціях»).
 $('swapToggle').addEventListener('click', () => {
