@@ -521,10 +521,11 @@ export class SceneAssembler {
       return;
     }
     if (d.t === 21) {
-      // Перемикач стану: i1 — початковий стан. Виняток — купол неба, який рушій вмикає сам (група 1).
-      const start = block.groups[d.i1] ?? [];
+      // Перемикач стану: i1 — початковий стан. Виняток — купол неба SkyDomeKey: рушій щокадру ставить стан
+      // «номер неба кімнати + 1» (HTruck.exe 0x42a8a8), група 0 — порожня (блок nil, без неба). Номер неба кімнати
+      // ще не розібрано — беремо перше небо (група 1, гіпотеза).
       const sky = block.name === 'SkyDomeKey';
-      groups = [sky && !start.length ? (block.groups.find((g) => g.length) ?? []) : start];
+      groups = [sky && block.groups.length > 1 ? block.groups[1] : (block.groups[d.i1] ?? [])];
     } else if (d.t === 9 && d.shape.kind === 5 && block.groups.length >= 2 && this.buildingRooms) {
       // У геометрії трас тип 9 — дерево поділу простору: обидві половини видимі (як було до перемикачів у
       // моделях); вибір за боком камери ховав частини траси — мерехтіння й «невидимі» стіни з колізією.
@@ -693,7 +694,10 @@ export function buildScene(b3d: B3d, rmp: RmpArchive, opts: BuildOptions = {}): 
   };
 }
 
-/** Небо: шаблон Background_object (купол noz_sky) без глибини й туману, малюється першим. */
+/** Частка туману на куполі неба: біля обрію й угорі (виставляє режим їзди за погодою). */
+export const SKY_FOG = { horizon: { value: 0 }, top: { value: 0 } };
+
+/** Небо: шаблон Background_object (купол noz_sky) без глибини, малюється першим. */
 function buildSky(asm: SceneAssembler): THREE.Group | null {
   const tpl = asm.template('Background_object');
   if (!tpl) return null;
@@ -708,7 +712,26 @@ function buildSky(asm: SceneAssembler): THREE.Group | null {
     const m = (o.material as THREE.MeshBasicMaterial).clone();
     m.depthWrite = false;
     m.depthTest = false;
-    m.fog = false;
+    // Купол поруч із камерою (≈ 46 м) — туман за відстанню його б не зачепив: частка туману — за висотою над
+    // обрієм (SKY_FOG), щоб небо зливалося з далечінню.
+    m.fog = true;
+    m.onBeforeCompile = (sh) => {
+      sh.uniforms.skyFogHorizon = SKY_FOG.horizon;
+      sh.uniforms.skyFogTop = SKY_FOG.top;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vSkyDir;')
+        .replace('#include <fog_vertex>', '#include <fog_vertex>\nvSkyDir = (modelMatrix * vec4(transformed, 1.0)).xyz - cameraPosition;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vSkyDir;\nuniform float skyFogHorizon;\nuniform float skyFogTop;')
+        .replace(
+          '#include <fog_fragment>',
+          `#ifdef USE_FOG
+  float skyFog = mix(skyFogHorizon, skyFogTop, smoothstep(0.0, 0.35, normalize(vSkyDir).y));
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, skyFog);
+#endif`,
+        );
+    };
+    m.customProgramCacheKey = () => 'sky-fog';
     // Купол видно зсередини.
     m.side = THREE.DoubleSide;
     o.material = m;

@@ -49,7 +49,13 @@ fpsEl.hidden = !showFps;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8fb4d8);
 scene.fog = new THREE.Fog(0x8fb4d8, 400, 2500);
-const camera = new THREE.PerspectiveCamera(60, 1, 0.5, 5000);
+/**
+ * Поле зору — як в оригіналі: truck.ini [RENDER] ypyramid=1.5 — висота «піраміди огляду» на відстані 1 (проєкція
+ * ділить на ypyramid/2, HTruck.exe 0x452e84), тобто вертикаль 2·atan(0,75) ≈ 73,7°, при 4:3 — 90° по горизонталі.
+ * На ширших екранах вертикаль та сама, горизонт ширший. (Раніше було 60° — кабіна займала більше екрана.)
+ */
+const Y_PYRAMID = 1.5;
+const camera = new THREE.PerspectiveCamera(THREE.MathUtils.radToDeg(2 * Math.atan(Y_PYRAMID / 2)), 1, 0.5, 5000);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.screenSpacePanning = false;

@@ -12,7 +12,7 @@ import { TruckLights, hideLampReflections } from '../render/truckLights';
 import { WetReflections } from '../render/wetReflections';
 import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
-import type { BuiltScene } from '../render/sceneBuilder';
+import { SKY_FOG, type BuiltScene } from '../render/sceneBuilder';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
 import { EngineAudio, type LoopSound } from '../audio/engineAudio';
@@ -123,7 +123,12 @@ const CRASH_SOUNDS = ['crash2', 'crash4a', 'crash9'];
 /** Тестовий режим: сила ударів, після якої машина вибухає (у кар'єрі техстан 0 — це 250 при зносі 0,004 за одиницю). */
 const WRECK_HITS = 250;
 /** Туман під дощем: початок і повна непрозорість, м (гіпотеза). */
-const RAIN_FOG: [number, number] = [40, 420];
+/** Туман: колір, початок і кінець, м (гіпотеза). */
+const RAIN_FOG: [number, number, number] = [0x8d959d, 40, 420];
+const NIGHT_FOG: [number, number, number] = [0x10141a, 80, 600];
+const NIGHT_RAIN_FOG: [number, number, number] = [0x1a1e24, 30, 320];
+/** Скло ліхтаря лежить на поверхні кузова: останні стільки метрів променя до нього не перевіряємо. */
+const LAMP_SKIP = 0.6;
 /** Розтяг циліндра дощу по висоті (гіпотеза, див. update). */
 const RAIN_STRETCH = 1.6;
 /** Зони вмʼятин за годинниковою стрілкою від переду — суфікси перемикачів `Damage<зона>Key` у моделях. */
@@ -285,14 +290,7 @@ export class DriveSession {
     }
     // RainKey: група 0 — струмені, група 1 — порожня.
     this.rain?.setSwitch('RainKey', on ? 0 : 1);
-    // Під дощем далечінь у димці (як в оригіналі): ближчий і сіріший туман; вночі — темний.
-    if (on) {
-      this.dryFog ??= this.scene.fog as THREE.Fog | null;
-      this.scene.fog = new THREE.Fog(this.night ? 0x0b0d10 : 0x8d959d, RAIN_FOG[0], RAIN_FOG[1]);
-    } else if (this.dryFog !== undefined) {
-      this.scene.fog = this.dryFog;
-      this.dryFog = undefined;
-    }
+    this.applyFog();
     if (this.rain) this.rain.root.visible = on;
     if (this.glassRain) {
       this.glassRain.raining = on;
@@ -306,7 +304,24 @@ export class DriveSession {
   }
   /** Оригінальні спрайти крапель на склі (txr/glass_1.msk, glass_2.msk з архіву траси). */
   private dropSprites: HTMLCanvasElement[] = [];
-  private dryFog: THREE.Fog | null | undefined;
+  /** Туман і фон сцени до заїзду (повертаються в dispose). */
+  private baseFog: { fog: THREE.Fog | null; bg: THREE.Scene['background'] } | undefined;
+  /**
+   * Туман: удень без дощу — як до заїзду; під дощем далечінь у димці — ближчий і сіріший; уночі — темний.
+   * Фон сцени — колір туману (у проміжках між геометрією й небом), купол неба — у тумані біля обрію (SKY_FOG).
+   * Кольори й відстані — гіпотеза (truck.ini: fog=off; оригінальний туман дощу не розібрано).
+   */
+  private applyFog(): void {
+    this.baseFog ??= { fog: this.scene.fog as THREE.Fog | null, bg: this.scene.background };
+    const rain = this.raining;
+    const night = this.isNight;
+    const [color, near, far] = rain ? (night ? NIGHT_RAIN_FOG : RAIN_FOG) : night ? NIGHT_FOG : [0, 0, 0];
+    this.scene.fog = rain || night ? new THREE.Fog(color, near, far) : this.baseFog.fog;
+    const fog = this.scene.fog as THREE.Fog | null;
+    this.scene.background = fog ? fog.color.clone() : this.baseFog.bg;
+    SKY_FOG.horizon.value = fog ? (rain ? 1 : 0.85) : 0;
+    SKY_FOG.top.value = rain ? (night ? 0.5 : 0.7) : 0;
+  }
   /** Краплі на склі кабіни й двірники. */
   private glassRain: GlassRain | null = null;
   /** Вмʼятини кузова: накопичена сила ударів за зонами (FC, FR, R, BR, BC, BL, L, FL). */
@@ -491,7 +506,14 @@ export class DriveSession {
     }
   }
   /** Нічна траса: фари світять на дорогу (задає main за локацією). */
-  night = false;
+  private isNight = false;
+  get night(): boolean {
+    return this.isNight;
+  }
+  set night(on: boolean) {
+    this.isNight = on;
+    this.applyFog();
+  }
   private lights: TruckLights | null = null;
   /** Відблиски ліхтарів на дорозі — власні, у формі ліхтарів (див. WetReflections; оригінальні білборди сховані). */
   private readonly wetReflections: WetReflections[] = [];
@@ -616,7 +638,7 @@ export class DriveSession {
     s.truck = new TruckVehicle(s.world, def, model, s.spawn, setup);
     s.lights = new TruckLights(model.setSwitch, s.truck.visual, s.truck.lightGeometry);
     hideLampReflections(model.root);
-    s.wetReflections.push(new WetReflections(model.root, () => s.truck.groundHeight(), (x, y, z) => s.roadBelow(x, y, z), (x, y, z) => s.glossAt(x, y, z)));
+    s.wetReflections.push(new WetReflections(model.root, () => s.truck.groundHeight(), (x, y, z) => s.roadBelow(x, y, z), (x, y, z) => s.glossAt(x, y, z), (f, t) => s.lampSeen(f, t)));
     scene.add(s.truck.visual);
     s.spawnOpponents(rivals);
     s.roomVis = new RoomVisibility(s.track, built.rooms);
@@ -925,7 +947,7 @@ export class DriveSession {
       pilot.cruise = 58 + ((i * 7) % 18);
       const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
       hideLampReflections(model.root);
-      this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z), (x, y, z) => this.glossAt(x, y, z)));
+      this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z), (x, y, z) => this.glossAt(x, y, z), (f, t) => this.lampSeen(f, t)));
       this.opponents.push({ truck, pilot, odo: new Odometer(), lights, flippedFor: 0 });
     });
   }
@@ -1233,6 +1255,20 @@ export class DriveSession {
     return hit ? y - hit.timeOfImpact : null;
   }
 
+  /**
+   * Ліхтар у точці to видно з from: промінь до нього (без останніх LAMP_SKIP м — скло на поверхні кузова) нічого не
+   * перетинає. Кабіна гравця не рахується — камера з кабіни всередині її колайдера.
+   */
+  lampSeen(from: THREE.Vector3, to: THREE.Vector3): boolean {
+    const d = this.lampDir.subVectors(to, from);
+    const len = d.length() - LAMP_SKIP;
+    if (len <= 0) return true;
+    d.normalize();
+    const hit = this.world.castRay(new RAPIER.Ray(from, d), len, true, undefined, undefined, undefined, this.truck.body);
+    return !hit;
+  }
+  private readonly lampDir = new THREE.Vector3();
+
   floorHeight(p: THREE.Vector3): number | null {
     return floorAt(this.col, p.x, -p.z, p.y)?.z ?? null;
   }
@@ -1367,7 +1403,11 @@ export class DriveSession {
     // Циліндр дощу — у спільній сцені: без цього лишався стояти там, де була камера попереднього заїзду.
     if (this.rain) this.scene.remove(this.rain.root);
     for (const r of this.wetReflections) r.dispose();
-    if (this.dryFog !== undefined) this.scene.fog = this.dryFog;
+    if (this.baseFog) {
+      this.scene.fog = this.baseFog.fog;
+      this.scene.background = this.baseFog.bg;
+    }
+    SKY_FOG.horizon.value = SKY_FOG.top.value = 0;
     for (const s of this.oppSounds ?? []) s?.stop();
     this.wiperSound?.stop();
     this.stonesSound?.stop();

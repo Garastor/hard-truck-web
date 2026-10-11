@@ -104,6 +104,8 @@ export class WetReflections {
     private readonly groundZ: () => number,
     private readonly groundAt?: (x: number, y: number, z: number) => number | null,
     private readonly glossAt?: (x: number, y: number, z: number) => number,
+    /** Чи видно точку (скло ліхтаря) з камери — нічого не заступає (інші машини, власний кузов, рельєф). */
+    private readonly seen?: (from: THREE.Vector3, to: THREE.Vector3) => boolean,
   ) {
     root.updateWorldMatrix(true, true);
     const rootInv = root.matrixWorld.clone().invert();
@@ -191,6 +193,9 @@ export class WetReflections {
       const lamp = this.lampW.copy(l.center).applyMatrix4(mw);
       const near = show ? (this.groundAt?.(lamp.x, lamp.y, lamp.z) ?? this.root.localToWorld(this.tmp.set(l.center.x, l.center.y, this.groundZ())).y) : 0;
       show &&= cam.y > near + LIFT + 0.2;
+      // Відблиск видно лише разом із самим ліхтарем: інакше смуга лягала на дорогу від фар, закритих кузовом чи
+      // рельєфом («рентген»).
+      show &&= this.seen?.(cam, lamp) ?? true;
       l.out.visible = show;
       if (!show) continue;
       const g = near + LIFT;
