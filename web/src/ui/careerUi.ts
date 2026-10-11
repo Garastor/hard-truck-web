@@ -250,6 +250,7 @@ export class CareerGame {
     this.panel.append(this.info, this.actions, this.player);
     window.addEventListener('keydown', this.onKey);
     window.addEventListener('resize', this.placeBaseGroup);
+    for (const ev of ['pointerup', 'pointercancel', 'blur'] as const) window.addEventListener(ev, this.stopHold);
   }
 
   static async start(host: CareerHost, c: Career, specs: TruckSpec[]): Promise<CareerGame> {
@@ -263,8 +264,10 @@ export class CareerGame {
 
   dispose(): void {
     clearInterval(this.timer);
+    this.stopHold();
     window.removeEventListener('keydown', this.onKey);
     window.removeEventListener('resize', this.placeBaseGroup);
+    for (const ev of ['pointerup', 'pointercancel', 'blur'] as const) window.removeEventListener(ev, this.stopHold);
     this.clearShowroom();
     this.panel.remove();
   }
@@ -280,6 +283,7 @@ export class CareerGame {
   // --- База ---
 
   private async goBase(): Promise<void> {
+    this.stopHold();
     this.level = 'MENU3D';
     this.drive = await this.host.play('MENU3D', { truck: this.c.truck, rivals: [], kind: 'free', setup: {} });
     if (!this.drive) return;
@@ -381,6 +385,7 @@ export class CareerGame {
   // --- Траса ---
 
   private async goTrack(track: TrackId): Promise<void> {
+    this.stopHold();
     this.busy = true;
     try {
       const info = TRACKS[track];
@@ -747,7 +752,13 @@ export class CareerGame {
     this.player.replaceChildren(canvas);
   }
 
-  private button(label: string, onClick: () => void, repeat = false): HTMLButtonElement {
+  /**
+   * repeat — утримання повторює дію (як утримання клавіші в оригіналі). Після кожного кроку зона перебудовується
+   * й кнопка замінюється новою, тож таймер — на рівні гри: повторюється поточна дія (repeat()), а зупиняє його
+   * відпускання будь-де у вікні, а не на кнопці (стара кнопка вже не отримає pointerup — таймер жив вічно й
+   * сам докуповував товар).
+   */
+  private button(label: string, onClick: () => void, repeat?: () => (() => void) | null): HTMLButtonElement {
     const b = el('button', 'hud-btn');
     b.setAttribute('aria-label', label);
     const { canvas, ctx } = pixelCanvas(this.measure(label), this.host.font?.height ?? 8, hudScale() * BUTTON_ZOOM);
@@ -755,20 +766,27 @@ export class CareerGame {
     b.append(canvas);
     if (!repeat) b.addEventListener('click', onClick);
     else {
-      // Утримання — повторювати (як утримання клавіші в оригіналі).
-      let t = 0;
-      const stop = () => clearInterval(t);
       b.addEventListener('pointerdown', (e) => {
         e.preventDefault();
+        this.stopHold();
         onClick();
-        stop();
-        t = window.setInterval(onClick, 130);
+        this.holdTimer = window.setInterval(() => {
+          const fn = repeat();
+          if (fn) fn();
+          else this.stopHold();
+        }, 130);
       });
-      for (const ev of ['pointerup', 'pointerleave', 'pointercancel'] as const) b.addEventListener(ev, stop);
+      b.addEventListener('pointerleave', this.stopHold);
     }
     this.actions.append(b);
     return b;
   }
+
+  private holdTimer = 0;
+  private readonly stopHold = () => {
+    clearInterval(this.holdTimer);
+    this.holdTimer = 0;
+  };
 
   /**
    * Кнопки бази (на прохання користувача; значок виклику допомоги тут без сенсу): «Головне меню» — на місці
@@ -849,27 +867,26 @@ export class CareerGame {
     this.button('НА БАЗУ', () => void this.leaveTrack());
     this.ratingButton();
     // Ремонт у дорозі: утримувати кнопку, доки машина не прийде в задовільний стан (лише на місці).
-    if (this.needsRoadRepair())
-      this.button(
-        'РЕМОНТ',
-        () => {
-          if ((this.drive?.speedKmh ?? 99) > 2) return toastIn(this.host.overlay, 'Ремонт — лише на місці: зупиніться.', 2000);
-          if (!roadRepairStep(this.c, this.spec)) return;
-          // Звук ремонту — не частіше ніж раз на ~0,8 с (кнопку утримують).
-          const now = performance.now();
-          if (now - this.repairSoundAt > 800) {
-            this.repairSoundAt = now;
-            this.drive?.sound('repair', 0.8);
-          }
-          this.renderPlayer();
-          if (!this.needsRoadRepair()) {
-            this.save();
-            this.zoneKey = '';
-            this.refresh();
-          }
-        },
-        true,
-      );
+    if (this.needsRoadRepair()) {
+      const step = () => {
+        if ((this.drive?.speedKmh ?? 99) > 2) return toastIn(this.host.overlay, 'Ремонт — лише на місці: зупиніться.', 2000);
+        if (!roadRepairStep(this.c, this.spec)) return;
+        // Звук ремонту — не частіше ніж раз на ~0,8 с (кнопку утримують).
+        const now = performance.now();
+        if (now - this.repairSoundAt > 800) {
+          this.repairSoundAt = now;
+          this.drive?.sound('repair', 0.8);
+        }
+        this.renderPlayer();
+        if (!this.needsRoadRepair()) {
+          this.save();
+          this.zoneKey = '';
+          this.refresh();
+        }
+      };
+      const track = this.level;
+      this.button('РЕМОНТ', step, () => (this.level === track && this.needsRoadRepair() ? step : null));
+    }
     const recover = this.drive?.flipped ? this.button(`ВІДНОВИТИСЯ ${money(recoverCost(this.spec))}`, () => void this.askRecover()) : null;
     this.collapsible(recover ? [recover] : []);
   }
@@ -900,8 +917,8 @@ export class CareerGame {
     const unload = act(() => unloadGood(c, section, 1));
     this.keyLoad = load;
     this.keyUnload = unload;
-    this.button('- ПОВЕРНУТИ', unload, true);
-    this.button('+ ЗАВАНТАЖИТИ', load, true);
+    this.button('- ПОВЕРНУТИ', unload, () => this.keyUnload);
+    this.button('+ ЗАВАНТАЖИТИ', load, () => this.keyLoad);
   }
 
   /** Звук покупки, як в оригіналі: liftSound — і вантажівка, і запчастина, і завантаження товару (0x4c950c). */
