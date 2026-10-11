@@ -190,6 +190,7 @@ async function startDrive(): Promise<void> {
     if (!cfg && id !== 'MENU3D') drive.showMap(true);
     if (loadControl() === 'tilt') drive.setTilt(true);
     if (!cfg) drive.setWeather(weatherSel.value === 'rain');
+    drive.night = id === 'NIGHT';
     setStatus(null);
   } catch (e) {
     console.error(e);

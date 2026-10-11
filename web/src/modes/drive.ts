@@ -7,6 +7,7 @@ import { TruckVehicle, type TruckSetup } from '../game/truckVehicle';
 import { GlassRain } from '../render/glassRain';
 import { Movables } from '../game/movables';
 import { Effects } from '../render/effects';
+import { TruckLights } from '../render/truckLights';
 import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import type { BuiltScene } from '../render/sceneBuilder';
@@ -133,7 +134,7 @@ export class DriveSession {
   /** Сектор, з якого почався відлік кола. */
   private lapRoom: string | null = null;
   /** Суперники (aicar у truck.ini): вантажівки під керуванням автопілота. */
-  readonly opponents: { truck: TruckVehicle; pilot: AutoPilot; odo: Odometer }[] = [];
+  readonly opponents: { truck: TruckVehicle; pilot: AutoPilot; odo: Odometer; lights: TruckLights | null }[] = [];
   private readonly playerOdo = new Odometer();
   /** Відлік до старту, с (як світлофор над стартом: червоний → жовтий → зелений). */
   private countdown = 3;
@@ -390,18 +391,14 @@ export class DriveSession {
       this.navMap = null;
     }
   }
-  private lightsKey = '';
-  /** Стоп-сигнали (StopFaraKey: 1 — габарити, 2 — гальмування) і вогні заднього ходу (BackFaraKey) машини гравця. */
+  /** Нічна траса: фари світять на дорогу (задає main за локацією). */
+  night = false;
+  private lights: TruckLights | null = null;
   private updateLights(state: { throttle: number; brake: number }): void {
+    const wet = this.raining && (this.glassRain?.raining ?? true);
     const reverse = this.truck.gear < 0;
-    const braking = reverse ? state.throttle > 0 : state.brake > 0;
-    const key = `${braking ? 1 : 0}${reverse ? 1 : 0}`;
-    if (key === this.lightsKey || !this.modelSwitch) return;
-    this.lightsKey = key;
-    for (const side of ['L', 'R']) {
-      this.modelSwitch(`StopFaraKey${side}`, braking ? 2 : 1);
-      this.modelSwitch(`BackFaraKey${side}`, reverse ? 1 : 0);
-    }
+    this.lights?.update(this.night, wet, reverse ? state.throttle > 0 : state.brake > 0, reverse);
+    for (const o of this.opponents) o.lights?.update(this.night, wet, o.pilot.state.brake > 0, o.truck.gear < 0);
   }
   /** Кермування нахилом телефона (дозвіл на iOS питають в «Опціях», за жестом). */
   setTilt(on: boolean): void {
@@ -514,6 +511,7 @@ export class DriveSession {
     s.prevPos.copy(s.spawn.position);
     for (const r of s.track.rooms.values()) for (const e of r.events) if (e.type === EVENT_CHECKPOINT) s.checkpoints.add(e.param);
     s.truck = new TruckVehicle(s.world, def, model, s.spawn, setup);
+    s.lights = new TruckLights(model.setSwitch, s.truck.visual, s.truck.lightGeometry);
     scene.add(s.truck.visual);
     s.spawnOpponents(rivals);
     s.roomVis = new RoomVisibility(s.track, built.rooms);
@@ -724,7 +722,7 @@ export class DriveSession {
     const start = this.wayNet.nearest(this.spawn.position, this.spawn.forward);
     if (!start) return;
     defs.forEach((def, i) => {
-      const model = buildTruckModel(this.built.assembler, def);
+      const model = buildTruckModel(this.built.assembler, def, true);
       if (!model) return;
       const along = this.wayNet!.advance(start.line, start.seg, start.t, 14 * (i + 1));
       const ahead = this.wayNet!.advance(start.line, start.seg, start.t, 14 * (i + 1) + 3);
@@ -734,7 +732,8 @@ export class DriveSession {
       this.scene.add(truck.visual);
       const pilot = new AutoPilot(this.wayNet!);
       pilot.cruise = 58 + ((i * 7) % 18);
-      this.opponents.push({ truck, pilot, odo: new Odometer() });
+      const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
+      this.opponents.push({ truck, pilot, odo: new Odometer(), lights });
     });
   }
 

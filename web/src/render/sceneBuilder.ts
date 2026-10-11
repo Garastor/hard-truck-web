@@ -66,25 +66,28 @@ export class MaterialLibrary {
           params.transparent = false;
         }
       } else params.color = 0xff00ff;
-    } else if (def && def.col !== null && Number.isFinite(Number(this.rmp.colors[def.col - 1]))) {
-      // col N — N-й запис секції COLORS архіву (з 1): яскравість 0…1 (black col 1 = 0, white col 5 = 1;
-      // шини «*_black col 10» = 0,016 на всіх трасах). Палітра траси тут ні до чого — з неї шини були кремові/сині.
-      const v = Number(this.rmp.colors[def.col - 1]);
-      params.color = new THREE.Color().setRGB(v, v, v, THREE.SRGBColorSpace);
+    } else if (def && def.col !== null && (this.palette || Number.isFinite(Number(this.rmp.colors[def.col - 1])))) {
+      // col N — колір N-го запису палітри траси, рахуючи з 1 (palette[N − 1]): black col 1 = 0,0,0; white col 5 =
+      // білий; red col 6 = 255,0,0; шини «*_black col 10» = 4,4,4 на всіх трасах. (Раніше брали palette[N] — шини
+      // виходили кремові/сині; тоді перейшли на яскравість із COLORS — і червоні ліхтарі стали білими.)
+      const c = def.col - 1;
+      if (this.palette) {
+        params.color = new THREE.Color().setRGB(
+          this.palette[c * 3] / 255,
+          this.palette[c * 3 + 1] / 255,
+          this.palette[c * 3 + 2] / 255,
+          THREE.SRGBColorSpace,
+        );
+      } else {
+        const v = Number(this.rmp.colors[c]);
+        params.color = new THREE.Color().setRGB(v, v, v, THREE.SRGBColorSpace);
+      }
       // У світі однотонні полігони — переважно розмітка, що лежить на текстурованій дорозі в тій самій площині:
       // висуваємо трохи до камери, інакше далі розмітка «тоне» в асфальті. (У моделях вантажівок навпаки —
       // див. buildTruckModel.)
       params.polygonOffset = true;
       params.polygonOffsetFactor = -1;
       params.polygonOffsetUnits = -2;
-    } else if (def && def.col !== null && this.palette) {
-      const c = def.col;
-      params.color = new THREE.Color().setRGB(
-        this.palette[c * 3] / 255,
-        this.palette[c * 3 + 1] / 255,
-        this.palette[c * 3 + 2] / 255,
-        THREE.SRGBColorSpace,
-      );
     } else params.color = 0x808080;
     if (def?.params.transp) {
       params.transparent = true;

@@ -1,5 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
+import type { LightGeometry } from '../render/truckLights';
 import { GROUP_BUMPER, GROUP_MOVABLE, g2t, groups } from '../physics/world';
 import type { ControlState } from '../input/input';
 import type { TruckDef, TruckModel } from './trucks';
@@ -105,6 +106,8 @@ export class TruckVehicle {
   /** Пошкодження гальм: множник сили (1 — справні). */
   private brakeFactor = 1;
   private readonly tractionControl: boolean;
+  /** Для світлових плям фар і габаритів (локальна система машини). */
+  lightGeometry: LightGeometry = { groundY: -1, frontZ: -4, backZ: 4, width: 2.5 };
   /** Покриття під колесами: множники зчеплення й опору кочення (1 — асфальт). Аркада — без впливу. */
   private surfaceGrip = 1;
   private surfaceRoll = 1;
@@ -224,6 +227,7 @@ export class TruckVehicle {
     // до BUMPER_CLEARANCE над дорогою (дорога — низ коліс у спокої).
     const wy = g2t(new THREE.Vector3().setFromMatrixPosition(model.wheelBase[0])).y;
     const ground = wy + this.suspRest * 0.5 - this.suspRest - this.wheelRadius;
+    this.lightGeometry = { groundY: ground, frontZ: box.min.z, backZ: box.max.z, width: size.x };
     const bottom = ground + BUMPER_CLEARANCE;
     const top = colliderAt.y - size.y * 0.4 + 0.2;
     if (top > bottom + 0.1)
