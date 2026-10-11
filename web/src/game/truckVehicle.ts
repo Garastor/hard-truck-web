@@ -121,6 +121,8 @@ export interface TruckSetup {
 
 /** Тінь над дорогою, м — щоб не мерехтіла з дорогою (гіпотеза порту). */
 const SHADOW_LIFT = 0.04;
+/** Як далеко вниз шукати землю для тіні, коли колеса не торкаються дороги, м. */
+const SHADOW_RAY = 30;
 
 export class TruckVehicle {
   readonly body: RAPIER.RigidBody;
@@ -224,12 +226,15 @@ export class TruckVehicle {
         // Площина тіні з центром у нулі (орієнтація — як у кузова).
         local: new THREE.Matrix4().makeTranslation(-center.x, -center.y, -center.z).multiply(o.matrixWorld),
         center,
+        mid: center.clone(),
         parentInv: o.parent.matrixWorld.clone().invert(),
       };
     });
     const box = visibleBox(model.body);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
+    // Точка, під якою лежить тінь: центр тіні на середній висоті кузова — і на боці, і догори колесами тінь під машиною.
+    if (this.shadow) this.shadow.mid.y = center.y;
 
     const forward = spawn.forward.clone().setY(0).normalize();
     const rot = new THREE.Quaternion().setFromRotationMatrix(
@@ -478,21 +483,21 @@ export class TruckVehicle {
 
   /**
    * Тінь моделі: вузол; площина тіні з центром у нулі в системі visual; її центр; обернена матриця батька вузла
-   * в системі visual (сталa — вище тіні в моделі нічого не рухається).
+   * в системі visual (сталa — вище тіні в моделі нічого не рухається); mid — точка в кузові, під якою тінь лягає.
    */
-  private shadow: { obj: THREE.Object3D; local: THREE.Matrix4; center: THREE.Vector3; parentInv: THREE.Matrix4 } | null = null;
+  private shadow: { obj: THREE.Object3D; local: THREE.Matrix4; center: THREE.Vector3; mid: THREE.Vector3; parentInv: THREE.Matrix4 } | null = null;
 
   /**
    * Тінь лягає на площину дороги під колесами (точки й нормалі контакту — досить одного колеса: на сильному крені
    * колеса одного боку відриваються): при крені й тангажі кузова вона не провалюється під дорогу одним боком. Від
-   * кузова — лише напрям і точка під центром. Без жодного контакту коліс
-   * (стрибок, перекидання) — під кузовом на висоті дороги за підвіскою.
+   * кузова — лише напрям і точка під центром. Без жодного контакту коліс (машина на боці, догори колесами, у
+   * стрибку) — на землю під центром кузова за променем униз; землі під ним немає — тінь не показуємо.
    */
   private placeShadow(): void {
     const s = this.shadow!;
     const v = this.visual;
     v.updateMatrix();
-    const centerW = s.center.clone().applyMatrix4(v.matrix);
+    const centerW = s.mid.clone().applyMatrix4(v.matrix);
     const up = new THREE.Vector3();
     const ground = new THREE.Vector3();
     let n = 0;
@@ -505,20 +510,40 @@ export class TruckVehicle {
       up.add(nr as THREE.Vector3Like);
       n++;
     }
-    let world: THREE.Matrix4;
     if (n > 0 && up.lengthSq() > 1e-6) {
       up.normalize();
       ground.divideScalar(n);
-      // Точка під центром кузова на площині дороги.
-      const pos = centerW.clone().addScaledVector(up, -centerW.clone().sub(ground).dot(up) + SHADOW_LIFT);
-      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(v.quaternion);
-      fwd.addScaledVector(up, -fwd.dot(up)).normalize();
-      const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
-      world = new THREE.Matrix4().makeBasis(right, up, fwd.negate()).setPosition(pos);
     } else {
-      const pos = centerW.clone().addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(v.quaternion), this.groundHeight() + SHADOW_LIFT - s.center.y);
-      world = new THREE.Matrix4().makeRotationFromQuaternion(v.quaternion).setPosition(pos);
+      // Нерухома геометрія під центром кузова (без власного корпусу й рухомих тіл).
+      const hit = this.world.castRayAndGetNormal(
+        new RAPIER.Ray(centerW, { x: 0, y: -1, z: 0 }),
+        SHADOW_RAY,
+        true,
+        RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC,
+        undefined,
+        undefined,
+        this.body,
+      );
+      if (!hit) {
+        s.obj.visible = false;
+        return;
+      }
+      ground.set(centerW.x, centerW.y - hit.timeOfImpact, centerW.z);
+      up.copy(hit.normal as THREE.Vector3Like).normalize();
     }
+    s.obj.visible = true;
+    // Точка під центром кузова на площині дороги.
+    const pos = centerW.clone().addScaledVector(up, -centerW.clone().sub(ground).dot(up) + SHADOW_LIFT);
+    // Напрям — уздовж кузова, спроєктований на дорогу (машина сторч — уздовж її «угору»).
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(v.quaternion);
+    fwd.addScaledVector(up, -fwd.dot(up));
+    if (fwd.lengthSq() < 1e-4) {
+      fwd.set(0, 1, 0).applyQuaternion(v.quaternion);
+      fwd.addScaledVector(up, -fwd.dot(up));
+    }
+    fwd.normalize();
+    const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
+    const world = new THREE.Matrix4().makeBasis(right, up, fwd.negate()).setPosition(pos);
     // У систему батька вузла: visual⁻¹ · світ · площина, потім батько⁻¹.
     s.obj.matrix.copy(s.parentInv).multiply(v.matrix.clone().invert()).multiply(world).multiply(s.local);
     s.obj.matrixWorldNeedsUpdate = true;
