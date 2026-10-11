@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { walk, type B3d } from '../formats/b3d';
+import { GROUP_MOVABLE, groups } from '../physics/world';
 
 /**
  * Рухомі предмети трас (`AnmObjNNNN` — ящики, бетонні блоки, розбита машина), розставлені просторами
@@ -51,7 +52,11 @@ export class Movables {
         );
         const mass = Math.max(MIN_MASS, Math.min(MAX_MASS, size.x * size.y * size.z * DENSITY));
         world.createCollider(
-          RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2).setMass(mass).setFriction(0.7).setRestitution(0.1),
+          RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2)
+            .setMass(mass)
+            .setFriction(0.7)
+            .setRestitution(0.1)
+            .setCollisionGroups(groups(GROUP_MOVABLE, 0xffff)),
           body,
         );
         node.matrixAutoUpdate = false;

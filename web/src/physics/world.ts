@@ -10,6 +10,15 @@ export function initRapier(): Promise<typeof RAPIER> {
 }
 
 /** Перетворення координат гри (Z угору, Y уперед) у Three.js (Y угору, −Z уперед). */
+/**
+ * Групи колізій Rapier (u32: старші 16 біт — членство, молодші — з ким стикається). Світ — лише група WORLD,
+ * щоб бампери вантажівок (лише проти рухомих предметів) не чіплялися за дорогу на трамплінах.
+ */
+export const GROUP_WORLD = 0x0001;
+export const GROUP_MOVABLE = 0x0002;
+export const GROUP_BUMPER = 0x0008;
+export const groups = (member: number, filter: number) => ((member << 16) | filter) >>> 0;
+
 export function g2t(v: readonly number[] | THREE.Vector3): THREE.Vector3 {
   const [x, y, z] = v instanceof THREE.Vector3 ? [v.x, v.y, v.z] : v;
   return new THREE.Vector3(x, z, -y);
@@ -45,7 +54,7 @@ export function addStaticMeshes(world: RAPIER.World, root: THREE.Object3D, minUp
     const verts = new Float32Array(out);
     const idx = new Uint32Array(verts.length / 3);
     for (let i = 0; i < idx.length; i++) idx[i] = i;
-    world.createCollider(RAPIER.ColliderDesc.trimesh(verts, idx).setFriction(1.0));
+    world.createCollider(RAPIER.ColliderDesc.trimesh(verts, idx).setFriction(1.0).setCollisionGroups(groups(GROUP_WORLD, 0xffff)));
     count++;
   });
   return count;
@@ -64,5 +73,7 @@ export function addCollisionPolys(world: RAPIER.World, polys: number[][][], fric
   const verts = new Float32Array(out);
   const idx = new Uint32Array(verts.length / 3);
   for (let i = 0; i < idx.length; i++) idx[i] = i;
-  return world.createCollider(RAPIER.ColliderDesc.trimesh(verts, idx).setFriction(friction));
+  return world.createCollider(
+    RAPIER.ColliderDesc.trimesh(verts, idx).setFriction(friction).setCollisionGroups(groups(GROUP_WORLD, 0xffff)),
+  );
 }

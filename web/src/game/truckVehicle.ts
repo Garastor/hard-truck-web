@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { g2t } from '../physics/world';
+import { GROUP_BUMPER, GROUP_MOVABLE, g2t, groups } from '../physics/world';
 import type { ControlState } from '../input/input';
 import type { TruckDef, TruckModel } from './trucks';
 import { Engine, GEAR_R } from './engine';
@@ -219,7 +219,9 @@ export class TruckVehicle {
             .setTranslation(center.x, (top + bottom) / 2, z)
             .setDensity(0)
             .setFriction(0.3)
-            .setRestitution(0.1),
+            .setRestitution(0.1)
+            // Лише проти рухомих предметів: з дорогою бампер на крутому трампліні впирався в асфальт.
+            .setCollisionGroups(groups(GROUP_BUMPER, GROUP_MOVABLE)),
           this.body,
         );
   }
