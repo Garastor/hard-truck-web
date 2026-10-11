@@ -1,12 +1,13 @@
 /** Растрові шрифти оригіналу: MENU.FON (6×9) і large.fon (12×17). */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { parseFon } from '../src/formats/fon';
 
 const read = (n: string) => new Uint8Array(readFileSync(`../Game/Hard Truck/${n}`));
 const cp = (ch: string) => new TextEncoder().encode(ch)[0] && ch.charCodeAt(0) < 128 ? ch.charCodeAt(0) : 0xc0 + 'АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ'.indexOf(ch);
 
-describe('FON', () => {
+// Без файлів гри (CI на GitHub) — пропускаємо.
+describe.skipIf(!existsSync('../Game/Hard Truck/MENU.FON'))('FON', () => {
   // large.fon — лише великі кириличні, цифри й частина латиниці.
   it.each([
     ['MENU.FON', 6, 8, '0123456789ABCZ$%АБЯЖ'],

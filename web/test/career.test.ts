@@ -1,6 +1,6 @@
 /** Економіка кар'єри на реальних вантажівках з TRUCK.TCH. */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { decodeCp1251 } from '../src/formats/binary';
 import { parseTrucks } from '../src/game/trucks';
 import {
@@ -9,12 +9,15 @@ import {
   truckSpec, unloadGood,
 } from '../src/game/career';
 
-const defs = parseTrucks(decodeCp1251(new Uint8Array(readFileSync('../Game/Hard Truck/TRUCK.TCH'))));
+// Без файлів гри (CI на GitHub) — тести пропускаються.
+const TCH = '../Game/Hard Truck/TRUCK.TCH';
+const has = existsSync(TCH);
+const defs = has ? parseTrucks(decodeCp1251(new Uint8Array(readFileSync(TCH)))) : [];
 const specs = defs.map(truckSpec);
 const fresh = () => newCareer({ name: 'Тест', difficulty: 'sim', rivals: 3, trucks: specs, seed: 42 });
 const spec = (i: number) => specs.find((s) => s.index === i)!;
 
-describe('карʼєра', () => {
+describe.skipIf(!has)('карʼєра', () => {
   it('старт: найдешевша вантажівка (ЗіЛ), стартовий капітал, суперники', () => {
     const c = fresh();
     expect(spec(c.truck).name).toBe('ЗіЛ');
