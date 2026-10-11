@@ -355,6 +355,10 @@ export class DriveSession {
   sound(name: string, volume = 1): void {
     this.audio?.play(name, volume);
   }
+  /** Той самий звук, але без накладання, поки попередній ще звучить. */
+  soundOnce(name: string, volume = 1): void {
+    this.audio?.playOnce(name, volume);
+  }
   /** Звуки поза двигуном: двигуни суперників (extcar), двірники, грім; пауза між звуками ударів. */
   private oppSounds: (LoopSound | null)[] | null = null;
   private thunderIn = 20;

@@ -35,6 +35,8 @@ export interface CareerHost {
 }
 
 const EV_TUNNEL = 666;
+/** Тривалість звуку покупки (wav/lift.wav), мс: перезапуск бази з новою вантажівкою — після нього. */
+const BUY_SOUND_MS = 1000;
 /** Наскільки опущені колеса стоячої вантажівки відносно точки колеса в моделі, м (хід підвіски 0,1…0,4 з TCH — гіпотеза). */
 const SHOWROOM_SAG = 0.2;
 /**
@@ -225,6 +227,8 @@ export class CareerGame {
   private wornDist = 0;
   private damageKey = '';
   private repairSoundAt = 0;
+  /** Куплено вантажівку: до перезапуску бази (після звуку покупки) зони й кнопки не оновлюються. */
+  private switchingTruck = false;
 
   private constructor(
     private readonly host: CareerHost,
@@ -369,7 +373,7 @@ export class CareerGame {
 
   private onBaseRoom(room: Room): void {
     const tunnel = room.events.find((e) => e.type === EV_TUNNEL);
-    if (tunnel && TUNNELS[tunnel.param] && !this.busy) void this.goTrack(TUNNELS[tunnel.param]);
+    if (tunnel && TUNNELS[tunnel.param] && !this.busy && !this.switchingTruck) void this.goTrack(TUNNELS[tunnel.param]);
     this.refresh();
   }
 
@@ -541,6 +545,7 @@ export class CareerGame {
   private refresh(): void {
     this.updateDamage();
     this.renderPlayer();
+    if (this.switchingTruck) return;
     const room = this.drive?.currentRoom;
     const ev = room?.events.find((e) => e.type === EV_GOOD || e.type === EV_TRUCK || e.type === EV_PART);
     const c = this.c;
@@ -857,19 +862,25 @@ export class CareerGame {
       ['КРИХКІСТЬ', `${Math.round(g.fragility * 100)}%`],
       ['У КУЗОВІ', `${inCargo}`],
     ], canLoad(c, this.spec, g) ? undefined : 'Більше не вміщується або бракує грошей');
-    const act = (fn: () => number) => () => {
+    const act = (fn: () => number, buy = false) => () => {
       if (fn()) {
+        if (buy) this.buySound();
         this.save();
         this.zoneKey = '';
         this.refresh();
       }
     };
-    const load = act(() => loadGood(c, this.spec, section, 1));
+    const load = act(() => loadGood(c, this.spec, section, 1), true);
     const unload = act(() => unloadGood(c, section, 1));
     this.keyLoad = load;
     this.keyUnload = unload;
     this.button('- ПОВЕРНУТИ', unload, true);
     this.button('+ ЗАВАНТАЖИТИ', load, true);
+  }
+
+  /** Звук покупки, як в оригіналі: liftSound — і вантажівка, і запчастина, і завантаження товару (0x4c950c). */
+  private buySound(): void {
+    this.drive?.soundOnce('lift');
   }
 
   private truckZone(pod: number): void {
@@ -889,8 +900,16 @@ export class CareerGame {
       const r = buyTruck(this.c, this.specs, def.index);
       if (r !== 'ok') return toastIn(this.host.overlay, r === 'money' ? 'Недостатньо грошей' : 'Вантаж не поміститься — спершу розвантажтесь');
       this.save();
-      // Нова вантажівка: перезапуск бази на ній (стара стає на подіум).
-      void this.goBase();
+      // Нова вантажівка: перезапуск бази на ній (стара стає на подіум) — після звуку покупки (перезапуск закриває
+      // звук бази); кнопки на цей час прибрано, щоб не купити двічі.
+      this.buySound();
+      this.switchingTruck = true;
+      this.keyBuy = null;
+      this.actions.replaceChildren();
+      window.setTimeout(() => {
+        this.switchingTruck = false;
+        void this.goBase();
+      }, BUY_SOUND_MS);
     };
     this.keyBuy = buy;
     this.button('КУПИТИ', buy);
@@ -911,6 +930,7 @@ export class CareerGame {
     const buy = () => {
       const r = buyPart(this.c, i);
       if (r !== 'ok') return toastIn(this.host.overlay, r === 'money' ? 'Недостатньо грошей' : 'Вже встановлено');
+      this.buySound();
       this.save();
       this.zoneKey = '';
       this.refresh();
