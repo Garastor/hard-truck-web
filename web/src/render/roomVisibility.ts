@@ -14,6 +14,13 @@ interface Rect {
   y1: number;
 }
 
+/**
+ * Камера ближче до площини порталу (м) і в межах його прорізу — кімната за ним видима завжди. Камера з кабіни
+ * попереду центру машини: на межі залів вона вже за порталом, а кімната машини — ще попередня; портал тоді
+ * позаду камери, і без цього перед нею нічого не малювалось (база, межа room_000 / room_100).
+ */
+const NEAR_PORTAL = 3;
+
 /** Обмеження обходу: глибина ланцюжка порталів і загальна кількість переходів за кадр. */
 const MAX_DEPTH = 24;
 const MAX_STEPS = 600;
@@ -49,7 +56,7 @@ export class RoomVisibility {
       if (!r || depth >= MAX_DEPTH) continue;
       for (const p of r.portals) {
         steps++;
-        const sub = this.portalRect(p, vp, rect);
+        const sub = this.near(p, camera.position) ? { ...rect } : this.portalRect(p, vp, rect);
         if (!sub) continue;
         const seen = this.visible.has(p.to);
         this.visible.add(p.to);
@@ -58,6 +65,19 @@ export class RoomVisibility {
       }
     }
     for (const [name, g] of this.groups) g.visible = this.visible.has(name);
+  }
+
+  /** Камера біля порталу: ближче за NEAR_PORTAL до його площини і в межах прорізу (з тим самим запасом). */
+  private near(p: Portal, c: THREE.Vector3): boolean {
+    const dx = p.b.x - p.a.x;
+    const dz = p.b.z - p.a.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-3) return false;
+    const along = ((c.x - p.a.x) * dx + (c.z - p.a.z) * dz) / len;
+    const across = Math.abs((c.x - p.a.x) * dz - (c.z - p.a.z) * dx) / len;
+    const y0 = Math.min(p.a.y, p.b.y);
+    const y1 = Math.max(p.a.y, p.b.y);
+    return across < NEAR_PORTAL && along > -NEAR_PORTAL && along < len + NEAR_PORTAL && c.y > y0 - NEAR_PORTAL && c.y < y1 + NEAR_PORTAL;
   }
 
   /** Прямокутник порталу на екрані, обрізаний поточним; null — портал не видно. */
