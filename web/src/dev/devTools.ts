@@ -51,7 +51,6 @@ export function installDevTools(host: DevHost): object {
       cam: d.cameraMode,
       raining: d.raining,
       night: d.night,
-      reflections: d.reflectionMode,
       autopilot: d.autopilotOn,
     };
   };
@@ -109,12 +108,11 @@ export function installDevTools(host: DevHost): object {
       return info();
     },
 
-    /** Камера, погода, відблиски, старт без відліку, автопілот. */
-    setup(o: { cam?: CamMode; weather?: 'dry' | 'rain'; reflections?: 'own' | 'original'; start?: boolean; autopilot?: boolean }) {
+    /** Камера, погода, старт без відліку, автопілот. */
+    setup(o: { cam?: CamMode; weather?: 'dry' | 'rain'; start?: boolean; autopilot?: boolean }) {
       const d = need();
       if (o.cam) d.cameraMode = o.cam;
       if (o.weather) d.setWeather(o.weather === 'rain');
-      if (o.reflections) d.reflectionMode = o.reflections;
       if (o.start) d.skipCountdown();
       if (o.autopilot !== undefined && o.autopilot !== d.autopilotOn) d.toggleAutopilot(o.autopilot);
       return info();

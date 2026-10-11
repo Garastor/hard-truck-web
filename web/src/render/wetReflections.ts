@@ -1,32 +1,12 @@
 import * as THREE from 'three';
 
 /**
- * Власні відблиски ліхтарів на дорозі (не з оригіналу — замість білбордів refl_r/refl_w, див. LampReflections):
+ * Власні відблиски ліхтарів на дорозі (не з оригіналу — замість білбордів refl_r/refl_w, див. hideLampReflections):
  * кожне скло, що світиться зараз (перемикачі StopFaraKey — габарит/гальмо, BackFaraKey — задній хід, FFaraKey —
  * фари), дає м'яку пляму на асфальті від ліхтаря до глядача (від фар — ширший конус). Пляма лежить на дорозі
  * (висота асфальту — променями вниз), тож з різних камер видно перспективу; під пологим кутом мокра дорога відбиває
  * сильніше. Поперек — гаусів спад, уздовж — плавне згасання (шейдер). Параметри — на око.
  */
-export type ReflectionMode = 'own' | 'original';
-
-const MODE_KEY = 'ht.reflections';
-
-export function reflectionMode(): ReflectionMode {
-  try {
-    return localStorage.getItem(MODE_KEY) === 'original' ? 'original' : 'own';
-  } catch {
-    return 'own';
-  }
-}
-
-export function setReflectionMode(mode: ReflectionMode): void {
-  try {
-    localStorage.setItem(MODE_KEY, mode);
-  } catch {
-    /* без сховища — лише на цей запуск */
-  }
-}
-
 /**
  * Форма плями на дорозі, м: початок від ліхтаря, довжина, ширина відносно скла (і найменша півширина),
  * розширення до кінця (×(1 + spread)). Задні ліхтарі — коротка пляма, фари — довгий конус.
@@ -190,10 +170,10 @@ export class WetReflections {
     return this.lamps.length;
   }
 
-  /** lights — горять габарити й фари; wet — мокра дорога; enabled — режим власних відблисків. */
-  update(camera: THREE.Camera, lights: boolean, wet: boolean, enabled: boolean): void {
+  /** lights — горять габарити й фари; wet — мокра дорога. */
+  update(camera: THREE.Camera, lights: boolean, wet: boolean): void {
     if (!this.lamps.length) return;
-    const on = enabled && (lights || wet);
+    const on = lights || wet;
     if (!on) {
       for (const l of this.lamps) l.out.visible = false;
       return;

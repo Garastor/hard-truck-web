@@ -8,8 +8,8 @@ import { GlassRain } from '../render/glassRain';
 import { parseMsk } from '../formats/msk';
 import { Movables } from '../game/movables';
 import { Effects } from '../render/effects';
-import { LampReflections, TruckLights } from '../render/truckLights';
-import { WetReflections, reflectionMode, setReflectionMode, type ReflectionMode } from '../render/wetReflections';
+import { TruckLights, hideLampReflections } from '../render/truckLights';
+import { WetReflections } from '../render/wetReflections';
 import { NavMap } from '../ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '../game/trucks';
 import type { BuiltScene } from '../render/sceneBuilder';
@@ -493,18 +493,8 @@ export class DriveSession {
   /** Нічна траса: фари світять на дорогу (задає main за локацією). */
   night = false;
   private lights: TruckLights | null = null;
-  /** Відблиски ліхтарів на дорозі (позиція залежить від камери — оновлюємо перед кадром). */
-  private readonly reflections: LampReflections[] = [];
-  /** Власні відблиски у формі ліхтарів (див. WetReflections); режим — перемикач «власні / оригінальні». */
+  /** Відблиски ліхтарів на дорозі — власні, у формі ліхтарів (див. WetReflections; оригінальні білборди сховані). */
   private readonly wetReflections: WetReflections[] = [];
-  private reflMode: ReflectionMode = reflectionMode();
-  get reflectionMode(): ReflectionMode {
-    return this.reflMode;
-  }
-  set reflectionMode(mode: ReflectionMode) {
-    this.reflMode = mode;
-    setReflectionMode(mode);
-  }
   private updateLights(state: { throttle: number; brake: number }): void {
     const wet = this.raining && (this.glassRain?.raining ?? true);
     const reverse = this.truck.gear < 0;
@@ -625,7 +615,7 @@ export class DriveSession {
     for (const r of s.track.rooms.values()) for (const e of r.events) if (e.type === EVENT_CHECKPOINT) s.checkpoints.add(e.param);
     s.truck = new TruckVehicle(s.world, def, model, s.spawn, setup);
     s.lights = new TruckLights(model.setSwitch, s.truck.visual, s.truck.lightGeometry);
-    s.reflections.push(new LampReflections(model.root, () => s.truck.groundHeight()));
+    hideLampReflections(model.root);
     s.wetReflections.push(new WetReflections(model.root, () => s.truck.groundHeight(), (x, y, z) => s.roadBelow(x, y, z), (x, y, z) => s.glossAt(x, y, z)));
     scene.add(s.truck.visual);
     s.spawnOpponents(rivals);
@@ -934,7 +924,7 @@ export class DriveSession {
       const pilot = new AutoPilot(this.wayNet!);
       pilot.cruise = 58 + ((i * 7) % 18);
       const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
-      this.reflections.push(new LampReflections(model.root, () => truck.groundHeight()));
+      hideLampReflections(model.root);
       this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z), (x, y, z) => this.glossAt(x, y, z)));
       this.opponents.push({ truck, pilot, odo: new Odometer(), lights, flippedFor: 0 });
     });
@@ -1067,13 +1057,8 @@ export class DriveSession {
     this.odometer += (this.truck.speedKmh / 3.6) * dt;
     this.updateCab(state);
     this.updateLights(state);
-    const own = this.reflMode === 'own';
-    for (const r of this.reflections) {
-      r.enabled = !own;
-      r.update(this.camera);
-    }
     const wet = this.raining && (this.glassRain?.raining ?? true);
-    for (const r of this.wetReflections) r.update(this.camera, this.night || wet, wet, own);
+    for (const r of this.wetReflections) r.update(this.camera, this.night || wet, wet);
     this.updateSurface(dt);
     this.checkDeath(dt);
     this.effects?.update(dt);

@@ -21,7 +21,6 @@ import {
 } from './ui/menuScreens';
 import { HUD_CYAN, PixelFont, box, pixelCanvas } from './ui/pixelFont';
 import { parseFon } from './formats/fon';
-import { reflectionMode, setReflectionMode } from './render/wetReflections';
 import { installDevTools } from './dev/devTools';
 
 /**
@@ -324,14 +323,6 @@ weatherSel.addEventListener('change', () => {
     /* приватний режим */
   }
   if (drive && !careerCfg) drive.setWeather(weatherSel.value === 'rain');
-});
-// Відблиски ліхтарів: власні (у формі ліхтаря) чи оригінальні білборди — для порівняння.
-const reflSel = $<HTMLSelectElement>('refl');
-reflSel.value = reflectionMode();
-reflSel.addEventListener('change', () => {
-  const mode = reflSel.value === 'original' ? 'original' : 'own';
-  setReflectionMode(mode);
-  if (drive) drive.reflectionMode = mode;
 });
 
 // Налаштування керування: кермо праворуч, педалі ліворуч (зберігається в цьому браузері).
