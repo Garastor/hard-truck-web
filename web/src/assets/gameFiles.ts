@@ -163,6 +163,23 @@ export async function importZip(zip: File, progress: Progress): Promise<number> 
   return wanted.size;
 }
 
+/** Стан файлів гри на пристрої (для «Опцій»): скільки потрібних є, зайняте місце, чи захищене сховище. */
+export interface StorageInfo {
+  stored: number;
+  required: number;
+  /** Зайнято сайтом, байт (оцінка браузера; null — невідомо). */
+  usage: number | null;
+  /** Браузер не очистить дані сам (null — API немає). */
+  persisted: boolean | null;
+}
+
+export async function storageInfo(): Promise<StorageInfo> {
+  const missing = await missingFiles().catch(() => REQUIRED);
+  const est = await navigator.storage?.estimate?.().catch(() => null);
+  const persisted = navigator.storage?.persisted ? await navigator.storage.persisted().catch(() => null) : null;
+  return { stored: REQUIRED.length - missing.length, required: REQUIRED.length, usage: est?.usage ?? null, persisted };
+}
+
 export async function clearFiles(): Promise<void> {
   await tx('readwrite', (s) => s.clear());
 }

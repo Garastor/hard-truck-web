@@ -1,7 +1,8 @@
 import { defineConfig } from 'vitest/config';
 import type { Plugin } from 'vite';
-import { createReadStream, existsSync, statSync } from 'node:fs';
-import { resolve, normalize, sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import { createReadStream, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { join, relative, resolve, normalize, sep } from 'node:path';
 
 /** Каталог оригінальної гри (лише для локальної розробки; у релізі файли надає гравець). */
 const GAME_DIR = resolve(import.meta.dirname, '..', 'Game', 'Hard Truck');
@@ -39,10 +40,49 @@ function gameFiles(): Plugin {
   };
 }
 
+/**
+ * Збірка: вписує в dist/sw.js список усіх файлів збірки (service worker кешує їх при встановленні — гра працює
+ * офлайн одразу після першого відкриття) і версію — хеш їхнього вмісту (нова збірка — новий кеш, оновлення).
+ */
+function precacheManifest(): Plugin {
+  let outDir = 'dist';
+  return {
+    name: 'precache-manifest',
+    apply: 'build',
+    configResolved(c) {
+      outDir = resolve(c.root, c.build.outDir);
+    },
+    closeBundle() {
+      const sw = join(outDir, 'sw.js');
+      if (!existsSync(sw)) return;
+      const files: string[] = [];
+      const walk = (dir: string) => {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, e.name);
+          if (e.isDirectory()) walk(full);
+          else files.push(relative(outDir, full).split(sep).join('/'));
+        }
+      };
+      walk(outDir);
+      const list = files.filter((f) => f !== 'sw.js').sort();
+      // Версія — і за файлами збірки, і за самим service worker (зміна лише в ньому — теж нова версія).
+      const template = readFileSync(sw, 'utf8');
+      const hash = createHash('sha256').update(template);
+      for (const f of list) hash.update(f).update(readFileSync(join(outDir, f)));
+      const version = hash.digest('hex').slice(0, 12);
+      const urls = ['./', ...list.map((f) => `./${f}`)];
+      const src = template
+        .replace("'__VERSION__'", JSON.stringify(version))
+        .replace('[/* PRECACHE */]', JSON.stringify(urls));
+      writeFileSync(sw, src);
+    },
+  };
+}
+
 export default defineConfig({
   // Відносні шляхи: збірка працює з будь-якої теки хостингу (GitHub Pages тощо).
   base: './',
-  plugins: [gameFiles()],
+  plugins: [gameFiles(), precacheManifest()],
   server: { host: true, port: 5173 },
   test: {
     include: ['test/**/*.test.ts'],

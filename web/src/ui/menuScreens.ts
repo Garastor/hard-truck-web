@@ -13,6 +13,7 @@ import { parsePlm } from '../formats/plm';
 import type { RgbaImage } from '../formats/binary';
 import { formatMoney, type Career, type Difficulty } from '../game/career';
 import { localizeBackground, localizeButton } from './menuLocale';
+import type { StorageInfo } from '../assets/gameFiles';
 
 export class MenuArt {
   private readonly palette: Uint8Array | undefined;
@@ -298,6 +299,17 @@ export interface OptionsActions {
   setSwap(on: boolean): void;
   setFps(on: boolean): void;
   setCab(style: '3d' | '2d'): void;
+  /** Стан файлів гри на пристрої (рядки «Файли гри», «Сховище»). */
+  storage(): Promise<StorageInfo>;
+  /** Повторний імпорт файлів гри (ZIP / тека). */
+  reimport(): Promise<void>;
+}
+
+/** «Файли гри»: скільки є з потрібних і скільки місця зайнято. */
+function filesText(i: StorageInfo | null): string {
+  if (!i) return '…';
+  const mb = i.usage !== null ? `, ${Math.round(i.usage / 2 ** 20)} МБ` : '';
+  return i.stored === i.required ? `на пристрої${mb}` : `${i.stored} з ${i.required}${mb}`;
 }
 
 /** Клавіші порту (для таблиці «перевизначення клавіатури» — поки лише показуємо). */
@@ -399,10 +411,20 @@ export function optionsScreen(art: MenuArt, st: OptionsState, act: OptionsAction
       add('Лічильник кадрів', st.fps ? 'так' : 'ні', () => ((st.fps = !st.fps), act.setFps(st.fps), renderRows()));
       add('Кабіна', st.cab === '2d' ? '2D' : '3D', () => ((st.cab = st.cab === '2d' ? '3d' : '2d'), act.setCab(st.cab), renderRows()));
       add('Кермування нахилом', st.control === 'tilt' ? 'так' : 'ні');
+      // Файли гри — тап: імпортувати знову; сховище — чи не очистить браузер дані сам.
+      add('Файли гри (імпорт)', filesText(info), () => void act.reimport().then(loadInfo));
+      add('Сховище', !info || info.persisted === null ? '—' : info.persisted ? 'захищене' : 'браузер може очистити');
       add('', '');
       for (const [k, v] of KEY_ROWS) add(k, v);
     }
+    let info: StorageInfo | null = null;
+    const loadInfo = () =>
+      act.storage().then((i) => {
+        info = i;
+        renderRows();
+      });
     renderRows();
+    void loadInfo();
   });
 }
 

@@ -596,6 +596,43 @@ body.driving.bar-open .touch-more {
   cursor: pointer;
 }
 
+/* Повторний імпорт з «Опцій» — поверх меню оригіналу. */
+#status.over-menu {
+  z-index: 7;
+}
+
+.import-box .hint {
+  color: var(--accent);
+}
+
+/* Нова версія гри (service worker): табличка вгорі по центру, у стилі кнопок технічного меню. */
+.update-banner {
+  position: fixed;
+  top: max(8px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid #8c8c8c;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.8);
+  background: rgba(16, 18, 20, 0.85);
+  color: rgb(123, 255, 255);
+  font: 700 12px Tahoma, Arial, sans-serif;
+  white-space: nowrap;
+}
+
+.update-banner button {
+  min-height: 36px;
+  border-radius: 0;
+  border: 1px solid #8c8c8c;
+  background: rgba(16, 18, 20, 0.62);
+  color: rgb(123, 255, 255);
+  font: inherit;
+}
+
 .import-box progress {
   width: 100%;
   margin-top: 12px;

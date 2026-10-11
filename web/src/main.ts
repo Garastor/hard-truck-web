@@ -2,7 +2,8 @@ import { cabStyle, setCabStyle } from './game/viewSettings';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LEVELS, devServerSource, loadLevel, type FileSource, type LevelId, type LoadedLevel } from './assets/loader';
-import { REQUIRED, cachedSource, idbSource, importFiles, importZip, missingFiles, prefetchMissing, storeFile } from './assets/gameFiles';
+import { REQUIRED, cachedSource, idbSource, importFiles, importZip, missingFiles, prefetchMissing, storageInfo, storeFile } from './assets/gameFiles';
+import { isIos, isStandalone, registerServiceWorker } from './ui/pwa';
 import { loadCab2d } from './assets/cab2d';
 import { FpsMeter, FrameLimiter, QUALITY, loadQuality, loadShowFps, saveQuality, saveShowFps, type QualityId } from './ui/quality';
 import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from './ui/mobile';
@@ -101,9 +102,6 @@ function setStatus(text: string | null): void {
  * вкладкою й кар'єрою. Звичайний запуск (зокрема гра з домашнього екрана) — завжди головне меню, адреса чиста.
  */
 const debugLink = import.meta.env.DEV && !isStandalone() && (params.has('tab') || params.has('career'));
-function isStandalone(): boolean {
-  return matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
-}
 
 function syncUrl(): void {
   if (!debugLink) return history.replaceState(null, '', location.pathname);
@@ -468,22 +466,42 @@ async function devServerAvailable(): Promise<boolean> {
   }
 }
 
-/** Екран першого запуску: оберіть HardTruck.zip або теку гри. */
-function showImport(missing: string[]): Promise<void> {
+/**
+ * Екран імпорту файлів гри: перший запуск (бракує файлів) або повторний імпорт з «Опцій» (again — з кнопкою
+ * «Скасувати», поверх меню). На iPhone у Safari — підказка спершу встановити гру на головний екран: у застосунку
+ * з головного екрана окреме сховище, файли, імпортовані в Safari, він не побачить.
+ */
+function showImport(missing: string[], again = false): Promise<void> {
   return new Promise((resolve) => {
     status.hidden = false;
     status.innerHTML = '';
+    status.classList.toggle('over-menu', again);
     const box = document.createElement('div');
     box.className = 'import-box';
+    const iosHint =
+      isIos() && !isStandalone()
+        ? `<p class="hint">На iPhone спершу встановіть гру: «Поділитися» → «На початковий екран», відкрийте її з іконки
+      й оберіть файли вже там — у Safari й на головному екрані окремі сховища.</p>`
+        : '';
     box.innerHTML = `
       <h2>Файли гри</h2>
-      <p>Для гри потрібні файли оригінальних «Дальнобійників» (≈ 66 МБ, файлів: ${missing.length}).
-      Оберіть архів <b>HardTruck.zip</b> або теку встановленої гри — файли залишаться лише на цьому пристрої.</p>
+      <p>${again ? 'Імпорт замінить файли гри на цьому пристрої.' : `Для гри потрібні файли оригінальних «Дальнобійників» (≈ 66 МБ, файлів: ${missing.length}).`}
+      Оберіть архів <b>HardTruck.zip</b> або теку встановленої гри — файли залишаться лише на цьому пристрої;
+      далі гра працює без інтернету.</p>
+      ${iosHint}
       <label class="btn">Обрати ZIP<input type="file" accept=".zip,application/zip" hidden></label>
       <label class="btn">Обрати теку гри<input type="file" webkitdirectory multiple hidden></label>
+      ${again ? '<button class="btn cancel">Скасувати</button>' : ''}
       <progress max="1" value="0" hidden></progress>
       <p class="msg"></p>`;
     status.append(box);
+    const close = () => {
+      status.innerHTML = '';
+      status.hidden = true;
+      status.classList.remove('over-menu');
+      resolve();
+    };
+    box.querySelector('.cancel')?.addEventListener('click', close);
     const [zipIn, dirIn] = box.querySelectorAll('input');
     const bar = box.querySelector('progress')!;
     const msg = box.querySelector('.msg')!;
@@ -495,10 +513,7 @@ function showImport(missing: string[]): Promise<void> {
     const finish = async () => {
       const left = await missingFiles();
       if (left.length) msg.textContent = `Бракує файлів: ${left.join(', ')}`;
-      else {
-        status.innerHTML = '';
-        resolve();
-      }
+      else close();
     };
     zipIn.addEventListener('change', async () => {
       if (zipIn.files?.[0]) await importZip(zipIn.files[0], progress).catch((e) => (msg.textContent = String(e)));
@@ -674,6 +689,12 @@ async function optionsDialog(): Promise<void> {
           setCabStyle(style);
           drive?.setCabStyle(style);
         },
+        storage: storageInfo,
+        async reimport() {
+          await showImport(REQUIRED, true);
+          // Файли тепер на пристрої — читаємо звідси (а не з ПК).
+          if (!(await missingFiles()).length) source = idbSource;
+        },
 
       },
       OPTION_DEFAULTS,
@@ -784,9 +805,7 @@ async function startup(): Promise<void> {
   await menuLoop();
 }
 
-// PWA: офлайн-кеш коду (лише у збірці й у захищеному контексті — HTTPS/localhost).
-if (import.meta.env.PROD && 'serviceWorker' in navigator && isSecureContext) {
-  void navigator.serviceWorker.register('./sw.js');
-}
+// PWA: офлайн-кеш коду й оновлення (лише у збірці й у захищеному контексті — HTTPS/localhost).
+registerServiceWorker();
 
 void boot();
