@@ -1415,7 +1415,19 @@ export class DriveSession {
   setHudFonts(small: PixelFont | null, large: PixelFont | null): void {
     this.hudFonts = [small, large];
     this.pixelHud?.dispose();
-    this.pixelHud = small ? new DriveHud(this.hud, small, large, this.cab ? odometerDigits(this.cab) : null) : null;
+    this.pixelHud = small ? new DriveHud(this.hud, small, large, this.hudDigits()) : null;
+  }
+  /**
+   * Цифри швидкості табло — з одометра 3D-кабіни машини, незалежно від виду (у 2D-кабіні й від першої особи
+   * 3D-кабіни немає — інакше табло перемикалося на інший шрифт). Беремо раз з окремої копії моделі кабіни.
+   */
+  private odoDigits: HTMLCanvasElement[] | null | undefined;
+  private hudDigits(): HTMLCanvasElement[] | null {
+    if (this.odoDigits === undefined) {
+      const dyn = this.built.assembler.dynamicObject(`${this.def.prefix}Cab`);
+      this.odoDigits = dyn ? odometerDigits(dyn.root) : null;
+    }
+    return this.odoDigits;
   }
 
   /** Увімкнути колізії лише кімнат з машинами та їхніх сусідів через портали (решта — вимкнені). */

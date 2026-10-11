@@ -161,7 +161,7 @@ export class Cab2d {
     return { x: (r.x + ox) * s, y: (r.y + oy) * s, w: r.w * s, h: r.h * s };
   }
 
-  private quad(name: string | null, x: number, y: number, w?: number, h?: number, color?: number, rotation = 0): void {
+  private quad(name: string | null, x: number, y: number, w?: number, h?: number, color?: number, rotation = 0, opacity = 1): void {
     let q = this.quads[this.used];
     if (!q) {
       q = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ transparent: true, alphaTest: 0.5, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
@@ -178,7 +178,9 @@ export class Cab2d {
       m.needsUpdate = true;
     }
     m.color.set(color ?? 0xffffff);
-    m.alphaTest = tex ? 0.5 : 0;
+    // Напівпрозорий кадр керма (перехід між кадрами) — змішуванням, без порогу.
+    m.alphaTest = tex && opacity >= 1 ? 0.5 : 0;
+    m.opacity = opacity;
     q.visible = !!tex || color !== undefined;
     // Площина 1×1 з центром у нулі; камера — y униз (top < bottom), рядок 0 маски (flipY = false) — угорі.
     q.matrixAutoUpdate = false;
@@ -225,12 +227,16 @@ export class Cab2d {
     // Кермо: найближчий кадр, доповернутий на залишок кута до неперервного положення (39 кадрів на весь хід, на
     // краях — до 9° між кадрами: без доповороту кермо поверталось ривками; змішування кадрів давало двоїння).
     // Обертання — навколо центру спрайта (≈ центр обода); камера з y униз — знак протилежний.
+    // Обидва сусідні кадри доповернуті до одного точного кута й плавно змішані: без змішування на межі кадрів
+    // перескакував сам малюнок (ракурс маточини на краях помітно різний), без доповороту — двоїлося.
     const wf = wheelFrame(st.steer);
-    const n = Math.round(wf);
-    const f0 = Math.floor(wf);
-    const exact = WHEEL_ANGLES[f0] + (WHEEL_ANGLES[Math.min(38, f0 + 1)] - WHEEL_ANGLES[f0]) * (wf - f0);
-    const turn = THREE.MathUtils.degToRad(exact - WHEEL_ANGLES[n]);
-    this.quad(`m_rul_${String(n + 1).padStart(2, '0')}`, X + 115, Y + 325, undefined, undefined, undefined, -turn);
+    const f0 = Math.min(37, Math.floor(wf));
+    const t = wf - f0;
+    const exact = WHEEL_ANGLES[f0] + (WHEEL_ANGLES[f0 + 1] - WHEEL_ANGLES[f0]) * t;
+    const wheel = (f: number, opacity = 1) =>
+      this.quad(`m_rul_${String(f + 1).padStart(2, '0')}`, X + 115, Y + 325, undefined, undefined, undefined, -THREE.MathUtils.degToRad(exact - WHEEL_ANGLES[f]), opacity);
+    wheel(f0);
+    if (t > 0.01) wheel(f0 + 1, THREE.MathUtils.smoothstep(t, 0, 1));
     // Чорне поза маскою: над нею й нижче за Y + 460, а також боки, якщо екран ширший за маску.
     const { ox, oy, w, h } = this.view;
     const left = -ox;
