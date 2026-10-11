@@ -32,7 +32,7 @@ const DEPTH_FAR = 1.7;
 /** Яскравість дальнього кінця відносно ближнього. */
 const FAR_FADE = 0;
 /** Над дорогою, м (щоб не потонув в асфальті). */
-const LIFT = 0.03;
+const LIFT = 0.05;
 /** Суха нічна дорога відбиває слабше за мокру. */
 const DRY_FACTOR = 0.3;
 /** Шари відблиску: ширина контуру ліхтаря (відносно центру скла), довжина й яскравість — м'які краї. */
@@ -61,6 +61,7 @@ interface Lamp {
   height: Float32Array;
   centerX: number;
   centerY: number;
+  centerZ: number;
   out: THREE.Mesh;
   pos: THREE.BufferAttribute;
   col: THREE.BufferAttribute;
@@ -69,6 +70,12 @@ interface Lamp {
 export class WetReflections {
   private readonly lamps: Lamp[] = [];
   private readonly tmp = new THREE.Vector3();
+  private readonly cam = new THREE.Vector3();
+  private readonly lampW = new THREE.Vector3();
+  private readonly v = new THREE.Vector3();
+  private readonly p = new THREE.Vector3();
+  private readonly p0 = new THREE.Vector3();
+  private readonly pf = new THREE.Vector3();
   private readonly material = new THREE.MeshBasicMaterial({
     vertexColors: true,
     transparent: true,
@@ -80,10 +87,14 @@ export class WetReflections {
     polygonOffsetUnits: -4,
   });
 
-  /** root — модель у системі гри (z угору), groundZ — висота дороги під машиною в цій системі (щокадру). */
+  /**
+   * root — модель у системі гри (z угору); groundZ — висота дороги під машиною в цій системі (запасний варіант);
+   * groundAt — висота дороги у світі під точкою (x, z), шукаючи вниз від y (Three.js).
+   */
   constructor(
     private readonly root: THREE.Object3D,
     private readonly groundZ: () => number,
+    private readonly groundAt?: (x: number, y: number, z: number) => number | null,
   ) {
     root.updateWorldMatrix(true, true);
     const rootInv = root.matrixWorld.clone().invert();
@@ -101,6 +112,7 @@ export class WetReflections {
       let zMax = -Infinity;
       let cx = 0;
       let cy = 0;
+      let cz = 0;
       for (let i = 0; i < p.count; i++) {
         v.fromBufferAttribute(p, i).applyMatrix4(m);
         verts.set([v.x, v.y, v.z], i * 3);
@@ -108,6 +120,7 @@ export class WetReflections {
         zMax = Math.max(zMax, v.z);
         cx += v.x;
         cy += v.y;
+        cz += v.z;
       }
       const height = new Float32Array(p.count);
       for (let i = 0; i < p.count; i++) height[i] = zMax > zMin ? (verts[i * 3 + 2] - zMin) / (zMax - zMin) : 0.5;
@@ -130,6 +143,7 @@ export class WetReflections {
         height,
         centerX: cx / p.count,
         centerY: cy / p.count,
+        centerZ: cz / p.count,
         out,
         pos,
         col,
@@ -151,29 +165,49 @@ export class WetReflections {
       return;
     }
     this.root.updateWorldMatrix(true, false);
-    const c = this.root.worldToLocal(camera.getWorldPosition(this.tmp));
-    const ground = this.groundZ();
-    const g = ground + LIFT;
+    const mw = this.root.matrixWorld;
+    const cam = camera.getWorldPosition(this.cam);
+    const c = this.root.worldToLocal(this.tmp.copy(cam));
     const surface = wet ? 1 : DRY_FACTOR;
     for (const l of this.lamps) {
       const k = KIND[l.kind];
       // Видно, лише коли світиться саме це скло, і з боку, куди світить ліхтар (задній — ззаду машини).
-      const show = c.z > g && (!k.needsLights || lights) && effectivelyVisible(l.src, this.root) && (l.front ? c.y > l.centerY : c.y < l.centerY);
+      let show = (!k.needsLights || lights) && effectivelyVisible(l.src, this.root) && (l.front ? c.y > l.centerY : c.y < l.centerY);
+      // Дорога під ліхтарем — у світі (промінь униз), а не площина днища: на переломі дороги смуга лягає на асфальт.
+      const lamp = this.lampW.set(l.centerX, l.centerY, l.centerZ).applyMatrix4(mw);
+      const near = show ? (this.groundAt?.(lamp.x, lamp.y, lamp.z) ?? this.root.localToWorld(this.tmp.set(l.centerX, l.centerY, this.groundZ())).y) : 0;
+      show &&= cam.y > near + LIFT;
       l.out.visible = show;
       if (!show) continue;
+      const g = near + LIFT;
+      const project = (wx: number, wz: number, depth: number, out: THREE.Vector3) => {
+        // Точка на дорозі на промені «камера → віддзеркалення»: на екрані — там, де було б віддзеркалення.
+        const t = (cam.y - g) / (cam.y - (near - depth));
+        return out.set(cam.x + (wx - cam.x) * t, g, cam.z + (wz - cam.z) * t);
+      };
+      // Кінець смуги — і висота дороги там (на підйомі позаду машини смуга піднімається разом з асфальтом).
+      const p0 = project(lamp.x, lamp.z, DEPTH_NEAR, this.p0);
+      const pf = project(lamp.x, lamp.z, DEPTH_FAR * LAYERS[LAYERS.length - 1].length, this.pf);
+      // Висота дороги посередині й на кінці смуги відносно початку (ламана з двох відрізків — на перегині).
+      // Від рівня дороги під ліхтарем, а не від камери: у тунелі промінь згори влучав у стелю.
+      const top = near + 2;
+      const rel = (h: number | null | undefined) => (h === null || h === undefined ? 0 : Math.max(-1.5, Math.min(1.5, h - near)));
+      const riseMid = rel(this.groundAt?.((p0.x + pf.x) / 2, top, (p0.z + pf.z) / 2));
+      const riseFar = rel(this.groundAt?.(pf.x, top, pf.z));
+      const span = Math.max(0.01, Math.hypot(pf.x - p0.x, pf.z - p0.z));
+      const rise = (u: number) => (u < 0.5 ? riseMid * u * 2 : riseMid + (riseFar - riseMid) * Math.min(1, (u - 0.5) * 2));
       const gain = k.gain * surface;
       const n = l.height.length;
       LAYERS.forEach((layer, li) => {
         for (let i = 0; i < n; i++) {
           const s = l.height[i];
           const depth = DEPTH_NEAR + (DEPTH_FAR - DEPTH_NEAR) * layer.length * s;
-          const mx = l.centerX + (l.verts[i * 3] - l.centerX) * layer.width;
-          const my = l.verts[i * 3 + 1];
-          const mz = ground - depth;
-          // Точка на дорозі на промені «камера → віддзеркалення»: на екрані — там, де було б віддзеркалення.
-          const t = (c.z - g) / (c.z - mz);
+          const v = this.v.set(l.centerX + (l.verts[i * 3] - l.centerX) * layer.width, l.verts[i * 3 + 1], l.verts[i * 3 + 2]).applyMatrix4(mw);
+          const p = project(v.x, v.z, depth, this.p);
+          p.y += rise(Math.hypot(p.x - p0.x, p.z - p0.z) / span);
+          this.root.worldToLocal(p);
           const j = li * n + i;
-          l.pos.setXYZ(j, c.x + (mx - c.x) * t, c.y + (my - c.y) * t, g);
+          l.pos.setXYZ(j, p.x, p.y, p.z);
           const b = gain * layer.gain * (1 - (1 - FAR_FADE) * s);
           l.col.setXYZ(j, k.color.r * b, k.color.g * b, k.color.b * b);
         }

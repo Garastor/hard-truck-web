@@ -546,7 +546,7 @@ export class DriveSession {
     s.truck = new TruckVehicle(s.world, def, model, s.spawn, setup);
     s.lights = new TruckLights(model.setSwitch, s.truck.visual, s.truck.lightGeometry);
     s.reflections.push(new LampReflections(model.root, () => s.truck.groundHeight()));
-    s.wetReflections.push(new WetReflections(model.root, () => s.truck.groundHeight()));
+    s.wetReflections.push(new WetReflections(model.root, () => s.truck.groundHeight(), (x, y, z) => s.roadBelow(x, y, z)));
     scene.add(s.truck.visual);
     s.spawnOpponents(rivals);
     s.roomVis = new RoomVisibility(s.track, built.rooms);
@@ -780,7 +780,7 @@ export class DriveSession {
       pilot.cruise = 58 + ((i * 7) % 18);
       const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
       this.reflections.push(new LampReflections(model.root, () => truck.groundHeight()));
-      this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight()));
+      this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z)));
       this.opponents.push({ truck, pilot, odo: new Odometer(), lights });
     });
   }
@@ -1024,6 +1024,17 @@ ${raceLine}`;
   }
 
   /** Висота підлоги (Three.js y) під точкою — за полігонами колізій усіх кімнат. */
+  /** Висота дороги (нерухомі колізії) під точкою, шукаючи вниз від y на 8 м; null — немає. */
+  roadBelow(x: number, y: number, z: number): number | null {
+    const hit = this.world.castRay(
+      new RAPIER.Ray({ x, y, z }, { x: 0, y: -1, z: 0 }),
+      8,
+      true,
+      RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC,
+    );
+    return hit ? y - hit.timeOfImpact : null;
+  }
+
   floorHeight(p: THREE.Vector3): number | null {
     return floorAt(this.col, p.x, -p.z, p.y)?.z ?? null;
   }
