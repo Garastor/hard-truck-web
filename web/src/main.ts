@@ -18,7 +18,7 @@ import { buildTruckModel, parseTrucks, type TruckDef } from './game/trucks';
 import type { DriveSession } from './modes/drive';
 import type { TruckSetup } from './game/truckVehicle';
 import { currentDriver, listCareers, loadCareer, newCareer, setCurrentDriver, truckSpec, type Career } from './game/career';
-import { CareerGame, modal, setHudFont, type LevelKind } from './ui/careerUi';
+import { CareerGame, HOME_SVG, modal, setHudFont, type LevelKind } from './ui/careerUi';
 import {
   MenuArt, driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
   type ControlMode, type OptionsState, type QualityLevel,
@@ -217,6 +217,19 @@ async function startDrive(): Promise<void> {
     drive.setHudFonts(small, large);
     // Тестовий режим: мінікарта завжди (у кар'єрі — лише з навігаційною системою «НС»).
     if (!cfg && id !== 'MENU3D') drive.showMap(true);
+    // Тестовий режим — розкладка кнопок, як на базі кар'єри (на прохання користувача): сигнал у групі «•••», на його
+    // місці — «Головне меню»; група розкривається під «•••» колонками справа наліво.
+    if (!cfg) {
+      const home = document.createElement('button');
+      home.className = 'touch-btn home';
+      home.setAttribute('aria-label', 'Головне меню');
+      home.innerHTML = HOME_SVG;
+      soften(home);
+      home.addEventListener('click', () => $('toMenu').click());
+      drive.input.setBaseLayout({ group: [], top: [home] });
+      // Місце групи, яке виставляє база кар'єри (поруч із вікном закупівлі), — тут не потрібне.
+      document.documentElement.style.removeProperty('--base-group-right');
+    }
     if (loadControl() === 'tilt') drive.setTilt(true);
     drive.night = id === 'NIGHT';
     if (!cfg) drive.setWeather(weatherSel.value === 'rain');

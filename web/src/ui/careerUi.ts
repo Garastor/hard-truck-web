@@ -172,7 +172,7 @@ const RATING_SVG =
   '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="16.5" cy="7" r="3"/><path d="M14.5 13.6c.6-.3 1.3-.4 2-.4 2.8 0 4.5 2.2 4.5 5.3"/><circle cx="9" cy="9.5" r="3.5"/><path d="M3 21c0-3.8 2.6-6.4 6-6.4s6 2.6 6 6.4"/></svg>';
 
 /** Значок «Меню» — будинок (головне меню); напис на телефоні в квадратну кнопку не вміщався. */
-const HOME_SVG =
+export const HOME_SVG =
   '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7.5 9 7.5"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5.5h4V20"/></svg>';
 
 /** Стрілка «згорнути» (вліво) кольору тексту табло. */
