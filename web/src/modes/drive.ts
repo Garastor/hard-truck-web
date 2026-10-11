@@ -701,6 +701,7 @@ export class DriveSession {
       if (cmd === 'camera') s.cameraMode = NEXT_CAM[s.camMode];
       if (cmd === 'lights') s.lightsOverride = !s.headlights;
       if (cmd === 'map' && s.mapAllowed && s.navMap) s.navMap.el.hidden = !s.navMap.el.hidden;
+      else if (cmd === 'map' && !s.mapAllowed) toast('Навігаційної системи немає');
       if (cmd === 'engine') s.toggleEngine();
       if (cmd === 'wipers') s.toggleWipers();
       if (cmd === 'mirror') s.toggleMirror();
@@ -1032,7 +1033,7 @@ export class DriveSession {
     const [lights, mirror, map, wipers, engine, mapAllowed, glass] = st;
     this.input.setToggle('lights', lights);
     this.input.setToggle('mirror', mirror);
-    this.input.setToggle('map', map, !mapAllowed);
+    this.input.setToggle('map', map, false, !mapAllowed);
     this.input.setToggle('wipers', wipers, !glass);
     this.input.setToggle('engine', engine);
     this.input.setToggle('cab', this.cabStyleNow === '2d');

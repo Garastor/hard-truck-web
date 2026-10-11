@@ -261,10 +261,12 @@ export class Input {
     this.baseExtras = [...layout.group, ...layout.top];
   }
   /** Підсвітка увімкнених функцій у групі «ще» (фари, дзеркало…); hidden — кнопку не показувати. */
-  setToggle(cmd: Command, on: boolean, hidden = false): void {
+  /** unavailable — функції немає (навігація без «НС»): кнопка видна, але сіра. */
+  setToggle(cmd: Command, on: boolean, hidden = false, unavailable = false): void {
     const b = this.touchUi?.querySelector<HTMLElement>(`[data-cmd="${cmd}"]`);
     if (!b) return;
-    b.classList.toggle('on', on);
+    b.classList.toggle('on', on && !unavailable);
+    b.classList.toggle('unavailable', unavailable);
     b.hidden = hidden;
   }
 
