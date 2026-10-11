@@ -3,6 +3,8 @@
  * гравцю — табличка «Є нова версія» з кнопкою «Оновити» (перезавантаження посеред заїзду скинуло б його).
  * Лише у збірці й у захищеному контексті (HTTPS/localhost).
  */
+import { soften } from './softUi';
+
 export function registerServiceWorker(): void {
   if (!import.meta.env.PROD || !('serviceWorker' in navigator) || !isSecureContext) return;
   const sw = navigator.serviceWorker;
@@ -45,6 +47,8 @@ function showUpdate(waiting: ServiceWorker): void {
   later.addEventListener('click', () => box.remove());
   box.append(text, go, later);
   document.body.append(box);
+  soften(go);
+  soften(later);
 }
 
 /** iPhone / iPad (зокрема iPad, що прикидається Mac). */

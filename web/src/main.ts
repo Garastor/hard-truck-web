@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LEVELS, devServerSource, loadLevel, type FileSource, type LevelId, type LoadedLevel } from './assets/loader';
 import { REQUIRED, cachedSource, idbSource, importFiles, importZip, missingFiles, prefetchMissing, storageInfo, storeFile } from './assets/gameFiles';
 import { isIos, isStandalone, registerServiceWorker } from './ui/pwa';
+import { setSoftFont, soften } from './ui/softUi';
 import { loadCab2d } from './assets/cab2d';
 import { FpsMeter, FrameLimiter, QUALITY, loadQuality, loadShowFps, saveQuality, saveShowFps, type QualityId } from './ui/quality';
 import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from './ui/mobile';
@@ -410,6 +411,8 @@ async function toggleFullscreen(): Promise<void> {
   if (!(await enterFullscreen())) toast(IOS_FULLSCREEN_HINT, 15000);
 }
 blockPageZoom();
+// Кнопки технічного меню й кнопка ☰ — «м'які», як панелі (softUi).
+for (const b of document.querySelectorAll<HTMLElement>('#bar button, #menu')) soften(b);
 // На телефоні гра сама переходить на весь екран при першому дотику в режимі їзди
 // (браузер дозволяє це лише з обробника дотику).
 let autoFullscreenTried = false;
@@ -570,6 +573,7 @@ async function hudFonts(): Promise<[PixelFont | null, PixelFont | null]> {
   if (hudFont === undefined) hudFont = await load('MENU.FON');
   if (largeFont === undefined) largeFont = await load('large.fon');
   setHudFont(hudFont);
+  setSoftFont(hudFont);
   return [hudFont, largeFont];
 }
 

@@ -491,13 +491,17 @@ body.driving.bar-open .drive-hud {
 }
 
 #swapToggle,
-#toMenu {
+#toMenu,
+#options,
+#fullscreen {
   min-width: calc(44px * var(--ui, 1));
   padding: 0;
   place-items: center;
 }
 
-#toMenu {
+#toMenu,
+#options,
+#fullscreen {
   display: grid;
 }
 
@@ -1121,6 +1125,18 @@ body.career #fps {
 body.driving.bar-open .career-hud,
 body.driving.bar-open .hud-player {
   visibility: hidden;
+}
+
+/* «М'які» значки й написи кнопок (softUi.ts): полотно в пікселях оригіналу як маска, колір — кнопки. */
+.soft {
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
+  background-color: currentColor;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
 }
 
 /* Табло намальоване піксельним шрифтом оригіналу. */

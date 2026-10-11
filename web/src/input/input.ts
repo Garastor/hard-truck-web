@@ -2,6 +2,8 @@
  * Єдиний стан керування з різних джерел: клавіатура, сенсорні кнопки, геймпад.
  * Осі: steer −1..1 (вліво/вправо), throttle 0..1, brake 0..1.
  */
+import { soften } from '../ui/softUi';
+
 export interface ControlState {
   steer: number;
   throttle: number;
@@ -182,6 +184,7 @@ export class Input {
       if (svg) b.innerHTML = svg;
       else b.textContent = label;
       b.setAttribute('aria-label', cls);
+      soften(b);
       const down = (e: PointerEvent) => {
         e.preventDefault();
         b.setPointerCapture(e.pointerId);

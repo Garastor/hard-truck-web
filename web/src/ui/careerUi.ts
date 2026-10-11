@@ -6,6 +6,7 @@
  * 888/n — вітрина запчастини n, 666/10…50 — тунелі на траси. На трасах 666 — фініш (тунель на базу).
  */
 import * as THREE from 'three';
+import { soften } from './softUi';
 import callSignUrl from '../assets/call-sign.png';
 import {
   PARTS, TRACKS, TUNNELS, autoLoad, buyPart, buyTruck, canLoad, cargoVolume, cargoWeight, fmt,
@@ -756,6 +757,7 @@ export class CareerGame {
       const b = el('button', `touch-btn ${cls}`);
       b.setAttribute('aria-label', label);
       b.innerHTML = html;
+      if (html) soften(b);
       b.addEventListener('click', onClick);
       return b;
     };
@@ -785,6 +787,7 @@ export class CareerGame {
     const b = el('button', 'hud-btn hud-square');
     b.setAttribute('aria-label', label);
     b.append(content);
+    soften(b);
     b.addEventListener('click', onClick);
     this.actions.append(b);
     return b;
