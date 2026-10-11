@@ -119,6 +119,9 @@ export interface TruckSetup {
   surfaceEffects?: boolean;
 }
 
+/** Тінь над дорогою, м — щоб не мерехтіла з дорогою (гіпотеза порту). */
+const SHADOW_LIFT = 0.04;
+
 export class TruckVehicle {
   readonly body: RAPIER.RigidBody;
   readonly ctrl: RAPIER.DynamicRayCastVehicleController;
@@ -207,6 +210,15 @@ export class TruckVehicle {
 
     // Габарити кузова в локальних координатах Three.js.
     gameFrame.updateMatrixWorld(true);
+    // Тінь (*Shadow, матеріал s_shadow) у моделі — на рівні коліс у верхньому положенні підвіски, ≈ 1 м над дорогою:
+    // більша за кузов, вона виглядала сірою «спідницею» навколо нього. Опускаємо її на дорогу (syncVisual).
+    model.root.traverse((o) => {
+      if (this.shadow || !/shadow$/i.test(o.name) || !o.parent) return;
+      const box = new THREE.Box3().setFromObject(o);
+      if (box.isEmpty()) return;
+      const toParent = new THREE.Matrix3().setFromMatrix4(o.parent.matrixWorld.clone().invert());
+      this.shadow = { obj: o, base: o.position.clone(), up: new THREE.Vector3(0, 1, 0).applyMatrix3(toParent), y0: (box.min.y + box.max.y) / 2 };
+    });
     const box = visibleBox(model.body);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
@@ -456,7 +468,15 @@ export class TruckVehicle {
     return sum / 4;
   }
 
+  /** Тінь моделі: вузол, його початкове положення, напрям «угору» Three.js у системі батька й висота площини. */
+  private shadow: { obj: THREE.Object3D; base: THREE.Vector3; up: THREE.Vector3; y0: number } | null = null;
+
   syncVisual(): void {
+    if (this.shadow) {
+      const s = this.shadow;
+      s.obj.position.copy(s.base).addScaledVector(s.up, this.groundHeight() + SHADOW_LIFT - s.y0);
+      s.obj.updateMatrix();
+    }
     const t = this.body.translation();
     const r = this.body.rotation();
     this.visual.position.set(t.x, t.y, t.z);
