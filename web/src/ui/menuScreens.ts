@@ -53,6 +53,8 @@ export class MenuArt {
 class Screen {
   readonly root = document.createElement('div');
   readonly stage = document.createElement('div');
+  /** Фон екрана до заміни підписів — підкладка для перекладених кнопок (localizeButton). */
+  private clean: CanvasRenderingContext2D | null = null;
   private readonly onResize = () => this.fit();
 
   constructor(art: MenuArt, background: string) {
@@ -60,6 +62,11 @@ class Screen {
     this.stage.className = 'menu-stage';
     const bg = art.background(background);
     if (bg) {
+      const copy = document.createElement('canvas');
+      copy.width = bg.width;
+      copy.height = bg.height;
+      this.clean = copy.getContext('2d', { willReadFrequently: true });
+      this.clean?.drawImage(bg, 0, 0);
       localizeBackground(background, bg);
       this.stage.append(bg);
     }
@@ -87,6 +94,11 @@ class Screen {
       fn();
     };
     window.addEventListener('keydown', this.onKey);
+  }
+
+  /** Фон під прямокутником (x, y, w, h) у координатах 640×480. */
+  under(x: number, y: number, w: number, h: number): ImageData | null {
+    return this.clean ? this.clean.getImageData(x, y, w, h) : null;
   }
 
   close(): void {
@@ -131,7 +143,8 @@ function maskButton(screen: Screen, art: MenuArt, base: string, x: number, y: nu
   const orig: Record<string, HTMLCanvasElement | null> = {};
   for (const s of ['b', 'a', 'p', 'bp']) orig[s] = art.mask(`${base}_${s}.msk`);
   // Українські написи замість російських (якщо є переклад); off — недоступна (темніший текст).
-  const states: Record<string, HTMLCanvasElement | null> = localizeButton(base, orig) ?? orig;
+  const first = orig.b ?? orig.a;
+  const states: Record<string, HTMLCanvasElement | null> = localizeButton(base, orig, first ? screen.under(x, y, first.width, first.height) : null) ?? orig;
   for (const c of Object.values(states)) if (c) wrap.append(c);
   let pressed = false;
   let over = false;

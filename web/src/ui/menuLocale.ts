@@ -54,8 +54,10 @@ const CAP: Record<string, number> = { m: 11, n: 12, d: 12, o: 9, l: 12 };
 /** Підписи на фонах — тонкий геометричний шрифт, як в оригіналі. */
 const LABEL_FONT = '"Century Gothic", "Futura", "Trebuchet MS", Arial, sans-serif';
 
-/** Розширення маски тексту, пікселів. */
-const GROW = 3;
+/** Розширення маски тексту, пікселів (для замальовування, коли під кнопкою немає чистого фону). */
+const GROW = 1;
+/** Запас навколо старого напису, що замінюється фоном (тінь напису зміщена вниз-праворуч), пікселів. */
+const PAD = 5;
 
 /** Маска тексту: пікселі, що відрізняються між станами, розширені на GROW пікселів (контур і тінь). */
 function textMask(states: ImageData[]): Uint8Array {
@@ -72,8 +74,7 @@ function textMask(states: ImageData[]): Uint8Array {
       }
     }
   }
-  // Розширення на GROW пікселів: тінь/ореол старого напису однакові в усіх станах (у різницю не потрапляють) і
-  // лишались темними плямами поруч із новим написом.
+  // Розширення на GROW пікселів — контур напису.
   const out = m.slice();
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++)
@@ -182,7 +183,16 @@ function drawLabel(
  * Українські стани кнопки: { b, a, p, bp?, off }. states — оригінальні полотна станів (той самий розмір).
  * Повертає null, якщо для кнопки немає перекладу.
  */
-export function localizeButton(base: string, states: Record<string, HTMLCanvasElement | null>): Record<string, HTMLCanvasElement> | null {
+/**
+ * under — фон екрана під кнопкою (той самий розмір), без перекладених підписів: кнопки меню оригіналу намальовані
+ * поверх тієї ж смужки, що й на фоні, тож старий напис разом із його тінню замінюємо шматком фону (замальовування
+ * лишало темні плями від тіні й розмивало смужку). Якщо поза текстом кнопка з фоном не збігається — замальовуємо.
+ */
+export function localizeButton(
+  base: string,
+  states: Record<string, HTMLCanvasElement | null>,
+  under?: ImageData | null,
+): Record<string, HTMLCanvasElement> | null {
   const text = BUTTON_UK[base];
   const keys = Object.keys(states).filter((k) => states[k]);
   if (!text || keys.length < 2) return null;
@@ -195,16 +205,44 @@ export function localizeButton(base: string, states: Record<string, HTMLCanvasEl
   const align = box.x1 > w * 0.75 && box.x0 > w * 0.3 ? 'right' : 'center';
   const tight = { x0: box.x0 + GROW, y0: box.y0 + GROW, x1: box.x1 - GROW, y1: box.y1 - GROW };
   const maxW = align === 'right' ? tight.x1 - 8 : w - 10;
+  // По центру — за шириною кнопки (старий напис бував зсунутий).
+  const place = align === 'center' ? { ...tight, x0: 0, x1: w - 1 } : tight;
+  // Чи збігається стан кнопки поза текстом із фоном під нею (вибраний / натиснутий стан буває підсвічений).
+  const matches = (from: ImageData) => {
+    if (!under || under.width !== w || under.height !== h) return false;
+    const d = from.data;
+    let diff = 0;
+    let n = 0;
+    for (let i = 0; i < w * h; i++) {
+      if (mask[i] || d[i * 4 + 3] === 0) continue;
+      diff += Math.abs(d[i * 4] - under.data[i * 4]) + Math.abs(d[i * 4 + 1] - under.data[i * 4 + 1]) + Math.abs(d[i * 4 + 2] - under.data[i * 4 + 2]);
+      n++;
+    }
+    return n > 0 && diff / n / 3 < 10;
+  };
   const out: Record<string, HTMLCanvasElement> = {};
   const make = (key: string, from: ImageData, style: { fill: string; edge: string }, underline = false) => {
     const img = new ImageData(new Uint8ClampedArray(from.data), w, h);
-    inpaint(img, mask);
+    if (under && matches(from)) {
+      const x0 = Math.max(0, box.x0 - PAD);
+      const y0 = Math.max(0, box.y0 - PAD);
+      const x1 = Math.min(w - 1, box.x1 + PAD);
+      const y1 = Math.min(h - 1, box.y1 + PAD);
+      for (let y = y0; y <= y1; y++)
+        for (let x = x0; x <= x1; x++) {
+          const i = (y * w + x) * 4;
+          if (img.data[i + 3] === 0) continue;
+          img.data[i] = under.data[i];
+          img.data[i + 1] = under.data[i + 1];
+          img.data[i + 2] = under.data[i + 2];
+        }
+    } else inpaint(img, mask);
     const c = document.createElement('canvas');
     c.width = w;
     c.height = h;
     const ctx = c.getContext('2d')!;
     ctx.putImageData(img, 0, 0);
-    drawLabel(ctx, text, tight, maxW, align, style, key !== 'b' && key !== 'off', underline, CAP[base.split('/')[0]]);
+    drawLabel(ctx, text, place, maxW, align, style, key !== 'b' && key !== 'off', underline, CAP[base.split('/')[0]]);
     out[key] = c;
   };
   keys.forEach((k, i) => make(k, src[i], STYLE[k] ?? STYLE.b, k === 'bp'));
@@ -217,7 +255,7 @@ export function localizeButton(base: string, states: Record<string, HTMLCanvasEl
  — два рядки). Латка — звідки брати
  * чистий фон: 'left' (смуга лівіше, за замовчуванням) або 'above' (над підписом — коли ліворуч інші написи).
  */
-const BACKGROUND_UK: Record<string, [number, number, number, number, string, ('left' | 'above')?][]> = {
+const BACKGROUND_UK: Record<string, [number, number, number, number, string, ('left' | 'above')?, [number, number]?][]> = {
   'n/back_new.txr': [
     [166, 97, 320, 110, 'РІВЕНЬ СКЛАДНОСТІ'],
     [130, 178, 322, 190, 'КІЛЬКІСТЬ СУПЕРНИКІВ'],
@@ -225,9 +263,10 @@ const BACKGROUND_UK: Record<string, [number, number, number, number, string, ('l
   ],
   'o/back_opt.txr': [
     [254, 96, 446, 106, 'НАЛАШТУВАННЯ ТА КЛАВІШІ', 'above'],
-    [48, 355, 128, 366, 'КЕРУВАННЯ', 'above'],
-    [162, 355, 250, 366, 'ЯКІСТЬ', 'above'],
-    [286, 355, 375, 366, 'ВІДЕОРЕЖИМ', 'above'],
+    // Заголовки колонок кнопок — по центру колонки (стовпчики x = 27, 150, 273, кнопка ≈ 113 px).
+    [48, 355, 128, 366, 'КЕРУВАННЯ', 'above', [27, 140]],
+    [162, 355, 250, 366, 'ЯКІСТЬ', 'above', [150, 263]],
+    [286, 355, 375, 366, 'ВІДЕОРЕЖИМ', 'above', [273, 386]],
   ],
   'd/back_dri.txr': [
     [232, 152, 294, 166, 'ЗА КЕРМОМ'],
@@ -253,8 +292,9 @@ export function localizeBackground(name: string, canvas: HTMLCanvasElement): voi
     const srcW = Math.max(4, Math.min(w, x0 - srcX));
     for (let x = x0; x <= x1; x += srcW) ctx.drawImage(canvas, srcX, y0, Math.min(srcW, x1 - x + 1), h, x, y0, Math.min(srcW, x1 - x + 1), h);
   }
-  for (const [x0, y0, x1, y1, text] of items) {
-    const w = x1 - x0 + 1;
-    drawLabel(ctx, text, { x0, y0, x1, y1 }, w, 'right', { fill: 'rgb(240,232,204)', edge: 'rgba(0,0,0,0.85)' }, false, false, 8.5, 'normal');
+  for (const [x0, y0, x1, y1, text, , center] of items) {
+    const box = center ? { x0: center[0], y0, x1: center[1], y1 } : { x0, y0, x1, y1 };
+    const w = box.x1 - box.x0 + 1;
+    drawLabel(ctx, text, box, w, center ? 'center' : 'right', { fill: 'rgb(240,232,204)', edge: 'rgba(0,0,0,0.85)' }, false, false, 8.5, 'normal');
   }
 }
