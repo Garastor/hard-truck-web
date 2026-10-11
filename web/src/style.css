@@ -945,6 +945,17 @@ body.in-menu #fps {
   pointer-events: auto;
 }
 
+/* Під вікном закупівлі кнопки разом — на всю ширину вікна, порівну (симетрично з табличкою). */
+.career-hud:has(> .hud-info:not([hidden])) > .hud-actions {
+  align-self: stretch;
+}
+
+.career-hud:has(> .hud-info:not([hidden])) > .hud-actions > .hud-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 0 calc(4px * var(--ui, 1));
+}
+
 /* Кнопки з написом (На базу, Ремонт, Купити…) — щонайменше на дві квадратні кнопки з проміжком, тієї ж висоти. */
 .hud-actions .hud-btn:not(.hud-square):not(.hud-toggle) {
   min-width: calc(96px * var(--ui, 1));
