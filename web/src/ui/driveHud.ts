@@ -1,9 +1,9 @@
 /**
- * Верхнє табло заїзду в стилі табличок оригіналу (рамка + втиснуті панелі, растрові шрифти large.fon / MENU.FON,
+ * Верхнє табло заїзду в стилі кнопок табло (тонка рамка, растрові шрифти large.fon / MENU.FON,
  * бірюзовий текст): швидкість, передача (кольори індикатора на приладовій панелі кабіни — pribor.txr:
  * R червона, N біла, передачі зелені), міцність машини й цілість вантажу у відсотках; нижче — баланс і рядок гонки.
  */
-import { HUD_CYAN, PixelFont, inset, frame, pixelCanvas } from './pixelFont';
+import { HUD_CYAN, PixelFont, box, pixelCanvas } from './pixelFont';
 
 export interface HudData {
   speedKmh: number;
@@ -97,22 +97,25 @@ export class DriveHud {
     if (truck) rowW += 12 + item(TRUCK_ICON);
     if (cargo) rowW += 10 + item(BOXES_ICON);
     const lineW = S.measure(d.line);
-    const innerW = Math.max(rowW, lineW) + 12;
-    const W = innerW + 9;
-    const top1 = 5;
-    const h1 = lh + 8;
-    const top2 = top1 + h1 + 3;
-    const h2 = d.line ? sh + 7 : 0;
-    const H = d.line ? top2 + h2 + 4 : top1 + h1 + 4;
+    const innerW = Math.max(rowW, lineW) + 8;
+    const W = innerW + 4;
+    const top1 = 2;
+    const h1 = lh + 6;
+    const top2 = top1 + h1 + 1;
+    const h2 = d.line ? sh + 6 : 0;
+    const H = d.line ? top2 + h2 + 2 : top1 + h1 + 2;
 
     const { canvas, ctx } = pixelCanvas(W, H);
-    frame(ctx, 0, 0, W, H);
-    inset(ctx, 5, top1, innerW, h1);
-    if (d.line) inset(ctx, 5, top2, innerW, h2);
+    box(ctx, 0, 0, W, H);
+    // Між рядками — тонка лінія, як рамка.
+    if (d.line) {
+      ctx.fillStyle = 'rgba(140, 140, 140, 0.6)';
+      ctx.fillRect(4, top2 - 1, W - 8, 1);
+    }
 
     // Рядок 1 — посередині першої панелі.
-    let x = 5 + Math.floor((innerW - rowW) / 2);
-    const y = top1 + 4;
+    let x = 2 + Math.floor((innerW - rowW) / 2);
+    const y = top1 + 3;
     const ys = y + Math.round((lh - sh) / 2);
     L.draw(ctx, speed, x + speedW - L.measure(speed), y, HUD_CYAN);
     x += speedW + 8;
@@ -128,7 +131,7 @@ export class DriveHud {
     if (truck) stat(TRUCK_ICON, truck, 12);
     if (cargo) stat(BOXES_ICON, cargo, 10);
 
-    if (d.line) S.draw(ctx, d.line, 5 + Math.floor((innerW - lineW) / 2), top2 + 4, HUD_CYAN);
+    if (d.line) S.draw(ctx, d.line, 2 + Math.floor((innerW - lineW) / 2), top2 + 3, HUD_CYAN);
     this.host.replaceChildren(canvas);
   }
 

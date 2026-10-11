@@ -19,7 +19,7 @@ import {
   MenuArt, driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
   type ControlMode, type OptionsState, type QualityLevel,
 } from './ui/menuScreens';
-import { HUD_CYAN, PixelFont, frame as hudFrame, pixelCanvas } from './ui/pixelFont';
+import { HUD_CYAN, PixelFont, box, pixelCanvas } from './ui/pixelFont';
 import { parseFon } from './formats/fon';
 import { reflectionMode, setReflectionMode } from './render/wetReflections';
 import { installDevTools } from './dev/devTools';
@@ -364,7 +364,7 @@ $('fpsToggle').addEventListener('click', () => {
   showFpsValue('…');
 });
 
-/** Частота кадрів — табличкою оригіналу (рамка, MENU.FON); поки шрифт не завантажено — текстом. */
+/** Частота кадрів — тонкою табличкою, як кнопки табло (MENU.FON); поки шрифт не завантажено — текстом. */
 function showFpsValue(text: string): void {
   if (!hudFont) {
     fpsEl.textContent = text;
@@ -374,7 +374,7 @@ function showFpsValue(text: string): void {
   const w = hudFont.measure(text) + 10;
   const h = hudFont.height + 8;
   const { canvas, ctx } = pixelCanvas(w, h);
-  hudFrame(ctx, 0, 0, w, h);
+  box(ctx, 0, 0, w, h);
   hudFont.draw(ctx, text, 5, 4, HUD_CYAN);
   fpsEl.classList.add('pixel-hud');
   fpsEl.replaceChildren(canvas);
