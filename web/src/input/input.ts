@@ -10,24 +10,30 @@ export interface ControlState {
 }
 
 type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake';
-/** Значок сигналу (гучномовець із хвилями) — однотонний, як решта кнопок. */
+/** Значок сигналу (ріжок, за зразком користувача) — однотонний контур, як решта кнопок. */
 const HORN_SVG =
-  '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M3 10v4h3l6 4V6L6 10H3z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M19 6.5a8 8 0 0 1 0 11"/></svg>';
+  '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M2.5 8.6v4.6M2.5 10.9H5"/><path d="M5 9h7.5c3.2 0 6-1.6 8-4.3.6-.8 1.5-.4 1.5.5v13.4c0 .9-.9 1.3-1.5.5-2-2.4-3.5-3.6-5.6-4.2"/><path d="M5 12.9h1.4"/><path d="M6.4 12.9c0 2.4 1.2 3.8 3.4 3.8h3.4"/><rect x="8.6" y="12.6" width="6.4" height="2.9" rx="1.45"/></svg>';
 
 /** Значки групи «ще» (однотонні, як сигнал). */
 const svg = (body: string) =>
   `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">${body}</svg>`;
+/** Значки — за зразками користувача, контуром кольору тексту. */
 const ICONS = {
   more: svg('<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>'),
-  lights: svg('<path d="M12 6c-3 0-5 2.5-5 6s2 6 5 6V6z"/><path d="M15 8h6M15 12h6M15 16h6"/>'),
+  // Фара з променями ліворуч.
+  lights: svg('<path d="M13.5 5.5c4.5 0 7.5 2.9 7.5 6.5s-3 6.5-7.5 6.5z"/><path d="M3 8.2l7.5-1.6M3 11.4l7.5-1.2M3 14.6l7.5-.9M3 17.8l7.5-.6"/>'),
   mirror: svg('<rect x="3" y="7" width="18" height="9" rx="3"/><path d="M12 16v3"/>'),
   map: svg('<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>'),
-  wipers: svg('<path d="M3 18a9 9 0 0 1 18 0"/><path d="M12 18L7 9"/>'),
-  engine: svg('<path d="M12 3v8"/><path d="M6.3 7.3a8 8 0 1 0 11.4 0"/>'),
-  cab: svg('<rect x="3" y="5" width="18" height="14"/><path d="M3 13h18M8 19l2-6M16 19l-2-6"/>'),
+  // Лобове скло з двірником (вісь унизу посередині).
+  wipers: svg('<path d="M10.2 18.5H6.5L3 7.5c5.8-2.6 12.2-2.6 18 0l-3.5 11h-3.7"/><path d="M12.4 17.2L10 7.8"/><circle cx="12.4" cy="18.4" r="1.4" fill="currentColor"/>'),
+  // Блок двигуна.
+  engine: svg('<path d="M6.5 9.5V8h3V6h5v2h2.5l1.5 2h1.5V8.5h1.5v7h-1.5V14H18.5l-1.5 3.5H9.5L7.5 15H6.5v-1.5H3.5v2H2v-6h1.5v2h3z"/>'),
+  // Приладова панель — вид кабіни 2D / 3D.
+  cab: svg('<path d="M6 18.5A7.5 7.5 0 1 1 18 18.5z"/><path d="M12 14.6l3.4-4.6"/><circle cx="12" cy="14.8" r="1.1"/><path d="M12 8.7v1.3M7.6 13.4h1.2M15.2 13.4h1.2M8.4 10l.8.8"/><path d="M3.6 11.6a2.6 2.6 0 0 0 0 5.2M20.4 11.6a2.6 2.6 0 0 1 0 5.2"/>'),
   swap: svg('<path d="M4 8h14l-3-3M20 16H6l3 3"/>'),
   cam: svg('<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
-  reset: svg('<path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 4v5h5"/>'),
+  // Кругова стрілка за годинниковою — відновитися.
+  reset: svg('<path d="M17.2 16.8A6.8 6.8 0 1 1 18.3 9"/><path d="M15.6 9.6h5.2l-2.6 3.6z" fill="currentColor"/>'),
   left: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M17 4L6 12l11 8z"/></svg>',
   right: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M7 4l11 8-11 8z"/></svg>',
 };
