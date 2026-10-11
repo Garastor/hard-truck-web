@@ -211,13 +211,21 @@ export class TruckVehicle {
     // Габарити кузова в локальних координатах Three.js.
     gameFrame.updateMatrixWorld(true);
     // Тінь (*Shadow, матеріал s_shadow) у моделі — на рівні коліс у верхньому положенні підвіски, ≈ 1 м над дорогою:
-    // більша за кузов, вона виглядала сірою «спідницею» навколо нього. Опускаємо її на дорогу (syncVisual).
+    // більша за кузов, вона виглядала сірою «спідницею» навколо нього. Кладемо її на дорогу (syncVisual). Тут visual
+    // ще в нулі — світові матриці збігаються з локальними для visual.
     model.root.traverse((o) => {
       if (this.shadow || !/shadow$/i.test(o.name) || !o.parent) return;
       const box = new THREE.Box3().setFromObject(o);
       if (box.isEmpty()) return;
-      const toParent = new THREE.Matrix3().setFromMatrix4(o.parent.matrixWorld.clone().invert());
-      this.shadow = { obj: o, base: o.position.clone(), up: new THREE.Vector3(0, 1, 0).applyMatrix3(toParent), y0: (box.min.y + box.max.y) / 2 };
+      const center = box.getCenter(new THREE.Vector3());
+      o.matrixAutoUpdate = false;
+      this.shadow = {
+        obj: o,
+        // Площина тіні з центром у нулі (орієнтація — як у кузова).
+        local: new THREE.Matrix4().makeTranslation(-center.x, -center.y, -center.z).multiply(o.matrixWorld),
+        center,
+        parentInv: o.parent.matrixWorld.clone().invert(),
+      };
     });
     const box = visibleBox(model.body);
     const size = box.getSize(new THREE.Vector3());
@@ -468,19 +476,60 @@ export class TruckVehicle {
     return sum / 4;
   }
 
-  /** Тінь моделі: вузол, його початкове положення, напрям «угору» Three.js у системі батька й висота площини. */
-  private shadow: { obj: THREE.Object3D; base: THREE.Vector3; up: THREE.Vector3; y0: number } | null = null;
+  /**
+   * Тінь моделі: вузол; площина тіні з центром у нулі в системі visual; її центр; обернена матриця батька вузла
+   * в системі visual (сталa — вище тіні в моделі нічого не рухається).
+   */
+  private shadow: { obj: THREE.Object3D; local: THREE.Matrix4; center: THREE.Vector3; parentInv: THREE.Matrix4 } | null = null;
+
+  /**
+   * Тінь лягає на площину дороги під колесами (точки й нормалі контакту — досить одного колеса: на сильному крені
+   * колеса одного боку відриваються): при крені й тангажі кузова вона не провалюється під дорогу одним боком. Від
+   * кузова — лише напрям і точка під центром. Без жодного контакту коліс
+   * (стрибок, перекидання) — під кузовом на висоті дороги за підвіскою.
+   */
+  private placeShadow(): void {
+    const s = this.shadow!;
+    const v = this.visual;
+    v.updateMatrix();
+    const centerW = s.center.clone().applyMatrix4(v.matrix);
+    const up = new THREE.Vector3();
+    const ground = new THREE.Vector3();
+    let n = 0;
+    for (let i = 0; i < 4; i++) {
+      if (!this.ctrl.wheelIsInContact(i)) continue;
+      const p = this.ctrl.wheelContactPoint(i);
+      const nr = this.ctrl.wheelContactNormal(i);
+      if (!p || !nr) continue;
+      ground.add(p as THREE.Vector3Like);
+      up.add(nr as THREE.Vector3Like);
+      n++;
+    }
+    let world: THREE.Matrix4;
+    if (n > 0 && up.lengthSq() > 1e-6) {
+      up.normalize();
+      ground.divideScalar(n);
+      // Точка під центром кузова на площині дороги.
+      const pos = centerW.clone().addScaledVector(up, -centerW.clone().sub(ground).dot(up) + SHADOW_LIFT);
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(v.quaternion);
+      fwd.addScaledVector(up, -fwd.dot(up)).normalize();
+      const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
+      world = new THREE.Matrix4().makeBasis(right, up, fwd.negate()).setPosition(pos);
+    } else {
+      const pos = centerW.clone().addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(v.quaternion), this.groundHeight() + SHADOW_LIFT - s.center.y);
+      world = new THREE.Matrix4().makeRotationFromQuaternion(v.quaternion).setPosition(pos);
+    }
+    // У систему батька вузла: visual⁻¹ · світ · площина, потім батько⁻¹.
+    s.obj.matrix.copy(s.parentInv).multiply(v.matrix.clone().invert()).multiply(world).multiply(s.local);
+    s.obj.matrixWorldNeedsUpdate = true;
+  }
 
   syncVisual(): void {
-    if (this.shadow) {
-      const s = this.shadow;
-      s.obj.position.copy(s.base).addScaledVector(s.up, this.groundHeight() + SHADOW_LIFT - s.y0);
-      s.obj.updateMatrix();
-    }
     const t = this.body.translation();
     const r = this.body.rotation();
     this.visual.position.set(t.x, t.y, t.z);
     this.visual.quaternion.set(r.x, r.y, r.z, r.w);
+    if (this.shadow) this.placeShadow();
     // Колеса: підвіска (зсув по Z гри), поворот керма (навколо Z), обертання (навколо X).
     for (let i = 0; i < 4; i++) {
       const w = this.wheelVisual[i];
