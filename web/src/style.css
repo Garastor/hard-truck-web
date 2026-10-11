@@ -736,6 +736,9 @@ body.career #stats {
  */
 .menu-table {
   line-height: 18px;
+  /* Яскравіше за інші списки меню (на прохання користувача), з тінню — читається на світлій плитці. */
+  color: #f6e8b4;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.75);
   overflow-x: hidden;
   overflow-y: auto;
   scroll-snap-type: y mandatory;
@@ -745,6 +748,10 @@ body.career #stats {
 
 .menu-table::-webkit-scrollbar {
   display: none;
+}
+
+.menu-table .menu-row {
+  color: #fff3c2;
 }
 
 .menu-trow {
