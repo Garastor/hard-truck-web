@@ -19,7 +19,7 @@ import {
   MenuArt, driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
   type ControlMode, type OptionsState, type QualityLevel,
 } from './ui/menuScreens';
-import { PixelFont } from './ui/pixelFont';
+import { HUD_CYAN, PixelFont, frame as hudFrame, pixelCanvas } from './ui/pixelFont';
 import { parseFon } from './formats/fon';
 import { reflectionMode, setReflectionMode } from './render/wetReflections';
 import { installDevTools } from './dev/devTools';
@@ -361,8 +361,24 @@ $('fpsToggle').addEventListener('click', () => {
   showFps = !showFps;
   saveShowFps(showFps);
   fpsEl.hidden = !showFps;
-  fpsEl.textContent = '…';
+  showFpsValue('…');
 });
+
+/** Частота кадрів — табличкою оригіналу (рамка, MENU.FON); поки шрифт не завантажено — текстом. */
+function showFpsValue(text: string): void {
+  if (!hudFont) {
+    fpsEl.textContent = text;
+    if (hudFont === undefined) void hudFonts();
+    return;
+  }
+  const w = hudFont.measure(text) + 10;
+  const h = hudFont.height + 8;
+  const { canvas, ctx } = pixelCanvas(w, h);
+  hudFrame(ctx, 0, 0, w, h);
+  hudFont.draw(ctx, text, 5, 4, HUD_CYAN);
+  fpsEl.classList.add('pixel-hud');
+  fpsEl.replaceChildren(canvas);
+}
 async function toggleFullscreen(): Promise<void> {
   if (isFullscreen()) return exitFullscreen();
   if (!(await enterFullscreen())) toast(IOS_FULLSCREEN_HINT, 15000);
@@ -389,7 +405,7 @@ document.addEventListener('visibilitychange', () => {
 });
 function loop(now: number): void {
   if (!limiter.ready(now)) return;
-  if (showFps && fpsMeter.tick(now)) fpsEl.textContent = `${fpsMeter.value} к/с`;
+  if (showFps && fpsMeter.tick(now)) showFpsValue(`${fpsMeter.value} к/с`);
   const dt = clock.getDelta();
   if (tab === 'drive') {
     drive?.update(dt);

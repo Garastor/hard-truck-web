@@ -183,6 +183,19 @@ button.active {
   display: none;
 }
 
+/* Табличка в стилі оригіналу (canvas) — без власного фону. */
+#fps.pixel-hud {
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  line-height: 0;
+}
+
+/* Частота кадрів — лише в тестовому режимі. */
+body.career #fps {
+  display: none;
+}
+
 body.bar-open #fps {
   visibility: hidden;
 }
