@@ -83,6 +83,14 @@ export const SUSPENSION = {
   bump_damping: 12,
 };
 
+/**
+ * Поправка roll_lift для окремих вантажівок (за prefix з TRUCK.TCH): у ЗіЛа центр мас (CenterMassInB3D) майже на
+ * метр вищий, ніж у Volvo, і він перекидався помітно частіше — на прохання користувача крен трохи менший
+ * (кермо до упору: 40 км/год — 10° замість 17°, 45 — 28° замість 54°).
+ * Налаштування, не дані оригіналу.
+ */
+const ROLL_LIFT_BY_TRUCK: Record<string, number> = { zil: 0.12 };
+
 /** Частки breakpower на колесо: передні / задні (телеметрія ЗіЛ, s6) — гіпотеза для інших вантажівок. */
 const BRAKE_FRONT = 0.49;
 const BRAKE_REAR = 0.35;
@@ -125,6 +133,8 @@ export class TruckVehicle {
   readonly tire = TIRE;
   /** Параметри підвіски (спільні) — для підбору в консолі. */
   readonly suspension = SUSPENSION;
+  /** Поправки roll_lift за вантажівкою — для підбору в консолі. */
+  readonly rollLiftByTruck = ROLL_LIFT_BY_TRUCK;
 
   private readonly wheelRadius: number;
   private readonly driven: boolean[];
@@ -423,7 +433,8 @@ export class TruckVehicle {
       // менший за фізичний (як rollInfluence у Bullet) — бічне тертя 1,15 інакше перекидало б у кожному повороті.
       const com = this.body.worldCom();
       const h = (com.x - p.x) * up.x + (com.y - p.y) * up.y + (com.z - p.z) * up.z;
-      const at = { x: p.x + up.x * h * TIRE.roll_lift, y: p.y + up.y * h * TIRE.roll_lift, z: p.z + up.z * h * TIRE.roll_lift };
+      const lift = ROLL_LIFT_BY_TRUCK[this.def.prefix.toLowerCase()] ?? TIRE.roll_lift;
+      const at = { x: p.x + up.x * h * lift, y: p.y + up.y * h * lift, z: p.z + up.z * h * lift };
       this.body.applyImpulseAtPoint(impulse, at, true);
     }
   }

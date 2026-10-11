@@ -23,6 +23,8 @@ export interface LevelCollision {
   walls: Poly[];
   /** Кімната кожної стіни. */
   wallRoom: string[];
+  /** Стіна — з огорожі (блок 20). */
+  wallFence: boolean[];
   /** Чи описує `hit_*` поверхню для коліс; інакше землю беремо з видимої геометрії. */
   hasFloor: boolean;
   /** Кількість колайдерів за типами блоків (для налагодження). */
@@ -42,13 +44,16 @@ export function levelCollision(b3d: B3d): LevelCollision {
   const floorRoom: string[] = [];
   const walls: Poly[] = [];
   const wallRoom: string[] = [];
+  const wallFence: boolean[] = [];
   const stats: Record<string, number> = {};
   const roomBoxes = roomBounds(b3d);
   let room = '';
+  let isFence = false;
   const add = (p: Poly) => {
     if (Math.abs(normalZ(p)) < FLOOR_MIN_NZ) {
       walls.push(p);
       wallRoom.push(room);
+      wallFence.push(isFence);
       return;
     }
     floors.push(p);
@@ -96,16 +101,74 @@ export function levelCollision(b3d: B3d): LevelCollision {
       }
       if (emitted.length) {
         stats[d.t] = (stats[d.t] ?? 0) + 1;
+        isFence = d.t === 20;
         for (const p of emitted) {
           const c = clipAll(p, clip);
           if (c) add(c);
         }
+        isFence = false;
       }
       for (const g of b.groups ?? []) for (const c of g) visit(c, clip);
     };
     visit(top, []);
   }
-  return { floors, floorRoom, walls, wallRoom, hasFloor: floors.length > walls.length / 4, stats };
+  return { floors, floorRoom, walls, wallRoom, wallFence, hasFloor: floors.length > walls.length / 4, stats };
+}
+
+/** Наскільки близько до лінії огорожі має лежати портал, щоб вирізати в ній прохід, м. */
+const PORTAL_ON_FENCE = 0.5;
+
+/**
+ * Вирізає в огорожах (блок 20) проходи там, де на їхній лінії лежить портал (блок 30) будь-якої кімнати. Огорожі —
+ * межі кімнат на плані, і огорожа однієї кімнати буває довшою за саму кімнату: на COUNT межа room_017 на y = 1925
+ * тягнеться до x = 2755 і перекривала бічний проїзд room_018 → room_195 (x 2714…2738) — «невидима стіна», бо
+ * колізії сусідньої кімнати активні. Портали — кути (a, b) у системі гри (x, y); висота не враховується.
+ */
+export function openPortals(col: LevelCollision, portals: { a: [number, number]; b: [number, number] }[]): number {
+  let cut = 0;
+  const walls: Poly[] = [];
+  const rooms: string[] = [];
+  const fences: boolean[] = [];
+  col.walls.forEach((w, i) => {
+    const keep = (p: Poly, fence: boolean) => {
+      walls.push(p);
+      rooms.push(col.wallRoom[i]);
+      fences.push(fence);
+    };
+    if (!col.wallFence[i] || w.length !== 4) return keep(w, col.wallFence[i]);
+    const [a, b] = [w[0], w[1]];
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-3) return keep(w, true);
+    const gaps: [number, number][] = [];
+    for (const p of portals) {
+      const off = (q: [number, number]) => Math.abs((q[0] - a[0]) * dy - (q[1] - a[1]) * dx) / len;
+      if (off(p.a) > PORTAL_ON_FENCE || off(p.b) > PORTAL_ON_FENCE) continue;
+      const t = (q: [number, number]) => ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / (len * len);
+      const t0 = Math.max(0, Math.min(t(p.a), t(p.b)));
+      const t1 = Math.min(1, Math.max(t(p.a), t(p.b)));
+      if (t1 > t0) gaps.push([t0, t1]);
+    }
+    if (!gaps.length) return keep(w, true);
+    gaps.sort((g, h) => g[0] - h[0]);
+    const z0 = w[0][2];
+    const z1 = w[2][2];
+    const at = (t: number) => [a[0] + dx * t, a[1] + dy * t];
+    let from = 0;
+    for (const [g0, g1] of [...gaps, [1, 1] as [number, number]]) {
+      if (g0 > from + 1e-4) {
+        const [p0, p1] = [at(from), at(g0)];
+        keep([[p0[0], p0[1], z0], [p1[0], p1[1], z0], [p1[0], p1[1], z1], [p0[0], p0[1], z1]], true);
+      }
+      from = Math.max(from, g1);
+    }
+    cut++;
+  });
+  col.walls = walls;
+  col.wallRoom = rooms;
+  col.wallFence = fences;
+  return cut;
 }
 
 /**

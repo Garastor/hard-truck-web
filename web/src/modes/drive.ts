@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { addCollisionPolys, addStaticMeshes, g2t, initRapier } from '../physics/world';
-import { floorAt, levelCollision, roomAt, type LevelCollision } from '../game/collision';
+import { floorAt, levelCollision, openPortals, roomAt, type LevelCollision } from '../game/collision';
 import { Input } from '../input/input';
 import { TruckVehicle, type TruckSetup } from '../game/truckVehicle';
 import { GlassRain } from '../render/glassRain';
@@ -589,6 +589,9 @@ export class DriveSession {
     // Колізії як в оригіналі — з обʼєктів hit_road/hit_obj; видима геометрія — лише запасний варіант.
     const col = levelCollision(built.assembler.b3d);
     s.col = col;
+    s.track = new Track(built.assembler.b3d);
+    // Проходи між кімнатами — без огорож сусідніх кімнат (портали в системі гри: x, y = −z Three.js).
+    openPortals(col, [...s.track.rooms.values()].flatMap((r) => r.portals.map((p) => ({ a: [p.a.x, -p.a.z] as [number, number], b: [p.b.x, -p.b.z] as [number, number] }))));
     // Колізії — окремо для кожної кімнати: геометрія сусідніх кімнат перетинається в просторі
     // (тунель траси крізь зал бази), а оригінал перевіряє зіткнення лише з кімнатою машини.
     const byRoom = (polys: number[][][], rooms: string[]) => {
@@ -616,7 +619,6 @@ export class DriveSession {
     if (!model) throw new Error(`Модель ${def.carNode} відсутня в цій локації`);
     s.modelSwitch = model.setSwitch;
     s.modelStates = model.switchStates;
-    s.track = new Track(built.assembler.b3d);
     s.spawn = s.findSpawn();
     s.room = s.locate(s.spawn.position) ?? s.track.guessRoom(s.spawn.position);
     s.prevPos.copy(s.spawn.position);
