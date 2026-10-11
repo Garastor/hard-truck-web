@@ -92,6 +92,42 @@ function textMask(states: ImageData[]): Uint8Array {
   return out;
 }
 
+/**
+ * Заповнює пікселі маски по стовпчиках: лінійно між найближчими незамаскованими пікселями над і під ними (напис —
+ * горизонтальна смуга посередині кнопки; так зберігається малюнок плитки вище й нижче, а не розмивається в пляму).
+ * Стовпчики без опори з обох боків — середнім сусідів (inpaint).
+ */
+function inpaintColumns(img: ImageData, mask: Uint8Array): void {
+  const { width: w, height: h, data } = img;
+  const rest = new Uint8Array(w * h);
+  for (let x = 0; x < w; x++) {
+    let y = 0;
+    while (y < h) {
+      if (!mask[y * w + x]) {
+        y++;
+        continue;
+      }
+      const y0 = y - 1;
+      while (y < h && mask[y * w + x]) y++;
+      const y1 = y;
+      if (y0 < 0 || y1 >= h) {
+        for (let k = Math.max(0, y0 + 1); k < y1; k++) rest[k * w + x] = 1;
+        continue;
+      }
+      const a = (y0 * w + x) * 4;
+      const b = (y1 * w + x) * 4;
+      for (let k = y0 + 1; k < y1; k++) {
+        const t = (k - y0) / (y1 - y0);
+        const i = (k * w + x) * 4;
+        for (let ch = 0; ch < 3; ch++) data[i + ch] = data[a + ch] + (data[b + ch] - data[a + ch]) * t;
+        // Дірки (прозорі пікселі) усередині старого напису — теж заповнюємо, інакше просвічує тло.
+        data[i + 3] = 255;
+      }
+    }
+  }
+  inpaint(img, rest);
+}
+
 /** Заповнює пікселі маски середнім уже відомих сусідів (шарами від краю всередину). */
 function inpaint(img: ImageData, mask: Uint8Array): void {
   const { width: w, height: h, data } = img;
@@ -125,6 +161,7 @@ function inpaint(img: ImageData, mask: Uint8Array): void {
       data[i * 4] = r;
       data[i * 4 + 1] = g;
       data[i * 4 + 2] = b;
+      data[i * 4 + 3] = 255;
       todo[i] = 0;
     }
   }
@@ -209,16 +246,23 @@ export function localizeButton(
   const align = box.x1 > w * 0.75 && box.x0 > w * 0.3 ? 'right' : 'center';
   const tight = { x0: box.x0 + GROW, y0: box.y0 + GROW, x1: box.x1 - GROW, y1: box.y1 - GROW };
   const maxW = align === 'right' ? tight.x1 - 8 : w - 10;
-  // По центру — за шириною кнопки (старий напис бував зсунутий).
-  const place = align === 'center' ? { ...tight, x0: 0, x1: w - 1 } : tight;
+  // По центру — за шириною кнопки (старий напис бував зсунутий); однорядковий — і по висоті кнопки: у рамку
+  // старого напису потрапляло його підкреслення, і новий сідав нижче середини.
+  const cap = CAP[base.split('/')[0]];
+  let place = align === 'center' ? { ...tight, x0: 0, x1: w - 1 } : tight;
+  if (align === 'center' && cap && !text.includes('\n')) {
+    // drawLabel: базова лінія — y0 + 0,88·висоти рядка; великі літери — cap над нею.
+    const lineH = Math.round(cap * 1.6);
+    const y0 = Math.round(h / 2 + cap / 2 - lineH * 0.88);
+    place = { x0: 0, x1: w - 1, y0, y1: y0 + lineH - 1 };
+  }
   // Для замальовування — маска з тінню: тінь напису оригіналу розмита й зміщена вниз-праворуч на 3–4 px і однакова в
   // усіх станах (у різницю не потрапляє); без неї замальовування розтягувало темні плями.
+  // Увесь прямокутник старого напису з тінню (без рамки кнопки): поодинокі пікселі букв і тіні поза маскою
+  // різниці лишались крапками.
   const shadowMask = mask.slice();
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++)
-      if (mask[y * w + x])
-        for (let dy = 0; dy <= SHADOW; dy++)
-          for (let dx = 0; dx <= SHADOW; dx++) if (x + dx < w - FRAME && y + dy < h - FRAME) shadowMask[(y + dy) * w + x + dx] = 1;
+  for (let y = Math.max(FRAME, box.y0 - 1); y <= Math.min(h - 1 - FRAME, box.y1 + SHADOW); y++)
+    for (let x = Math.max(FRAME, box.x0 - 1); x <= Math.min(w - 1 - FRAME, box.x1 + SHADOW + 1); x++) shadowMask[y * w + x] = 1;
   // Чи збігається стан кнопки поза текстом із фоном під нею (вибраний / натиснутий стан буває підсвічений).
   const matches = (from: ImageData) => {
     if (!under || under.width !== w || under.height !== h) return false;
@@ -248,7 +292,7 @@ export function localizeButton(
           img.data[i + 1] = under.data[i + 1];
           img.data[i + 2] = under.data[i + 2];
         }
-    } else inpaint(img, shadowMask);
+    } else inpaintColumns(img, shadowMask);
     const c = document.createElement('canvas');
     c.width = w;
     c.height = h;
