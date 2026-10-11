@@ -3,6 +3,7 @@
  * бірюзовий текст): швидкість, передача (кольори індикатора на приладовій панелі кабіни — pribor.txr:
  * R червона, N біла, передачі зелені), міцність машини й цілість вантажу у відсотках; нижче — баланс і рядок гонки.
  */
+import type * as THREE from 'three';
 import { HUD_CYAN, PixelFont, box, pixelCanvas } from './pixelFont';
 
 export interface HudData {
@@ -55,6 +56,53 @@ const BOXES_ICON = [
   'XXXXX.XXXXX',
 ];
 
+/**
+ * Цифри одометра кабіни (перемикач `KMeter<n>Key` старшого розряду, стани 0–9): ділянки текстури приладів
+ * (pribor.txr) за UV, колір — з текстури, форма — в альфа-каналі. Без одометра в кабіні — null.
+ */
+export function odometerDigits(cab: THREE.Object3D): HTMLCanvasElement[] | null {
+  let top = -1;
+  cab.traverse((o) => {
+    const m = /^KMeter(\d)Key#\d$/.exec(o.name);
+    if (m) top = Math.max(top, Number(m[1]));
+  });
+  if (top < 0) return null;
+  const digits: HTMLCanvasElement[] = [];
+  for (let d = 0; d < 10; d++) {
+    let mesh: THREE.Mesh | undefined;
+    cab.traverse((o) => {
+      if (!mesh && o.name === `KMeter${top}Key#${d}`) o.traverse((g) => (mesh ??= (g as THREE.Mesh).geometry ? (g as THREE.Mesh) : undefined));
+    });
+    const mat = mesh && ([] as THREE.Material[]).concat(mesh.material)[0];
+    const img = (mat as THREE.MeshBasicMaterial | undefined)?.map?.image as { data?: ArrayLike<number>; width: number; height: number } | undefined;
+    const uv = mesh?.geometry.attributes.uv;
+    if (!img?.data || !uv) return null;
+    let [u0, v0, u1, v1] = [1, 1, 0, 0];
+    for (let i = 0; i < uv.count; i++) {
+      u0 = Math.min(u0, uv.getX(i));
+      u1 = Math.max(u1, uv.getX(i));
+      v0 = Math.min(v0, uv.getY(i));
+      v1 = Math.max(v1, uv.getY(i));
+    }
+    const x0 = Math.round(u0 * img.width);
+    const y0 = Math.round(v0 * img.height);
+    const w = Math.round(u1 * img.width) - x0;
+    const h = Math.round(v1 * img.height) - y0;
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const out = new ImageData(w, h);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const si = ((y0 + y) * img.width + x0 + x) * 4;
+        out.data.set([img.data[si], img.data[si + 1], img.data[si + 2], img.data[si + 3]], (y * w + x) * 4);
+      }
+    c.getContext('2d')!.putImageData(out, 0, 0);
+    digits.push(c);
+  }
+  return digits;
+}
+
 function icon(ctx: CanvasRenderingContext2D, rows: string[], x: number, y: number, color: string): number {
   ctx.fillStyle = color;
   rows.forEach((r, j) => {
@@ -70,6 +118,8 @@ export class DriveHud {
     private readonly host: HTMLElement,
     private readonly small: PixelFont,
     private readonly large: PixelFont | null,
+    /** Цифри одометра кабіни для швидкості (0–9); null — великим шрифтом. */
+    private readonly digits: HTMLCanvasElement[] | null = null,
   ) {
     host.classList.add('pixel-hud');
   }
@@ -86,10 +136,12 @@ export class DriveHud {
 
     const S = this.small;
     const L = this.large ?? S;
-    const lh = L.height;
+    const dg = this.digits;
+    // Швидкість — цифрами одометра (у клітинці цифри є поля: обрізаємо на 2 px згори й знизу).
+    const lh = dg ? Math.max(L.height, dg[0].height - 4) : L.height;
     const sh = S.height;
     // Ширини — за найширшими значеннями, щоб табло не «дихало» з кожною цифрою.
-    const speedW = L.measure('000');
+    const speedW = dg ? dg[0].width * 3 : L.measure('000');
     const gearW = Math.max(L.measure('R'), L.measure('N'), L.measure('8'));
     const pctW = S.measure('100%');
     const item = (rows: string[]) => rows[0].length + 4 + pctW;
@@ -116,10 +168,18 @@ export class DriveHud {
     // Рядок 1 — посередині першої панелі.
     let x = 2 + Math.floor((innerW - rowW) / 2);
     const y = top1 + 3;
+    const ly = y + Math.round((lh - L.height) / 2);
     const ys = y + Math.round((lh - sh) / 2);
-    L.draw(ctx, speed, x + speedW - L.measure(speed), y, HUD_CYAN);
+    if (dg) {
+      let dx = x + speedW - dg[0].width * speed.length;
+      for (const ch of speed) {
+        const c = dg[Number(ch)];
+        ctx.drawImage(c, 0, 2, c.width, c.height - 4, dx, y + Math.round((lh - (c.height - 4)) / 2), c.width, c.height - 4);
+        dx += dg[0].width;
+      }
+    } else L.draw(ctx, speed, x + speedW - L.measure(speed), y, HUD_CYAN);
     x += speedW + 8;
-    L.draw(ctx, gear, x + Math.floor((gearW - L.measure(gear)) / 2), y, gear === 'R' ? GEAR_R : gear === 'N' ? GEAR_N : GEAR_D);
+    L.draw(ctx, gear, x + Math.floor((gearW - L.measure(gear)) / 2), ly, gear === 'R' ? GEAR_R : gear === 'N' ? GEAR_N : GEAR_D);
     x += gearW;
     const stat = (rows: string[], text: string, gap: number) => {
       x += gap;

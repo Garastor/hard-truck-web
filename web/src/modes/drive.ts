@@ -16,7 +16,7 @@ import type { BuiltScene } from '../render/sceneBuilder';
 import { walk } from '../formats/b3d';
 import type { RmpArchive } from '../formats/rmp';
 import { EngineAudio, type LoopSound } from '../audio/engineAudio';
-import { DriveHud } from '../ui/driveHud';
+import { DriveHud, odometerDigits } from '../ui/driveHud';
 import type { PixelFont } from '../ui/pixelFont';
 import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, EVENT_RAIN, Track, type Room } from '../game/track';
 import { AutoPilot, WayNet } from '../game/autopilot';
@@ -1131,7 +1131,7 @@ export class DriveSession {
   /** Шрифти оригіналу для табло (MENU.FON, large.fon); без них — текст системним шрифтом. */
   setHudFonts(small: PixelFont | null, large: PixelFont | null): void {
     this.pixelHud?.dispose();
-    this.pixelHud = small ? new DriveHud(this.hud, small, large) : null;
+    this.pixelHud = small ? new DriveHud(this.hud, small, large, this.cab ? odometerDigits(this.cab) : null) : null;
   }
 
   /** Увімкнути колізії лише кімнат з машинами та їхніх сусідів через портали (решта — вимкнені). */
