@@ -46,8 +46,26 @@ export const TIRE = {
   slide_drag_max: 0.45,
   /** Нижня межа поздовжньої швидкості для кута проковзування, м/с (стійкість на місці). */
   low_speed: 2,
-  /** Наскільки піднімати точку прикладання бічної сили до центру мас (0 — земля, 1 — центр мас). */
-  roll_lift: 0.45,
+  /**
+   * Наскільки піднімати точку прикладання бічної сили до центру мас (0 — земля, 1 — центр мас). Відгук
+   * користувача: в оригіналі кузов помітно кренить у поворотах, а іноді вантажівка перекидається на бік.
+   * 0,12 (ЗіЛ, порожній, кермо до упору): 25 км/год — крен ≈ 5°, 35 — ≈ 7°, 50 — на межі перекидання;
+   * з вантажем центр мас вищий — перекидається раніше. Підбір, не формула оригіналу.
+   */
+  roll_lift: 0.12,
+};
+
+/**
+ * Підвіска (Rapier: жорсткість і демпфування на одиницю маси кузова). М'яка, щоб кузов кренився й погойдувався,
+ * як в оригіналі; хід 0,3 м = hmax − hmin з TRUCK.TCH (0,4 − 0,1). Демпфування — та сама частка критичного
+ * (≈ 0,4 стиснення, ≈ 0,2 відбій), що й до пом'якшення. ks/cs з TCH (у файлі закоментовані — діють типові 12500 / 1)
+ * в одиницях оригіналу не розібрані — гіпотеза.
+ */
+export const SUSPENSION = {
+  stiffness: 15,
+  compression: 3.2,
+  relaxation: 1.7,
+  travel: 0.3,
 };
 
 /** Частки breakpower на колесо: передні / задні (телеметрія ЗіЛ, s6) — гіпотеза для інших вантажівок. */
@@ -212,10 +230,10 @@ export class TruckVehicle {
       const p = new THREE.Vector3().setFromMatrixPosition(model.wheelBase[i]);
       const c = g2t(p);
       this.ctrl.addWheel({ x: c.x, y: c.y + this.suspRest * 0.5, z: c.z }, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, this.suspRest, this.wheelRadius);
-      this.ctrl.setWheelSuspensionStiffness(i, 28);
-      this.ctrl.setWheelSuspensionCompression(i, 4.4);
-      this.ctrl.setWheelSuspensionRelaxation(i, 2.3);
-      this.ctrl.setWheelMaxSuspensionTravel(i, 0.3);
+      this.ctrl.setWheelSuspensionStiffness(i, SUSPENSION.stiffness);
+      this.ctrl.setWheelSuspensionCompression(i, SUSPENSION.compression);
+      this.ctrl.setWheelSuspensionRelaxation(i, SUSPENSION.relaxation);
+      this.ctrl.setWheelMaxSuspensionTravel(i, SUSPENSION.travel);
       this.ctrl.setWheelMaxSuspensionForce(i, mass * 40);
       this.ctrl.setWheelFrictionSlip(i, TIRE_GRIP * this.grip);
       // Бічні сили шин рахуємо самі (applyTireLateral) — у Rapier вимикаємо.
@@ -323,7 +341,8 @@ export class TruckVehicle {
   /**
    * Бічні сили шин: кут проковзування α кожного колеса → сила до межі «тертя × навантаження» на α ≈ 7°,
    * далі занос (сила слабшає до 80 % і гальмує рух боком — вантажівка втрачає швидкість, а потім
-   * знову зачіпається й різко доповорочує). Сила прикладена в точці контакту — дає крен кузова.
+   * знову зачіпається й різко доповорочує). Сила прикладена нижче центру мас — крен кузова, а в різкому
+   * повороті на швидкості — перекидання.
    * Форма кривої — гіпотеза під опис поведінки оригіналу (відгук користувача), межа тертя — 0,84 з оригіналу.
    */
   private applyTireLateral(dt: number): void {
@@ -357,8 +376,8 @@ export class TruckVehicle {
         const limited = Math.min(drag, (wheelMass * Math.abs(vLong)) / dt);
         impulse.addScaledVector(fwd, -Math.sign(vLong) * limited * dt);
       }
-      // Точку прикладання піднімаємо до висоти центру мас на частку TIRE.roll_lift: крен лишається, а
-      // перекидальний момент менший (як rollInfluence у Bullet).
+      // Точку прикладання піднімаємо до висоти центру мас на частку TIRE.roll_lift: перекидальний момент трохи
+      // менший за фізичний (як rollInfluence у Bullet) — бічне тертя 1,15 інакше перекидало б у кожному повороті.
       const com = this.body.worldCom();
       const h = (com.x - p.x) * up.x + (com.y - p.y) * up.y + (com.z - p.z) * up.z;
       const at = { x: p.x + up.x * h * TIRE.roll_lift, y: p.y + up.y * h * TIRE.roll_lift, z: p.z + up.z * h * TIRE.roll_lift };

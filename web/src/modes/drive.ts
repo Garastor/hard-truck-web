@@ -129,6 +129,32 @@ const DENT_ZONES = ['FC', 'FR', 'R', 'BR', 'BC', 'BL', 'L', 'FL'];
 const DENT_MIN_HIT = 2;
 const DENT_STEPS = [5, 14, 28, 50];
 
+/** Стартовий світлофор (HTruck.exe 0x490da4): червоний 2 с + жовтий 3,5 с до старту, зелений — ще 5 с після. */
+const START_RED = 2;
+const START_YELLOW = 3.5;
+const START_GREEN = 5;
+const START_COUNTDOWN = START_RED + START_YELLOW;
+type StartLamp = 'r' | 'y' | 'g' | 'off';
+
+/** Лампа за часом від початку відліку: жовтий спалахує на кожній третій третині секунди (n mod 3 = 2, n < 9). */
+function startLamp(t: number): StartLamp {
+  if (t < START_RED) return 'r';
+  if (t < START_COUNTDOWN) {
+    const n = Math.floor((t - START_RED) * 3 + 0.01);
+    return n % 3 === 2 && n < 9 ? 'y' : 'off';
+  }
+  return t < START_COUNTDOWN + START_GREEN ? 'g' : 'off';
+}
+
+/** Скільки суперник лежить перекинутим, перш ніж повернутися на дорогу, с (гіпотеза). */
+const OPPONENT_RECOVER = 3;
+
+/** Машина лежить на боці чи догори колесами. */
+function isFlipped(t: TruckVehicle): boolean {
+  const q = t.body.rotation();
+  return 1 - 2 * (q.x * q.x + q.z * q.z) < 0.5;
+}
+
 export class DriveSession {
   private world!: RAPIER.World;
   private truck!: TruckVehicle;
@@ -176,10 +202,14 @@ export class DriveSession {
   /** Сектор, з якого почався відлік кола. */
   private lapRoom: string | null = null;
   /** Суперники (aicar у truck.ini): вантажівки під керуванням автопілота. */
-  readonly opponents: { truck: TruckVehicle; pilot: AutoPilot; odo: Odometer; lights: TruckLights | null }[] = [];
+  readonly opponents: { truck: TruckVehicle; pilot: AutoPilot; odo: Odometer; lights: TruckLights | null; flippedFor: number }[] = [];
   private readonly playerOdo = new Odometer();
-  /** Відлік до старту, с (як світлофор над стартом: червоний → жовтий → зелений). */
-  private countdown = 3;
+  /** Відлік до старту, с (світлофор над стартом, як в оригіналі: червоний → три спалахи жовтого → зелений). */
+  private countdown = START_COUNTDOWN;
+  /** Поточна лампа стартового світлофора; null — ще не вмикали. */
+  private lamp: StartLamp | null = null;
+  /** Звук спалаху жовтого (alarmSound), звучить, поки лампа горить. */
+  private lampBeep: { stop(): void } | null = null;
   /** Кількість кіл гонки (Кольцо — 3, за довідкою оригіналу); 0 — без фінішу. */
   lapsToFinish = 3;
   /** Тип заїзду: кільцева гонка, маршрут до фінішу, вільна їзда (база). */
@@ -281,8 +311,7 @@ export class DriveSession {
   onResetRequest: (() => void) | null = null;
   /** Машина лежить на боці чи догори колесами. */
   get flipped(): boolean {
-    const q = this.truck.body.rotation();
-    return new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w)).y < 0.5;
+    return isFlipped(this.truck);
   }
   /** Одноразовий звук з архіву траси (repair, alarm…). */
   sound(name: string, volume = 1): void {
@@ -880,7 +909,7 @@ export class DriveSession {
       const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
       this.reflections.push(new LampReflections(model.root, () => truck.groundHeight()));
       this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z), (x, y, z) => this.glossAt(x, y, z)));
-      this.opponents.push({ truck, pilot, odo: new Odometer(), lights });
+      this.opponents.push({ truck, pilot, odo: new Odometer(), lights, flippedFor: 0 });
     });
   }
 
@@ -903,6 +932,17 @@ export class DriveSession {
       o.truck.update(dt, st);
       o.odo.update(pos, this.wayNet);
       if (tp.y < this.fallY) o.truck.reset(this.spawn);
+      // Перекинувся (лежить на боці довше OPPONENT_RECOVER с) — назад на дорогу: найближча лінія way_* за її напрямком.
+      o.flippedFor = isFlipped(o.truck) ? o.flippedFor + dt : 0;
+      if (o.flippedFor > OPPONENT_RECOVER && this.wayNet) {
+        o.flippedFor = 0;
+        const n = this.wayNet.nearest(pos);
+        if (n) {
+          const a = n.line.pts[n.seg];
+          const b = n.line.pts[n.seg + 1];
+          o.truck.reset({ position: this.groundAt(a.clone().lerp(b, n.t)), forward: b.clone().sub(a).setY(0).normalize() });
+        }
+      }
     }
   }
 
@@ -931,20 +971,30 @@ export class DriveSession {
     const before = this.countdown;
     this.countdown -= dt;
     if (before > 0 && this.countdown <= 0) this.raceStart = this.clock;
-    // Стартовий світлофор: 3–2 с червоний, 2–1 жовтий, далі зелений (перемикачі *SvetKey, стан 1 = увімкнено).
-    const phase = (c: number) => (c > 2 ? 'r' : c > 1 ? 'y' : c > -6 ? 'g' : 'off');
-    if (phase(before) !== phase(this.countdown) || before === 3) {
-      const ph = phase(this.countdown);
-      const asm = this.built.assembler;
-      asm.setSwitch('RedSvetKey', ph === 'r' ? 1 : 0);
-      asm.setSwitch('YellowSvetKey', ph === 'y' ? 1 : 0);
-      asm.setSwitch('GreenSvetKey', ph === 'g' ? 1 : 0);
-      if (ph === 'g') this.audio?.play('start', 0.5);
-    }
+    if (this.raceKind !== 'free') this.updateStartLight();
     if (this.opponents.length) {
       const tp = this.truck.body.translation();
       this.playerOdo.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.wayNet);
     }
+  }
+
+  /**
+   * Стартовий світлофор (HTruck.exe 0x490e34, перемикачі *SvetKey, стан 1 = увімкнено): 2 с червоний, далі 3,5 с
+   * жовтий блимає тричі по 1/3 с, кожен спалах — alarmSound, поки лампа горить; на зеленому alarmSound повністю
+   * і старт, зелений горить ще 5 с.
+   */
+  private updateStartLight(): void {
+    const lamp = startLamp(START_COUNTDOWN - this.countdown);
+    if (lamp === this.lamp) return;
+    this.lamp = lamp;
+    const asm = this.built.assembler;
+    asm.setSwitch('RedSvetKey', lamp === 'r' ? 1 : 0);
+    asm.setSwitch('YellowSvetKey', lamp === 'y' ? 1 : 0);
+    asm.setSwitch('GreenSvetKey', lamp === 'g' ? 1 : 0);
+    this.lampBeep?.stop();
+    this.lampBeep = null;
+    if (lamp === 'y') this.lampBeep = this.audio?.play('alarm', 1) ?? null;
+    if (lamp === 'g') this.audio?.play('alarm', 1);
   }
 
   /** Детермінований крок для тестів: n кроків фізики без залежності від requestAnimationFrame. */
@@ -1050,7 +1100,7 @@ export class DriveSession {
     const best = this.bestLap !== null ? `   кращий ${fmtTime(this.bestLap)}` : '';
     const place = this.opponents.length ? `   місце ${this.racePosition()}/${this.opponents.length + 1}` : '';
     const start = this.countdown > 0 ? `
-${['ЗЕЛЕНИЙ', 'ЖОВТИЙ', 'ЧЕРВОНИЙ'][Math.min(2, Math.floor(this.countdown))]}  ${Math.ceil(this.countdown)}` : '';
+${this.lamp === 'r' ? 'ЧЕРВОНИЙ' : 'ЖОВТИЙ'}  ${Math.ceil(this.countdown)}` : '';
     const fin = this.finished ? `
 ФІНІШ!  місце ${this.finished.place}, час ${fmtTime(this.finished.time)}` : '';
     const speedLine = `${t.speedKmh.toFixed(0)} км/год   ${t.gear < 0 ? 'R' : t.gear === 0 ? 'N' : t.gear}   ${t.rpm.toFixed(0)} об/хв`;

@@ -26,6 +26,8 @@ interface RunReport {
   stuckFor: number;
   room: string | null;
   speedKmh: number;
+  /** Скільки разів машина перекидалась (після 3 с на боці — відновлення, як кнопка «↺»). */
+  flips: number;
 }
 
 const STEP = 1 / 30;
@@ -63,14 +65,22 @@ export function installDevTools(host: DevHost): object {
     let still = 0;
     let stuckFor = 0;
     let prev = d.playerTruck.body.translation();
+    let flips = 0;
+    let onSide = 0;
     const steps = Math.round(seconds / STEP);
     for (let i = 0; i < steps; i++) {
       d.update(STEP);
+      onSide = d.flipped ? onSide + STEP : 0;
+      if (onSide > 3) {
+        flips++;
+        onSide = 0;
+        d.recover();
+      }
       if (d.roomName) rooms.add(d.roomName);
       const p = d.playerTruck.body.translation();
       const moved = Math.hypot(p.x - prev.x, p.z - prev.z);
       distance += moved;
-      still = moved < 0.5 * STEP ? still + STEP : 0;
+      still = moved < 0.5 * STEP && !onSide ? still + STEP : 0; // лежання на боці — не застрягання
       stuckFor = Math.max(stuckFor, still);
       prev = p;
     }
@@ -81,6 +91,7 @@ export function installDevTools(host: DevHost): object {
       stuckFor: Math.round(stuckFor * 10) / 10,
       room: d.roomName,
       speedKmh: Math.round(d.playerTruck.speedKmh),
+      flips,
     };
   };
 

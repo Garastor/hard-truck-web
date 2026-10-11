@@ -99,10 +99,10 @@ export class EngineAudio {
     };
   }
 
-  /** Одноразовий звук. */
-  play(name: string, volume = 1, rate = 1): void {
+  /** Одноразовий звук; повертає зупинку (обірвати раніше кінця запису). */
+  play(name: string, volume = 1, rate = 1): { stop(): void } | null {
     const buf = this.buffers.get(name);
-    if (!buf || this.ctx.state !== 'running') return;
+    if (!buf || this.ctx.state !== 'running') return null;
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.playbackRate.value = rate;
@@ -110,6 +110,15 @@ export class EngineAudio {
     g.gain.value = volume;
     src.connect(g).connect(this.master);
     src.start();
+    return {
+      stop: () => {
+        try {
+          src.stop();
+        } catch {
+          /* уже зупинено */
+        }
+      },
+    };
   }
 
   /** Оновлення двигуна: rpm — оберти, load — навантаження 0..1 (газ). */
