@@ -4,7 +4,7 @@
  * R червона, N біла, передачі зелені), міцність машини й цілість вантажу у відсотках; нижче — баланс і рядок гонки.
  */
 import type * as THREE from 'three';
-import { HUD_CYAN, PixelFont, box, pixelCanvas } from './pixelFont';
+import { HUD_CYAN, PixelFont, box, hudScale, pixelCanvas } from './pixelFont';
 
 export interface HudData {
   speedKmh: number;
@@ -17,6 +17,9 @@ export interface HudData {
   /** Рядок гонки: баланс, коло, час, місце, відлік, фініш; порожній — без нижньої панелі. */
   line: string;
 }
+
+/** Висота цифр швидкості відносно цифри передачі (на прохання користувача — трохи більші). */
+const SPEED_SIZE = 1.35;
 
 /** Кольори передачі — як світиться індикатор GearKey на приладовій панелі (текстура pribor.txr). */
 const GEAR_R = 'rgb(255,0,0)';
@@ -139,7 +142,7 @@ export class DriveHud {
     const dg = this.digits;
     // Швидкість — цифрами одометра, масштабованими до висоти індикатора передачі (за рядками з пікселями).
     const ink = dg ? this.digitInk(L) : null;
-    const lh = L.height;
+    const lh = ink ? Math.max(L.height, ink.h + 2) : L.height;
     const sh = S.height;
     // Ширини — за найширшими значеннями, щоб табло не «дихало» з кожною цифрою.
     const step = dg && ink ? Math.round(dg[0].width * ink.scale) : 0;
@@ -172,15 +175,32 @@ export class DriveHud {
     const y = top1 + 3;
     const ly = y + Math.round((lh - L.height) / 2);
     const ys = y + Math.round((lh - sh) / 2);
+    let speedLayer: HTMLCanvasElement | null = null;
     if (dg && ink) {
-      let dx = x + speedW - step * speed.length;
+      // Окреме полотно в повній роздільності екрана з плавним масштабуванням — як текстура одометра в кабіні
+      // (лінійна фільтрація + alphaTest); на піксельному полотні дрібні цифри з напівпрозорими краями розмивались.
+      const k = hudScale() * (window.devicePixelRatio || 1);
+      const sx = x + speedW - step * speed.length;
+      const sy = Math.round(ly + ink.gearTop + ink.gearH / 2 - ink.h / 2);
+      const lw = step * speed.length;
+      speedLayer = document.createElement('canvas');
+      speedLayer.width = Math.ceil(lw * k);
+      speedLayer.height = Math.ceil(ink.h * k);
+      speedLayer.style.cssText = `position:absolute;left:${sx * hudScale()}px;top:${sy * hudScale()}px;width:${lw * hudScale()}px;height:${ink.h * hudScale()}px`;
+      const sctx = speedLayer.getContext('2d')!;
+      sctx.imageSmoothingEnabled = true;
+      sctx.imageSmoothingQuality = 'high';
       const sh0 = ink.bottom - ink.top + 1;
+      let dx = 0;
       for (const ch of speed) {
         const c = dg[Number(ch)];
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(c, 0, ink.top, c.width, sh0, dx, ly + ink.gearTop, Math.round(c.width * ink.scale), ink.gearH);
+        sctx.drawImage(c, 0, ink.top, c.width, sh0, dx * k, 0, c.width * ink.scale * k, ink.h * k);
         dx += step;
       }
+      // Відсікання прозорості 0,5, як у матеріалі кабіни (alphaTest): після плавного збільшення краї чіткі.
+      const img = sctx.getImageData(0, 0, speedLayer.width, speedLayer.height);
+      for (let i = 3; i < img.data.length; i += 4) img.data[i] = img.data[i] >= 128 ? 255 : 0;
+      sctx.putImageData(img, 0, 0);
     } else L.draw(ctx, speed, x + speedW - L.measure(speed), y, HUD_CYAN);
     x += speedW + 8;
     L.draw(ctx, gear, x + Math.floor((gearW - L.measure(gear)) / 2), ly, gear === 'R' ? GEAR_R : gear === 'N' ? GEAR_N : GEAR_D);
@@ -196,13 +216,13 @@ export class DriveHud {
     if (cargo) stat(BOXES_ICON, cargo, 10);
 
     if (d.line) S.draw(ctx, d.line, 2 + Math.floor((innerW - lineW) / 2), top2 + 3, HUD_CYAN);
-    this.host.replaceChildren(canvas);
+    this.host.replaceChildren(...(speedLayer ? [canvas, speedLayer] : [canvas]));
   }
 
-  private ink: { top: number; bottom: number; scale: number; gearTop: number; gearH: number } | null = null;
+  private ink: { top: number; bottom: number; scale: number; h: number; gearTop: number; gearH: number } | null = null;
 
-  /** Рядки з пікселями цифр одометра і цифри «8» великого шрифту — масштаб, щоб висоти збігались. */
-  private digitInk(L: PixelFont): { top: number; bottom: number; scale: number; gearTop: number; gearH: number } {
+  /** Рядки з пікселями цифр одометра і цифри «8» великого шрифту — масштаб цифр швидкості (SPEED_SIZE × передача). */
+  private digitInk(L: PixelFont): { top: number; bottom: number; scale: number; h: number; gearTop: number; gearH: number } {
     if (this.ink) return this.ink;
     const dg = this.digits!;
     let top = Infinity;
@@ -221,7 +241,8 @@ export class DriveHud {
     const rows = g ? Array.from({ length: L.height }, (_, y) => g.bits.slice(y * w, y * w + w).some((b) => b === 1)) : [];
     const gearTop = Math.max(0, rows.indexOf(true));
     const gearH = rows.length ? rows.lastIndexOf(true) - gearTop + 1 : L.height;
-    this.ink = { top, bottom, scale: gearH / (bottom - top + 1), gearTop, gearH };
+    const h = Math.round(gearH * SPEED_SIZE);
+    this.ink = { top, bottom, scale: h / (bottom - top + 1), h, gearTop, gearH };
     return this.ink;
   }
 
