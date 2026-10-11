@@ -538,8 +538,8 @@ export class CareerGame {
     const key =
       this.level === 'MENU3D'
         ? ev
-          ? `${ev.type}/${ev.param}/${c.money}/${c.truck}/${c.parts.join()}/${c.cargo.map((i) => i.qty).join()}`
-          : `base/${repairCost(c, this.spec)}`
+          ? `${ev.type}/${ev.param}/${c.money}/${c.truck}/${c.parts.join()}/${c.cargo.map((i) => i.qty).join()}/${repairCost(c, this.spec)}`
+          : 'base'
         : `track/${this.level}/${this.drive?.flipped ? 1 : 0}/${this.needsRoadRepair() ? 1 : 0}`;
     if (key === this.zoneKey) return;
     this.zoneKey = key;
@@ -547,8 +547,12 @@ export class CareerGame {
     this.actions.replaceChildren();
     this.keyLoad = this.keyUnload = this.keyBuy = null;
     this.info.hidden = true;
-    if (this.level !== 'MENU3D') return this.trackZone();
-    if (!ev) return this.baseZone();
+    if (this.level !== 'MENU3D') {
+      this.drive?.input.setBaseLayout(null);
+      return this.trackZone();
+    }
+    this.baseButtons();
+    if (!ev) return;
     if (ev.type === EV_GOOD) this.goodZone(ev.param);
     else if (ev.type === EV_TRUCK) this.truckZone(ev.param);
     else this.partZone(ev.param);
@@ -710,21 +714,36 @@ export class CareerGame {
     return b;
   }
 
-  private baseZone(): void {
+  /**
+   * Кнопки бази (на прохання користувача; значок виклику допомоги тут без сенсу): «Головне меню» — на місці
+   * сигналу; сигнал і «Рейтинг» — у групі «•••»; «Ремонт» (коли машина пошкоджена) — угорі ліворуч, праворуч від
+   * кнопки технічного меню. Без паузи — на базі гра не зупиняється.
+   */
+  private baseButtons(): void {
+    const mk = (cls: string, label: string, html: string, onClick: () => void) => {
+      const b = el('button', `touch-btn ${cls}`);
+      b.setAttribute('aria-label', label);
+      b.innerHTML = html;
+      b.addEventListener('click', onClick);
+      return b;
+    };
+    const top = [mk('home', 'Головне меню', HOME_SVG, () => void this.quit())];
     const rc = repairCost(this.c, this.spec);
-    if (rc > 0)
-      this.button(`РЕМОНТ $${rc}`, () => {
+    if (rc > 0) {
+      const b = mk('repair', `Ремонт ${rc}`, '', () => {
         if (!repair(this.c, this.spec)) return toastIn(this.host.overlay, 'Недостатньо грошей');
         this.save();
         this.zoneKey = '';
         this.refresh();
       });
-    this.ratingButton();
-    const home = document.createElement('span');
-    home.innerHTML = HOME_SVG;
-    home.style.display = 'grid';
-    this.square('Меню', home, () => void this.quit());
-    this.collapsible();
+      const label = `РЕМОНТ $${rc}`;
+      const { canvas, ctx } = pixelCanvas(this.measure(label), this.host.font?.height ?? 8, hudScale() * BUTTON_ZOOM);
+      this.text(ctx, label, 0, 0, HUD_CYAN);
+      b.append(canvas);
+      top.push(b);
+    }
+    this.drive?.input.setBaseLayout({ group: [mk('rating', 'Рейтинг', RATING_SVG, () => void this.rating())], top });
+    if (this.drive) this.drive.paused = false;
   }
 
   /**

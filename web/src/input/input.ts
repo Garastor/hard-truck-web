@@ -209,13 +209,16 @@ export class Input {
       more.hidden = !more.hidden;
       toggle.classList.toggle('on', !more.hidden);
     });
-    const items: [string, Command][] = [['lights', 'lights'], ['mirror', 'mirror'], ['map', 'map'], ['wipers', 'wipers'], ['engine', 'engine'], ['cab', 'cab'], ['swap', 'swap']];
+    const items: [string, Command][] = [['lights', 'lights'], ['mirror', 'mirror'], ['map', 'map'], ['wipers', 'wipers'], ['engine', 'engine'], ['cab', 'cab'], ['swap', 'swap'], ['horn', 'horn']];
     for (const [cls, cmd] of items) {
-      btn(cls, '', undefined, cmd, ICONS[cls as keyof typeof ICONS]);
+      btn(cls === 'horn' ? 'horn-in-group' : cls, '', undefined, cmd, cls === 'horn' ? HORN_SVG : ICONS[cls as keyof typeof ICONS]);
       const b = ui.lastElementChild as HTMLElement;
       b.dataset.cmd = cmd;
       more.append(b);
     }
+    // Сигнал у групі — лише в розкладці бази (setBaseLayout).
+    (more.querySelector('.horn-in-group') as HTMLElement).hidden = true;
+    this.more = more;
     ui.append(more);
     parent.append(ui);
     this.touchUi = ui;
@@ -223,6 +226,25 @@ export class Input {
   }
 
   private touchUi: HTMLElement | null = null;
+  private more: HTMLElement | null = null;
+  private baseExtras: HTMLElement[] = [];
+
+  /**
+   * Розкладка бази (кар'єра): сигнал переходить у групу «•••» разом із group (Рейтинг), на місці сигналу — top
+   * (Головне меню, Ремонт); null — звичайна (траса, тест).
+   */
+  setBaseLayout(layout: { group: HTMLElement[]; top: HTMLElement[] } | null): void {
+    const ui = this.touchUi;
+    if (!ui || !this.more) return;
+    for (const e of this.baseExtras) e.remove();
+    this.baseExtras = [];
+    ui.classList.toggle('base-layout', !!layout);
+    (this.more.querySelector('.horn-in-group') as HTMLElement).hidden = !layout;
+    if (!layout) return;
+    for (const e of layout.group) this.more.append(e);
+    for (const e of layout.top) ui.append(e);
+    this.baseExtras = [...layout.group, ...layout.top];
+  }
   /** Підсвітка увімкнених функцій у групі «ще» (фари, дзеркало…); hidden — кнопку не показувати. */
   setToggle(cmd: Command, on: boolean, hidden = false): void {
     const b = this.touchUi?.querySelector<HTMLElement>(`[data-cmd="${cmd}"]`);

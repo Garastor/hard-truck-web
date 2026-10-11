@@ -485,8 +485,31 @@ body.driving .drive-hud {
 body.driving .touch-btn.cam,
 body.driving .touch-btn.reset,
 body.driving .touch-btn.horn,
-body.driving .touch-btn.more {
+body.driving .touch-btn.more,
+body.driving .touch-btn.home,
+body.driving .touch-btn.repair {
   top: max(8px, env(safe-area-inset-top));
+}
+
+/* База (кар'єра): сигнал — у групі «•••», на його місці — «Головне меню»; «Ремонт» — праворуч від кнопки меню. */
+.touch-ui.base-layout > .touch-btn.horn {
+  display: none;
+}
+
+.touch-btn.home {
+  right: calc(var(--sr) + 104px * var(--ui, 1));
+}
+
+.touch-btn.repair {
+  left: calc(var(--sl) + 52px * var(--ui, 1));
+  width: auto;
+  min-width: calc(96px * var(--ui, 1));
+  padding: 0 calc(10px * var(--ui, 1));
+}
+
+body.driving.bar-open .touch-btn.home,
+body.driving.bar-open .touch-btn.repair {
+  visibility: hidden;
 }
 
 body.driving.bar-open .touch-btn.more,
