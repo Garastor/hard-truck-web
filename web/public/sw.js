@@ -37,11 +37,13 @@ self.addEventListener('message', (e) => {
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   const url = new URL(req.url);
-  if (req.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/game/')) return;
+  if (req.method !== 'GET' || url.origin !== location.origin || /^\/game2?\//.test(url.pathname)) return;
   // Сторінка (з будь-якими параметрами адреси) — з кешу цієї версії; без кешу — з мережі.
   // ignoreVary: сервер може віддати `Vary: Origin`, а динамічний import() модуля надсилає Origin — без цього
   // закешований модуль (код режиму їзди) не знаходився, і офлайн заїзд не запускався.
-  const key = req.mode === 'navigate' ? './' : req;
+  // Теки-входи /ht1/, /ht2/ (прямий запуск гри) — свої сторінки.
+  const entry = /\/(ht[12])\/(index\.html)?$/.exec(url.pathname);
+  const key = req.mode === 'navigate' ? (entry ? `./${entry[1]}/` : './') : req;
   e.respondWith(
     caches.open(CACHE).then((c) =>
       c.match(key, { ignoreSearch: req.mode === 'navigate', ignoreVary: true }).then(

@@ -1,0 +1,98 @@
+/* Дальнобойщики 2: меню (menu.ts) і режим гри (app.ts). */
+.ht2-stage {
+  width: 800px;
+  height: 600px;
+}
+
+.ht2-item {
+  padding: 4px 8px;
+  margin: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: rgb(240, 220, 138);
+  font: 700 16px/1 Arial, sans-serif;
+  line-height: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Напис — маска з растрового шрифту, колір — кнопки. */
+.ht2-item-text {
+  display: block;
+  image-rendering: pixelated;
+  filter: drop-shadow(1px 1px 0 #000);
+}
+
+.ht2-item:hover .ht2-item-text,
+.ht2-item:focus-visible .ht2-item-text {
+  filter: drop-shadow(0 0 3px rgba(255, 230, 150, 0.9)) brightness(1.2);
+}
+
+.ht2-item:active {
+  transform: translateY(1px);
+}
+
+.ht2-item.disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Режим HT2: панель і кнопки першої гри сховані. */
+body.game-ht2 #bar,
+body.game-ht2 #menu,
+body.game-ht2 #stats,
+body.game-ht2 #gallery {
+  display: none;
+}
+
+.ht2-hud {
+  position: fixed;
+  left: max(8px, env(safe-area-inset-left));
+  top: max(8px, env(safe-area-inset-top));
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.ht2-hud > * {
+  pointer-events: auto;
+}
+
+.ht2-hud button {
+  min-height: 0;
+  padding: 6px 10px;
+  border: 1px solid rgba(240, 220, 138, 0.5);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: rgb(240, 220, 138);
+  font: 600 13px/1 Arial, sans-serif;
+}
+
+.ht2-hud select {
+  min-height: 0;
+  padding: 5px 6px;
+  border: 1px solid rgba(240, 220, 138, 0.5);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: rgb(240, 220, 138);
+  font: 600 13px/1 Arial, sans-serif;
+}
+
+.ht2-info {
+  position: fixed;
+  right: max(8px, env(safe-area-inset-right));
+  bottom: max(8px, env(safe-area-inset-bottom));
+  z-index: 5;
+  max-width: 50vw;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #e8e0c0;
+  font: 500 11px/1.35 ui-monospace, Consolas, monospace;
+  white-space: pre;
+  pointer-events: none;
+}

@@ -16,6 +16,8 @@ import { parseTech } from '../src/formats/tech';
 import { parseHeightmap } from '../src/formats/heightmap';
 import { parseOvl } from '../src/formats/ovl';
 import { decodeCp1251 } from '../src/formats/binary';
+import { HT2_FILES, HT2_REQUIRED } from '../src/games/ht2/files';
+import { detectGame } from '../src/games/registry';
 
 const GAME = resolve(import.meta.dirname, '..', '..', 'Game', 'Hard Truck 2');
 const has = existsSync(join(GAME, 'king.exe'));
@@ -142,5 +144,21 @@ describe.skipIf(!has)('HT2: RAW, OVL', () => {
     const ovl = parseOvl(decodeCp1251(read('COMMON/TRUCKS.OVL')));
     expect(ovl.size).toBeGreaterThan(10);
     expect([...ovl.values()].flat().every((n) => /\.(txr|msk)$/.test(n))).toBe(true);
+  });
+});
+
+describe.skipIf(!has)('HT2: набір файлів для пристрою', () => {
+  it('усі потрібні файли є в грі', () => {
+    for (const f of HT2_REQUIRED) expect(existsSync(join(GAME, f)), f).toBe(true);
+  });
+  it('шлях з архіву → канонічний', () => {
+    expect(HT2_FILES.canonical('Hard Truck 2/ENV/AA.B3D')).toBe('ENV/aa.b3d');
+    expect(HT2_FILES.canonical('x/COMMON/trucks1.res')).toBe('COMMON/TRUCKS1.RES');
+    expect(HT2_FILES.canonical('ENV/aa.res')).toBeNull();
+  });
+  it('гра за списком файлів', () => {
+    expect(detectGame(['Hard Truck 2/king.exe', 'Hard Truck 2/LOAD.RES'])).toBe('ht2');
+    expect(detectGame(['HardTruck/COUNT/COUNT2.B3D', 'HardTruck/LOAD.RES'])).toBe('ht1');
+    expect(detectGame(['readme.txt'])).toBeNull();
   });
 });

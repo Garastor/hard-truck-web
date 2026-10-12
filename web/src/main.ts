@@ -2,7 +2,12 @@ import { cabStyle, setCabStyle } from './game/viewSettings';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LEVELS, devServerSource, loadLevel, type FileSource, type LevelId, type LoadedLevel } from './assets/loader';
-import { REQUIRED, cachedSource, idbSource, importFiles, importZip, missingFiles, prefetchMissing, storageInfo, storeFile } from './assets/gameFiles';
+import {
+  HT1_FILES, cachedSource, idbSource, importFiles, importZip, missingFiles, prefetchMissing, storageInfo, storeFile, zipNames,
+  type FileSet,
+} from './assets/gameFiles';
+import { GAMES, GAME_IDS, detectGame, gameFromLocation, lastGame, setLastGame, type GameId } from './games/registry';
+import { HT2_FILES, ht2DevSource } from './games/ht2/files';
 import { isIos, isStandalone, registerServiceWorker } from './ui/pwa';
 import { setSoftFont, soften } from './ui/softUi';
 import { WIPER_TXR, loadCab2d, loadCab2dTexture } from './assets/cab2d';
@@ -483,12 +488,16 @@ async function devServerAvailable(): Promise<boolean> {
   }
 }
 
+const FILE_SETS: Record<GameId, FileSet> = { ht1: HT1_FILES, ht2: HT2_FILES };
+
 /**
  * Екран імпорту файлів гри: перший запуск (бракує файлів) або повторний імпорт з «Опцій» (again — з кнопкою
  * «Скасувати», поверх меню). На iPhone у Safari — підказка спершу встановити гру на головний екран: у застосунку
  * з головного екрана окреме сховище, файли, імпортовані в Safari, він не побачить.
+ * set — яку гру чекаємо (null — будь-яку). Гру впізнаємо за вмістом архіву чи теки: файли іншої гри теж
+ * зберігаються (під її префіксом). Результат — гра, файли якої тепер повні (null — скасовано).
  */
-function showImport(missing: string[], again = false): Promise<void> {
+function showImport(set: FileSet | null, again = false): Promise<GameId | null> {
   return new Promise((resolve) => {
     status.hidden = false;
     status.innerHTML = '';
@@ -500,10 +509,14 @@ function showImport(missing: string[], again = false): Promise<void> {
         ? `<p class="hint">На iPhone спершу встановіть гру: «Поділитися» → «На початковий екран», відкрийте її з іконки
       й оберіть файли вже там — у Safari й на головному екрані окремі сховища.</p>`
         : '';
+    const what = !set
+      ? 'Для гри потрібні файли оригінальних «Дальнобійників» (≈ 66 МБ) або «Дальнобійників 2» (≈ 150 МБ). Оберіть архів чи теку встановленої гри —'
+      : set.game === 'ht2'
+        ? `Для гри потрібні файли «Дальнобійників 2» (≈ 150 МБ, файлів: ${set.required.length}). Оберіть архів або теку встановленої гри (GOG, диск) —`
+        : `Для гри потрібні файли оригінальних «Дальнобійників» (≈ 66 МБ, файлів: ${set.required.length}). Оберіть архів <b>HardTruck.zip</b> або теку встановленої гри —`;
     box.innerHTML = `
-      <h2>Файли гри</h2>
-      <p>${again ? 'Імпорт замінить файли гри на цьому пристрої.' : `Для гри потрібні файли оригінальних «Дальнобійників» (≈ 66 МБ, файлів: ${missing.length}).`}
-      Оберіть архів <b>HardTruck.zip</b> або теку встановленої гри — файли залишаться лише на цьому пристрої;
+      <h2>Файли гри${set ? ` — ${GAMES[set.game].title}` : ''}</h2>
+      <p>${again ? 'Імпорт замінить файли гри на цьому пристрої. ' : ''}${what} файли залишаться лише на цьому пристрої;
       далі гра працює без інтернету.</p>
       ${iosHint}
       <label class="btn">Обрати ZIP<input type="file" accept=".zip,application/zip" hidden></label>
@@ -512,13 +525,13 @@ function showImport(missing: string[], again = false): Promise<void> {
       <progress max="1" value="0" hidden></progress>
       <p class="msg"></p>`;
     status.append(box);
-    const close = () => {
+    const close = (got: GameId | null) => {
       status.innerHTML = '';
       status.hidden = true;
       status.classList.remove('over-menu');
-      resolve();
+      resolve(got);
     };
-    box.querySelector('.cancel')?.addEventListener('click', close);
+    box.querySelector('.cancel')?.addEventListener('click', () => close(null));
     const [zipIn, dirIn] = box.querySelectorAll('input');
     const bar = box.querySelector('progress')!;
     const msg = box.querySelector('.msg')!;
@@ -527,25 +540,88 @@ function showImport(missing: string[], again = false): Promise<void> {
       bar.value = f;
       msg.textContent = m;
     };
-    const finish = async () => {
-      const left = await missingFiles();
+    // Гра за вмістом: невпізнане — та, яку чекаємо (або перша).
+    const target = (names: Iterable<string>) => FILE_SETS[detectGame(names) ?? set?.game ?? 'ht1'];
+    const finish = async (got: FileSet) => {
+      const left = await missingFiles(got);
       if (left.length) msg.textContent = `Бракує файлів: ${left.join(', ')}`;
-      else close();
+      else if (set && got !== set) msg.textContent = `Це файли «${GAMES[got.game].title}» — збережено. Для «${GAMES[set.game].title}» оберіть її архів чи теку.`;
+      else close(got.game);
     };
     zipIn.addEventListener('change', async () => {
-      if (zipIn.files?.[0]) await importZip(zipIn.files[0], progress).catch((e) => (msg.textContent = String(e)));
-      await finish();
+      const zip = zipIn.files?.[0];
+      if (!zip) return;
+      const got = target(await zipNames(zip).catch(() => []));
+      await importZip(zip, progress, got).catch((e) => (msg.textContent = String(e)));
+      await finish(got);
     });
     dirIn.addEventListener('change', async () => {
-      if (dirIn.files) await importFiles(dirIn.files, progress).catch((e) => (msg.textContent = String(e)));
-      await finish();
+      if (!dirIn.files) return;
+      const files = [...dirIn.files];
+      const got = target(files.map((f) => f.webkitRelativePath || f.name));
+      await importFiles(files, progress, got).catch((e) => (msg.textContent = String(e)));
+      await finish(got);
     });
   });
 }
 
+/** Чи є гра на dev-сервері ПК (файли за /game/ чи /game2/). */
+async function devHas(id: GameId): Promise<boolean> {
+  try {
+    const r = await fetch(`${GAMES[id].devPrefix}${GAMES[id].devProbe}`, { method: 'HEAD' });
+    return r.ok && !(r.headers.get('content-type') ?? '').includes('html');
+  } catch {
+    return false;
+  }
+}
+
+/** Ігри, доступні зараз: повністю імпортовані на пристрій або на dev-сервері ПК. */
+async function availableGames(): Promise<GameId[]> {
+  const ok = await Promise.all(
+    GAME_IDS.map(async (id) => (await missingFiles(FILE_SETS[id]).catch(() => [''])).length === 0 || (params.get('source') !== 'local' && (await devHas(id)))),
+  );
+  return GAME_IDS.filter((_, i) => ok[i]);
+}
+
+/** Скільки ігор доступно (від цього залежить «Вихід» у головному меню — до вибору гри). */
+let gameCount = 1;
+
+/** Вихід до вибору гри: головна адреса порту (без теки-входу /ht1/, /ht2/ і параметрів) — з перезавантаженням. */
+function exitToGameSelect(): void {
+  location.assign(location.pathname.replace(/ht[12]\/(index\.html)?$/i, ''));
+}
+
+async function chooseGame(ids: GameId[]): Promise<GameId> {
+  const [small, large] = await hudFonts();
+  const { gameSelectScreen } = await import('./games/select');
+  const sourceOf = (id: GameId): FileSource => (id === 'ht1' ? cachedSource(devServerSource) : cachedSource(ht2DevSource, HT2_FILES));
+  const cards = await Promise.all(
+    ids.map(async (id) => {
+      const art = await MenuArt.load((n) => sourceOf(id).read(n));
+      return { meta: GAMES[id], art: art?.background(GAMES[id].menuBackground) ?? null };
+    }),
+  );
+  return gameSelectScreen(cards, { small, large }, lastGame());
+}
+
 async function boot(): Promise<void> {
   void navigator.storage?.persist?.();
-  const missing = await missingFiles().catch(() => REQUIRED);
+  const wanted = gameFromLocation();
+  const games = await availableGames();
+  gameCount = games.length;
+  let game: GameId | null = wanted;
+  if (!game) {
+    if (games.length > 1) game = await chooseGame(games);
+    else if (games.length === 1) game = games[0];
+    else game = await showImport(null);
+  }
+  game ??= 'ht1';
+  setLastGame(game);
+  if (game === 'ht2') {
+    const { runHt2 } = await import('./games/ht2/app');
+    return runHt2({ renderer, overlay, setStatus, showImport: (again) => showImport(HT2_FILES, again), exit: gameCount > 1 ? exitToGameSelect : null });
+  }
+  const missing = await missingFiles().catch(() => HT1_FILES.required);
   if (!missing.length && params.get('source') !== 'pc') {
     // Усі файли вже на пристрої — читаємо локально, навіть якщо ПК доступний (без Wi-Fi — швидше).
     source = idbSource;
@@ -556,7 +632,7 @@ async function boot(): Promise<void> {
     await startup();
     return;
   } else {
-    if (missing.length) await showImport(missing);
+    if (missing.length) await showImport(HT1_FILES);
     source = idbSource;
   }
   await startup();
@@ -583,7 +659,9 @@ let largeFont: PixelFont | null | undefined;
 
 /** Растрові шрифти оригіналу для табло: MENU.FON (6×9) і large.fon (12×17); недоступний — null. */
 async function hudFonts(): Promise<[PixelFont | null, PixelFont | null]> {
-  const load = (name: string) => source.read(name).then((b) => new PixelFont(parseFon(b))).catch(() => null);
+  // До вибору гри (екран вибору) шрифти першої гри — з ПК або з пристрою, що є.
+  const read = (name: string) => source.read(name).catch(() => idbSource.read(name));
+  const load = (name: string) => read(name).then((b) => new PixelFont(parseFon(b))).catch(() => null);
   if (hudFont === undefined) hudFont = await load('MENU.FON');
   if (largeFont === undefined) largeFont = await load('large.fon');
   setHudFont(hudFont);
@@ -709,7 +787,7 @@ async function optionsDialog(): Promise<void> {
         },
         storage: storageInfo,
         async reimport() {
-          await showImport(REQUIRED, true);
+          await showImport(HT1_FILES, true);
           // Файли тепер на пристрої — читаємо звідси (а не з ПК).
           if (!(await missingFiles()).length) source = idbSource;
         },
@@ -761,7 +839,7 @@ async function menuLoop(): Promise<void> {
   if (menuArt === undefined) menuArt = await MenuArt.load((n) => source.read(n));
   if (!menuArt) return fallbackMenu();
   const choice = await mainMenu(menuArt, {
-    viewer: import.meta.env.DEV,
+    viewer: import.meta.env.DEV || gameCount > 1,
     get driver() {
       return currentDriver();
     },
@@ -791,6 +869,9 @@ async function menuLoop(): Promise<void> {
   if (choice === 'quick') {
     levelSel.value = 'CIRCUIT';
     selectTab('drive');
+  } else if (gameCount > 1) {
+    // «Вихід» — до вибору гри (переглядач на ПК лишається за налагоджувальним посиланням ?tab=scene).
+    return exitToGameSelect();
   } else selectTab('scene');
   await open();
 }

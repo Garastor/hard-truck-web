@@ -2,6 +2,7 @@ import { Unzip, UnzipInflate } from 'fflate';
 import { LEVELS } from './loader';
 import type { FileSource } from './loader';
 import { CAB2D_DIR, CAB2D_RAIN_FILES, CAB2D_SOURCE, extractCab2d } from './cab2d';
+import type { GameId } from '../games/registry';
 
 /**
  * Файли гри на пристрої гравця (Фаза 7): імпорт з HardTruck.zip або теки гри → IndexedDB.
@@ -39,28 +40,47 @@ async function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBReq
   });
 }
 
-/** Зіставляє довільний шлях з архіву/теки з канонічним (без урахування регістру, за останніми сегментами). */
-export function canonical(path: string): string | null {
-  // Витягнуті маски 2D-кабіни (див. cab2d.ts) — під власними іменами.
-  if (path.startsWith(CAB2D_DIR)) return path;
+/**
+ * Набір файлів однієї гри на пристрої: потрібні файли (канонічні шляхи), префікс ключів у сховищі
+ * (HT1 — без префікса, як і до появи HT2: імпортовані раніше файли лишаються на місці; HT2 — `ht2/`).
+ */
+export interface FileSet {
+  game: GameId;
+  required: string[];
+  prefix: string;
+  /** Довільний шлях з архіву/теки → канонічний (без префікса) або null — файл не потрібен. */
+  canonical(path: string): string | null;
+}
+
+/** Зіставлення за останніми сегментами шляху (без урахування регістру): «ENV/aa.b3d» чи «LOAD.RES». */
+export function matchRequired(required: string[], path: string): string | null {
   const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
   const last = parts[parts.length - 1]?.toUpperCase();
   const parent = parts[parts.length - 2]?.toUpperCase();
-  for (const req of REQUIRED) {
+  for (const req of required) {
     const [a, b] = req.split('/');
     if (b === undefined ? last === a.toUpperCase() : last === b.toUpperCase() && parent === a.toUpperCase()) return req;
   }
   return null;
 }
 
+/** Зіставляє довільний шлях з архіву/теки з канонічним (без урахування регістру, за останніми сегментами). */
+export function canonical(path: string): string | null {
+  // Витягнуті маски 2D-кабіни (див. cab2d.ts) — під власними іменами.
+  if (path.startsWith(CAB2D_DIR)) return path;
+  return matchRequired(REQUIRED, path);
+}
+
+export const HT1_FILES: FileSet = { game: 'ht1', required: REQUIRED, prefix: '', canonical };
+
 export async function storedFiles(): Promise<Set<string>> {
   const keys = (await tx('readonly', (s) => s.getAllKeys())) as string[];
   return new Set(keys);
 }
 
-export async function missingFiles(): Promise<string[]> {
+export async function missingFiles(set: FileSet = HT1_FILES): Promise<string[]> {
   const have = await storedFiles();
-  return REQUIRED.filter((r) => !have.has(r));
+  return set.required.filter((r) => !have.has(set.prefix + r));
 }
 
 /** Архів програмного набору, з якого при імпорті беремо лише маски 2D-кабіни. */
@@ -85,20 +105,20 @@ async function put(name: string, data: Uint8Array | Blob): Promise<void> {
 export type Progress = (msg: string, fraction: number) => void;
 
 /** Імпорт з окремих файлів або теки (input webkitdirectory). */
-export async function importFiles(files: FileList | File[], progress: Progress): Promise<number> {
+export async function importFiles(files: FileList | File[], progress: Progress, set: FileSet = HT1_FILES): Promise<number> {
   let n = 0;
   const list = [...files];
   for (const [i, f] of list.entries()) {
     const path = f.webkitRelativePath || f.name;
-    if (isCab2dSource(path)) {
+    if (set === HT1_FILES && isCab2dSource(path)) {
       progress('Витягую 2D-кабіни', i / list.length);
       await putCab2d(f).catch(() => {});
       continue;
     }
-    const c = canonical(path);
+    const c = set.canonical(path);
     if (!c) continue;
     progress(`Копіюю ${c}`, i / list.length);
-    await put(c, f);
+    await put(set.prefix + c, f);
     n++;
   }
   progress('Готово', 1);
@@ -106,13 +126,13 @@ export async function importFiles(files: FileList | File[], progress: Progress):
 }
 
 /** Потокове розпакування ZIP: беремо лише потрібні файли, решту пропускаємо без розпакування. */
-export async function importZip(zip: File, progress: Progress): Promise<number> {
+export async function importZip(zip: File, progress: Progress, set: FileSet = HT1_FILES): Promise<number> {
   const wanted = new Map<string, Uint8Array[]>();
   const done: Promise<void>[] = [];
   const unzip = new Unzip();
   unzip.register(UnzipInflate);
   unzip.onfile = (file) => {
-    if (isCab2dSource(file.name) && !wanted.has(CAB2D_SOURCE)) {
+    if (set === HT1_FILES && isCab2dSource(file.name) && !wanted.has(CAB2D_SOURCE)) {
       const chunks: Uint8Array[] = [];
       wanted.set(CAB2D_SOURCE, chunks);
       done.push(
@@ -130,7 +150,7 @@ export async function importZip(zip: File, progress: Progress): Promise<number> 
       );
       return;
     }
-    const c = canonical(file.name);
+    const c = set.canonical(file.name);
     if (!c || wanted.has(c)) return;
     const chunks: Uint8Array[] = [];
     wanted.set(c, chunks);
@@ -140,7 +160,7 @@ export async function importZip(zip: File, progress: Progress): Promise<number> 
           if (err) return reject(err);
           chunks.push(data);
           if (final) {
-            put(c, new Blob(chunks as BlobPart[])).then(resolve, reject);
+            put(set.prefix + c, new Blob(chunks as BlobPart[])).then(resolve, reject);
             chunks.length = 0;
           }
         };
@@ -173,7 +193,28 @@ export interface StorageInfo {
   persisted: boolean | null;
 }
 
-export async function storageInfo(): Promise<StorageInfo> {
+/** Імена файлів із центрального каталогу ZIP (у кінці архіву) — щоб упізнати гру до розпакування. */
+export async function zipNames(zip: File): Promise<string[]> {
+  const tail = new Uint8Array(await zip.slice(Math.max(0, zip.size - 2 * 1048576)).arrayBuffer());
+  const names: string[] = [];
+  const dec = new TextDecoder('latin1');
+  // Запис центрального каталогу: «PK\x01\x02», довжина імені — u16 на зсуві 28, імʼя — з 46.
+  for (let i = 0; i + 46 < tail.length; i++) {
+    if (tail[i] !== 0x50 || tail[i + 1] !== 0x4b || tail[i + 2] !== 1 || tail[i + 3] !== 2) continue;
+    const n = tail[i + 28] | (tail[i + 29] << 8);
+    names.push(dec.decode(tail.subarray(i + 46, i + 46 + n)));
+    i += 45 + n;
+  }
+  return names;
+}
+
+export async function storageInfo(set: FileSet = HT1_FILES): Promise<StorageInfo> {
+  if (set !== HT1_FILES) {
+    const missing = await missingFiles(set).catch(() => set.required);
+    const est = await navigator.storage?.estimate?.().catch(() => null);
+    const persisted = navigator.storage?.persisted ? await navigator.storage.persisted().catch(() => null) : null;
+    return { stored: set.required.length - missing.length, required: set.required.length, usage: est?.usage ?? null, persisted };
+  }
   const missing = await missingFiles().catch(() => REQUIRED);
   // Файли дощу 2D-кабіни (витягуються з COUNT.RMP лише при імпорті) — теж у підрахунку: без них «Опції» показують
   // неповний набір, і видно, що потрібен повторний імпорт.
@@ -197,39 +238,43 @@ async function getBlob(name: string): Promise<Blob | undefined> {
   return (await tx('readonly', (s) => s.get(name))) as Blob | undefined;
 }
 
-/** Джерело файлів з IndexedDB. */
-export const idbSource: FileSource = {
-  async read(path) {
-    const c = canonical(path) ?? path;
-    const blob = await getBlob(c);
-    if (!blob) throw new Error(`Файл гри ${c} не імпортовано`);
-    return new Uint8Array(await blob.arrayBuffer());
-  },
-};
+/** Джерело файлів гри з IndexedDB. */
+export function idbSourceFor(set: FileSet): FileSource {
+  return {
+    async read(path) {
+      const c = set.canonical(path) ?? path;
+      const blob = await getBlob(set.prefix + c);
+      if (!blob) throw new Error(`Файл гри ${c} не імпортовано`);
+      return new Uint8Array(await blob.arrayBuffer());
+    },
+  };
+}
+
+export const idbSource: FileSource = idbSourceFor(HT1_FILES);
 
 /**
  * Джерело з кешем на пристрої: спершу IndexedDB, інакше — `inner` (dev-сервер ПК) із записом у IndexedDB.
  * Файли гри незмінні, тож перевіряти свіжість не потрібно.
  */
-export function cachedSource(inner: FileSource): FileSource {
+export function cachedSource(inner: FileSource, set: FileSet = HT1_FILES): FileSource {
   return {
     async read(path) {
-      const c = canonical(path);
-      const blob = c ? await getBlob(c).catch(() => undefined) : undefined;
+      const c = set.canonical(path);
+      const blob = c ? await getBlob(set.prefix + c).catch(() => undefined) : undefined;
       if (blob) return new Uint8Array(await blob.arrayBuffer());
       const data = await inner.read(path);
-      if (c) await put(c, data).catch(() => {});
+      if (c) await put(set.prefix + c, data).catch(() => {});
       return data;
     },
   };
 }
 
 /** У фоні докачує в IndexedDB решту потрібних файлів — після цього гра працює на пристрої без ПК. */
-export async function prefetchMissing(inner: FileSource): Promise<number> {
+export async function prefetchMissing(inner: FileSource, set: FileSet = HT1_FILES): Promise<number> {
   let n = 0;
-  for (const f of await missingFiles()) {
+  for (const f of await missingFiles(set)) {
     try {
-      await put(f, await inner.read(f));
+      await put(set.prefix + f, await inner.read(f));
       n++;
     } catch {
       /* спробуємо наступного запуску */
