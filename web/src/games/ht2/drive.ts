@@ -694,7 +694,8 @@ export class Ht2Drive {
     this.careerMode?.update(dt, state.throttle);
     const fine = this.police?.update(dt, this.truck.visual.position, this.truck.speedKmh);
     if (fine && this.careerMode && !this.tuning.antiRadar) void this.careerMode.fine(fine.over);
-    const mafia = this.careerMode && !this.paused ? this.mafia?.update(dt, this.truck.visual.position, !!this.careerMode.career.order) : null;
+    // Мафія полює лише на вантажі класу formafia (merchandise.sch: горілка, алмази, Pentium III…).
+    const mafia = this.careerMode && !this.paused ? this.mafia?.update(dt, this.truck.visual.position, !!this.careerMode.career.order?.goods.forMafia) : null;
     if (mafia === 'robbed') void this.careerMode!.robbed();
     if (mafia === 'escaped') this.notice = { text: 'Мафія відстала', time: 4 };
     if (this.markets && this.careerMode) this.markets.update(this.truck.visual.position, Math.floor(this.careerMode.career.time / 86400));
