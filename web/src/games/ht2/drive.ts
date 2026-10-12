@@ -14,6 +14,8 @@ import { Ht2World, toThree, type LoadedRegion } from './world';
 import { AutoPilot } from '../../game/autopilot';
 import { Ht2Roads } from './roads';
 import { Traffic, trafficKinds } from './traffic';
+import { CareerMode } from './careerMode';
+import type { Ht2Career } from './career';
 
 /**
  * Їзда у світі Дальнобойщиків 2 (G4): вантажівка з vehicle.tech і TRUCKS.B3D на тій самій фізиці, що й у першій
@@ -29,6 +31,8 @@ export interface Ht2DriveOptions {
   onExit(): void;
   /** car_node вантажівки (Zil, ZilR, Kamaz…); без — з GAME.CNF. */
   truck?: string | null;
+  /** Кар'єра (гроші, замовлення); без — вільна їзда. */
+  career?: Ht2Career | null;
 }
 
 type CamMode = 'chase' | 'cockpit' | 'far';
@@ -58,6 +62,11 @@ export class Ht2Drive {
   roads!: Ht2Roads;
   autopilot: AutoPilot | null = null;
   traffic: Traffic | null = null;
+  careerMode: CareerMode | null = null;
+  /** Пауза (вікно складу чи СТО): фізика й час стоять. */
+  paused = false;
+  /** Маса вантажу в кузові, кг (фізика: центр мас і загальна маса). */
+  private cargoMass = 0;
   private readonly onResize = () => this.resize();
 
   private constructor(
@@ -89,27 +98,37 @@ export class Ht2Drive {
     const sp = cnf ? assoc(cnf, 'startposition') : undefined;
     const start: [number, number, number] = sp ? [num(sp[1]), num(sp[2]), num(sp[3])] : [-3020, -4625, 20];
     const live = cnf ? assoc(assoc(cnf, 'playertypes')?.slice(1) ?? [], 'live') : undefined;
-    const want = o.truck || (live ? str(live[2]) : 'ZilR');
+    const want = o.career?.truck || o.truck || (live ? str(live[2]) : 'ZilR');
     const list = drivable(this.trucks);
     const rec = list.find((r) => r.carNode.toLowerCase() === want.toLowerCase()) ?? list[0];
     const def = rec && truckDef(this.trucks, rec);
     if (!def) throw new Error('Немає моделі вантажівки');
     this.def = def;
+    if (o.career && !o.career.truck) o.career.truck = def.carNode;
 
     o.setStatus('Завантаження регіонів довкола старту…');
     await this.world.ready(start[0], start[1]);
     this.rapier.step(); // колайдери потрапляють у запити (castRay) лише після кроку
 
-    const spawn = this.spawnAt(start);
+    // Кар'єра — з місця, де зупинились минулого разу (точка дороги поруч).
+    const saved = o.career?.pos;
+    if (saved) await this.world.ready(saved[0], saved[1]);
+    if (saved) this.rapier.step();
+    const spawn = this.spawnAt(saved ?? start);
     const model = buildTruckModel(this.trucks.asm, def, false);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня`);
-    this.truck = new TruckVehicle(this.rapier, def, model, spawn);
+    this.cargoMass = o.career?.order ? o.career.order.goods.mass * o.career.order.units : 0;
+    this.truck = new TruckVehicle(this.rapier, def, model, spawn, { cargoMass: this.cargoMass });
     this.world.scene.add(this.truck.visual);
     this.safe = spawn;
     this.cockpit = g2t(def.tech.viewer);
     this.camPos.copy(spawn.position).addScaledVector(spawn.forward, -14).add(new THREE.Vector3(0, 6, 0));
     this.camLook.copy(spawn.position);
 
+    if (o.career) {
+      const merch = await o.source.read('merchandise.sch').then(readSch).catch(() => []);
+      this.careerMode = new CareerMode(this, o.career, merch);
+    }
     const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
     this.traffic = new Traffic(this.world.scene, this.rapier, this.roads, this.trucks, trafficKinds(vehicles, this.trucks), (r) => this.world.loaded.has(r));
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);
@@ -192,6 +211,23 @@ export class Ht2Drive {
     this.colliders.delete(id);
   }
 
+  get overlay(): HTMLElement {
+    return this.opts.overlay;
+  }
+
+  /** Новий вантаж у кузові: машину перебудовуємо на тому ж місці (маса й центр мас — при створенні). */
+  setCargo(mass: number): void {
+    this.cargoMass = mass;
+    const position = this.truck.visual.position.clone().add(new THREE.Vector3(0, 0.3, 0));
+    const forward = this.truck.forward();
+    const model = buildTruckModel(this.trucks.asm, this.def, false);
+    if (!model) return;
+    this.world.scene.remove(this.truck.visual);
+    this.truck.dispose();
+    this.truck = new TruckVehicle(this.rapier, this.def, model, { position, forward }, { cargoMass: mass });
+    this.world.scene.add(this.truck.visual);
+  }
+
   /** Відновитися: на останню надійну точку дороги. */
   recover(): void {
     if (this.safe) this.truck.reset({ position: this.safe.position.clone(), forward: this.safe.forward.clone() });
@@ -215,6 +251,7 @@ export class Ht2Drive {
 
   /** Крок гри (також для тестів — без requestAnimationFrame). */
   update(dt: number): void {
+    if (this.paused) return;
     const manual = this.input.update(dt);
     const tp = this.truck.body.translation();
     const state = this.autopilot ? this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt, this.traffic?.cars.map((c) => c.pos)) : manual;
@@ -231,7 +268,10 @@ export class Ht2Drive {
     this.trackSafe(dt);
     this.updateCamera(dt);
     this.world.update(this.camera);
-    this.bar.textContent = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
+    this.careerMode?.update(dt);
+    const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
+    this.bar.textContent = this.careerMode ? `${drive}
+${this.careerMode.hud()}` : drive;
   }
 
   /**
@@ -317,6 +357,7 @@ export class Ht2Drive {
   }
 
   dispose(): void {
+    this.careerMode?.persist();
     this.opts.renderer.setAnimationLoop(null);
     window.removeEventListener('resize', this.onResize);
     document.body.classList.remove('driving');

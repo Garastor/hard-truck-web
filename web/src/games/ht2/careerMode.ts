@@ -1,0 +1,201 @@
+import * as THREE from 'three';
+import { modal } from '../../ui/careerUi';
+import type { SExpr } from '../../formats/sexpr';
+import { findStores, makeOrders, parseGoods, type Goods, type Store } from './economy';
+import { REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
+import { toThree } from './world';
+import type { Ht2Drive } from './drive';
+
+/**
+ * Кар'єра в режимі їзди HT2: склади (замовлення й здача вантажу), СТО (ремонт), удари (пошкодження машини й
+ * вантажу), табло (гроші, вантаж, куди й скільки лишилось часу, годинник), збереження раз на 10 с.
+ * Вікна зʼявляються, коли вантажівка зупинилась біля місця завантаження складу чи біля СТО.
+ */
+const DOCK_RADIUS = 22;
+const STO_RADIUS = 18;
+/** Удар: зміна швидкості за крок, м/с — від неї пошкодження (гіпотеза, як у першій грі). */
+const HIT_MIN = 1.5;
+
+export class CareerMode {
+  readonly stores: Store[];
+  private readonly goods: Goods[];
+  private readonly sto: [number, number, number][] = [];
+  private busy = false;
+  /** Біля якого місця вже показано вікно (повторно — лише після відʼїзду). */
+  private shownAt: string | null = null;
+  private saveTimer = 0;
+  private readonly prevVel = new THREE.Vector3();
+
+  constructor(
+    private readonly drive: Ht2Drive,
+    readonly career: Ht2Career,
+    merchandise: SExpr[],
+  ) {
+    this.goods = parseGoods(merchandise);
+    this.stores = findStores(drive.world.regions.values());
+    for (const r of drive.world.regions.values())
+      for (const room of r.way.rooms) for (const n of room.nodes) if (/^sto_/i.test(n.name)) this.sto.push(n.pos);
+  }
+
+  /** Обʼєм кузова (площа × висота, гіпотеза) і вантажопідйомність. */
+  private capacity(): { mass: number; volume: number } {
+    const t = this.drive.truck.def.tech;
+    return { mass: t.cargoLoad, volume: Math.max(1, t.bodySquare * t.bodyHeight) };
+  }
+
+  /** Крок: час, удари, табло; зупинка біля складу/СТО — вікно. */
+  update(dt: number): void {
+    const c = this.career;
+    if (this.busy) return;
+    c.time += dt;
+    const v = this.drive.truck.body.linvel();
+    const dv = Math.hypot(v.x - this.prevVel.x, v.y - this.prevVel.y, v.z - this.prevVel.z);
+    this.prevVel.set(v.x, v.y, v.z);
+    if (dv > HIT_MIN) {
+      c.damage = Math.min(1, c.damage + dv * 0.004);
+      if (c.order) c.order.integrity = Math.max(0, c.order.integrity - dv * 0.01);
+    }
+    const p = this.drive.truck.visual.position;
+    const gx = p.x;
+    const gy = -p.z;
+    this.saveTimer += dt;
+    if (this.saveTimer > 10) {
+      this.saveTimer = 0;
+      this.persist();
+    }
+    if (this.drive.truck.speedKmh > 3) {
+      // Відʼїхали — вікно цього місця можна показати знову.
+      if (this.shownAt && !this.near(gx, gy, this.shownAt)) this.shownAt = null;
+      return;
+    }
+    const store = this.stores.find((s) => s.docks.some((d) => Math.hypot(d[0] - gx, d[1] - gy) < DOCK_RADIUS));
+    if (store && this.shownAt !== `s${store.id}`) {
+      this.shownAt = `s${store.id}`;
+      void this.atStore(store);
+      return;
+    }
+    const sto = this.sto.findIndex((d) => Math.hypot(d[0] - gx, d[1] - gy) < STO_RADIUS);
+    if (sto >= 0 && this.shownAt !== `r${sto}` && c.damage > 0.01) {
+      this.shownAt = `r${sto}`;
+      void this.atSto();
+    }
+  }
+
+  private near(gx: number, gy: number, key: string): boolean {
+    const id = Number(key.slice(1));
+    if (key[0] === 's') return this.stores.find((s) => s.id === id)!.docks.some((d) => Math.hypot(d[0] - gx, d[1] - gy) < DOCK_RADIUS * 2);
+    const d = this.sto[id];
+    return !!d && Math.hypot(d[0] - gx, d[1] - gy) < STO_RADIUS * 2;
+  }
+
+  persist(): void {
+    const p = this.drive.truck.visual.position;
+    const f = this.drive.truck.forward();
+    this.career.pos = [p.x, -p.z, p.y];
+    this.career.heading = [f.x, -f.z];
+    saveCareer(this.career);
+  }
+
+  private async atStore(store: Store): Promise<void> {
+    const c = this.career;
+    this.busy = true;
+    this.drive.paused = true;
+    try {
+      if (c.order && c.order.to === store.id) {
+        const s = settle(c.order, c.time);
+        const lines = [
+          `${c.order.goods.name} × ${c.order.units}`,
+          `Оплата: ${formatMoney(c.order.pay)}`,
+          s.damagePenalty ? `Пошкодження вантажу ${Math.round((1 - c.order.integrity) * 100)}%: −${formatMoney(s.damagePenalty)}` : '',
+          s.late ? `Термін доставки минув. Неустойка: −${formatMoney(s.latePenalty)}` : '',
+          `Ви заробили: ${formatMoney(s.pay)}`,
+        ].filter(Boolean);
+        await modal(this.drive.overlay, `Склад «${store.town}»`, lines.join('\n'), ['Гаразд']);
+        c.money += s.pay;
+        c.earned += s.pay;
+        c.delivered++;
+        c.order = null;
+        this.drive.setCargo(0);
+      } else if (c.order) {
+        const to = this.stores.find((s) => s.id === c.order!.to);
+        await modal(this.drive.overlay, `Склад «${store.town}»`, `У кузові — ${c.order.goods.name}, доставити в «${to?.town ?? '?'}».`, ['Гаразд']);
+      } else {
+        const orders = makeOrders(store, this.stores, this.goods, this.capacity());
+        const box = document.createElement('div');
+        box.className = 'career-form ht2-orders';
+        box.textContent = 'Замовлення на доставку:';
+        const buttons = orders.map((o) => {
+          const to = this.stores.find((s) => s.id === o.to)!;
+          return `${o.goods.name} ×${o.units} → ${to.town}: ${formatMoney(o.pay)}${o.urgent ? ' (терміново)' : ''}`;
+        });
+        const i = await modal(this.drive.overlay, `Склад «${store.town}»`, box, [...buttons, 'Не брати']);
+        const o = orders[i];
+        if (o) {
+          c.order = { ...o, taken: c.time, integrity: 1 };
+          this.drive.setCargo(o.goods.mass * o.units);
+        }
+      }
+      this.persist();
+    } finally {
+      this.drive.paused = false;
+      this.busy = false;
+    }
+  }
+
+  private async atSto(): Promise<void> {
+    const c = this.career;
+    this.busy = true;
+    this.drive.paused = true;
+    try {
+      const cost = Math.round(c.damage * 100 * REPAIR_PER_PERCENT);
+      const i = await modal(this.drive.overlay, 'СТО', `Пошкодження машини ${Math.round(c.damage * 100)}%. Ремонт: ${formatMoney(cost)}.`, ['Ремонт', 'Не треба']);
+      if (i === 0) {
+        if (c.money < cost) await modal(this.drive.overlay, 'СТО', 'НЕ ХВАТАЕТ ДЕНЕГ', ['Гаразд']);
+        else {
+          c.money -= cost;
+          c.damage = 0;
+          this.persist();
+        }
+      }
+    } finally {
+      this.drive.paused = false;
+      this.busy = false;
+    }
+  }
+
+  /** Табло: гроші, стан, вантаж і куди, залишок часу, годинник. */
+  hud(): string {
+    const c = this.career;
+    const parts = [formatMoney(c.money), `стан ${Math.round((1 - c.damage) * 100)}%`, formatClock(c.time)];
+    if (c.order) {
+      const o = c.order;
+      const to = this.stores.find((s) => s.id === o.to);
+      const left = o.deadline - (c.time - o.taken);
+      const p = this.drive.truck.visual.position;
+      const dist = to ? Math.hypot(to.center[0] - p.x, to.center[1] + p.z) : 0;
+      const target = to ? toThree(...to.center) : null;
+      const arrow = target ? arrowTo(this.drive.truck.forward(), target.sub(p)) : '';
+      parts.push(
+        `${o.goods.name} → ${to?.town ?? '?'} ${arrow} ${(dist / 1000).toFixed(1)} км, ${left > 0 ? `${Math.ceil(left / 60)} хв` : 'термін минув'}, ціл. ${Math.round(o.integrity * 100)}%`,
+      );
+    } else {
+      // Без вантажу — до найближчого складу.
+      const p = this.drive.truck.visual.position;
+      let best: Store | null = null;
+      let bd = Infinity;
+      for (const s of this.stores) {
+        const d = Math.hypot(s.center[0] - p.x, s.center[1] + p.z);
+        if (d < bd) (bd = d), (best = s);
+      }
+      if (best) parts.push(`склад «${best.town}» ${arrowTo(this.drive.truck.forward(), toThree(...best.center).sub(p))} ${(bd / 1000).toFixed(1)} км`);
+    }
+    return parts.join('   ');
+  }
+}
+
+/** Стрілка напрямку до цілі відносно курсу машини (8 напрямків). */
+function arrowTo(forward: THREE.Vector3, to: THREE.Vector3): string {
+  const a = Math.atan2(forward.x * to.z - forward.z * to.x, forward.x * to.x + forward.z * to.z);
+  const arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
+  return arrows[((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8];
+}

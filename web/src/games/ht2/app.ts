@@ -8,6 +8,10 @@ import { HT2_FILES, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2MenuScreen, type MenuItem } from './menu';
 import { WorldViewer } from './viewer';
 import { Ht2Drive } from './drive';
+import { formatMoney, loadCareer, newCareer, type Ht2Career } from './career';
+import { modal } from '../../ui/careerUi';
+
+type Choice = 'world' | 'drive' | 'career' | 'new' | 'files' | 'exit';
 
 /**
  * Дальнобойщики 2 у порті: джерело файлів (пристрій або ПК), меню з LOAD.RES гри, режими. Свій цикл кадрів і сцена —
@@ -55,24 +59,31 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   const art = await Ht2MenuArt.load((n) => source.read(n));
   ctx.setStatus(null);
 
-  // Налагодження: ?game=ht2&tab=world — одразу огляд світу (&region=ab); &tab=drive — їзда (&truck=Kamaz).
+  // Налагодження: ?game=ht2&tab=world — одразу огляд світу (&region=ab); &tab=drive — вільна їзда (&truck=Kamaz);
+  // &tab=career — кар'єра.
   const params = new URLSearchParams(location.search);
-  let direct: 'world' | 'drive' | null = params.get('tab') === 'world' ? 'world' : params.get('tab') === 'drive' ? 'drive' : null;
+  const tab = params.get('tab');
+  let direct: Choice | null = tab === 'world' || tab === 'drive' || tab === 'career' ? tab : null;
   for (;;) {
-    const choice = direct ?? (await new Promise<'world' | 'drive' | 'files' | 'exit'>((resolve) => {
+    const saved = loadCareer();
+    const choice = direct ?? (await new Promise<Choice>((resolve) => {
       let close = () => {};
       // Меню закривається перед будь-якою дією.
-      const pick = (c: 'world' | 'drive' | 'files' | 'exit') => () => {
+      const pick = (c: Choice) => () => {
         close();
         resolve(c);
       };
-      const items: MenuItem[] = [
-        { label: 'Їзда', action: pick('drive') },
+      const items: MenuItem[] = [];
+      if (saved) items.push({ label: 'Продовжити', action: pick('career') });
+      items.push(
+        { label: 'Нова гра', action: pick('new') },
+        { label: 'Вільна їзда', action: pick('drive') },
         { label: 'Огляд світу', action: pick('world') },
         { label: 'Файли гри', action: pick('files') },
-      ];
+      );
       if (ctx.exit) items.push({ label: 'Вихід', action: pick('exit') });
-      close = ht2MenuScreen(art, large, items, 'Дальнобойщики 2 — порт у розробці: вільна їзда й огляд світу');
+      const note = saved ? `За кермом: ${saved.driver} · ${formatMoney(saved.money)} · доставок ${saved.delivered}` : 'Дальнобойщики 2 — порт у розробці';
+      close = ht2MenuScreen(art, large, items, note);
     }));
     direct = null;
     if (choice === 'exit') return ctx.exit?.();
@@ -80,7 +91,12 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
       await ctx.showImport(true);
       continue;
     }
-    if (choice === 'drive') {
+    if (choice === 'drive' || choice === 'career' || choice === 'new') {
+      let career: Ht2Career | null = null;
+      if (choice === 'new') {
+        if (saved && (await modal(ctx.overlay, 'Нова гра', 'Збережену гру буде втрачено. Почати заново?', ['Почати заново', 'Скасувати'])) !== 0) continue;
+        career = newCareer('Водій', '');
+      } else if (choice === 'career') career = saved ?? newCareer('Водій', '');
       await new Promise<void>((resolve) => {
         let drive: Ht2Drive | null = null;
         const exit = () => {
@@ -88,7 +104,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           ctx.setStatus(null);
           resolve();
         };
-        Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck') })
+        Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck'), career })
           .then((d) => {
             drive = d;
             Object.assign(window, { ht2: { drive } });

@@ -16,8 +16,9 @@ import { parseTech } from '../src/formats/tech';
 import { parseHeightmap } from '../src/formats/heightmap';
 import { parseOvl } from '../src/formats/ovl';
 import { decodeCp1251 } from '../src/formats/binary';
-import { HT2_FILES, HT2_REQUIRED } from '../src/games/ht2/files';
+import { HT2_FILES, HT2_REGIONS, HT2_REQUIRED } from '../src/games/ht2/files';
 import { detectGame } from '../src/games/registry';
+import { findStores, orderPay, parseGoods } from '../src/games/ht2/economy';
 
 const GAME = resolve(import.meta.dirname, '..', '..', 'Game', 'Hard Truck 2');
 const has = existsSync(join(GAME, 'king.exe'));
@@ -168,5 +169,27 @@ describe.skipIf(!has)('HT2: TXR з міпмапами (LVMP перед PFRM)', (
     const a = parseRmp(read('ENV/ce1.res'));
     expect(parseTxr(a.textures.get('txr/grass_ce1.txr')!).hasAlpha).toBe(false);
     expect(parseTxr(a.textures.get('txr/for22_01.txr')!).hasAlpha).toBe(true);
+  });
+});
+
+describe.skipIf(!has)('HT2: економіка', () => {
+  it('товари з merchandise.sch', () => {
+    const goods = parseGoods(readSch(read('merchandise.sch')));
+    expect(goods.length).toBeGreaterThan(50);
+    const bread = goods.find((g) => g.id === 'BREAD')!;
+    expect(bread).toMatchObject({ name: 'Хлеб', mass: 25, volume: 0.1, price: 70 });
+    expect(goods.find((g) => g.id === 'AKM')!.illegal).toBe(true);
+  });
+  it('склади з вузлів WAY: 11 баз, у кожної 5 місць', () => {
+    const regions = HT2_REGIONS.map((id) => ({ id, way: parseWay(read(`ENV/${id}.way`)) }));
+    const stores = findStores(regions);
+    expect(stores.map((s) => s.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(stores.every((s) => s.docks.length === 5)).toBe(true);
+    expect(stores.find((s) => s.id === 3)!.town).toBe('Южный');
+  });
+  it('оплата росте з відстанню й терміновістю', () => {
+    const g = { id: 'X', name: 'X', mass: 10, volume: 0.1, price: 100, ratio: 0.8, illegal: false, forMafia: false };
+    expect(orderPay(g, 100, 5000, false)).toBe(Math.round((5000 * 0.115 + 0.4 * 100) * 3));
+    expect(orderPay(g, 100, 5000, true)).toBeGreaterThan(orderPay(g, 100, 5000, false));
   });
 });
