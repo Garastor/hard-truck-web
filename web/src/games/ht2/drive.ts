@@ -294,6 +294,7 @@ export class Ht2Drive {
     if (p !== this.period) {
       this.period = p;
       this.world.setLight('good', p);
+      this.world.setNight(p !== 'day');
       this.cabLight?.color.copy(this.world.ambientColor).multiplyScalar(1.4);
     }
     const on = this.lightsManual ?? (p === 'night' || p === 'sset' || p === 'srise');

@@ -117,3 +117,35 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
   }
   return group;
 }
+
+/**
+ * Ореоли ліхтарів — генератор `$$DynamicGlow` (блок 40): центр і радіус сфери; світіння — білборд з текстурою
+ * `glow*.txr` регіону, додається до кадру (адитивно). Показуються в сутінках і вночі (Ht2World.setNight).
+ * Розмір — 0,6 радіуса сфери (на око; поля `values` генератора — 75, 275, 0,75, 5,5… — не розібрано).
+ */
+export function buildGlows(b3d: B3d, rmp: RmpArchive): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'glows';
+  group.visible = false;
+  const file = rmp.order.TEXTUREFILES.find((n) => /glow[^/]*\.txr$/i.test(n));
+  const bytes = file ? rmp.textures.get(file) : undefined;
+  if (!bytes) return group;
+  const img = parseTxr(bytes);
+  const tex = new THREE.DataTexture(img.data, img.width, img.height, THREE.RGBAFormat);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  const mat = new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false });
+  for (const [blk] of walk(b3d.blocks)) {
+    const d = blk.data;
+    if (d.t !== 40 || d.name2 !== '$$DynamicGlow') continue;
+    const [x, y, z, r] = d.bound;
+    const s = new THREE.Sprite(mat);
+    s.position.set(x, y, z);
+    s.scale.setScalar(Math.max(1.5, r * 0.6));
+    group.add(s);
+  }
+  return group;
+}

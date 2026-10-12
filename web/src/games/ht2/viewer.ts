@@ -49,7 +49,10 @@ export class WorldViewer {
     this.select.addEventListener('change', () => void this.goTo(this.select.value));
     for (const [v, t] of [['day', 'День'], ['srise', 'Світанок'], ['sset', 'Захід'], ['night', 'Ніч']]) this.time.add(new Option(t, v));
     for (const [v, t] of [['good', 'Ясно'], ['bad', 'Хмарно']]) this.sky.add(new Option(t, v));
-    const light = () => this.world?.setLight(this.sky.value as Sky, this.time.value as DayTime);
+    const light = () => {
+      this.world?.setLight(this.sky.value as Sky, this.time.value as DayTime);
+      this.world?.setNight(this.time.value !== 'day');
+    };
     this.time.addEventListener('change', light);
     this.sky.addEventListener('change', light);
     this.hud.append(back, this.select, this.time, this.sky);

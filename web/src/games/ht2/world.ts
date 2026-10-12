@@ -7,7 +7,7 @@ import { parseWay, type Way } from '../../formats/way';
 import { SceneAssembler, buildScene, type BuiltScene } from '../../render/sceneBuilder';
 import { HT2_REGIONS, regionFiles, type TexLevel } from './files';
 import { Weather, type DayTime, type Sky } from './weather';
-import { buildTrees } from './trees';
+import { buildGlows, buildTrees } from './trees';
 import { mergeStatic } from '../../render/mergeStatic';
 
 /**
@@ -60,15 +60,18 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
   built.stats.meshes = merged.after;
   const trees = buildTrees(scene, rmp, palette);
   built.root.add(trees);
+  const glows = buildGlows(scene, rmp);
+  built.root.add(glows);
   const dispose = built.dispose;
   built.dispose = () => {
     dispose();
-    trees.traverse((o) => {
-      if (o instanceof THREE.Mesh) {
-        (o.material as THREE.MeshLambertMaterial).map?.dispose();
-        (o.material as THREE.Material).dispose();
-      }
-    });
+    for (const g of [trees, glows])
+      g.traverse((o) => {
+        if (o instanceof THREE.Mesh || o instanceof THREE.Sprite) {
+          (o.material as THREE.MeshLambertMaterial).map?.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      });
   };
   return { id, built };
 }
@@ -100,6 +103,14 @@ export class Ht2World {
   private readonly sun = new THREE.DirectionalLight(0xffffff, 1);
   private readonly ambient = new THREE.AmbientLight(0xffffff, 0.5);
   private sky: THREE.Group | null = null;
+  private readonly skyTint = new THREE.Color(1, 1, 1);
+
+  private tintSky(): void {
+    this.sky?.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
+      if (m?.color) m.color.copy(this.skyTint);
+    });
+  }
   private loading: string | null = null;
   private lastCheck = 0;
   private readonly waiters: (() => void)[] = [];
@@ -146,8 +157,21 @@ export class Ht2World {
     (this.scene.background as THREE.Color).copy(l.fog);
     this.sun.color.copy(l.sun);
     this.ambient.color.copy(l.ambient);
+    // Купол неба (текстура денного неба) — у кольорі skyamb пори доби відносно ясного дня (204): уночі темний.
+    this.skyTint.copy(l.sky).multiplyScalar(255 / 204);
+    this.tintSky();
     this.sun.intensity = Math.PI * 0.8;
     this.ambient.intensity = Math.PI;
+  }
+
+  /** Ніч і сутінки: ореоли ліхтарів ($$DynamicGlow) у всіх завантажених регіонах. */
+  private night = false;
+  setNight(on: boolean): void {
+    this.night = on;
+    for (const r of this.loaded.values()) {
+      const g = r.built.root.getObjectByName('glows');
+      if (g) g.visible = on;
+    }
   }
 
   /** Колір розсіяного світла пори доби (для кабіни, що малюється окремою сценою). */
@@ -222,11 +246,14 @@ export class Ht2World {
     void loadRegion(this.source, next, this.common)
       .then((reg) => {
         this.loaded.set(next, reg);
+        const glows = reg.built.root.getObjectByName('glows');
+        if (glows) glows.visible = this.night;
         this.scene.add(reg.built.root);
         this.onRegion?.(reg, true);
         if (!this.sky && reg.built.sky) {
           this.sky = reg.built.sky;
           this.scene.add(this.sky);
+          this.tintSky();
         }
         this.onChange?.();
       })
