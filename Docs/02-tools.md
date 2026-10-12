@@ -18,6 +18,10 @@
 | 🔍 | REDPOWAR / D2GI | Обгортка DX7→DX9 для HT2 — розуміння рендер-конвеєра | https://github.com/REDPOWAR/D2GI |
 | 🔍 | ModDB: Hard Truck Series Engine | Інструменти, моди, редактор RES | https://www.moddb.com/engines/hard-truck-series-engine |
 
+**Для HT2 (King of the Road)** — повний перелік з ліцензіями в [08-ht2-plan.md §3](08-ht2-plan.md#3-інструменти-спільноти-для-ht2):
+розшифрування `SDTE` (`*.sch`, `GAME.CNF`) — `KeyGenerator.1sc`/`decodeSCH.1sc` з AlexKimov (MIT);
+WAY — [VldmrInt/HT2-WAY-Tool](https://github.com/VldmrInt/HT2-WAY-Tool) (MIT); TECH/RAW — `.bt` AlexKimov і `.ksy` reRNR.
+
 ## 2. Дослідження бінарних форматів і коду
 
 | | Інструмент | Для чого |
