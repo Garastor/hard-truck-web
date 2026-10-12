@@ -35,17 +35,19 @@ async function devAvailable(): Promise<boolean> {
   }
 }
 
-/** Джерело файлів: повний набір на пристрої — звідти; інакше ПК (з кешуванням) або імпорт. */
+/**
+ * Джерело файлів: з пристрою (IndexedDB), а чого там немає — з ПК із записом на пристрій (необовʼязкова музика
+ * теж). Без ПК і без повного набору — імпорт.
+ */
 async function pickSource(ctx: Ht2Context): Promise<FileSource> {
   const params = new URLSearchParams(location.search);
   const local = idbSourceFor(HT2_FILES);
-  const missing = await missingFiles(HT2_FILES).catch(() => HT2_FILES.required);
-  if (!missing.length && params.get('source') !== 'pc') return local;
   if (params.get('source') !== 'local' && (await devAvailable())) {
     void prefetchMissing(ht2DevSource, HT2_FILES);
     return cachedSource(ht2DevSource, HT2_FILES);
   }
-  await ctx.showImport(false);
+  const missing = await missingFiles(HT2_FILES).catch(() => HT2_FILES.required);
+  if (missing.length) await ctx.showImport(false);
   return local;
 }
 

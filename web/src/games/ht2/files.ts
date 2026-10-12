@@ -41,11 +41,14 @@ export const HT2_REQUIRED: string[] = [
   'merchandise.sch', 'evehicles.sch', 'etrashboxes.sch', 'names.sch', 'restable.sch', 'vd.sch', 'Ms.sch',
 ];
 
+/** Музика (≈ 29 МБ) — імпортується, якщо є, але гра без неї повна. */
+export const HT2_MUSIC = Array.from({ length: 12 }, (_, i) => `MUSIC/track${String(i + 1).padStart(2, '0')}l.mp3`);
+
 export const HT2_FILES: FileSet = {
   game: 'ht2',
   required: HT2_REQUIRED,
   prefix: 'ht2/',
-  canonical: (path) => matchRequired(HT2_REQUIRED, path),
+  canonical: (path) => matchRequired(HT2_REQUIRED, path) ?? matchRequired(HT2_MUSIC, path),
 };
 
 /** Dev-сервер ПК: файли HT2 за `/game2/` (vite.config.ts). */

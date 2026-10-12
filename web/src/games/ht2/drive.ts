@@ -16,6 +16,7 @@ import { Ht2Roads } from './roads';
 import { Traffic, trafficKinds } from './traffic';
 import { CareerMode } from './careerMode';
 import { NavMap } from '../../ui/navMap';
+import { Music } from './music';
 import { SceneAssembler } from '../../render/sceneBuilder';
 import { parseB3d } from '../../formats/b3d';
 import { parseRmp } from '../../formats/rmp';
@@ -68,6 +69,7 @@ export class Ht2Drive {
   traffic: Traffic | null = null;
   careerMode: CareerMode | null = null;
   private map: NavMap | null = null;
+  private music: Music | null = null;
   /** Кабіна (вид з кабіни): інтер'єр з CABINES.B3D окремою сценою поверх світу, як у першій грі. */
   private readonly overlayScene = new THREE.Scene();
   private cab: THREE.Group | null = null;
@@ -169,7 +171,13 @@ export class Ht2Drive {
     back.textContent = '← Меню';
     back.addEventListener('click', () => o.onExit());
     this.bar.className = 'ht2-drive-bar';
-    this.hud.append(back);
+    this.music = new Music(o.source);
+    void this.music.next();
+    const music = document.createElement('button');
+    music.textContent = '♪';
+    music.setAttribute('aria-label', 'Музика');
+    music.addEventListener('click', () => music.classList.toggle('off', !this.music?.toggle()));
+    this.hud.append(back, music);
     // У шарі overlay — під вікнами складу й СТО (вони теж там, вище).
     o.overlay.append(this.hud, this.bar);
     window.addEventListener('resize', this.onResize);
@@ -462,6 +470,7 @@ ${this.careerMode.hud()}` : drive;
     this.bar.remove();
     this.audio?.dispose();
     this.cabAsm?.dispose();
+    this.music?.dispose();
     this.traffic?.dispose();
     this.truck?.dispose();
     this.world.dispose();

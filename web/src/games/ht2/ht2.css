@@ -92,6 +92,11 @@ body.game-ht2 .drive-hud {
   font: 600 13px/1 Arial, sans-serif;
 }
 
+.ht2-hud button.off {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
 .ht2-hud select {
   min-height: 0;
   padding: 5px 6px;
