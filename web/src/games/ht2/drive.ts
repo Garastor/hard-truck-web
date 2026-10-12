@@ -16,6 +16,7 @@ import { Ht2Roads } from './roads';
 import { Traffic, trafficKinds } from './traffic';
 import { CareerMode } from './careerMode';
 import { Police } from './police';
+import { Mafia } from './mafia';
 import { RaceMode } from './race';
 import { Trailer } from './trailer';
 import { Truckers, truckerNames } from './truckers';
@@ -80,6 +81,9 @@ export class Ht2Drive {
   traffic: Traffic | null = null;
   careerMode: CareerMode | null = null;
   police: Police | null = null;
+  mafia: Mafia | null = null;
+  /** Коротке повідомлення на табло (текст і скільки ще показувати, с). */
+  private notice: { text: string; time: number } | null = null;
   race: RaceMode | null = null;
   truckers: Truckers | null = null;
   private raceMessages = new Map<string, string>();
@@ -188,6 +192,7 @@ export class Ht2Drive {
       ]);
       this.careerMode = new CareerMode(this, o.career, merch, messages, parseUpgrades(restable));
       this.police = new Police(this.world.scene, this.rapier, this.trucks, this.world.regions.values());
+      this.mafia = new Mafia(this.world.scene, this.rapier, this.trucks, this.world.regions.values(), (p) => this.groundAtPublic(p).y - 2.5);
     }
     if (o.race) {
       const ms = await o.source.read('Ms.sch').then(readSch).catch(() => []);
@@ -574,11 +579,18 @@ export class Ht2Drive {
     this.careerMode?.update(dt, state.throttle);
     const fine = this.police?.update(dt, this.truck.visual.position, this.truck.speedKmh);
     if (fine && this.careerMode && !this.tuning.antiRadar) void this.careerMode.fine(fine.over);
-    this.map?.update(dt, this.truck.visual.position, this.truck.forward(), [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? [])], this.careerMode?.target() ?? null);
+    const mafia = this.careerMode && !this.paused ? this.mafia?.update(dt, this.truck.visual.position, !!this.careerMode.career.order) : null;
+    if (mafia === 'robbed') void this.careerMode!.robbed();
+    if (mafia === 'escaped') this.notice = { text: 'Мафія відстала', time: 4 };
+    const chaser = this.mafia?.chaser;
+    this.map?.update(dt, this.truck.visual.position, this.truck.forward(), [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? []), ...(chaser ? [chaser] : [])], this.careerMode?.target() ?? null);
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
     // Поруч далекобійник — його імʼя й машина (names.sch, vehicle.tech).
     const near = this.truckers?.nearest(this.truck.visual.position);
-    const who = near ? `\n${near.name} (${near.truck.def.carNode})` : '';
+    let who = near ? `\n${near.name} (${near.truck.def.carNode})` : '';
+    const chase = this.mafia?.chase;
+    if (chase) who += `\nМАФІЯ позаду: ${Math.round(chase.pos.distanceTo(this.truck.visual.position))} м`;
+    if (this.notice && (this.notice.time -= dt) > 0) who += `\n${this.notice.text}`;
     this.bar.textContent = (this.careerMode ? `${drive}\n${this.careerMode.hud()}` : this.race ? `${drive}\n${this.race.hud()}` : drive) + who;
   }
 
@@ -681,6 +693,7 @@ export class Ht2Drive {
     this.music?.dispose();
     this.traffic?.dispose();
     this.police?.dispose();
+    this.mafia?.dispose();
     this.race?.dispose();
     this.truckers?.dispose();
     this.trailer?.dispose();

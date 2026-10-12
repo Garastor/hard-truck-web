@@ -144,6 +144,29 @@ export class CareerMode {
     }
   }
 
+  /**
+   * Мафія наздогнала: вантаж відібрано, замовнику — неустойка в половину цінності вантажу (гіпотеза, як за
+   * прострочення). Тексти — Ms.sch (ATTACKED_BY_MAFIA, FORFEIT).
+   */
+  async robbed(): Promise<void> {
+    const c = this.career;
+    if (!c.order) return;
+    this.busy = true;
+    this.drive.paused = true;
+    try {
+      const forfeit = Math.round(c.order.value * 0.5);
+      const text = `${this.msg('ATTACKED_BY_MAFIA', 'ВЫ ОГРАБЛЕНЫ МАФИЕЙ')}\n${c.order.goods.name} × ${c.order.units}\n${this.msg('FORFEIT', 'НЕУСТОЙКА $%g', forfeit)}`;
+      await modal(this.drive.overlay, 'Мафія', text, ['Гаразд']);
+      c.money = Math.max(0, c.money - forfeit);
+      c.order = null;
+      this.drive.setCargo(0);
+      this.persist();
+    } finally {
+      this.drive.paused = false;
+      this.busy = false;
+    }
+  }
+
   /** Купівля вантажівки на складі: стара — в залік за половину ціни (гіпотеза). */
   private async buyTruck(store: Store): Promise<void> {
     const c = this.career;
