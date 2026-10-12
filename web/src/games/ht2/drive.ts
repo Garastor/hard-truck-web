@@ -19,6 +19,8 @@ import { Police } from './police';
 import { Mafia } from './mafia';
 import { Signs } from './signs';
 import { Markets, parseMarkets } from './market';
+import { WorldMap, type MapPoint } from './worldMap';
+import { findStores } from './economy';
 import { WeatherDrift } from './weather';
 import { iniNum, parseIni } from '../../formats/ini';
 import { decodeCp1251 } from '../../formats/binary';
@@ -96,6 +98,7 @@ export class Ht2Drive {
   mafia: Mafia | null = null;
   private signs: Signs | null = null;
   markets: Markets | null = null;
+  private worldMap: WorldMap | null = null;
   /** Коротке повідомлення на табло (текст і скільки ще показувати, с). */
   private notice: { text: string; time: number } | null = null;
   race: RaceMode | null = null;
@@ -206,6 +209,19 @@ export class Ht2Drive {
     const mods = await Promise.all(HT2_MOD_REGIONS.map((region) => o.source.read(`ENV/mod_${region}.sch`).then((b) => ({ region, sch: readSch(b) })).catch(() => null)));
     const regionMods = mods.filter((m): m is { region: string; sch: SExpr[] } => !!m);
     if (!o.race) this.signs = new Signs(regionMods, this.world.regions.values());
+    // Карта світу: склади (міста з mod_*.sch), СТО, заправки, ринки.
+    const points: MapPoint[] = findStores(this.world.regions.values(), parseTowns(regionMods)).map((s) => ({ pos: toThree(...s.center), kind: 'town' as const, label: s.town }));
+    for (const r of this.world.regions.values())
+      for (const room of r.way.rooms)
+        for (const n of room.nodes) {
+          if (/^sto_/i.test(n.name)) points.push({ pos: toThree(...n.pos), kind: 'sto' });
+          if (/^node_car_fuel/i.test(n.name)) points.push({ pos: toThree(...n.pos), kind: 'fuel' });
+        }
+    for (const m of parseMarkets(regionMods, this.world.regions.values())) points.push({ pos: m.spots[0].pos, kind: 'market', label: m.name });
+    this.worldMap = new WorldMap(document.body, this.roads.lines.filter((l) => !l.name.endsWith('r')), points);
+    this.worldMap.onClose = () => {
+      this.paused = false;
+    };
     if (o.career) this.markets = new Markets(this.world.scene, this.rapier, this.trucks, parseMarkets(regionMods, this.world.regions.values()), (p) => this.groundAtPublic(p).y - 2.5);
     if (o.career) {
       const [merch, messages, restable] = await Promise.all([
@@ -266,7 +282,11 @@ export class Ht2Drive {
     music.textContent = '♪';
     music.setAttribute('aria-label', 'Музика');
     music.addEventListener('click', () => music.classList.toggle('off', !this.music?.toggle()));
-    this.hud.append(back, music);
+    const map = document.createElement('button');
+    map.textContent = 'Карта';
+    map.setAttribute('aria-label', 'Карта світу');
+    map.addEventListener('click', () => this.openMap());
+    this.hud.append(back, music, map);
     // У шарі overlay — під вікнами складу й СТО (вони теж там, вище).
     o.overlay.append(this.hud, this.bar);
     window.addEventListener('resize', this.onResize);
@@ -349,6 +369,14 @@ export class Ht2Drive {
     this.world.scene.add(this.truck.visual);
     this.hitch();
     this.mountLamps();
+  }
+
+  /** Карта світу поверх гри (гра на паузі, поки карта відкрита). */
+  openMap(): void {
+    if (!this.worldMap || this.paused) return;
+    this.paused = true;
+    const t = this.truck.body.translation();
+    this.worldMap.open(new THREE.Vector3(t.x, t.y, t.z), this.truck.forward(), this.careerMode?.target() ?? null);
   }
 
   /** Ігрових секунд за реальну (повзунок «тривалість доби»). */
@@ -747,6 +775,7 @@ export class Ht2Drive {
     this.police?.dispose();
     this.mafia?.dispose();
     this.markets?.dispose();
+    this.worldMap?.dispose();
     this.race?.dispose();
     this.truckers?.dispose();
     this.trailer?.dispose();

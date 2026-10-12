@@ -177,3 +177,49 @@ body.game-ht2 .drive-hud {
   white-space: pre;
   pointer-events: none;
 }
+
+/* Карта світу (worldMap.ts): на весь екран поверх гри. */
+.ht2-worldmap {
+  position: fixed;
+  inset: 0;
+  /* Поверх табла й сенсорних кнопок. */
+  z-index: 30;
+  touch-action: none;
+}
+
+.ht2-worldmap canvas {
+  display: block;
+}
+
+.ht2-worldmap-close {
+  position: absolute;
+  top: max(8px, env(safe-area-inset-top));
+  right: max(8px, env(safe-area-inset-right));
+  width: 44px;
+  height: 44px;
+  border: 1px solid #58c8b0;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font: 700 26px/1 Arial, sans-serif;
+}
+
+.ht2-worldmap-legend {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left));
+  top: max(10px, env(safe-area-inset-top));
+  display: flex;
+  gap: 12px;
+  color: #ddd;
+  font: 600 12px Arial, sans-serif;
+  text-shadow: 0 0 3px #000;
+}
+
+.ht2-worldmap-legend b {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 50%;
+  vertical-align: -1px;
+}
