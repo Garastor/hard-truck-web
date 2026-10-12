@@ -30,6 +30,8 @@ export interface Ht2Career {
   earned: number;
   /** Встановлені покращення (`PR_ID:варіант`, див. upgrades.ts); переходять на нову вантажівку (гіпотеза). */
   upgrades?: string[];
+  /** Вмʼятини за зонами кузова (0…1, dents.ts); ремонт на СТО скидає. */
+  dents?: Partial<Record<string, number>>;
   /** Остання позиція (координати гри) і склад, де стоїмо. */
   pos?: [number, number, number];
   heading?: [number, number];

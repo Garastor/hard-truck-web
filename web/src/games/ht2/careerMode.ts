@@ -214,6 +214,8 @@ export class CareerMode {
       c.money -= cost;
       c.truck = s.rec.carNode;
       c.damage = s.used ? USED_DAMAGE : 0;
+      // Нова машина — без вмʼятин; вживана — трохи побита спереду й ззаду (гіпотеза).
+      c.dents = s.used ? { FC: 0.25, BC: 0.25 } : {};
       c.fuel = null;
       markets.sell(m, day, s);
       this.drive.changeTruck(s.rec.carNode);
@@ -327,6 +329,7 @@ export class CareerMode {
           else {
             c.money -= cost;
             c.damage = 0;
+            this.drive.dents?.repair();
             this.persist();
           }
         } else if (pick === 'Покращення') await this.shopUpgrades(node);

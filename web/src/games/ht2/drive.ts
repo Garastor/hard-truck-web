@@ -21,6 +21,7 @@ import { Signs } from './signs';
 import { Markets, parseMarkets } from './market';
 import { WorldMap, type MapPoint } from './worldMap';
 import { GlassRain } from '../../render/glassRain';
+import { Dents } from './dents';
 import { parseMsk } from '../../formats/msk';
 import { findStores } from './economy';
 import { WeatherDrift } from './weather';
@@ -115,6 +116,12 @@ export class Ht2Drive {
   private cabAsm: SceneAssembler | null = null;
   /** Вода на склі кабіни й двірники (як у першій грі: маски glass_1/glass_2.msk з CABINES1.RES, Wiper*). */
   private glassRain: GlassRain | null = null;
+  /** Вмʼятини гравця (перемикачі пошкоджень моделі); у кар'єрі — зберігаються. */
+  dents: Dents | null = null;
+  private readonly prevVel = new THREE.Vector3();
+  private freeDents: Record<string, number> = {};
+  /** Габарити (SizeLightKey моделі). */
+  private setTruckSwitch: ((n: string, s: number) => void) | undefined;
   private cabRmp: ReturnType<typeof parseRmp> | null = null;
   private shelterTimer = 0;
   private sheltered = false;
@@ -199,10 +206,12 @@ export class Ht2Drive {
       const ahead = spawn.position.clone().addScaledVector(spawn.forward, 10);
       spawn.position.copy(this.groundAt(ahead.setY(ahead.y - 2.5)));
     }
-    const model = buildTruckModel(this.trucks.asm, def, false);
+    // Динамічна модель: перемикачі пошкоджень і вогнів (вмʼятини, габарити).
+    const model = buildTruckModel(this.trucks.asm, def, true);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня`);
     this.cargoMass = o.career?.order ? o.career.order.goods.mass * o.career.order.units : 0;
     this.truck = new TruckVehicle(this.rapier, def, model, spawn, this.setup(this.cargoMass));
+    this.truck.visual.userData.model = model;
     this.truck.setDamage({ power: 1, lostGears: 0, brakes: this.tuning.brakes });
     this.world.scene.add(this.truck.visual);
     this.hitch();
@@ -367,11 +376,12 @@ export class Ht2Drive {
     const t = this.truck.body.translation();
     const position = new THREE.Vector3(t.x, t.y + 0.3, t.z);
     const forward = this.truck.forward();
-    const model = buildTruckModel(this.trucks.asm, this.def, false);
+    const model = buildTruckModel(this.trucks.asm, this.def, true);
     if (!model) return;
     this.world.scene.remove(this.truck.visual);
     this.truck.dispose();
     this.truck = new TruckVehicle(this.rapier, this.def, model, { position, forward }, this.setup(mass));
+    this.truck.visual.userData.model = model;
     this.truck.setDamage({ power: 1, lostGears: 0, brakes: this.tuning.brakes });
     this.world.scene.add(this.truck.visual);
     this.hitch();
@@ -384,6 +394,26 @@ export class Ht2Drive {
     this.paused = true;
     const t = this.truck.body.translation();
     this.worldMap.open(new THREE.Vector3(t.x, t.y, t.z), this.truck.forward(), this.careerMode?.target() ?? null);
+  }
+
+  /** Кадрів після перестановки машини, коли удари не рахуємо (стрибок швидкості — не удар). */
+  private skipHits = 0;
+
+  /**
+   * Удари: різка зміна горизонтальної швидкості за кадр (понад 2 м/с) — вмʼятина в зоні, звідки прийшов удар
+   * (зміна швидкості в системі машини, dents.ts).
+   */
+  private detectHits(): void {
+    const lv = this.truck.body.linvel();
+    const v = new THREE.Vector3(lv.x, 0, lv.z);
+    const dv = v.clone().sub(this.prevVel);
+    this.prevVel.copy(v);
+    if (this.skipHits > 0) {
+      this.skipHits--;
+      return;
+    }
+    if (dv.length() < 2) return;
+    this.dents?.hit(dv.applyQuaternion(this.truck.visual.quaternion.clone().invert()));
   }
 
   /** Ігрових секунд за реальну (повзунок «тривалість доби»). */
@@ -422,6 +452,11 @@ export class Ht2Drive {
    * причепі. Старий причіп прибираємо.
    */
   private hitch(): void {
+    this.skipHits = 3;
+    // Нова модель — перемикачі вмʼятин і вогнів (стан пошкоджень — з кар'єри).
+    const m = this.truck.visual.userData.model as { setSwitch?: (n: string, s: number) => void; switchStates?: (n: string) => number } | undefined;
+    this.setTruckSwitch = m?.setSwitch;
+    this.dents = new Dents(this.opts.career ? (this.opts.career.dents ??= {}) : this.freeDents, m?.setSwitch, m?.switchStates);
     // Нова машина — дощ знову робить дорогу слизькою (зчеплення ×0,8, як у першій грі).
     this.truck.weatherGrip = this.raining ? 0.8 : 1;
     if (this.trailer) {
@@ -492,6 +527,8 @@ export class Ht2Drive {
     }
     const on = this.lightsManual ?? (p === 'night' || p === 'sset' || p === 'srise');
     for (const l of this.lamps) l.visible = on;
+    // Габарити вантажівки (SizeLightKey: 1 — горять) — разом з фарами.
+    this.setTruckSwitch?.('refer_SizeLightKey', on ? 1 : 0);
   }
 
   /** Для гонки: поверхня під точкою, дані вантажівок, світ фізики. */
@@ -540,6 +577,7 @@ export class Ht2Drive {
   recover(): void {
     if (this.safe) this.truck.reset({ position: this.safe.position.clone(), forward: this.safe.forward.clone() });
     this.trailer?.reset();
+    this.skipHits = 3;
   }
 
   private resize(): void {
@@ -682,6 +720,7 @@ export class Ht2Drive {
       this.acc -= step;
     }
     this.race?.after(dt);
+    this.detectHits();
     this.truckers?.after(dt, this.truck.visual.position);
     this.truck.syncVisual();
     this.trailer?.syncVisual();
