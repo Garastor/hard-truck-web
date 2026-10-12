@@ -18,6 +18,7 @@ import { CareerMode } from './careerMode';
 import { Police } from './police';
 import { RaceMode } from './race';
 import { Trailer } from './trailer';
+import { Truckers, truckerNames } from './truckers';
 import { parseUpgrades, tuning, type Tuning } from './upgrades';
 import { NavMap } from '../../ui/navMap';
 import { Music } from './music';
@@ -80,6 +81,7 @@ export class Ht2Drive {
   careerMode: CareerMode | null = null;
   police: Police | null = null;
   race: RaceMode | null = null;
+  truckers: Truckers | null = null;
   private raceMessages = new Map<string, string>();
   private map: NavMap | null = null;
   private music: Music | null = null;
@@ -192,6 +194,10 @@ export class Ht2Drive {
       for (const m of ms) if (Array.isArray(m) && typeof m[0] === 'string') this.raceMessages.set(m[0], str(m[m.length - 1]));
       this.race = new RaceMode(this, this.roads, (k, fb) => this.raceMessages.get(k) ?? fb);
       this.race.onFinish = () => o.onExit();
+    }
+    if (!o.race) {
+      const names = await o.source.read('names.sch').then(readSch).catch(() => []);
+      this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r));
     }
     const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
     this.traffic = new Traffic(this.world.scene, this.rapier, this.roads, this.trucks, trafficKinds(vehicles, this.trucks), (r) => this.world.loaded.has(r));
@@ -540,19 +546,23 @@ export class Ht2Drive {
     if (this.paused) return;
     const manual = this.input.update(dt);
     const tp = this.truck.body.translation();
-    let state = this.autopilot ? this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt, this.traffic?.cars.map((c) => c.pos)) : manual;
+    const rivals = this.truckers?.positions ?? [];
+    let state = this.autopilot ? this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt, [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...rivals]) : manual;
     if (this.race?.holding) state = { ...state, throttle: 0, brake: 1 };
-    this.traffic?.update(dt, this.truck.visual.position, this.trailer?.points());
+    this.traffic?.update(dt, this.truck.visual.position, [...(this.trailer?.points() ?? []), ...rivals]);
+    const obstacles = [this.truck.visual.position, ...(this.trailer?.points() ?? []), ...(this.traffic?.cars.map((c) => c.pos) ?? [])];
     this.acc += dt;
     const step = this.rapier.timestep;
     while (this.acc >= step) {
       this.truck.update(step, state);
       this.trailer?.update(step, this.truck.brakePedal(state), this.def.tech.brakePower);
       this.race?.control(step);
+      this.truckers?.control(step, obstacles);
       this.rapier.step();
       this.acc -= step;
     }
     this.race?.after(dt);
+    this.truckers?.after(dt, this.truck.visual.position);
     this.truck.syncVisual();
     this.trailer?.syncVisual();
     this.audio?.update(this.truck.rpm, state.throttle, this.truck.engineOn);
@@ -564,9 +574,12 @@ export class Ht2Drive {
     this.careerMode?.update(dt, state.throttle);
     const fine = this.police?.update(dt, this.truck.visual.position, this.truck.speedKmh);
     if (fine && this.careerMode && !this.tuning.antiRadar) void this.careerMode.fine(fine.over);
-    this.map?.update(dt, this.truck.visual.position, this.truck.forward(), this.traffic?.cars.map((c) => c.pos) ?? [], this.careerMode?.target() ?? null);
+    this.map?.update(dt, this.truck.visual.position, this.truck.forward(), [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? [])], this.careerMode?.target() ?? null);
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
-    this.bar.textContent = this.careerMode ? `${drive}\n${this.careerMode.hud()}` : this.race ? `${drive}\n${this.race.hud()}` : drive;
+    // Поруч далекобійник — його імʼя й машина (names.sch, vehicle.tech).
+    const near = this.truckers?.nearest(this.truck.visual.position);
+    const who = near ? `\n${near.name} (${near.truck.def.carNode})` : '';
+    this.bar.textContent = (this.careerMode ? `${drive}\n${this.careerMode.hud()}` : this.race ? `${drive}\n${this.race.hud()}` : drive) + who;
   }
 
   /**
@@ -669,6 +682,7 @@ export class Ht2Drive {
     this.traffic?.dispose();
     this.police?.dispose();
     this.race?.dispose();
+    this.truckers?.dispose();
     this.trailer?.dispose();
     this.truck?.dispose();
     this.world.dispose();
