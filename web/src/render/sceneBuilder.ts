@@ -34,6 +34,8 @@ export interface BuildOptions {
    * інакше зникали поруч з камерою).
    */
   nearGroup?: 0 | 1;
+  /** HT2: блок 4 — деталі в просторі name1 (кабіни: кермо в ZilRuleSpace, стрілки в ZilSpeedSpace…). */
+  type4Space?: boolean;
 }
 
 export interface BuiltScene {
@@ -286,6 +288,7 @@ export class SceneAssembler {
   private buildingRooms = false;
   private readonly lit: boolean;
   private readonly nearGroup: 0 | 1;
+  private readonly type4Space: boolean;
   private readonly fallback: SceneAssembler | null;
 
   constructor(
@@ -297,6 +300,7 @@ export class SceneAssembler {
     this.lib = new MaterialLibrary(b3d, rmp, opts.lit, opts.palette ?? null, opts.colorKey);
     this.lit = opts.lit ?? false;
     this.nearGroup = opts.nearGroup ?? 1;
+    this.type4Space = opts.type4Space ?? false;
     this.fallback = opts.fallback ?? null;
     for (const b of b3d.blocks) if (b.name) this.topByName.set(b.name.toLowerCase(), b);
     const collect = (b: Block, parent: THREE.Matrix4) => {
@@ -519,6 +523,24 @@ export class SceneAssembler {
       case 37:
         cur = { positions: d.positions, uvs: d.uvs, normals: d.t === 37 ? d.normals : null };
         break;
+      case 4: {
+        // HT2: деталь у просторі name1 — окрема група з матрицею простору (кермо, стрілки обертає гра).
+        const m = this.type4Space && d.name1 ? this.space(d.name1) : null;
+        if (m) {
+          const grp = new THREE.Group();
+          grp.name = block.name;
+          grp.matrixAutoUpdate = false;
+          grp.matrix.copy(m);
+          grp.userData.baseMatrix = m.clone();
+          grp.userData.space = d.name1.toLowerCase();
+          const b: Batches = new Map();
+          if (block.groups) for (const g of block.groups) for (const child of g) this.visit(child, cur, b, grp, depth + 1);
+          this.flush(b, grp);
+          into.add(grp);
+          return;
+        }
+        break;
+      }
       case 8:
       case 35:
         if (vs) this.addPolys(d.polys, vs, batches);

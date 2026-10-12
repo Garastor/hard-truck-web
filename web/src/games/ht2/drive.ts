@@ -16,6 +16,9 @@ import { Ht2Roads } from './roads';
 import { Traffic, trafficKinds } from './traffic';
 import { CareerMode } from './careerMode';
 import { NavMap } from '../../ui/navMap';
+import { SceneAssembler } from '../../render/sceneBuilder';
+import { parseB3d } from '../../formats/b3d';
+import { parseRmp } from '../../formats/rmp';
 import type { Ht2Career } from './career';
 
 /**
@@ -65,6 +68,12 @@ export class Ht2Drive {
   traffic: Traffic | null = null;
   careerMode: CareerMode | null = null;
   private map: NavMap | null = null;
+  /** Кабіна (вид з кабіни): інтер'єр з CABINES.B3D окремою сценою поверх світу, як у першій грі. */
+  private readonly overlayScene = new THREE.Scene();
+  private cab: THREE.Group | null = null;
+  private cabParts: { rule?: THREE.Object3D; speed?: THREE.Object3D; tacho?: THREE.Object3D } = {};
+  private cabAsm: SceneAssembler | null = null;
+  private cabLoading = false;
   /** Пауза (вікно складу чи СТО): фізика й час стоять. */
   paused = false;
   /** Маса вантажу в кузові, кг (фізика: центр мас і загальна маса). */
@@ -111,6 +120,7 @@ export class Ht2Drive {
     this.def = def;
     if (o.career && !o.career.truck) o.career.truck = def.carNode;
     this.tank = rec.tank;
+    this.cabPrefix = rec.prefixCab;
     this.fuelConsumption = rec.fuelConsumption;
 
     o.setStatus('Завантаження регіонів довкола старту…');
@@ -257,7 +267,78 @@ export class Ht2Drive {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.update(dt);
-    this.opts.renderer.render(this.world.scene, this.camera);
+    const r = this.opts.renderer;
+    r.render(this.world.scene, this.camera);
+    if (this.cab?.visible) {
+      // Кабіна — другим проходом з близькою площиною відсікання поверх світу.
+      const near = this.camera.near;
+      this.camera.near = 0.05;
+      this.camera.updateProjectionMatrix();
+      const auto = r.autoClear;
+      r.autoClear = false;
+      r.clearDepth();
+      r.render(this.overlayScene, this.camera);
+      r.autoClear = auto;
+      this.camera.near = near;
+      this.camera.updateProjectionMatrix();
+    }
+  }
+
+  /** Інтер'єр кабіни `<prefixCab>Cab` (CABINES.B3D, текстури CABINES1.RES) — вантажиться при першому вигляді з кабіни. */
+  private async loadCab(): Promise<void> {
+    if (this.cabLoading || this.cab) return;
+    this.cabLoading = true;
+    try {
+      if (!this.cabAsm) {
+        const [b3d, res] = await Promise.all([this.opts.source.read('COMMON/CABINES.B3D'), this.opts.source.read('COMMON/CABINES1.RES')]);
+        this.cabAsm = new SceneAssembler(parseB3d(b3d), parseRmp(res), { lit: true, colorKey: true, nearGroup: 0, type4Space: true, palette: this.world.common.lib.palette ?? undefined });
+        this.overlayScene.add(new THREE.AmbientLight(0xffffff, Math.PI * 0.75), new THREE.HemisphereLight(0xffffff, 0x404040, Math.PI * 0.4));
+      }
+      const name = `${this.cabPrefix}Cab`;
+      const dyn = this.cabAsm.dynamicObject(name);
+      if (!dyn) return;
+      const inner = dyn.root;
+      inner.rotation.x = -Math.PI / 2;
+      this.cab = new THREE.Group();
+      this.cab.add(inner);
+      this.overlayScene.add(this.cab);
+      const prefix = this.cabPrefix.toLowerCase();
+      const bySpace = (sp: string) => {
+        let found: THREE.Object3D | undefined;
+        inner.traverse((o) => {
+          if (!found && o.userData.space === `${prefix}${sp}`) found = o;
+        });
+        return found;
+      };
+      this.cabParts = { rule: bySpace('rulespace'), speed: bySpace('speedspace'), tacho: bySpace('tachospace') };
+    } finally {
+      this.cabLoading = false;
+    }
+  }
+
+  /** Префікс кабіни (prefixCab з vehicle.tech: ZilR → Zil, RenaultR → Reno). */
+  private cabPrefix = '';
+
+  /** Кабіна: на місці ока, орієнтація машини з нахилом погляду; кермо й стрілки — за станом. */
+  private updateCab(steer: number): void {
+    const inside = this.camMode === 'cockpit';
+    if (inside && !this.cab) void this.loadCab();
+    this.truck.visual.visible = !inside || !this.cab;
+    if (!this.cab) return;
+    this.cab.visible = inside;
+    if (!inside) return;
+    const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (this.def.tech.viewerTilt * Math.PI) / 180);
+    this.cab.position.copy(this.camera.position);
+    this.cab.quaternion.copy(this.truck.visual.quaternion).multiply(tilt);
+    const rot = (o: THREE.Object3D | undefined, axis: THREE.Vector3, angle: number) => {
+      if (!o) return;
+      o.matrix.copy(o.userData.baseMatrix as THREE.Matrix4).multiply(new THREE.Matrix4().makeRotationAxis(axis, angle));
+    };
+    const deg = Math.PI / 180;
+    const needle = (v: number, [max, angle]: [number, number]) => (Math.min(Math.max(v, 0), max * 1.05) / max) * angle * deg;
+    rot(this.cabParts.rule, new THREE.Vector3(0, 1, 0), -steer * 2.4);
+    rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), needle(this.truck.speedKmh, this.def.speedScale));
+    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle(this.truck.rpm / 60, this.def.tachScale));
   }
 
   /** Крок гри (також для тестів — без requestAnimationFrame). */
@@ -278,6 +359,7 @@ export class Ht2Drive {
     this.audio?.update(this.truck.rpm, state.throttle, this.truck.engineOn);
     this.trackSafe(dt);
     this.updateCamera(dt);
+    this.updateCab(state.steer);
     this.world.update(this.camera, this.truck.visual.position);
     this.careerMode?.update(dt, state.throttle);
     this.map?.update(dt, this.truck.visual.position, this.truck.forward(), this.traffic?.cars.map((c) => c.pos) ?? [], this.careerMode?.target() ?? null);
@@ -379,6 +461,7 @@ ${this.careerMode.hud()}` : drive;
     this.hud.remove();
     this.bar.remove();
     this.audio?.dispose();
+    this.cabAsm?.dispose();
     this.traffic?.dispose();
     this.truck?.dispose();
     this.world.dispose();

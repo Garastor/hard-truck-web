@@ -62,8 +62,8 @@ export function truckDef(t: Ht2Trucks, r: TechRecord): TruckDef | null {
     wheelNodes: wheels.map((w) => w.node),
     cockpitSpace: r.cockpitSpace,
     panelMask: '',
-    tachScale: [50, 240],
-    speedScale: [160, 240],
+    tachScale: r.tachScale,
+    speedScale: r.speedScale,
     tech: {
       mass: r.mass,
       maxRotMomentum: r.maxRotMomentum,

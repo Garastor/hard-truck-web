@@ -87,6 +87,12 @@ export interface TechRecord {
   couplerLength: number;
   /** Тип причепа (0 — не причіп; 1 — модуль, 2 — платформа, 3 — цистерна — за іменами). */
   trailerType: number;
+  /**
+   * Шкали приладів кабіни: [кінець шкали, кут стрілки, градуси]. Спідометр — км/год (у файлі м/с), тахометр — в
+   * одиницях TCH (у файлі × 5/3, як у TechToTCH; ЗіЛ: 40 — як 50 у TRUCK.TCH першої гри, об/с).
+   */
+  speedScale: [number, number];
+  tachScale: [number, number];
 }
 
 export interface Tech {
@@ -198,7 +204,9 @@ function readRecord(r: BinReader, index: number): TechRecord {
   const coupler = v3();
   const shiftSaddle = r.f32();
   const couplerLength = r.f32();
-  r.skip(4 + 4 + 4 + 4 + 4); // SpeedScale, ?, TachScale, ?, FuelScale
+  const speedScale: [number, number] = [r.f32() * 3.6, r.f32() * RAD];
+  const tachScale: [number, number] = [r.f32() / (5 / 3), r.f32() * RAD];
+  r.skip(4); // FuelScale
   r.skip(24 + 16 + 28 + 8); // вікна кабіни, шия водія, ?
   const cockpitSpace = s(60);
   const tch = s(30).replace(/^\.\\/, '').replace(/\.tch$/i, '');
@@ -218,6 +226,6 @@ function readRecord(r: BinReader, index: number): TechRecord {
     slideCollisionCoeff, cornerMarks, addCollisionPoints, cornerMarksW, collisionPlanes: planes.slice(0, nPlanes),
     tvCameras: cams.slice(0, nCams), smokePosition, smokeDirection, flamePlace, faraFL, faraFR, faraBL, faraBR,
     faraBLs, faraBRs, horsePower, price, lowSaddle, topSaddle, towHook, coupler, shiftSaddle, couplerLength,
-    trailerType,
+    trailerType, speedScale, tachScale,
   };
 }
