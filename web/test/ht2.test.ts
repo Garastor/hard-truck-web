@@ -183,7 +183,7 @@ describe.skipIf(!has)('HT2: економіка', () => {
   it('склади з вузлів WAY: 11 баз, у кожної 5 місць', () => {
     const regions = HT2_REGIONS.map((id) => ({ id, way: parseWay(read(`ENV/${id}.way`)) }));
     const stores = findStores(regions);
-    expect(stores.map((s) => s.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(stores.map((s) => s.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]); // 10 (aa) — без землі в порту
     expect(stores.every((s) => s.docks.length === 5)).toBe(true);
     expect(stores.find((s) => s.id === 3)!.town).toBe('Южный');
   });

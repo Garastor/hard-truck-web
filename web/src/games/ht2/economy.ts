@@ -49,6 +49,9 @@ export interface Order {
   urgent: boolean;
 }
 
+/** Регіони без землі в порту (процедурний рельєф): склади там не використовуємо. */
+export const NO_GROUND = new Set(['aa']);
+
 /** Міста за дорожніми знаками `town_<код>.txr` (регіон → назва). */
 export const TOWNS: Record<string, string> = {
   aa: 'Алмазный',
@@ -98,7 +101,9 @@ export function findStores(ways: Iterable<{ id: string; way: Way }>): Store[] {
         s.docks.push(n.pos);
       }
   // Склади з одним місцем (11, 13, 14) — допоміжні (гіпотеза: точки сценаріїв), у торгівлі не беруть участі.
-  const stores = [...byId.values()].filter((s) => s.docks.length >= 3);
+  // Склад 10 («Алмазный», регіон aa) — на процедурному рельєфі ($$GeneratorOfTerrain), якого порт ще не будує:
+  // землі там немає, тож поки без нього.
+  const stores = [...byId.values()].filter((s) => s.docks.length >= 3 && !NO_GROUND.has(s.region));
   for (const s of stores) s.center = [0, 1, 2].map((k) => s.docks.reduce((a, p) => a + p[k], 0) / s.docks.length) as [number, number, number];
   return stores.sort((a, b) => a.id - b.id);
 }
