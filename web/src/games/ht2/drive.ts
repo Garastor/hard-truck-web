@@ -67,6 +67,9 @@ export class Ht2Drive {
   paused = false;
   /** Маса вантажу в кузові, кг (фізика: центр мас і загальна маса). */
   private cargoMass = 0;
+  /** Бак, л, і витрата (vehicle.tech: × 10 = л/100 км) вантажівки гравця. */
+  tank = 250;
+  fuelConsumption = 5;
   private readonly onResize = () => this.resize();
 
   private constructor(
@@ -105,6 +108,8 @@ export class Ht2Drive {
     if (!def) throw new Error('Немає моделі вантажівки');
     this.def = def;
     if (o.career && !o.career.truck) o.career.truck = def.carNode;
+    this.tank = rec.tank;
+    this.fuelConsumption = rec.fuelConsumption;
 
     o.setStatus('Завантаження регіонів довкола старту…');
     await this.world.ready(start[0], start[1]);
@@ -268,8 +273,8 @@ export class Ht2Drive {
     this.audio?.update(this.truck.rpm, state.throttle, this.truck.engineOn);
     this.trackSafe(dt);
     this.updateCamera(dt);
-    this.world.update(this.camera);
-    this.careerMode?.update(dt);
+    this.world.update(this.camera, this.truck.visual.position);
+    this.careerMode?.update(dt, state.throttle);
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
     this.bar.textContent = this.careerMode ? `${drive}
 ${this.careerMode.hud()}` : drive;

@@ -5,7 +5,8 @@ import type { Order } from './economy';
  * цьому браузері (localStorage `ht2.career.v1`) — окремо від кар'єр першої гри.
  *
  * Гіпотези порту: стартові гроші 5000 $; ремонт — 30 $ за відсоток пошкодження; неустойка за прострочення —
- * половина цінності вантажу, за пошкодження — частка цінності, що дорівнює частці пошкодження.
+ * половина цінності вантажу, за пошкодження — частка цінності, що дорівнює частці пошкодження; пальне — $1 за літр
+ * (restable.sch: PR_FUEL «Fuel» 100 — одиниці невідомі).
  */
 export interface ActiveOrder extends Order {
   /** Ігровий час прийняття, с. */
@@ -20,6 +21,8 @@ export interface Ht2Career {
   truck: string;
   /** Пошкодження машини 0…1. */
   damage: number;
+  /** Пальне в баку, л (null — повний бак, ще не їздили). */
+  fuel: number | null;
   /** Ігровий час, с. */
   time: number;
   order: ActiveOrder | null;
@@ -33,9 +36,10 @@ export interface Ht2Career {
 const KEY = 'ht2.career.v1';
 export const START_MONEY = 5000;
 export const REPAIR_PER_PERCENT = 30;
+export const FUEL_PRICE = 1;
 
 export function newCareer(driver: string, truck: string): Ht2Career {
-  return { driver, money: START_MONEY, truck, damage: 0, time: 8 * 3600, order: null, delivered: 0, earned: 0 };
+  return { driver, money: START_MONEY, truck, damage: 0, fuel: null, time: 8 * 3600, order: null, delivered: 0, earned: 0 };
 }
 
 export function loadCareer(): Ht2Career | null {

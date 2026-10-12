@@ -172,13 +172,15 @@ export class Ht2World {
     return { pos: [p[0], p[1], p[2]], dir: [dx / l, dy / l] };
   }
 
-  /** Щокадру: небо за камерою; раз на 0,5 с — які регіони вантажити й вивантажувати. */
-  update(camera: THREE.Camera, now = performance.now()): void {
+  /**
+   * Щокадру: небо за камерою; раз на 0,5 с — які регіони вантажити й вивантажувати довкола `focus` (у їзді —
+   * вантажівка: камера після телепорту ще далеко, і регіони під машиною вивантажувались).
+   */
+  update(camera: THREE.Camera, focus: THREE.Vector3 = camera.position, now = performance.now()): void {
     if (this.sky) this.sky.position.copy(camera.position);
     if (now - this.lastCheck < 500) return;
     this.lastCheck = now;
-    const p = camera.position;
-    this.stream(p.x, -p.z);
+    this.stream(focus.x, -focus.z);
   }
 
   /** Чекати, доки довкола точки гри (x, y) завантажаться всі регіони радіуса LOAD_R. */

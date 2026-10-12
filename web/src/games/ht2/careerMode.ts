@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { modal } from '../../ui/careerUi';
 import type { SExpr } from '../../formats/sexpr';
 import { findStores, makeOrders, parseGoods, type Goods, type Store } from './economy';
-import { REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
+import { FUEL_PRICE, REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
 import { toThree } from './world';
 import type { Ht2Drive } from './drive';
 
@@ -13,6 +13,7 @@ import type { Ht2Drive } from './drive';
  */
 const DOCK_RADIUS = 22;
 const STO_RADIUS = 18;
+const FUEL_RADIUS = 14;
 /** Удар: зміна швидкості за крок, м/с — від неї пошкодження (гіпотеза, як у першій грі). */
 const HIT_MIN = 1.5;
 
@@ -20,6 +21,8 @@ export class CareerMode {
   readonly stores: Store[];
   private readonly goods: Goods[];
   private readonly sto: [number, number, number][] = [];
+  private readonly fuelSpots: [number, number, number][] = [];
+  private readonly lastPos = new THREE.Vector3();
   private busy = false;
   /** Біля якого місця вже показано вікно (повторно — лише після відʼїзду). */
   private shownAt: string | null = null;
@@ -34,7 +37,32 @@ export class CareerMode {
     this.goods = parseGoods(merchandise);
     this.stores = findStores(drive.world.regions.values());
     for (const r of drive.world.regions.values())
-      for (const room of r.way.rooms) for (const n of room.nodes) if (/^sto_/i.test(n.name)) this.sto.push(n.pos);
+      for (const room of r.way.rooms)
+        for (const n of room.nodes) {
+          if (/^sto_/i.test(n.name)) this.sto.push(n.pos);
+          if (/^node_car_fuel/i.test(n.name)) this.fuelSpots.push(n.pos);
+        }
+    this.lastPos.copy(drive.truck.visual.position);
+  }
+
+  /** Бак і витрата з vehicle.tech: витрата у файлі × 10 = л/100 км (ЗіЛ — 51), запас ходу = бак / витрата. */
+  private get tank(): number {
+    return this.drive.tank;
+  }
+
+  /**
+   * Пальне: витрата за пройдений шлях, на холостому — половина (гіпотеза), з газом — повна; порожній бак — двигун
+   * глухне (заводиться знову, коли заправились).
+   */
+  private burn(dt: number, throttle: number): void {
+    const c = this.career;
+    c.fuel ??= this.tank;
+    const p = this.drive.truck.visual.position;
+    const dist = Math.min(50, p.distanceTo(this.lastPos));
+    this.lastPos.copy(p);
+    const perMeter = (this.drive.fuelConsumption * 10) / 100 / 1000;
+    c.fuel = Math.max(0, c.fuel - dist * perMeter * (0.5 + 0.5 * throttle) - (this.drive.truck.engineOn ? dt * 0.0005 : 0));
+    if (c.fuel <= 0 && this.drive.truck.engineOn) this.drive.truck.engineOn = false;
   }
 
   /** Обʼєм кузова (площа × висота, гіпотеза) і вантажопідйомність. */
@@ -43,11 +71,12 @@ export class CareerMode {
     return { mass: t.cargoLoad, volume: Math.max(1, t.bodySquare * t.bodyHeight) };
   }
 
-  /** Крок: час, удари, табло; зупинка біля складу/СТО — вікно. */
-  update(dt: number): void {
+  /** Крок: час, удари, пальне, табло; зупинка біля складу/СТО/заправки — вікно. */
+  update(dt: number, throttle = 0): void {
     const c = this.career;
     if (this.busy) return;
     c.time += dt;
+    this.burn(dt, throttle);
     const v = this.drive.truck.body.linvel();
     const dv = Math.hypot(v.x - this.prevVel.x, v.y - this.prevVel.y, v.z - this.prevVel.z);
     this.prevVel.set(v.x, v.y, v.z);
@@ -78,14 +107,44 @@ export class CareerMode {
     if (sto >= 0 && this.shownAt !== `r${sto}` && c.damage > 0.01) {
       this.shownAt = `r${sto}`;
       void this.atSto();
+      return;
+    }
+    const fuel = this.fuelSpots.findIndex((d) => Math.hypot(d[0] - gx, d[1] - gy) < FUEL_RADIUS);
+    if (fuel >= 0 && this.shownAt !== `f${fuel}` && (c.fuel ?? this.tank) < this.tank - 1) {
+      this.shownAt = `f${fuel}`;
+      void this.atFuel();
+    }
+  }
+
+  private async atFuel(): Promise<void> {
+    const c = this.career;
+    this.busy = true;
+    this.drive.paused = true;
+    try {
+      const need = Math.ceil(this.tank - (c.fuel ?? this.tank));
+      const cost = Math.round(need * FUEL_PRICE);
+      const i = await modal(this.drive.overlay, 'Заправка', `У баку ${Math.round(c.fuel ?? 0)} л з ${Math.round(this.tank)}. Залити ${need} л: ${formatMoney(cost)}.`, ['Заправити', 'Не треба']);
+      if (i === 0) {
+        const can = Math.min(need, Math.floor(c.money / FUEL_PRICE));
+        if (can <= 0) await modal(this.drive.overlay, 'Заправка', 'НЕ ХВАТАЕТ ДЕНЕГ', ['Гаразд']);
+        else {
+          c.money -= Math.round(can * FUEL_PRICE);
+          c.fuel = (c.fuel ?? 0) + can;
+          if (!this.drive.truck.engineOn) this.drive.truck.engineOn = true;
+          this.persist();
+        }
+      }
+    } finally {
+      this.drive.paused = false;
+      this.busy = false;
     }
   }
 
   private near(gx: number, gy: number, key: string): boolean {
     const id = Number(key.slice(1));
     if (key[0] === 's') return this.stores.find((s) => s.id === id)!.docks.some((d) => Math.hypot(d[0] - gx, d[1] - gy) < DOCK_RADIUS * 2);
-    const d = this.sto[id];
-    return !!d && Math.hypot(d[0] - gx, d[1] - gy) < STO_RADIUS * 2;
+    const d = key[0] === 'f' ? this.fuelSpots[id] : this.sto[id];
+    return !!d && Math.hypot(d[0] - gx, d[1] - gy) < (key[0] === 'f' ? FUEL_RADIUS : STO_RADIUS) * 2;
   }
 
   persist(): void {
@@ -166,7 +225,8 @@ export class CareerMode {
   /** Табло: гроші, стан, вантаж і куди, залишок часу, годинник. */
   hud(): string {
     const c = this.career;
-    const parts = [formatMoney(c.money), `стан ${Math.round((1 - c.damage) * 100)}%`, formatClock(c.time)];
+    const fuel = c.fuel ?? this.tank;
+    const parts = [formatMoney(c.money), `стан ${Math.round((1 - c.damage) * 100)}%`, `пальне ${Math.round(fuel)} л${fuel < this.tank * 0.15 ? '!' : ''}`, formatClock(c.time)];
     if (c.order) {
       const o = c.order;
       const to = this.stores.find((s) => s.id === o.to);
