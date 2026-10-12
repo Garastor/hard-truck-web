@@ -15,6 +15,7 @@ import { AutoPilot } from '../../game/autopilot';
 import { Ht2Roads } from './roads';
 import { Traffic, trafficKinds } from './traffic';
 import { CareerMode } from './careerMode';
+import { Police } from './police';
 import { NavMap } from '../../ui/navMap';
 import { Music } from './music';
 import { SceneAssembler } from '../../render/sceneBuilder';
@@ -68,6 +69,7 @@ export class Ht2Drive {
   autopilot: AutoPilot | null = null;
   traffic: Traffic | null = null;
   careerMode: CareerMode | null = null;
+  police: Police | null = null;
   private map: NavMap | null = null;
   private music: Music | null = null;
   /** Кабіна (вид з кабіни): інтер'єр з CABINES.B3D окремою сценою поверх світу, як у першій грі. */
@@ -153,8 +155,12 @@ export class Ht2Drive {
     this.camLook.copy(spawn.position);
 
     if (o.career) {
-      const merch = await o.source.read('merchandise.sch').then(readSch).catch(() => []);
-      this.careerMode = new CareerMode(this, o.career, merch);
+      const [merch, messages] = await Promise.all([
+        o.source.read('merchandise.sch').then(readSch).catch(() => []),
+        o.source.read('Ms.sch').then(readSch).catch(() => []),
+      ]);
+      this.careerMode = new CareerMode(this, o.career, merch, messages);
+      this.police = new Police(this.world.scene, this.rapier, this.trucks, this.world.regions.values());
     }
     const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
     this.traffic = new Traffic(this.world.scene, this.rapier, this.roads, this.trucks, trafficKinds(vehicles, this.trucks), (r) => this.world.loaded.has(r));
@@ -301,6 +307,28 @@ export class Ht2Drive {
     for (const l of this.lamps) l.visible = on;
   }
 
+  /** Вантажівки, якими можна кермувати (для магазину). */
+  drivableTrucks() {
+    return drivable(this.trucks);
+  }
+
+  /** Інша вантажівка (купівля): нова модель і фізика на тому ж місці, свій бак, кабіна, фари. */
+  changeTruck(carNode: string): void {
+    const rec = drivable(this.trucks).find((r) => r.carNode === carNode);
+    const def = rec && truckDef(this.trucks, rec);
+    if (!rec || !def) return;
+    this.def = def;
+    this.tank = rec.tank;
+    this.fuelConsumption = rec.fuelConsumption;
+    this.cabPrefix = rec.prefixCab;
+    this.cockpit = g2t(def.tech.viewer);
+    if (this.cab) {
+      this.overlayScene.remove(this.cab);
+      this.cab = null;
+    }
+    this.setCargo(this.cargoMass);
+  }
+
   /** Відновитися: на останню надійну точку дороги. */
   recover(): void {
     if (this.safe) this.truck.reset({ position: this.safe.position.clone(), forward: this.safe.forward.clone() });
@@ -418,6 +446,8 @@ export class Ht2Drive {
     this.updateCab(state.steer);
     this.world.update(this.camera, this.truck.visual.position);
     this.careerMode?.update(dt, state.throttle);
+    const fine = this.police?.update(dt, this.truck.visual.position, this.truck.speedKmh);
+    if (fine && this.careerMode) void this.careerMode.fine(fine.over);
     this.map?.update(dt, this.truck.visual.position, this.truck.forward(), this.traffic?.cars.map((c) => c.pos) ?? [], this.careerMode?.target() ?? null);
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
     this.bar.textContent = this.careerMode ? `${drive}
@@ -520,6 +550,7 @@ ${this.careerMode.hud()}` : drive;
     this.cabAsm?.dispose();
     this.music?.dispose();
     this.traffic?.dispose();
+    this.police?.dispose();
     this.truck?.dispose();
     this.world.dispose();
     this.trucks.asm.dispose();

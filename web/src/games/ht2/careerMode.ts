@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { modal } from '../../ui/careerUi';
-import type { SExpr } from '../../formats/sexpr';
+import { isList, str, type SExpr } from '../../formats/sexpr';
 import { findStores, makeOrders, parseGoods, type Goods, type Store } from './economy';
 import { FUEL_PRICE, REPAIR_PER_PERCENT, TIME_SCALE, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
 import { toThree } from './world';
@@ -29,11 +29,16 @@ export class CareerMode {
   private saveTimer = 0;
   private readonly prevVel = new THREE.Vector3();
 
+  /** Повідомлення гри (Ms.sch): ключ → текст з %g / %d. */
+  private readonly messages = new Map<string, string>();
+
   constructor(
     private readonly drive: Ht2Drive,
     readonly career: Ht2Career,
     merchandise: SExpr[],
+    messages: SExpr[] = [],
   ) {
+    for (const m of messages) if (isList(m) && typeof m[0] === 'string') this.messages.set(m[0], str(m[m.length - 1]));
     this.goods = parseGoods(merchandise);
     this.stores = findStores(drive.world.regions.values());
     for (const r of drive.world.regions.values())
@@ -116,6 +121,61 @@ export class CareerMode {
     }
   }
 
+  /** Текст повідомлення гри з підставленим значенням (Ms.sch; без нього — запасний текст). */
+  msg(key: string, fallback: string, value?: number): string {
+    const t = this.messages.get(key) ?? fallback;
+    return t.replace(/%[gd]/, value === undefined ? '' : String(Math.round(value))).replace(/%%/g, '%');
+  }
+
+  /** Штраф поліції за перевищення швидкості: $20 за км/год понад ліміт (гіпотеза). */
+  async fine(over: number): Promise<void> {
+    const c = this.career;
+    this.busy = true;
+    this.drive.paused = true;
+    try {
+      const amount = over * 20;
+      await modal(this.drive.overlay, 'Поліція', this.msg('FINE_SPEEDING', 'ШТРАФ ЗА ПРЕВЫШЕНИЕ СКОРОСТИ $%g', amount), ['Сплатити']);
+      c.money = Math.max(0, c.money - amount);
+      this.persist();
+    } finally {
+      this.drive.paused = false;
+      this.busy = false;
+    }
+  }
+
+  /** Купівля вантажівки на складі: стара — в залік за половину ціни (гіпотеза). */
+  private async buyTruck(store: Store): Promise<void> {
+    const c = this.career;
+    // Лише вантажівки з кузовом (lorries): тягачам потрібен напівпричіп, а причепів у порту ще немає.
+    const list = this.drive.drivableTrucks().filter((r) => r.group === 'lorries' && r.carNode !== c.truck).sort((a, b) => a.price - b.price);
+    const current = this.drive.drivableTrucks().find((r) => r.carNode === c.truck);
+    const tradeIn = Math.round((current?.price ?? 0) * 0.5);
+    const labels = list.map((r) => `${r.carNode} (${r.horsePower} к.с., ${Math.round(r.cargoLoad / 1000)} т): ${formatMoney(r.price - tradeIn)}`);
+    const i = await modal(
+      this.drive.overlay,
+      `Вантажівки — «${store.town}»`,
+      `Ваша ${current?.carNode ?? c.truck} — у залік ${formatMoney(tradeIn)}. Гроші: ${formatMoney(c.money)}.`,
+      [...labels, 'Назад'],
+    );
+    const r = list[i];
+    if (!r) return;
+    const cost = r.price - tradeIn;
+    if (c.money < cost) {
+      await modal(this.drive.overlay, 'Вантажівки', this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'), ['Гаразд']);
+      return;
+    }
+    if (c.order) {
+      await modal(this.drive.overlay, 'Вантажівки', 'Спершу доставте вантаж.', ['Гаразд']);
+      return;
+    }
+    c.money -= cost;
+    c.truck = r.carNode;
+    c.damage = 0;
+    c.fuel = null;
+    this.drive.changeTruck(r.carNode);
+    this.persist();
+  }
+
   private async atFuel(): Promise<void> {
     const c = this.career;
     this.busy = true;
@@ -188,7 +248,8 @@ export class CareerMode {
           const h = (o.deadline * TIME_SCALE) / 3600;
           return `${o.goods.name} ×${o.units} → ${to.town}: ${formatMoney(o.pay)}, ${h < 1 ? `${Math.round(h * 60)} хв` : `${h.toFixed(1)} год`}${o.urgent ? ' (терміново)' : ''}`;
         });
-        const i = await modal(this.drive.overlay, `Склад «${store.town}»`, box, [...buttons, 'Не брати']);
+        const i = await modal(this.drive.overlay, `Склад «${store.town}»`, box, [...buttons, 'Купити вантажівку', 'Не брати']);
+        if (i === buttons.length) await this.buyTruck(store);
         const o = orders[i];
         if (o) {
           c.order = { ...o, deadline: o.deadline * TIME_SCALE, taken: c.time, integrity: 1 };
