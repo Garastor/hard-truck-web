@@ -13,6 +13,7 @@ import { FOV } from './viewer';
 import { Ht2World, toThree, type LoadedRegion } from './world';
 import { AutoPilot } from '../../game/autopilot';
 import { Ht2Roads } from './roads';
+import { Traffic, trafficKinds } from './traffic';
 
 /**
  * Їзда у світі Дальнобойщиків 2 (G4): вантажівка з vehicle.tech і TRUCKS.B3D на тій самій фізиці, що й у першій
@@ -56,6 +57,7 @@ export class Ht2Drive {
   /** Дороги всіх регіонів (WAY) і автопілот (клавіша P; для тестів — smoke). */
   roads!: Ht2Roads;
   autopilot: AutoPilot | null = null;
+  traffic: Traffic | null = null;
   private readonly onResize = () => this.resize();
 
   private constructor(
@@ -108,6 +110,8 @@ export class Ht2Drive {
     this.camPos.copy(spawn.position).addScaledVector(spawn.forward, -14).add(new THREE.Vector3(0, 6, 0));
     this.camLook.copy(spawn.position);
 
+    const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
+    this.traffic = new Traffic(this.world.scene, this.rapier, this.roads, this.trucks, trafficKinds(vehicles, this.trucks), (r) => this.world.loaded.has(r));
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);
     this.input.onCommand = (cmd) => {
       if (cmd === 'camera') this.camMode = NEXT_CAM[this.camMode];
@@ -213,7 +217,8 @@ export class Ht2Drive {
   update(dt: number): void {
     const manual = this.input.update(dt);
     const tp = this.truck.body.translation();
-    const state = this.autopilot ? this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt) : manual;
+    const state = this.autopilot ? this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt, this.traffic?.cars.map((c) => c.pos)) : manual;
+    this.traffic?.update(dt, this.truck.visual.position);
     this.acc += dt;
     const step = this.rapier.timestep;
     while (this.acc >= step) {
@@ -320,6 +325,7 @@ export class Ht2Drive {
     this.hud.remove();
     this.bar.remove();
     this.audio?.dispose();
+    this.traffic?.dispose();
     this.truck?.dispose();
     this.world.dispose();
     this.trucks.asm.dispose();
