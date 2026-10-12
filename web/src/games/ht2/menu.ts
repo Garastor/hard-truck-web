@@ -1,5 +1,7 @@
 import { parseRmp, type RmpArchive } from '../../formats/rmp';
 import { parseTxr } from '../../formats/txr';
+import { parseMsk } from '../../formats/msk';
+import { parsePlm } from '../../formats/plm';
 import type { RgbaImage } from '../../formats/binary';
 import type { PixelFont } from '../../ui/pixelFont';
 import type { Ht2Settings } from './settings';
@@ -13,7 +15,12 @@ import './ht2.css';
  * Docs/08-ht2-plan.md.
  */
 export class Ht2MenuArt {
-  private constructor(readonly res: RmpArchive) {}
+  /** Палітра масок меню (`menu_.plm` у LOAD.RES). */
+  private readonly palette: Uint8Array | undefined;
+  private constructor(readonly res: RmpArchive) {
+    const plm = res.palettes.get('menu_.plm');
+    this.palette = plm ? parsePlm(plm).palette : undefined;
+  }
 
   static async load(read: (name: string) => Promise<Uint8Array>): Promise<Ht2MenuArt | null> {
     try {
@@ -29,11 +36,19 @@ export class Ht2MenuArt {
     return b ? toCanvas(parseTxr(b)) : null;
   }
 
-  /** Зображення кнопки (стан — суфікс `_p`, `_a`…); кешується. */
+  /** Маска LOAD.RES (`common.msk` — рамка, `m/*.msk` — круглі кнопки, стрілки й бігунок повзунків). */
+  mask(name: string): HTMLCanvasElement | null {
+    const b = this.res.masks.get(name);
+    if (!b) return null;
+    const m = parseMsk(b, this.palette);
+    return toCanvas({ width: m.width, height: m.height, data: m.data });
+  }
+
+  /** Зображення кнопки: текстура (`….txr`) чи маска (`….msk`); кешується. */
   private readonly cache = new Map<string, string | null>();
   image(name: string): string | null {
     if (!this.cache.has(name)) {
-      const c = this.background(name);
+      const c = name.endsWith('.msk') ? this.mask(name) : this.background(name);
       this.cache.set(name, c ? c.toDataURL() : null);
     }
     return this.cache.get(name)!;
@@ -121,12 +136,41 @@ export function ht2MenuScreen(art: Ht2MenuArt | null, font: PixelFont | null, it
 }
 
 /**
- * Екран одиночної гри оригіналу (`s/backsing.txr`, 800×600) з кнопками LOAD.RES. Розташування кнопок у даних немає
- * (воно в king.exe) — знайдено зіставленням текстур кнопок з порожніми «гніздами» фону.
- * Стани кнопки: `_p` — звичайна, `_a` — під пальцем/мишею, `_ap` — натиснута, `_pp` / `_ph` — вибрана (перемикач)
- * і вибрана під пальцем, `_f` — недоступна.
- * Повзунки (насиченість трас, тривалість доби, погода): круглі кнопки фону ліворуч/праворуч — менше/більше, смуга
- * між ними — власне зображення значення (як малює оригінал, невідомо).
+ * Рамка меню оригіналу — маска `common.msk` (800×600, прозоре коло в центрі): у коло лягають екрани LOAD.RES
+ * (`m/back_main`, `s/backsing`, `e/backexit`…), по боках — вісім круглих кнопок `m/<ключ>_p|a|ap.msk` (125×125).
+ * Місця кнопок у даних немає — це центри чорних гнізд рамки (рамка симетрична відносно x = 400).
+ */
+export type RoundKey = 'graph' | 'contr' | 'demo' | 'recor' | 'singl' | 'multi' | 'chang' | 'exit';
+const ROUND: [RoundKey, number, number, string][] = [
+  ['graph', 79, 82, 'Графіка'],
+  ['contr', 28, 200, 'Керування'],
+  ['demo', 28, 330, 'Демо'],
+  ['recor', 79, 451, 'Відеоплеєр'],
+  ['singl', 597, 82, 'Гра'],
+  ['multi', 648, 200, 'Мережева гра'],
+  ['chang', 648, 330, 'Змінити водія'],
+  ['exit', 597, 451, 'Вихід з гри'],
+];
+
+/** Головний екран: центр — `m/back_main`, дії — круглі кнопки рамки. */
+export function ht2MainScreen(art: Ht2MenuArt, o: { note?: string; onRound(key: RoundKey): void }): () => void {
+  const sc = screen(art, 'm/back_main.txr', o.onRound);
+  if (o.note) {
+    const n = document.createElement('div');
+    n.className = 'menu-abs menu-note ht2-main-note';
+    n.style.left = '0';
+    n.style.top = `${H - 30}px`;
+    n.style.width = `${W}px`;
+    n.textContent = o.note;
+    sc.stage.append(n);
+  }
+  return sc.close;
+}
+
+/**
+ * Екран одиночної гри оригіналу (`s/backsing.txr`) з кнопками LOAD.RES. Місця кнопок знайдено зіставленням
+ * текстур кнопок з порожніми «гніздами» фону; повзунків (стрілки `aleft`/`aright`, бігунок `runner`) — за знімком
+ * екрана оригіналу.
  */
 const SINGLE = {
   new: [323, 120],
@@ -137,12 +181,14 @@ const SINGLE = {
   load: [323, 355],
   cancel: [323, 485],
 } as const;
-/** Рядки повзунків: y центру; круглі кнопки — x 369 і 529, смуга між ними. */
+/** Рядки повзунків: y центру; стрілки — центри x 365 і 524 (29×29), бігунок (12×22) — від x 385 (0) до 502 (1). */
 const SLIDERS: [keyof Pick<Ht2Settings, 'traffic' | 'dayLength' | 'weather'>, number][] = [
-  ['traffic', 227],
-  ['dayLength', 259],
-  ['weather', 290],
+  ['traffic', 225],
+  ['dayLength', 255],
+  ['weather', 285],
 ];
+const RUN_X0 = 385;
+const RUN_X1 = 502;
 
 export interface SingleScreen {
   hasSave: boolean;
@@ -152,18 +198,15 @@ export interface SingleScreen {
   onLoad(): void;
   onCancel(): void;
   onChange(s: Ht2Settings): void;
+  /** Кругла кнопка рамки (інший розділ меню). */
+  onRound(key: RoundKey): void;
   /** Повідомлення поверх екрана (parent — контейнер екрана: шар overlay гри під меню). */
   note(text: string, parent: HTMLElement): void;
 }
 
 export function ht2SingleScreen(art: Ht2MenuArt, o: SingleScreen): () => void {
-  const root = document.createElement('div');
-  root.className = 'menu-screen ht2-menu';
-  const stage = document.createElement('div');
-  stage.className = 'menu-stage ht2-stage';
-  root.append(stage);
-  const bg = art.background('s/backsing.txr');
-  if (bg) stage.append(bg);
+  const sc = screen(art, 's/backsing.txr', o.onRound);
+  const { stage, root } = sc;
   const s = { ...o.settings };
   const painters: (() => void)[] = [];
   const repaint = () => painters.forEach((p) => p());
@@ -197,38 +240,53 @@ export function ht2SingleScreen(art: Ht2MenuArt, o: SingleScreen): () => void {
   button('cancel', 'canc', 'Скасувати', { action: o.onCancel });
 
   for (const [key, y] of SLIDERS) {
-    const bar = document.createElement('div');
-    bar.className = 'menu-abs ht2-slider';
-    bar.style.left = '386px';
-    bar.style.top = `${y - 4}px`;
-    const fill = document.createElement('div');
-    bar.append(fill);
-    const paint = () => {
-      fill.style.width = `${Math.round(s[key] * 100)}%`;
-    };
     const set = (v: number) => {
       s[key] = Math.round(Math.min(1, Math.max(0, v)) * 10) / 10;
-      paint();
       changed();
     };
-    for (const [x, d, label] of [
-      [369, -0.1, 'менше'],
-      [529, 0.1, 'більше'],
-    ] as const) {
-      const b = document.createElement('button');
-      b.className = 'menu-abs ht2-round';
-      b.style.left = `${x - 15}px`;
-      b.style.top = `${y - 15}px`;
-      b.setAttribute('aria-label', `${key}: ${label}`);
-      b.addEventListener('click', () => set(s[key] + d));
-      stage.append(b);
-    }
-    bar.addEventListener('click', (e) => {
-      const r = bar.getBoundingClientRect();
-      set((e.clientX - r.left) / r.width);
+    // Стрілки: на межі — недоступні (_f).
+    painters.push(
+      texButton(art, stage, 'aleft', 365 - 14, y - 14, `${key}: менше`, { ext: '.msk', disabled: () => s[key] <= 0, action: () => set(s[key] - 0.1) }),
+      texButton(art, stage, 'aright', 524 - 14, y - 14, `${key}: більше`, { ext: '.msk', disabled: () => s[key] >= 1, action: () => set(s[key] + 0.1) }),
+    );
+    // Смуга — зона дотику (перетягування бігунка), бігунок — маска runner.
+    const track = document.createElement('div');
+    track.className = 'menu-abs ht2-track';
+    track.style.left = `${RUN_X0 - 8}px`;
+    track.style.top = `${y - 13}px`;
+    track.style.width = `${RUN_X1 - RUN_X0 + 16}px`;
+    const knob = document.createElement('img');
+    knob.alt = '';
+    knob.draggable = false;
+    knob.className = 'ht2-runner';
+    track.append(knob);
+    let drag = false;
+    const paint = () => {
+      knob.src = art.image(`runner_${drag ? 'ap' : 'p'}.msk`) ?? '';
+      knob.style.left = `${8 + (RUN_X1 - RUN_X0) * s[key] - 6}px`;
+    };
+    const fromEvent = (e: PointerEvent) => {
+      const r = track.getBoundingClientRect();
+      const k = r.width / (RUN_X1 - RUN_X0 + 16);
+      set((e.clientX - r.left - 8 * k) / ((RUN_X1 - RUN_X0) * k));
+    };
+    track.addEventListener('pointerdown', (e) => {
+      drag = true;
+      track.setPointerCapture(e.pointerId);
+      fromEvent(e);
     });
+    track.addEventListener('pointermove', (e) => {
+      if (drag) fromEvent(e);
+    });
+    const up = () => {
+      drag = false;
+      paint();
+    };
+    track.addEventListener('pointerup', up);
+    track.addEventListener('pointercancel', up);
+    painters.push(paint);
     paint();
-    stage.append(bar);
+    stage.append(track);
   }
 
   // Збережена гра — у полі списку (власний текст).
@@ -238,36 +296,27 @@ export function ht2SingleScreen(art: Ht2MenuArt, o: SingleScreen): () => void {
   save.style.top = '418px';
   save.textContent = o.hasSave ? o.saveText : 'Немає збереженої гри';
   stage.append(save);
-
-  const fit = () => {
-    const k = Math.min(window.innerWidth / W, window.innerHeight / H);
-    stage.style.transform = `translate(-50%, -50%) scale(${k})`;
-  };
-  window.addEventListener('resize', fit);
-  fit();
-  document.body.append(root);
-  document.body.classList.add('in-menu');
-  return () => {
-    window.removeEventListener('resize', fit);
-    root.remove();
-    document.body.classList.remove('in-menu');
-  };
+  return sc.close;
 }
 
 interface TexButtonOptions {
   selected?: () => boolean;
-  disabled?: boolean;
+  disabled?: boolean | (() => boolean);
   action: () => void;
   /** Після дії (перемалювати сусідні перемикачі). */
   after?: () => void;
+  /** Розширення зображень стану: `.txr` (текстура) чи `.msk` (маска). */
+  ext?: string;
 }
 
 /**
- * Кнопка-текстура LOAD.RES у точці (x, y) сцени: `<base>_<стан>.txr`. Повертає функцію перемальовування.
+ * Кнопка LOAD.RES у точці (x, y) сцени: `<base>_<стан><ext>`. Повертає функцію перемальовування.
  * Стани: `_p` — звичайна, `_a` — під пальцем/мишею, `_ap` — натиснута, `_pp` / `_ph` — вибрана (перемикач) і вибрана
  * під пальцем, `_f` — недоступна.
  */
 function texButton(art: Ht2MenuArt, stage: HTMLElement, base: string, x: number, y: number, label: string, opts: TexButtonOptions): () => void {
+  const ext = opts.ext ?? '.txr';
+  const off = () => (typeof opts.disabled === 'function' ? opts.disabled() : !!opts.disabled);
   const b = document.createElement('button');
   b.className = 'menu-abs ht2-tex-button';
   b.style.left = `${x}px`;
@@ -280,8 +329,8 @@ function texButton(art: Ht2MenuArt, stage: HTMLElement, base: string, x: number,
   let hover = false;
   let down = false;
   const paint = () => {
-    const st = opts.disabled ? 'f' : opts.selected?.() ? (hover ? 'ph' : 'pp') : down ? 'ap' : hover ? 'a' : 'p';
-    img.src = art.image(`${base}_${st}.txr`) ?? art.image(`${base}_p.txr`) ?? '';
+    const st = off() ? 'f' : opts.selected?.() ? (hover ? 'ph' : 'pp') : down ? 'ap' : hover ? 'a' : 'p';
+    img.src = art.image(`${base}_${st}${ext}`) ?? art.image(`${base}_p${ext}`) ?? '';
   };
   b.addEventListener('pointerenter', () => {
     hover = true;
@@ -301,7 +350,7 @@ function texButton(art: Ht2MenuArt, stage: HTMLElement, base: string, x: number,
     paint();
   });
   b.addEventListener('click', () => {
-    if (opts.disabled) return;
+    if (off()) return;
     opts.action();
     opts.after?.();
   });
@@ -310,8 +359,11 @@ function texButton(art: Ht2MenuArt, stage: HTMLElement, base: string, x: number,
   return paint;
 }
 
-/** Сцена 800×600 з фоном LOAD.RES, вписана у вікно; повертає (stage, root, close). */
-function screen(art: Ht2MenuArt, background: string): { stage: HTMLElement; root: HTMLElement; close: () => void } {
+/**
+ * Сцена 800×600, вписана у вікно: центр — екран LOAD.RES, поверх — рамка `common.msk` і круглі кнопки (onRound;
+ * без нього рамки немає). Повертає (stage, root, close).
+ */
+function screen(art: Ht2MenuArt, background: string, onRound?: (key: RoundKey) => void): { stage: HTMLElement; root: HTMLElement; close: () => void } {
   const root = document.createElement('div');
   root.className = 'menu-screen ht2-menu';
   const stage = document.createElement('div');
@@ -319,6 +371,14 @@ function screen(art: Ht2MenuArt, background: string): { stage: HTMLElement; root
   root.append(stage);
   const bg = art.background(background);
   if (bg) stage.append(bg);
+  if (onRound) {
+    const frame = art.mask('common.msk');
+    if (frame) {
+      frame.className = 'menu-abs ht2-frame';
+      stage.append(frame);
+    }
+    for (const [key, x, y, label] of ROUND) texButton(art, stage, `m/${key}`, x, y, label, { ext: '.msk', action: () => onRound(key) });
+  }
   const fit = () => {
     const k = Math.min(window.innerWidth / W, window.innerHeight / H);
     stage.style.transform = `translate(-50%, -50%) scale(${k})`;
@@ -344,11 +404,11 @@ function screen(art: Ht2MenuArt, background: string): { stage: HTMLElement; root
  */
 export function ht2ExitScreen(art: Ht2MenuArt): Promise<boolean> {
   return new Promise((resolve) => {
-    const sc = screen(art, 'e/backexit.txr');
     const done = (v: boolean) => () => {
       sc.close();
       resolve(v);
     };
+    const sc = screen(art, 'e/backexit.txr', () => done(false)());
     texButton(art, sc.stage, 'e/ok', 290, 304, 'Так, вийти', { action: done(true) });
     texButton(art, sc.stage, 'e/canc', 381, 304, 'Скасувати', { action: done(false) });
   });

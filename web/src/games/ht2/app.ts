@@ -5,7 +5,7 @@ import { parseFon } from '../../formats/fon';
 import { PixelFont } from '../../ui/pixelFont';
 import type { GameId } from '../registry';
 import { HT2_FILES, ht2DevSource } from './files';
-import { Ht2MenuArt, ht2ExitScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem } from './menu';
+import { Ht2MenuArt, ht2ExitScreen, ht2MainScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem, type RoundKey } from './menu';
 import { loadSettings, saveSettings, type Ht2Settings } from './settings';
 import { parseIni } from '../../formats/ini';
 import { decodeCp1251 } from '../../formats/binary';
@@ -74,25 +74,64 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   let direct: Choice | null = tab === 'world' || tab === 'drive' || tab === 'career' || tab === 'race' ? tab : null;
   for (;;) {
     const saved = loadCareer();
-    const choice = direct ?? (await new Promise<Choice>((resolve) => {
-      let close = () => {};
-      // Меню закривається перед будь-якою дією.
-      const pick = (c: Choice) => () => {
-        close();
-        resolve(c);
-      };
-      const items: MenuItem[] = [];
-      items.push(
-        { label: art ? 'Одиночна гра' : 'Нова гра', action: pick(art ? 'single' : 'new') },
-        { label: 'Вільна їзда', action: pick('drive') },
-        { label: 'Гонка на Кільці', action: pick('race') },
-        { label: 'Огляд світу', action: pick('world') },
-        { label: 'Файли гри', action: pick('files') },
-      );
-      if (ctx.exit) items.push({ label: 'Вихід', action: pick('exit') });
-      const note = saved ? `За кермом: ${saved.driver} · ${formatMoney(saved.money)} · доставок ${saved.delivered}` : 'Дальнобойщики 2 — порт у розробці';
-      close = ht2MenuScreen(art, large, items, note);
-    }));
+    const note = saved ? `За кермом: ${saved.driver} · ${formatMoney(saved.money)} · доставок ${saved.delivered}` : 'Дальнобойщики 2 — порт у розробці';
+    // Кругла кнопка рамки → дія (null — лишитися в меню). «Демо» — режими порту (вільна їзда, гонка, огляд, файли).
+    const round = async (key: RoundKey, parent: HTMLElement): Promise<Choice | null> => {
+      if (key === 'singl') return 'single';
+      if (key === 'exit') {
+        if (ctx.exit) return 'exit';
+        await modal(parent, 'Вихід з гри', 'Щоб вийти, закрийте вкладку чи застосунок.', ['Гаразд']);
+        return null;
+      }
+      if (key === 'demo') {
+        const modes: [string, Choice][] = [
+          ['Вільна їзда', 'drive'],
+          ['Гонка на Кільці', 'race'],
+          ['Огляд світу', 'world'],
+          ['Файли гри', 'files'],
+        ];
+        const i = await modal(parent, 'Демо', 'Режими порту без кар\'єри:', [...modes.map((m) => m[0]), 'Назад']);
+        return modes[i]?.[1] ?? null;
+      }
+      await modal(parent, 'Меню', 'Цей розділ у порті ще недоступний.', ['Гаразд']);
+      return null;
+    };
+    const choice =
+      direct ??
+      (await new Promise<Choice>((resolve) => {
+        if (art) {
+          // Головне меню оригіналу: рамка common.msk, у центрі m/back_main, круглі кнопки.
+          let busy = false;
+          const close = ht2MainScreen(art, {
+            note,
+            onRound: (key) => {
+              if (busy) return;
+              busy = true;
+              void round(key, document.querySelector('.ht2-menu') as HTMLElement).then((c) => {
+                busy = false;
+                if (!c) return;
+                close();
+                resolve(c);
+              });
+            },
+          });
+          return;
+        }
+        let close = () => {};
+        const pick = (c: Choice) => () => {
+          close();
+          resolve(c);
+        };
+        const items: MenuItem[] = [
+          { label: 'Нова гра', action: pick('new') },
+          { label: 'Вільна їзда', action: pick('drive') },
+          { label: 'Гонка на Кільці', action: pick('race') },
+          { label: 'Огляд світу', action: pick('world') },
+          { label: 'Файли гри', action: pick('files') },
+        ];
+        if (ctx.exit) items.push({ label: 'Вихід', action: pick('exit') });
+        close = ht2MenuScreen(art, large, items, note);
+      }));
     direct = null;
     if (choice === 'exit') {
       // Підтвердження — екран оригіналу «ВЫЙТИ ИЗ ИГРЫ».
@@ -100,20 +139,29 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
       return ctx.exit?.();
     }
     if (choice === 'single' && art) {
-      // Екран одиночної гри оригіналу: нова гра / завантажити, режим, повзунки.
+      // Екран одиночної гри оригіналу: нова гра / завантажити, режим, повзунки; круглі кнопки — інші розділи.
       const next = await new Promise<Choice | null>((resolve) => {
+        let busy = false;
         const close = ht2SingleScreen(art, {
           hasSave: !!saved,
-          saveText: saved ? `${saved.driver}
-${formatMoney(saved.money)}
-доставок: ${saved.delivered}` : '',
+          saveText: saved ? `${saved.driver}\n${formatMoney(saved.money)}\nдоставок: ${saved.delivered}` : '',
           settings,
           onNew: () => (close(), resolve('new')),
           onLoad: () => (close(), resolve('career')),
           onCancel: () => (close(), resolve(null)),
-          onChange: (s) => {
-            settings = s;
-            saveSettings(s);
+          onChange: (st) => {
+            settings = st;
+            saveSettings(st);
+          },
+          onRound: (key) => {
+            if (busy || key === 'singl') return;
+            busy = true;
+            void round(key, document.querySelector('.ht2-menu') as HTMLElement).then((c) => {
+              busy = false;
+              if (!c) return;
+              close();
+              resolve(c);
+            });
           },
           note: (t, parent) => void modal(parent, 'Одиночна гра', t, ['Гаразд']),
         });

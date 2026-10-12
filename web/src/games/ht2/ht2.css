@@ -39,6 +39,32 @@
   cursor: default;
 }
 
+/* Рамка меню (common.msk) поверх центрального екрана: кліки — крізь неї. */
+.ht2-frame {
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+/* Повзунок: зона дотику з бігунком (маска runner). */
+.ht2-track {
+  height: 26px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.ht2-runner {
+  position: absolute;
+  top: 2px;
+  pointer-events: none;
+}
+
+.ht2-main-note {
+  text-align: center;
+  font-size: 15px;
+  text-shadow: 0 0 3px #000, 0 0 3px #000;
+}
+
 /* Кнопки-текстури екранів LOAD.RES (s/backsing): зображення стану, без рамок браузера. */
 .ht2-tex-button {
   padding: 0;

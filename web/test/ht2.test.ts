@@ -289,9 +289,12 @@ describe.skipIf(!has)('HT2: описи регіонів (ENV/mod_*.sch)', () => 
 
 describe.skipIf(!has)('HT2: налаштування одиночної гри (TRUCK.INI)', () => {
   it('повзунки з [EFFECTS]: trafs, days, weats, arcad', () => {
-    const s = defaultSettings(parseIni(decodeCp1251(read('TRUCK.INI'))));
-    expect(s).toEqual({ arcade: false, traffic: 1, dayLength: 0.5, weather: 0.6 });
-    expect(timeScale(s)).toBe(10);
+    // Гра сама переписує TRUCK.INI, коли гравець змінює налаштування (arcad=1 після «Аркадный») — звіряємо з файлом.
+    const ini = parseIni(decodeCp1251(read('TRUCK.INI')));
+    const s = defaultSettings(ini);
+    expect(s.arcade).toBe(/^arcad\s*=\s*1/m.test(decodeCp1251(read('TRUCK.INI'))));
+    for (const v of [s.traffic, s.dayLength, s.weather]) expect(v >= 0 && v <= 1).toBe(true);
+    expect(timeScale({ ...s, dayLength: 0.5 })).toBe(10);
   });
 });
 
