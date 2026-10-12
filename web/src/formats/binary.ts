@@ -47,6 +47,12 @@ export class BinReader {
     return v;
   }
 
+  f64(): number {
+    const v = this.view.getFloat64(this.pos, true);
+    this.pos += 8;
+    return v;
+  }
+
   /** n чисел f32 у новий масив. */
   f32s(n: number): Float32Array {
     const out = new Float32Array(n);

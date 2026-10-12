@@ -5,11 +5,15 @@ import { BinReader, type RgbaImage } from './binary';
  * - 8 біт: TGA тип 1 (палітра 256×BGR24), після пікселів може бути чанк LVMP (міпмапи) — ігноруємо.
  * - 16 біт: TGA тип 2; поле ID (12 байт) = чанк LOFF (зсув до PFRM); після пікселів PFRM з масками
  *   каналів (565 або 4444), далі ENDR.
+ * - HT2: PFRM з нульовими масками — карта нерівностей (`bump_*.txr`, du/dv для рельєфного відбиття D3D):
+ *   молодший байт — du, старший — dv (зі знаком). Розкладаємо в RG навколо 128 (B = 255), `bump: true`.
  */
 export interface Txr extends RgbaImage {
   bpp: 8 | 16;
   /** Чи є в текстурі альфа-канал (16 біт з alpha-маскою). */
   hasAlpha: boolean;
+  /** Карта нерівностей du/dv (HT2), не колір. */
+  bump?: boolean;
 }
 
 export interface ChannelMasks {
@@ -58,8 +62,21 @@ export function parseTxr(bytes: Uint8Array): Txr {
     const pixStart = r.pos;
     r.skip(width * height * 2);
     const masks = findPfrm(bytes, idField, r.pos) ?? { r: 0x7c00, g: 0x03e0, b: 0x001f, a: 0x8000 };
-    const conv = maskConverter(masks);
     const v = new DataView(bytes.buffer, bytes.byteOffset + pixStart, width * height * 2);
+    if (!masks.r && !masks.g && !masks.b) {
+      for (let y = 0; y < height; y++) {
+        const dy = topDown ? y : height - 1 - y;
+        for (let x = 0; x < width; x++) {
+          const o = (dy * width + x) * 4;
+          data[o] = 128 + v.getInt8((y * width + x) * 2);
+          data[o + 1] = 128 + v.getInt8((y * width + x) * 2 + 1);
+          data[o + 2] = 255;
+          data[o + 3] = 255;
+        }
+      }
+      return { width, height, data, bpp: 16, hasAlpha: false, bump: true };
+    }
+    const conv = maskConverter(masks);
     for (let y = 0; y < height; y++) {
       const dy = topDown ? y : height - 1 - y;
       for (let x = 0; x < width; x++) {

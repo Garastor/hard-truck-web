@@ -4,20 +4,26 @@ import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, normalize, sep } from 'node:path';
 
-/** Каталог оригінальної гри (лише для локальної розробки; у релізі файли надає гравець). */
-const GAME_DIR = resolve(import.meta.dirname, '..', 'Game', 'Hard Truck');
+/**
+ * Каталоги оригінальних ігор (лише для локальної розробки; у релізі файли надає гравець):
+ * /game/ — Дальнобойщики, /game2/ — Дальнобойщики 2 (Game/Hard Truck 2 — junction на теку встановленої гри).
+ */
+const GAME_DIRS: Record<string, string> = {
+  '/game2': resolve(import.meta.dirname, '..', 'Game', 'Hard Truck 2'),
+  '/game': resolve(import.meta.dirname, '..', 'Game', 'Hard Truck'),
+};
 
 /**
- * Dev-плагін: віддає файли гри за URL /game/<шлях> (шляхи — як на диску).
+ * Dev-плагін: віддає файли гри за URL /game/<шлях> і /game2/<шлях> (шляхи — як на диску).
  */
 function gameFiles(): Plugin {
   return {
     name: 'game-files',
     configureServer(server) {
-      server.middlewares.use('/game', (req, res) => {
+      for (const [prefix, dir] of Object.entries(GAME_DIRS)) server.middlewares.use(prefix, (req, res) => {
         const rel = decodeURIComponent((req.url ?? '/').split('?')[0]).replace(/^\/+/, '');
-        const full = normalize(resolve(GAME_DIR, rel));
-        if (!full.startsWith(GAME_DIR + sep) || !existsSync(full) || !statSync(full).isFile()) {
+        const full = normalize(resolve(dir, rel));
+        if (!full.startsWith(dir + sep) || !existsSync(full) || !statSync(full).isFile()) {
           res.statusCode = 404;
           res.end('not found');
           return;
