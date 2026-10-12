@@ -11,6 +11,8 @@ import { assoc, num, readSch, str } from '../../formats/sexpr';
 import { drivable, loadTrucks, truckDef, type Ht2Trucks } from './trucks';
 import { FOV } from './viewer';
 import { Ht2World, toThree, type LoadedRegion } from './world';
+import { AutoPilot } from '../../game/autopilot';
+import { Ht2Roads } from './roads';
 
 /**
  * Їзда у світі Дальнобойщиків 2 (G4): вантажівка з vehicle.tech і TRUCKS.B3D на тій самій фізиці, що й у першій
@@ -51,6 +53,9 @@ export class Ht2Drive {
   private readonly hud = document.createElement('div');
   private readonly bar = document.createElement('div');
   private touch: HTMLElement | null = null;
+  /** Дороги всіх регіонів (WAY) і автопілот (клавіша P; для тестів — smoke). */
+  roads!: Ht2Roads;
+  autopilot: AutoPilot | null = null;
   private readonly onResize = () => this.resize();
 
   private constructor(
@@ -75,6 +80,7 @@ export class Ht2Drive {
     this.rapier = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     this.rapier.timestep = 1 / 60;
     this.world.onRegion = (reg, loaded) => (loaded ? this.addRegion(reg) : this.removeRegion(reg.id));
+    this.roads = new Ht2Roads(this.world.regions.values());
 
     // Старт і вантажівка гравця — з ENV/GAME.CNF.
     const cnf = await o.source.read('ENV/GAME.CNF').then(readSch).catch(() => null);
@@ -105,6 +111,7 @@ export class Ht2Drive {
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);
     this.input.onCommand = (cmd) => {
       if (cmd === 'camera') this.camMode = NEXT_CAM[this.camMode];
+      if (cmd === 'autopilot') this.autopilot = this.autopilot ? null : new AutoPilot(this.roads);
       if (cmd === 'reset') this.recover();
       if (cmd === 'horn') this.audio?.playOnce('horn');
       if (cmd === 'engine') {
@@ -204,7 +211,9 @@ export class Ht2Drive {
 
   /** Крок гри (також для тестів — без requestAnimationFrame). */
   update(dt: number): void {
-    const state = this.input.update(dt);
+    const manual = this.input.update(dt);
+    const tp = this.truck.body.translation();
+    const state = this.autopilot ? this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt) : manual;
     this.acc += dt;
     const step = this.rapier.timestep;
     while (this.acc >= step) {
@@ -218,6 +227,49 @@ export class Ht2Drive {
     this.updateCamera(dt);
     this.world.update(this.camera);
     this.bar.textContent = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
+  }
+
+  /**
+   * Автопрохід для перевірок (без requestAnimationFrame): автопілот seconds секунд — відстань, найдовше застрягання,
+   * перекидання, регіони дорогою.
+   */
+  async smoke(seconds: number): Promise<{ seconds: number; distance: number; stuckFor: number; flips: number; regions: string[]; ok: boolean }> {
+    const prev = this.autopilot;
+    this.autopilot ??= new AutoPilot(this.roads);
+    const regions = new Set<string>();
+    let distance = 0;
+    let stuck = 0;
+    let stuckFor = 0;
+    let flips = 0;
+    let wasFlipped = false;
+    const p0 = new THREE.Vector3();
+    const p1 = new THREE.Vector3();
+    let nextWait = 0;
+    for (let t = 0; t < seconds; t += 1 / 30) {
+      if (t >= nextWait) {
+        // Раз на секунду гри — дати регіонам довантажитися довкола машини (у грі це відбувається між кадрами).
+        nextWait = t + 1;
+        const c = this.truck.body.translation();
+        await this.world.ready(c.x, -c.z);
+      }
+      const a = this.truck.body.translation();
+      p0.set(a.x, a.y, a.z);
+      this.update(1 / 30);
+      const b = this.truck.body.translation();
+      p1.set(b.x, b.y, b.z);
+      distance += p0.distanceTo(p1);
+      if (this.truck.speedKmh < 2) stuck += 1 / 30;
+      else stuck = 0;
+      stuckFor = Math.max(stuckFor, stuck);
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.truck.visual.quaternion);
+      const flipped = up.y < 0.3;
+      if (flipped && !wasFlipped) flips++;
+      wasFlipped = flipped;
+      const r = this.world.regionAt(p1.x, -p1.z);
+      if (r) regions.add(r);
+    }
+    this.autopilot = prev;
+    return { seconds, distance: Math.round(distance), stuckFor: +stuckFor.toFixed(1), flips, regions: [...regions], ok: stuckFor < 3 && flips === 0 };
   }
 
   /** Раз на секунду запамʼятовуємо позицію, якщо всі колеса на землі й машина не перекинута; падіння — відновлення. */
