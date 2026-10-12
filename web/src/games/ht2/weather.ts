@@ -46,3 +46,36 @@ export class Weather {
     };
   }
 }
+
+/**
+ * Зміна погоди — гіпотеза порту за TRUCK.INI `[EFFECTS] wstart=0.75 wtemp=0.13`: «якість» погоди 0…1 починається з
+ * wstart і повільно блукає з темпом wtemp за ігрову годину; нижче BAD — негода (набір світла й туману `bad`
+ * WEATHER.INI). Дощ у HT2 малює сам рушій (у COMMON.B3D гілки `rain_key` порожні, є лише текстури rain/drop/snow) —
+ * у порту його поки немає.
+ */
+const BAD = 0.35;
+
+export class WeatherDrift {
+  value: number;
+  private target: number;
+
+  constructor(
+    start = 0.75,
+    private readonly rate = 0.13,
+    private readonly rnd = Math.random,
+  ) {
+    this.value = start;
+    this.target = start;
+  }
+
+  get bad(): boolean {
+    return this.value < BAD;
+  }
+
+  /** gameSeconds — ігровий час, що минув. */
+  update(gameSeconds: number): void {
+    if (Math.abs(this.target - this.value) < 0.02) this.target = this.rnd();
+    const step = this.rate * (gameSeconds / 3600);
+    this.value += Math.max(-step, Math.min(step, this.target - this.value));
+  }
+}

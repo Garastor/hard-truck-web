@@ -17,6 +17,9 @@ import { Traffic, trafficKinds } from './traffic';
 import { CareerMode } from './careerMode';
 import { Police } from './police';
 import { Mafia } from './mafia';
+import { WeatherDrift } from './weather';
+import { iniNum, parseIni } from '../../formats/ini';
+import { decodeCp1251 } from '../../formats/binary';
 import { RaceMode } from './race';
 import { Trailer } from './trailer';
 import { Truckers, truckerKinds, truckerNames } from './truckers';
@@ -44,6 +47,8 @@ export interface Ht2DriveOptions {
   truck?: string | null;
   /** Напівпричіп для тягача (car_node запису `trailers`); типово — STrailerM. */
   trailer?: string | null;
+  /** Погода для перевірки: `bad` — одразу негода з дощем, `good` — без змін погоди. */
+  weather?: string | null;
   /** Кар'єра (гроші, замовлення); без — вільна їзда. */
   career?: Ht2Career | null;
   /** Гонка на Кільці (регіон dr) з суперниками. */
@@ -101,6 +106,10 @@ export class Ht2Drive {
   /** Ігровий час вільної їзди, с від півночі (кар'єра — свій); старт — 10:00 (TRUCK.INI timestart=10). */
   private freeTime = 10 * 3600;
   private period = '';
+  /** Погода: «якість» (TRUCK.INI wstart/wtemp) і поточний набір світла WEATHER.INI; негода — слизька дорога. */
+  private weather = new WeatherDrift();
+  private sky: 'good' | 'bad' = 'good';
+  raining = false;
   /** Фари: два прожектори на місцях Fara_FL/FR з vehicle.tech; вмикаються в сутінках і вночі або клавішею L. */
   private readonly lamps: THREE.SpotLight[] = [];
   private lightsManual: boolean | null = null;
@@ -200,6 +209,11 @@ export class Ht2Drive {
       this.race = new RaceMode(this, this.roads, (k, fb) => this.raceMessages.get(k) ?? fb);
       this.race.onFinish = () => o.onExit();
     }
+    // Погода: TRUCK.INI [EFFECTS] wstart / wtemp (гіпотеза: початкова «якість» і темп зміни за годину гри).
+    const ini = await o.source.read('TRUCK.INI').then((b) => parseIni(decodeCp1251(b))).catch(() => null);
+    const wstart = ini ? iniNum(ini, 'EFFECTS', 'wstart', 0.75) : 0.75;
+    const wtemp = ini ? iniNum(ini, 'EFFECTS', 'wtemp', 0.13) : 0.13;
+    this.weather = new WeatherDrift(o.weather === 'bad' ? 0 : wstart, o.weather ? 0 : wtemp);
     const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
     if (!o.race) {
       const names = await o.source.read('names.sch').then(readSch).catch(() => []);
@@ -349,6 +363,8 @@ export class Ht2Drive {
    * причепі. Старий причіп прибираємо.
    */
   private hitch(): void {
+    // Нова машина — дощ знову робить дорогу слизькою (зчеплення ×0,8, як у першій грі).
+    this.truck.weatherGrip = this.raining ? 0.8 : 1;
     if (this.trailer) {
       this.world.scene.remove(this.trailer.visual);
       this.trailer.dispose();
@@ -400,9 +416,18 @@ export class Ht2Drive {
   private updateDayTime(dt: number): void {
     const t = this.careerMode ? this.careerMode.career.time : (this.freeTime += dt * TIME_SCALE);
     const p = dayTime(t);
+    if (!this.race) this.weather.update(dt * TIME_SCALE);
+    const sky = this.weather.bad ? 'bad' : 'good';
+    if (sky !== this.sky) {
+      this.sky = sky;
+      this.period = '';
+      this.raining = sky === 'bad';
+      this.truck.weatherGrip = this.raining ? 0.8 : 1;
+      this.notice = { text: this.raining ? 'Негода: дорога слизька' : 'Розпогодилось', time: 4 };
+    }
     if (p !== this.period) {
       this.period = p;
-      this.world.setLight('good', p);
+      this.world.setLight(this.sky, p);
       this.world.setNight(p !== 'day');
       this.cabLight?.color.copy(this.world.ambientColor).multiplyScalar(1.4);
     }
