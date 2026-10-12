@@ -16,6 +16,7 @@ import { Ht2Roads } from './roads';
 import { Traffic, trafficKinds } from './traffic';
 import { CareerMode } from './careerMode';
 import { Police } from './police';
+import { RaceMode } from './race';
 import { NavMap } from '../../ui/navMap';
 import { Music } from './music';
 import { SceneAssembler } from '../../render/sceneBuilder';
@@ -39,6 +40,8 @@ export interface Ht2DriveOptions {
   truck?: string | null;
   /** Кар'єра (гроші, замовлення); без — вільна їзда. */
   career?: Ht2Career | null;
+  /** Гонка на Кільці (регіон dr) з суперниками. */
+  race?: boolean;
 }
 
 type CamMode = 'chase' | 'cockpit' | 'far';
@@ -70,6 +73,8 @@ export class Ht2Drive {
   traffic: Traffic | null = null;
   careerMode: CareerMode | null = null;
   police: Police | null = null;
+  race: RaceMode | null = null;
+  private raceMessages = new Map<string, string>();
   private map: NavMap | null = null;
   private music: Music | null = null;
   /** Кабіна (вид з кабіни): інтер'єр з CABINES.B3D окремою сценою поверх світу, як у першій грі. */
@@ -121,7 +126,12 @@ export class Ht2Drive {
     // Старт і вантажівка гравця — з ENV/GAME.CNF.
     const cnf = await o.source.read('ENV/GAME.CNF').then(readSch).catch(() => null);
     const sp = cnf ? assoc(cnf, 'startposition') : undefined;
-    const start: [number, number, number] = sp ? [num(sp[1]), num(sp[2]), num(sp[3])] : [-3020, -4625, 20];
+    let start: [number, number, number] = sp ? [num(sp[1]), num(sp[2]), num(sp[3])] : [-3020, -4625, 20];
+    if (o.race) {
+      // Гонка — старт на решітці Кільця (start1_1 у ENV/dr.way).
+      const node = this.world.regions.get('dr')?.way.rooms.flatMap((r) => r.nodes).find((n) => n.name === 'start1_1');
+      if (node) start = node.pos;
+    }
     const live = cnf ? assoc(assoc(cnf, 'playertypes')?.slice(1) ?? [], 'live') : undefined;
     const want = o.career?.truck || o.truck || (live ? str(live[2]) : 'ZilR');
     const list = drivable(this.trucks);
@@ -161,6 +171,12 @@ export class Ht2Drive {
       ]);
       this.careerMode = new CareerMode(this, o.career, merch, messages);
       this.police = new Police(this.world.scene, this.rapier, this.trucks, this.world.regions.values());
+    }
+    if (o.race) {
+      const ms = await o.source.read('Ms.sch').then(readSch).catch(() => []);
+      for (const m of ms) if (Array.isArray(m) && typeof m[0] === 'string') this.raceMessages.set(m[0], str(m[m.length - 1]));
+      this.race = new RaceMode(this, this.roads, (k, fb) => this.raceMessages.get(k) ?? fb);
+      this.race.onFinish = () => o.onExit();
     }
     const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
     this.traffic = new Traffic(this.world.scene, this.rapier, this.roads, this.trucks, trafficKinds(vehicles, this.trucks), (r) => this.world.loaded.has(r));
@@ -307,6 +323,17 @@ export class Ht2Drive {
     for (const l of this.lamps) l.visible = on;
   }
 
+  /** Для гонки: поверхня під точкою, дані вантажівок, світ фізики. */
+  groundAtPublic(p: THREE.Vector3): THREE.Vector3 {
+    return this.groundAt(p);
+  }
+  get trucksData(): Ht2Trucks {
+    return this.trucks;
+  }
+  get rapierWorld(): RAPIER.World {
+    return this.rapier;
+  }
+
   /** Вантажівки, якими можна кермувати (для магазину). */
   drivableTrucks() {
     return drivable(this.trucks);
@@ -429,15 +456,18 @@ export class Ht2Drive {
     if (this.paused) return;
     const manual = this.input.update(dt);
     const tp = this.truck.body.translation();
-    const state = this.autopilot ? this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt, this.traffic?.cars.map((c) => c.pos)) : manual;
+    let state = this.autopilot ? this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt, this.traffic?.cars.map((c) => c.pos)) : manual;
+    if (this.race?.holding) state = { ...state, throttle: 0, brake: 1 };
     this.traffic?.update(dt, this.truck.visual.position);
     this.acc += dt;
     const step = this.rapier.timestep;
     while (this.acc >= step) {
       this.truck.update(step, state);
+      this.race?.control(step);
       this.rapier.step();
       this.acc -= step;
     }
+    this.race?.after(dt);
     this.truck.syncVisual();
     this.audio?.update(this.truck.rpm, state.throttle, this.truck.engineOn);
     this.trackSafe(dt);
@@ -450,8 +480,7 @@ export class Ht2Drive {
     if (fine && this.careerMode) void this.careerMode.fine(fine.over);
     this.map?.update(dt, this.truck.visual.position, this.truck.forward(), this.traffic?.cars.map((c) => c.pos) ?? [], this.careerMode?.target() ?? null);
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
-    this.bar.textContent = this.careerMode ? `${drive}
-${this.careerMode.hud()}` : drive;
+    this.bar.textContent = this.careerMode ? `${drive}\n${this.careerMode.hud()}` : this.race ? `${drive}\n${this.race.hud()}` : drive;
   }
 
   /**
@@ -551,6 +580,7 @@ ${this.careerMode.hud()}` : drive;
     this.music?.dispose();
     this.traffic?.dispose();
     this.police?.dispose();
+    this.race?.dispose();
     this.truck?.dispose();
     this.world.dispose();
     this.trucks.asm.dispose();

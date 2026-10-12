@@ -11,7 +11,7 @@ import { Ht2Drive } from './drive';
 import { formatMoney, loadCareer, newCareer, type Ht2Career } from './career';
 import { modal } from '../../ui/careerUi';
 
-type Choice = 'world' | 'drive' | 'career' | 'new' | 'files' | 'exit';
+type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'files' | 'exit';
 
 /**
  * Дальнобойщики 2 у порті: джерело файлів (пристрій або ПК), меню з LOAD.RES гри, режими. Свій цикл кадрів і сцена —
@@ -65,7 +65,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   // &tab=career — кар'єра.
   const params = new URLSearchParams(location.search);
   const tab = params.get('tab');
-  let direct: Choice | null = tab === 'world' || tab === 'drive' || tab === 'career' ? tab : null;
+  let direct: Choice | null = tab === 'world' || tab === 'drive' || tab === 'career' || tab === 'race' ? tab : null;
   for (;;) {
     const saved = loadCareer();
     const choice = direct ?? (await new Promise<Choice>((resolve) => {
@@ -80,6 +80,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
       items.push(
         { label: 'Нова гра', action: pick('new') },
         { label: 'Вільна їзда', action: pick('drive') },
+        { label: 'Гонка на Кільці', action: pick('race') },
         { label: 'Огляд світу', action: pick('world') },
         { label: 'Файли гри', action: pick('files') },
       );
@@ -93,7 +94,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
       await ctx.showImport(true);
       continue;
     }
-    if (choice === 'drive' || choice === 'career' || choice === 'new') {
+    if (choice === 'drive' || choice === 'career' || choice === 'new' || choice === 'race') {
       let career: Ht2Career | null = null;
       if (choice === 'new') {
         if (saved && (await modal(ctx.overlay, 'Нова гра', 'Збережену гру буде втрачено. Почати заново?', ['Почати заново', 'Скасувати'])) !== 0) continue;
@@ -106,7 +107,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           ctx.setStatus(null);
           resolve();
         };
-        Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck'), career })
+        Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck'), career, race: choice === 'race' })
           .then((d) => {
             drive = d;
             Object.assign(window, { ht2: { drive } });
