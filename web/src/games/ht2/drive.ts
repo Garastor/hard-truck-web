@@ -20,7 +20,7 @@ import { Music } from './music';
 import { SceneAssembler } from '../../render/sceneBuilder';
 import { parseB3d } from '../../formats/b3d';
 import { parseRmp } from '../../formats/rmp';
-import type { Ht2Career } from './career';
+import { TIME_SCALE, dayTime, type Ht2Career } from './career';
 
 /**
  * Їзда у світі Дальнобойщиків 2 (G4): вантажівка з vehicle.tech і TRUCKS.B3D на тій самій фізиці, що й у першій
@@ -76,8 +76,15 @@ export class Ht2Drive {
   private cabParts: { rule?: THREE.Object3D; speed?: THREE.Object3D; tacho?: THREE.Object3D } = {};
   private cabAsm: SceneAssembler | null = null;
   private cabLoading = false;
+  private cabLight: THREE.AmbientLight | null = null;
   /** Пауза (вікно складу чи СТО): фізика й час стоять. */
   paused = false;
+  /** Ігровий час вільної їзди, с від півночі (кар'єра — свій); старт — 10:00 (TRUCK.INI timestart=10). */
+  private freeTime = 10 * 3600;
+  private period = '';
+  /** Фари: два прожектори на місцях Fara_FL/FR з vehicle.tech; вмикаються в сутінках і вночі або клавішею L. */
+  private readonly lamps: THREE.SpotLight[] = [];
+  private lightsManual: boolean | null = null;
   /** Маса вантажу в кузові, кг (фізика: центр мас і загальна маса). */
   private cargoMass = 0;
   /** Бак, л, і витрата (vehicle.tech: × 10 = л/100 км) вантажівки гравця. */
@@ -139,6 +146,7 @@ export class Ht2Drive {
     this.cargoMass = o.career?.order ? o.career.order.goods.mass * o.career.order.units : 0;
     this.truck = new TruckVehicle(this.rapier, def, model, spawn, { cargoMass: this.cargoMass });
     this.world.scene.add(this.truck.visual);
+    this.mountLamps();
     this.safe = spawn;
     this.cockpit = g2t(def.tech.viewer);
     this.camPos.copy(spawn.position).addScaledVector(spawn.forward, -14).add(new THREE.Vector3(0, 6, 0));
@@ -155,6 +163,7 @@ export class Ht2Drive {
       if (cmd === 'camera') this.camMode = NEXT_CAM[this.camMode];
       if (cmd === 'autopilot') this.autopilot = this.autopilot ? null : new AutoPilot(this.roads);
       if (cmd === 'map' && this.map) this.map.el.hidden = !this.map.el.hidden;
+      if (cmd === 'lights') this.lightsManual = !this.lamps[0]?.visible;
       if (cmd === 'reset') this.recover();
       if (cmd === 'horn') this.audio?.playOnce('horn');
       if (cmd === 'engine') {
@@ -255,6 +264,40 @@ export class Ht2Drive {
     this.truck.dispose();
     this.truck = new TruckVehicle(this.rapier, this.def, model, { position, forward }, { cargoMass: mass });
     this.world.scene.add(this.truck.visual);
+    this.mountLamps();
+  }
+
+  /**
+   * Фари — прожектори в системі машини: точки Fara_FL/FR (vehicle.tech, система моделі: x, вперед, угору), світять
+   * уперед і трохи вниз. Сцена HT2 освітлюється (Lambert), тож світло лягає на дорогу без власних шейдерів.
+   * Параметри (сила 350 кд, дальність 80 м, конус 26°, згасання d^1,5) — на око.
+   */
+  private mountLamps(): void {
+    this.lamps.length = 0;
+    const rec = this.trucks.records.find((r) => r.carNode === this.def.carNode);
+    const spots = rec ? [rec.faraFL, rec.faraFR] : [[-0.8, 2.4, 0.2], [0.8, 2.4, 0.2]];
+    for (const f of spots) {
+      const p = g2t(f as [number, number, number]);
+      const lamp = new THREE.SpotLight(0xfff2d0, 350, 80, (26 * Math.PI) / 180, 0.45, 1.5);
+      lamp.position.copy(p);
+      lamp.target.position.copy(p).add(new THREE.Vector3(0, -1.2, -20));
+      lamp.visible = false;
+      this.truck.visual.add(lamp, lamp.target);
+      this.lamps.push(lamp);
+    }
+  }
+
+  /** Пора доби (світло й туман з WEATHER.INI) і фари. */
+  private updateDayTime(dt: number): void {
+    const t = this.careerMode ? this.careerMode.career.time : (this.freeTime += dt * TIME_SCALE);
+    const p = dayTime(t);
+    if (p !== this.period) {
+      this.period = p;
+      this.world.setLight('good', p);
+      this.cabLight?.color.copy(this.world.ambientColor).multiplyScalar(1.4);
+    }
+    const on = this.lightsManual ?? (p === 'night' || p === 'sset' || p === 'srise');
+    for (const l of this.lamps) l.visible = on;
   }
 
   /** Відновитися: на останню надійну точку дороги. */
@@ -300,7 +343,9 @@ export class Ht2Drive {
       if (!this.cabAsm) {
         const [b3d, res] = await Promise.all([this.opts.source.read('COMMON/CABINES.B3D'), this.opts.source.read('COMMON/CABINES1.RES')]);
         this.cabAsm = new SceneAssembler(parseB3d(b3d), parseRmp(res), { lit: true, colorKey: true, nearGroup: 0, type4Space: true, palette: this.world.common.lib.palette ?? undefined });
-        this.overlayScene.add(new THREE.AmbientLight(0xffffff, Math.PI * 0.75), new THREE.HemisphereLight(0xffffff, 0x404040, Math.PI * 0.4));
+        // Світло в кабіні — розсіяне світло пори доби (WEATHER.INI envamb) і трохи неба: уночі кабіна темна.
+        this.cabLight = new THREE.AmbientLight(this.world.ambientColor.clone().multiplyScalar(1.4), Math.PI);
+        this.overlayScene.add(this.cabLight, new THREE.HemisphereLight(0xffffff, 0x404040, Math.PI * 0.15));
       }
       const name = `${this.cabPrefix}Cab`;
       const dyn = this.cabAsm.dynamicObject(name);
@@ -331,7 +376,8 @@ export class Ht2Drive {
   private updateCab(steer: number): void {
     const inside = this.camMode === 'cockpit';
     if (inside && !this.cab) void this.loadCab();
-    this.truck.visual.visible = !inside || !this.cab;
+    // Ховаємо лише модель (перший нащадок), не саму машину: її прожектори-фари мають світити й з кабіни.
+    this.truck.visual.children[0].visible = !inside || !this.cab;
     if (!this.cab) return;
     this.cab.visible = inside;
     if (!inside) return;
@@ -366,6 +412,7 @@ export class Ht2Drive {
     this.truck.syncVisual();
     this.audio?.update(this.truck.rpm, state.throttle, this.truck.engineOn);
     this.trackSafe(dt);
+    this.updateDayTime(dt);
     this.updateCamera(dt);
     this.updateCab(state.steer);
     this.world.update(this.camera, this.truck.visual.position);

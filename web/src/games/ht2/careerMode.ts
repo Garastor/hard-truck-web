@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { modal } from '../../ui/careerUi';
 import type { SExpr } from '../../formats/sexpr';
 import { findStores, makeOrders, parseGoods, type Goods, type Store } from './economy';
-import { FUEL_PRICE, REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
+import { FUEL_PRICE, REPAIR_PER_PERCENT, TIME_SCALE, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
 import { toThree } from './world';
 import type { Ht2Drive } from './drive';
 
@@ -75,7 +75,7 @@ export class CareerMode {
   update(dt: number, throttle = 0): void {
     const c = this.career;
     if (this.busy) return;
-    c.time += dt;
+    c.time += dt * TIME_SCALE;
     this.burn(dt, throttle);
     const v = this.drive.truck.body.linvel();
     const dv = Math.hypot(v.x - this.prevVel.x, v.y - this.prevVel.y, v.z - this.prevVel.z);
@@ -185,12 +185,13 @@ export class CareerMode {
         box.textContent = 'Замовлення на доставку:';
         const buttons = orders.map((o) => {
           const to = this.stores.find((s) => s.id === o.to)!;
-          return `${o.goods.name} ×${o.units} → ${to.town}: ${formatMoney(o.pay)}${o.urgent ? ' (терміново)' : ''}`;
+          const h = (o.deadline * TIME_SCALE) / 3600;
+          return `${o.goods.name} ×${o.units} → ${to.town}: ${formatMoney(o.pay)}, ${h < 1 ? `${Math.round(h * 60)} хв` : `${h.toFixed(1)} год`}${o.urgent ? ' (терміново)' : ''}`;
         });
         const i = await modal(this.drive.overlay, `Склад «${store.town}»`, box, [...buttons, 'Не брати']);
         const o = orders[i];
         if (o) {
-          c.order = { ...o, taken: c.time, integrity: 1 };
+          c.order = { ...o, deadline: o.deadline * TIME_SCALE, taken: c.time, integrity: 1 };
           this.drive.setCargo(o.goods.mass * o.units);
         }
       }
@@ -246,7 +247,7 @@ export class CareerMode {
       const target = to ? toThree(...to.center) : null;
       const arrow = target ? arrowTo(this.drive.truck.forward(), target.sub(p)) : '';
       parts.push(
-        `${o.goods.name} → ${to?.town ?? '?'} ${arrow} ${(dist / 1000).toFixed(1)} км, ${left > 0 ? `${Math.ceil(left / 60)} хв` : 'термін минув'}, ціл. ${Math.round(o.integrity * 100)}%`,
+        `${o.goods.name} → ${to?.town ?? '?'} ${arrow} ${(dist / 1000).toFixed(1)} км, ${left > 0 ? `ще ${formatLeft(left)}` : 'термін минув'}, ціл. ${Math.round(o.integrity * 100)}%`,
       );
     } else {
       // Без вантажу — до найближчого складу.
@@ -261,6 +262,11 @@ export class CareerMode {
     }
     return parts.join('   ');
   }
+}
+
+function formatLeft(s: number): string {
+  const m = Math.ceil(s / 60);
+  return m < 60 ? `${m} хв` : `${Math.floor(m / 60)} год ${m % 60} хв`;
 }
 
 /** Стрілка напрямку до цілі відносно курсу машини (8 напрямків). */

@@ -37,6 +37,17 @@ const KEY = 'ht2.career.v1';
 export const START_MONEY = 5000;
 export const REPAIR_PER_PERCENT = 30;
 export const FUEL_PRICE = 1;
+/**
+ * Ігровий час іде вдесятеро швидше за реальний (доба — 2,4 год гри; гіпотеза: TRUCK.INI [EFFECTS] timetemp=0.2,
+ * timestart=10 — темп і година старту, одиниці невідомі). Терміни доставки — в ігровому часі.
+ */
+export const TIME_SCALE = 10;
+
+/** Пора доби за годиною (WEATHER.INI: night, srise, day, sset). */
+export function dayTime(t: number): 'night' | 'srise' | 'day' | 'sset' {
+  const h = (t / 3600) % 24;
+  return h < 5 || h >= 22 ? 'night' : h < 8 ? 'srise' : h < 19 ? 'day' : 'sset';
+}
 
 export function newCareer(driver: string, truck: string): Ht2Career {
   return { driver, money: START_MONEY, truck, damage: 0, fuel: null, time: 8 * 3600, order: null, delivered: 0, earned: 0 };

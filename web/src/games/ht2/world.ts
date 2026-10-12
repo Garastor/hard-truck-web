@@ -150,6 +150,11 @@ export class Ht2World {
     this.ambient.intensity = Math.PI;
   }
 
+  /** Колір розсіяного світла пори доби (для кабіни, що малюється окремою сценою). */
+  get ambientColor(): THREE.Color {
+    return this.ambient.color;
+  }
+
   /** Регіон, у межах доріг якого точка гри (x, y), або найближчий. */
   regionAt(x: number, y: number): string | null {
     let best: string | null = null;
