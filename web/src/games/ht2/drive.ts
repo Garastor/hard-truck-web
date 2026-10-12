@@ -20,6 +20,8 @@ import { Mafia } from './mafia';
 import { Signs } from './signs';
 import { Markets, parseMarkets } from './market';
 import { WorldMap, type MapPoint } from './worldMap';
+import { GlassRain } from '../../render/glassRain';
+import { parseMsk } from '../../formats/msk';
 import { findStores } from './economy';
 import { WeatherDrift } from './weather';
 import { iniNum, parseIni } from '../../formats/ini';
@@ -111,6 +113,11 @@ export class Ht2Drive {
   private cab: THREE.Group | null = null;
   private cabParts: { rule?: THREE.Object3D; speed?: THREE.Object3D; tacho?: THREE.Object3D } = {};
   private cabAsm: SceneAssembler | null = null;
+  /** Вода на склі кабіни й двірники (як у першій грі: маски glass_1/glass_2.msk з CABINES1.RES, Wiper*). */
+  private glassRain: GlassRain | null = null;
+  private cabRmp: ReturnType<typeof parseRmp> | null = null;
+  private shelterTimer = 0;
+  private sheltered = false;
   private cabLoading = false;
   private cabLight: THREE.AmbientLight | null = null;
   /** Пауза (вікно складу чи СТО): фізика й час стоять. */
@@ -515,6 +522,8 @@ export class Ht2Drive {
     this.cockpit = g2t(def.tech.viewer);
     if (this.cab) {
       this.overlayScene.remove(this.cab);
+      this.glassRain?.dispose();
+      this.glassRain = null;
       this.cab = null;
     }
     this.setCargo(this.cargoMass);
@@ -539,6 +548,12 @@ export class Ht2Drive {
     this.opts.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    // Табло — праворуч від кнопок «Меню», ♪, «Карта» (їхня ширина залежить від шрифту й екрана).
+    const right = this.hud.getBoundingClientRect().right;
+    if (right > 0) {
+      this.bar.style.left = `${Math.round(right + 8)}px`;
+      this.bar.style.maxWidth = `calc(100vw - ${Math.round(right + 8)}px - 4 * 52px - 24px)`;
+    }
   }
 
   private frame(): void {
@@ -556,6 +571,8 @@ export class Ht2Drive {
       const auto = r.autoClear;
       r.autoClear = false;
       r.clearDepth();
+      // Вода на склі: зміни — на відеокарту, копія кадру зі світом для заломлення (до кабіни).
+      this.glassRain?.prepare(r);
       r.render(this.overlayScene, this.camera);
       r.autoClear = auto;
       this.camera.near = near;
@@ -570,7 +587,8 @@ export class Ht2Drive {
     try {
       if (!this.cabAsm) {
         const [b3d, res] = await Promise.all([this.opts.source.read('COMMON/CABINES.B3D'), this.opts.source.read('COMMON/CABINES1.RES')]);
-        this.cabAsm = new SceneAssembler(parseB3d(b3d), parseRmp(res), { lit: true, colorKey: true, nearGroup: 0, type4Space: true, palette: this.world.common.lib.palette ?? undefined });
+        this.cabRmp = parseRmp(res);
+        this.cabAsm = new SceneAssembler(parseB3d(b3d), this.cabRmp, { lit: true, colorKey: true, nearGroup: 0, type4Space: true, palette: this.world.common.lib.palette ?? undefined });
         // Світло в кабіні — розсіяне світло пори доби (WEATHER.INI envamb) і трохи неба: уночі кабіна темна.
         this.cabLight = new THREE.AmbientLight(this.world.ambientColor.clone().multiplyScalar(1.4), Math.PI);
         this.overlayScene.add(this.cabLight, new THREE.HemisphereLight(0xffffff, 0x404040, Math.PI * 0.15));
@@ -592,6 +610,15 @@ export class Ht2Drive {
         return found;
       };
       this.cabParts = { rule: bySpace('rulespace'), speed: bySpace('speedspace'), tacho: bySpace('tachospace') };
+      // Скло (GlassKey, група 1) — завжди: його текстуру (краплі) малює GlassRain, суха — прозора.
+      dyn.setSwitch('GlassKey', 1);
+      const rmp = this.cabRmp!;
+      const mask = (n: string) => {
+        const b = rmp.masks.get(n);
+        return b ? parseMsk(b, this.cabAsm!.lib.palette ?? undefined) : null;
+      };
+      this.glassRain = new GlassRain(inner, mask('txr/glass_1.msk'), mask('txr/glass_2.msk'));
+      this.glassRain.onStroke = () => this.audio?.play('wipers', 0.9);
     } finally {
       this.cabLoading = false;
     }
@@ -608,6 +635,17 @@ export class Ht2Drive {
     this.truck.visual.children[0].visible = !inside || !this.cab;
     if (!this.cab) return;
     this.cab.visible = inside;
+    if (this.glassRain) {
+      // Під дахом (тунель, міст — промінь угору влучає в геометрію) нових крапель немає.
+      if ((this.shelterTimer -= 1 / 30) <= 0) {
+        this.shelterTimer = 0.5;
+        const t = this.truck.body.translation();
+        this.sheltered = this.raining && !!this.rapier.castRay(new RAPIER.Ray({ x: t.x, y: t.y + 3, z: t.z }, { x: 0, y: 1, z: 0 }), 60, true);
+      }
+      this.glassRain.raining = this.raining && !this.sheltered;
+      this.glassRain.wipersOn = this.raining;
+      this.glassRain.update(1 / 30, this.truck.speedKmh);
+    }
     if (!inside) return;
     const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (this.def.tech.viewerTilt * Math.PI) / 180);
     this.cab.position.copy(this.camera.position);
@@ -769,6 +807,7 @@ export class Ht2Drive {
     this.hud.remove();
     this.bar.remove();
     this.audio?.dispose();
+    this.glassRain?.dispose();
     this.cabAsm?.dispose();
     this.music?.dispose();
     this.traffic?.dispose();
