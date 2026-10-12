@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { modal } from '../../ui/careerUi';
 import { isList, str, type SExpr } from '../../formats/sexpr';
-import { findStores, makeOrders, parseGoods, type Goods, type Store } from './economy';
+import { findStores, makeOrders, parseGoods, type Goods, type Store, type Town } from './economy';
 import { FUEL_PRICE, REPAIR_PER_PERCENT, TIME_SCALE, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
 import { toThree } from './world';
 import { install, type Upgrade } from './upgrades';
@@ -21,7 +21,9 @@ const HIT_MIN = 1.5;
 export class CareerMode {
   readonly stores: Store[];
   private readonly goods: Goods[];
+  /** СТО: точка й вузол WAY (за ним — перелік покращень з mod_*.sch). */
   private readonly sto: [number, number, number][] = [];
+  private readonly stoNames: string[] = [];
   private readonly fuelSpots: [number, number, number][] = [];
   private readonly lastPos = new THREE.Vector3();
   private busy = false;
@@ -39,14 +41,19 @@ export class CareerMode {
     merchandise: SExpr[],
     messages: SExpr[] = [],
     private readonly upgrades: Upgrade[] = [],
+    towns: Map<number, Town> = new Map(),
+    private readonly services: Map<string, Set<string>> = new Map(),
   ) {
     for (const m of messages) if (isList(m) && typeof m[0] === 'string') this.messages.set(m[0], str(m[m.length - 1]));
     this.goods = parseGoods(merchandise);
-    this.stores = findStores(drive.world.regions.values());
+    this.stores = findStores(drive.world.regions.values(), towns);
     for (const r of drive.world.regions.values())
       for (const room of r.way.rooms)
         for (const n of room.nodes) {
-          if (/^sto_/i.test(n.name)) this.sto.push(n.pos);
+          if (/^sto_/i.test(n.name)) {
+            this.sto.push(n.pos);
+            this.stoNames.push(n.name.toLowerCase());
+          }
           if (/^node_car_fuel/i.test(n.name)) this.fuelSpots.push(n.pos);
         }
     this.lastPos.copy(drive.truck.visual.position);
@@ -112,7 +119,7 @@ export class CareerMode {
     const sto = this.sto.findIndex((d) => Math.hypot(d[0] - gx, d[1] - gy) < STO_RADIUS);
     if (sto >= 0 && this.shownAt !== `r${sto}`) {
       this.shownAt = `r${sto}`;
-      void this.atSto();
+      void this.atSto(this.stoNames[sto]);
       return;
     }
     const fuel = this.fuelSpots.findIndex((d) => Math.hypot(d[0] - gx, d[1] - gy) < FUEL_RADIUS);
@@ -265,7 +272,7 @@ export class CareerMode {
         const to = this.stores.find((s) => s.id === c.order!.to);
         await modal(this.drive.overlay, `Склад «${store.town}»`, `У кузові — ${c.order.goods.name}, доставити в «${to?.town ?? '?'}».`, ['Гаразд']);
       } else {
-        const orders = makeOrders(store, this.stores, this.goods, this.capacity());
+        const orders = makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, 5, this.drive.trailer?.rec.trailerType === 3);
         const box = document.createElement('div');
         box.className = 'career-form ht2-orders';
         box.textContent = 'Замовлення на доставку:';
@@ -290,7 +297,7 @@ export class CareerMode {
   }
 
   /** СТО: ремонт (якщо є пошкодження) і покращення (restable.sch). */
-  private async atSto(): Promise<void> {
+  private async atSto(node: string): Promise<void> {
     const c = this.career;
     this.busy = true;
     this.drive.paused = true;
@@ -308,7 +315,7 @@ export class CareerMode {
             c.damage = 0;
             this.persist();
           }
-        } else if (pick === 'Покращення') await this.shopUpgrades();
+        } else if (pick === 'Покращення') await this.shopUpgrades(node);
         else break;
       }
     } finally {
@@ -318,12 +325,19 @@ export class CareerMode {
   }
 
   /** Покращення: список з цінами; встановлене — позначка; купівля — одразу на машину (перебудова фізики). */
-  private async shopUpgrades(): Promise<void> {
+  private async shopUpgrades(node: string): Promise<void> {
     const c = this.career;
     const owned = c.upgrades ?? [];
-    const labels = this.upgrades.map((u) => `${owned.includes(u.key) ? '✓ ' : ''}${u.name} — ${u.effect}: ${owned.includes(u.key) ? 'встановлено' : formatMoney(u.price)}`);
+    // На цій СТО — лише покращення з її переліку (mod_*.sch); без даних — усі.
+    const here = this.services.get(node);
+    const list = here ? this.upgrades.filter((u) => here.has(u.key)) : this.upgrades;
+    if (!list.length) {
+      await modal(this.drive.overlay, 'Покращення', 'На цій СТО покращень, які діють у порту, немає.', ['Гаразд']);
+      return;
+    }
+    const labels = list.map((u) => `${owned.includes(u.key) ? '✓ ' : ''}${u.name} — ${u.effect}: ${owned.includes(u.key) ? 'встановлено' : formatMoney(u.price)}`);
     const i = await modal(this.drive.overlay, 'Покращення', `Гроші: ${formatMoney(c.money)}. Дія покращень — припущення порту.`, [...labels, 'Назад']);
-    const u = this.upgrades[i];
+    const u = list[i];
     if (!u || owned.includes(u.key)) return;
     if (c.money < u.price) {
       await modal(this.drive.overlay, 'Покращення', this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'), ['Гаразд']);

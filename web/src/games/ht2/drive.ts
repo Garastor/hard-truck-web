@@ -7,7 +7,7 @@ import { TruckVehicle } from '../../game/truckVehicle';
 import { buildTruckModel, type TruckDef } from '../../game/trucks';
 import { Input } from '../../input/input';
 import { GROUP_WORLD, addCollisionPolys, g2t, groups, initRapier } from '../../physics/world';
-import { assoc, num, readSch, str } from '../../formats/sexpr';
+import { assoc, num, readSch, str, type SExpr } from '../../formats/sexpr';
 import { drivable, loadTrucks, truckDef, type Ht2Trucks } from './trucks';
 import { FOV } from './viewer';
 import { Ht2World, toThree, type LoadedRegion } from './world';
@@ -24,6 +24,8 @@ import { RaceMode } from './race';
 import { Trailer } from './trailer';
 import { Truckers, truckerKinds, truckerNames } from './truckers';
 import { parseUpgrades, tuning, type Tuning } from './upgrades';
+import { HT2_MOD_REGIONS } from './files';
+import { parseServices, parseTowns } from './economy';
 import { NavMap } from '../../ui/navMap';
 import { Music } from './music';
 import { SceneAssembler } from '../../render/sceneBuilder';
@@ -194,12 +196,15 @@ export class Ht2Drive {
     this.camLook.copy(spawn.position);
 
     if (o.career) {
-      const [merch, messages, restable] = await Promise.all([
+      const [merch, messages, restable, mods] = await Promise.all([
         o.source.read('merchandise.sch').then(readSch).catch(() => []),
         o.source.read('Ms.sch').then(readSch).catch(() => []),
         o.source.read('restable.sch').then(readSch).catch(() => []),
+        // Описи регіонів (міста, товари, СТО) — необовʼязкові.
+        Promise.all(HT2_MOD_REGIONS.map((region) => o.source.read(`ENV/mod_${region}.sch`).then((b) => ({ region, sch: readSch(b) })).catch(() => null))),
       ]);
-      this.careerMode = new CareerMode(this, o.career, merch, messages, parseUpgrades(restable));
+      const regionMods = mods.filter((m): m is { region: string; sch: SExpr[] } => !!m);
+      this.careerMode = new CareerMode(this, o.career, merch, messages, parseUpgrades(restable), parseTowns(regionMods), parseServices(regionMods));
       this.police = new Police(this.world.scene, this.rapier, this.trucks, this.world.regions.values());
       this.mafia = new Mafia(this.world.scene, this.rapier, this.trucks, this.world.regions.values(), (p) => this.groundAtPublic(p).y - 2.5);
     }

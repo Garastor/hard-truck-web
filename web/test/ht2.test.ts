@@ -18,7 +18,8 @@ import { parseOvl } from '../src/formats/ovl';
 import { decodeCp1251 } from '../src/formats/binary';
 import { HT2_FILES, HT2_REGIONS, HT2_REQUIRED } from '../src/games/ht2/files';
 import { detectGame } from '../src/games/registry';
-import { findStores, orderPay, parseGoods } from '../src/games/ht2/economy';
+import { findStores, orderPay, parseGoods, parseServices, parseTowns } from '../src/games/ht2/economy';
+import { HT2_MOD_REGIONS } from '../src/games/ht2/files';
 import { install, parseUpgrades, tuning } from '../src/games/ht2/upgrades';
 
 const GAME = resolve(import.meta.dirname, '..', '..', 'Game', 'Hard Truck 2');
@@ -219,7 +220,7 @@ describe.skipIf(!has)('HT2: економіка', () => {
     expect(stores.find((s) => s.id === 3)!.town).toBe('Южный');
   });
   it('оплата росте з відстанню й терміновістю', () => {
-    const g = { id: 'X', name: 'X', mass: 10, volume: 0.1, price: 100, ratio: 0.8, illegal: false, forMafia: false };
+    const g = { id: 'X', name: 'X', mass: 10, volume: 0.1, price: 100, ratio: 0.8, illegal: false, forMafia: false, trucks: true, fuel: false };
     expect(orderPay(g, 100, 5000, false)).toBe(Math.round((5000 * 0.115 + 0.4 * 100) * 3));
     expect(orderPay(g, 100, 5000, true)).toBeGreaterThan(orderPay(g, 100, 5000, false));
   });
@@ -239,5 +240,35 @@ describe.skipIf(!has)('HT2: покращення (restable.sch)', () => {
     expect(owned).toEqual(['PR_ABS:1', 'PR_TIRES:1']);
     expect(tuning(owned).grip).toBeGreaterThan(1);
     expect(tuning([]).torque).toBe(1);
+  });
+});
+
+describe.skipIf(!has)('HT2: описи регіонів (ENV/mod_*.sch)', () => {
+  const mods = HT2_MOD_REGIONS.map((region) => ({ region, sch: readSch(read(`ENV/mod_${region}.sch`)) }));
+  it('міста: назви й товари складів', () => {
+    const towns = parseTowns(mods);
+    expect(towns.get(0)?.name).toBe('Приозерск');
+    expect(towns.get(4)?.name).toBe('Ключи');
+    expect(towns.get(10)?.region).toBe('aa');
+    expect(towns.get(0)?.goods).toContain('BREAD');
+    // АЗС (вузли node_car_fuel*) — не склади.
+    expect([...towns.values()].some((t) => /АЗС/.test(t.name))).toBe(false);
+    const goods = new Set(parseGoods(readSch(read('merchandise.sch'))).map((g) => g.id.toUpperCase()));
+    // Більшість товарів міст — відомі в merchandise.sch (C_* — контейнерні, окремий список).
+    const all = [...towns.values()].flatMap((t) => t.goods.filter((g) => !g.startsWith('C_')));
+    expect(all.filter((g) => goods.has(g)).length / all.length).toBeGreaterThan(0.8);
+  });
+  it('товари: вантажівкам — (trucks), легковим — C_* (cars), паливо — цистерна', () => {
+    const goods = new Map(parseGoods(readSch(read('merchandise.sch'))).map((g) => [g.id.toUpperCase(), g]));
+    expect(goods.get('BREAD')?.trucks).toBe(true);
+    expect(goods.get('C_PIZZA')?.trucks).toBe(false);
+    expect(goods.get('FUEL')?.fuel).toBe(true);
+  });
+  it('СТО: покращення за вузлом, шини — біти варіантів', () => {
+    const sto = parseServices(mods);
+    expect(sto.get('sto_ac')?.has('PR_TIRES:1')).toBe(true);
+    expect(sto.get('sto_ac')?.has('PR_TIRES:2')).toBe(true);
+    expect(sto.get('sto_ak')?.has('PR_TIRES:1')).toBe(false);
+    expect(sto.get('sto_ak')?.has('PR_EXTRA_TANK:1')).toBe(true);
   });
 });

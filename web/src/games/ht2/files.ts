@@ -44,11 +44,21 @@ export const HT2_REQUIRED: string[] = [
 /** Музика (≈ 29 МБ) — імпортується, якщо є, але гра без неї повна. */
 export const HT2_MUSIC = Array.from({ length: 12 }, (_, i) => `MUSIC/track${String(i + 1).padStart(2, '0')}l.mp3`);
 
+/**
+ * Описи регіонів `ENV/mod_<код>.sch` (міста й товари складів, СТО з переліком покращень, вказівники, засідки) —
+ * є не в усіх регіонах. Необовʼязкові: без них економіка бере назви міст зі знаків і всі товари.
+ */
+export const HT2_MOD_REGIONS = [
+  'aa', 'ab', 'ac', 'ad', 'ae', 'af', 'ag', 'ah', 'aj', 'ak', 'al', 'am', 'ap', 'aq', 'ar', 'as', 'at', 'au', 'aw', 'ax',
+  'ba', 'bb', 'bc', 'bd', 'bf', 'bg', 'ca', 'cb', 'cc', 'ce', 'cf', 'ch', 'da', 'db', 'dc', 'dq',
+];
+export const HT2_MODS = HT2_MOD_REGIONS.map((r) => `ENV/mod_${r}.sch`);
+
 export const HT2_FILES: FileSet = {
   game: 'ht2',
   required: HT2_REQUIRED,
   prefix: 'ht2/',
-  canonical: (path) => matchRequired(HT2_REQUIRED, path) ?? matchRequired(HT2_MUSIC, path),
+  canonical: (path) => matchRequired(HT2_REQUIRED, path) ?? matchRequired(HT2_MUSIC, path) ?? matchRequired(HT2_MODS, path),
 };
 
 /** Dev-сервер ПК: файли HT2 за `/game2/` (vite.config.ts). */
