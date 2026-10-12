@@ -6,7 +6,7 @@ import { PixelFont } from '../../ui/pixelFont';
 import type { GameId } from '../registry';
 import { HT2_FILES, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2MenuScreen, type MenuItem } from './menu';
-import { WorldViewer } from './world';
+import { WorldViewer } from './viewer';
 
 /**
  * Дальнобойщики 2 у порті: джерело файлів (пристрій або ПК), меню з LOAD.RES гри, режими. Свій цикл кадрів і сцена —
@@ -88,7 +88,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           resolve();
         },
       });
-      void viewer.open(viewer.regionId);
+      void viewer.start();
       Object.assign(window, { ht2: { viewer } });
     });
   }

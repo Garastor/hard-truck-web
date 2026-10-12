@@ -1,36 +1,40 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { FileSource } from '../../assets/loader';
 import { parseB3d } from '../../formats/b3d';
 import { parseRmp } from '../../formats/rmp';
-import { SceneAssembler, buildScene, type BuiltScene } from '../../render/sceneBuilder';
 import { decodeCp1251 } from '../../formats/binary';
-import { parseWay } from '../../formats/way';
+import { parseWay, type Way } from '../../formats/way';
+import { SceneAssembler, buildScene, type BuiltScene } from '../../render/sceneBuilder';
 import { HT2_REGIONS, regionFiles, type TexLevel } from './files';
 import { Weather, type DayTime, type Sky } from './weather';
 import { buildTrees } from './trees';
 
 /**
- * Поле зору: TRUCK.INI [RENDER] ypyramid=0.9 — висота «піраміди огляду» на відстані 1 (як у HT1, де 1.5):
- * вертикаль 2·atan(0,45) ≈ 48,5°.
+ * Відкритий світ Дальнобойщиків 2 (G3): 39 регіонів `ENV/<код>` у спільній системі координат гри. Межі регіону —
+ * за точками його доріг (WAY, файли малі — читаються всі одразу); регіони в радіусі LOAD_R від камери вантажаться
+ * по одному (найближчий першим), далі UNLOAD_R — вивантажуються (памʼять телефона). Спільні об'єкти й небо —
+ * COMMON.B3D. Світло й туман — WEATHER.INI.
+ *
+ * Координати гри: x, y — площина, z — угору; у Three.js — (x, z, −y) (корінь регіону повернуто на −90° навколо X).
  */
-const Y_PYRAMID = 0.9;
+export const LOAD_R = 1100;
+export const UNLOAD_R = 1700;
 
-/**
- * Переглядач світу Дальнобойщиків 2 (G2): регіон `ENV/<код>.b3d` + текстури `<код>1.res`, обліт камерою.
- * Наступні кроки — склеювання регіонів і потокове завантаження (G3).
- */
-export interface WorldViewerOptions {
-  renderer: THREE.WebGLRenderer;
-  source: FileSource;
-  region?: string;
-  setStatus(text: string | null): void;
-  onExit(): void;
+export interface RegionInfo {
+  id: string;
+  way: Way;
+  /** Межі доріг регіону в координатах гри: [x0, y0, x1, y1]. */
+  bounds: [number, number, number, number];
 }
 
 export interface LoadedRegion {
   id: string;
   built: BuiltScene;
+}
+
+/** Точка гри → Three.js. */
+export function toThree(x: number, y: number, z: number, out = new THREE.Vector3()): THREE.Vector3 {
+  return out.set(x, z, -y);
 }
 
 /** Спільні об'єкти (небо, анімовані предмети, ліхтарі): COMMON.B3D + текстури common1.res (з палітрою common.plm). */
@@ -61,71 +65,69 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
   return { id, built };
 }
 
-export class WorldViewer {
+function boundsOf(way: Way): [number, number, number, number] {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const r of way.rooms)
+    for (const s of r.segments)
+      for (let i = 0; i < s.points.length; i += 3) {
+        x0 = Math.min(x0, s.points[i]);
+        x1 = Math.max(x1, s.points[i]);
+        y0 = Math.min(y0, s.points[i + 1]);
+        y1 = Math.max(y1, s.points[i + 1]);
+      }
+  return [x0, y0, x1, y1];
+}
+
+/** Відстань від точки (x, y) гри до прямокутника меж регіону (0 — усередині). */
+export function distToBounds(b: [number, number, number, number], x: number, y: number): number {
+  const dx = Math.max(b[0] - x, 0, x - b[2]);
+  const dy = Math.max(b[1] - y, 0, y - b[3]);
+  return Math.hypot(dx, dy);
+}
+
+export class Ht2World {
   readonly scene = new THREE.Scene();
-  readonly camera: THREE.PerspectiveCamera;
-  readonly controls: OrbitControls;
-  region: LoadedRegion | null = null;
-  private common: SceneAssembler | null = null;
-  private readonly hud = document.createElement('div');
-  private readonly info = document.createElement('div');
-  private readonly select = document.createElement('select');
-  private readonly onResize = () => this.resize();
-  private readonly clock = new THREE.Clock();
+  readonly regions = new Map<string, RegionInfo>();
+  readonly loaded = new Map<string, LoadedRegion>();
   private readonly sun = new THREE.DirectionalLight(0xffffff, 1);
   private readonly ambient = new THREE.AmbientLight(0xffffff, 0.5);
-  private weather: Weather | null = null;
-  private readonly time = document.createElement('select');
-  private readonly sky = document.createElement('select');
+  private sky: THREE.Group | null = null;
+  private loading: string | null = null;
+  private lastCheck = 0;
+  private readonly waiters: (() => void)[] = [];
+  onChange: (() => void) | null = null;
 
-  constructor(private readonly opts: WorldViewerOptions) {
-    const { renderer } = opts;
+  private constructor(
+    private readonly source: FileSource,
+    private readonly common: SceneAssembler,
+    private readonly weather: Weather | null,
+  ) {
     this.scene.background = new THREE.Color(0x8fb4d8);
     this.scene.fog = new THREE.Fog(0x8fb4d8, 250, 900);
-    this.camera = new THREE.PerspectiveCamera(THREE.MathUtils.radToDeg(2 * Math.atan(Y_PYRAMID / 2)), 1, 0.5, 20000);
     // Сонце: напрям у даних не знайдено (гіпотеза: високо з півдня-заходу). Світло у світових координатах Three.js.
     this.sun.position.set(-0.5, 1, 0.35);
     this.scene.add(this.sun, this.sun.target, this.ambient);
-    this.controls = new OrbitControls(this.camera, renderer.domElement);
-    this.controls.enableDamping = true;
-    this.controls.screenSpacePanning = false;
-    this.controls.maxPolarAngle = Math.PI * 0.495;
-
-    this.hud.className = 'ht2-hud';
-    const back = document.createElement('button');
-    back.textContent = '← Меню';
-    back.addEventListener('click', () => opts.onExit());
-    for (const r of HT2_REGIONS) this.select.add(new Option(r.toUpperCase(), r));
-    this.select.value = opts.region && (HT2_REGIONS as readonly string[]).includes(opts.region) ? opts.region : 'aa';
-    this.select.addEventListener('change', () => void this.open(this.select.value));
-    for (const [v, t] of [['day', 'День'], ['srise', 'Світанок'], ['sset', 'Захід'], ['night', 'Ніч']]) this.time.add(new Option(t, v));
-    for (const [v, t] of [['good', 'Ясно'], ['bad', 'Хмарно']]) this.sky.add(new Option(t, v));
-    this.time.addEventListener('change', () => this.applyLight());
-    this.sky.addEventListener('change', () => this.applyLight());
-    this.hud.append(back, this.select, this.time, this.sky);
-    this.info.className = 'ht2-info';
-    document.body.append(this.hud, this.info);
-    window.addEventListener('resize', this.onResize);
-    this.resize();
-    renderer.setAnimationLoop(() => this.frame());
+    this.setLight('good', 'day');
   }
 
-  get regionId(): string {
-    return this.select.value;
+  static async create(source: FileSource): Promise<Ht2World> {
+    const [common, weather, ways] = await Promise.all([
+      loadCommon(source),
+      source.read('WEATHER.INI').then((b) => Weather.parse(decodeCp1251(b))).catch(() => null),
+      Promise.all(HT2_REGIONS.map((id) => source.read(regionFiles(id).way).then(parseWay).catch(() => null))),
+    ]);
+    const w = new Ht2World(source, common, weather);
+    HT2_REGIONS.forEach((id, i) => {
+      const way = ways[i];
+      if (way) w.regions.set(id, { id, way, bounds: boundsOf(way) });
+    });
+    return w;
   }
 
-  private resize(): void {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    this.opts.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
-  }
-
-  /** Світло й туман з WEATHER.INI за вибраною порою доби й погодою. */
-  private applyLight(): void {
+  /** Світло й туман з WEATHER.INI (набір 1 — гіпотеза: погоду регіону задає подія кімнати weather_change). */
+  setLight(sky: Sky, time: DayTime): void {
     if (!this.weather) return;
-    const l = this.weather.light(1, this.sky.value as Sky, this.time.value as DayTime);
+    const l = this.weather.light(1, sky, time);
     const fog = this.scene.fog as THREE.Fog;
     fog.color.copy(l.fog);
     fog.near = l.fogNear;
@@ -137,76 +139,98 @@ export class WorldViewer {
     this.ambient.intensity = Math.PI;
   }
 
-  async open(id: string): Promise<void> {
-    this.opts.setStatus(`Завантаження регіону ${id.toUpperCase()}…`);
-    try {
-      if (!this.weather) {
-        this.weather = await this.opts.source.read('WEATHER.INI').then((b) => Weather.parse(decodeCp1251(b))).catch(() => null);
-        this.applyLight();
-      }
-      const t0 = performance.now();
-      this.common ??= await loadCommon(this.opts.source);
-      const next = await loadRegion(this.opts.source, id, this.common);
-      const t1 = performance.now();
-      if (this.region) {
-        this.scene.remove(this.region.built.root);
-        if (this.region.built.sky) this.scene.remove(this.region.built.sky);
-        this.region.built.dispose();
-      }
-      this.region = next;
-      this.scene.add(next.built.root);
-      if (next.built.sky) this.scene.add(next.built.sky);
-      await this.placeOnRoad(id);
-      const s = next.built.stats;
-      this.info.textContent =
-        `${id.toUpperCase()}: кімнат ${s.rooms}, мешів ${s.meshes}, трикутників ${s.triangles}\n` +
-        `інстансів ${s.instances}, без текстур ${s.missingTextures}, завантаження ${(t1 - t0).toFixed(0)} мс`;
-      this.opts.setStatus(null);
-    } catch (e) {
-      console.error(e);
-      this.opts.setStatus(`Помилка: ${(e as Error).message}`);
+  /** Регіон, у межах доріг якого точка гри (x, y), або найближчий. */
+  regionAt(x: number, y: number): string | null {
+    let best: string | null = null;
+    let bd = Infinity;
+    for (const r of this.regions.values()) {
+      const d = distToBounds(r.bounds, x, y);
+      if (d < bd) (bd = d), (best = r.id);
+    }
+    return best;
+  }
+
+  /** Початок першого сегмента доріг регіону: точка й напрям (координати гри). */
+  startOf(id: string): { pos: [number, number, number]; dir: [number, number] } | null {
+    const seg = this.regions.get(id)?.way.rooms.flatMap((r) => r.segments).find((s) => s.points.length >= 6);
+    if (!seg) return null;
+    const p = seg.points;
+    const dx = p[3] - p[0];
+    const dy = p[4] - p[1];
+    const l = Math.hypot(dx, dy) || 1;
+    return { pos: [p[0], p[1], p[2]], dir: [dx / l, dy / l] };
+  }
+
+  /** Щокадру: небо за камерою; раз на 0,5 с — які регіони вантажити й вивантажувати. */
+  update(camera: THREE.Camera, now = performance.now()): void {
+    if (this.sky) this.sky.position.copy(camera.position);
+    if (now - this.lastCheck < 500) return;
+    this.lastCheck = now;
+    const p = camera.position;
+    this.stream(p.x, -p.z);
+  }
+
+  /** Чекати, доки довкола точки гри (x, y) завантажаться всі регіони радіуса LOAD_R. */
+  async ready(x: number, y: number): Promise<void> {
+    this.stream(x, y);
+    while (this.loading || this.wanted(x, y).some((id) => !this.loaded.has(id))) {
+      await new Promise<void>((r) => this.waiters.push(r));
+      this.stream(x, y);
     }
   }
 
-  /**
-   * Камера на дорозі: перший сегмент дорожньої мережі регіону (ENV/<код>.way) — на 3 м над першою точкою,
-   * погляд уздовж сегмента. Координати WAY — як у B3D (z — висота): у Three.js (x, z, −y).
-   */
-  private async placeOnRoad(id: string): Promise<void> {
-    const way = await this.opts.source.read(regionFiles(id).way).then(parseWay).catch(() => null);
-    const seg = way?.rooms.flatMap((r) => r.segments).find((s) => s.points.length >= 6);
-    if (seg) {
-      const p = seg.points;
-      const a = new THREE.Vector3(p[0], p[2], -p[1]);
-      const b = new THREE.Vector3(p[3], p[5], -p[4]);
-      const dir = b.clone().sub(a).setY(0).normalize();
-      this.camera.position.copy(a).add(new THREE.Vector3(0, 3, 0)).addScaledVector(dir, 4);
-      this.controls.target.copy(a).add(new THREE.Vector3(0, 2, 0)).addScaledVector(dir, 20);
-    } else {
-      const box = new THREE.Box3().setFromObject(this.region!.built.root);
-      const c = box.getCenter(new THREE.Vector3());
-      this.controls.target.copy(c);
-      this.camera.position.copy(c).add(new THREE.Vector3(150, 120, 150));
-    }
-    this.camera.far = 20000;
-    this.camera.updateProjectionMatrix();
-    this.controls.update();
+  private wanted(x: number, y: number): string[] {
+    return [...this.regions.values()]
+      .map((r) => [r.id, distToBounds(r.bounds, x, y)] as const)
+      .filter(([, d]) => d < LOAD_R)
+      .sort((a, b) => a[1] - b[1])
+      .map(([id]) => id);
   }
 
-  private frame(): void {
-    this.clock.getDelta();
-    this.controls.update();
-    const sky = this.region?.built.sky;
-    if (sky) sky.position.copy(this.camera.position);
-    this.opts.renderer.render(this.scene, this.camera);
+  private stream(x: number, y: number): void {
+    for (const [id, reg] of this.loaded) {
+      if (distToBounds(this.regions.get(id)!.bounds, x, y) > UNLOAD_R) {
+        this.scene.remove(reg.built.root);
+        reg.built.dispose();
+        this.loaded.delete(id);
+        this.onChange?.();
+      }
+    }
+    if (this.loading) return;
+    const next = this.wanted(x, y).find((id) => !this.loaded.has(id));
+    if (!next) return;
+    this.loading = next;
+    void loadRegion(this.source, next, this.common)
+      .then((reg) => {
+        this.loaded.set(next, reg);
+        this.scene.add(reg.built.root);
+        if (!this.sky && reg.built.sky) {
+          this.sky = reg.built.sky;
+          this.scene.add(this.sky);
+        }
+        this.onChange?.();
+      })
+      .catch((e) => console.error(`HT2: регіон ${next}`, e))
+      .finally(() => {
+        this.loading = null;
+        for (const w of this.waiters.splice(0)) w();
+        this.stream(x, y);
+      });
+  }
+
+  stats(): { regions: string[]; triangles: number; meshes: number } {
+    let triangles = 0;
+    let meshes = 0;
+    for (const r of this.loaded.values()) {
+      triangles += r.built.stats.triangles;
+      meshes += r.built.stats.meshes;
+    }
+    return { regions: [...this.loaded.keys()], triangles, meshes };
   }
 
   dispose(): void {
-    this.opts.renderer.setAnimationLoop(null);
-    window.removeEventListener('resize', this.onResize);
-    this.controls.dispose();
-    this.hud.remove();
-    this.info.remove();
-    if (this.region) this.region.built.dispose();
+    for (const r of this.loaded.values()) r.built.dispose();
+    this.loaded.clear();
+    this.common.dispose();
   }
 }
