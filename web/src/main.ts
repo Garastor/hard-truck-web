@@ -83,6 +83,8 @@ truckRoot.rotation.x = -Math.PI / 2;
 scene.add(truckRoot);
 
 const params = new URLSearchParams(location.search);
+/** Гра з адреси (/ht1/, /ht2/, ?game=) — читаємо до того, як syncUrl перепише адресу. */
+const urlGame = gameFromLocation();
 for (const id of Object.keys(LEVELS)) levelSel.add(new Option(id, id));
 levelSel.value = params.get('level') ?? 'CIRCUIT';
 
@@ -445,6 +447,8 @@ document.addEventListener('pointerup', (e) => {
 const clock = new THREE.Clock();
 // Пауза, коли вкладку згорнуто (економія батареї); після повернення не «надолужуємо» час.
 document.addEventListener('visibilitychange', () => {
+  // Друга гра має власний цикл кадрів (games/ht2) — його не підміняємо.
+  if (document.body.classList.contains('game-ht2')) return;
   if (document.hidden) renderer.setAnimationLoop(null);
   else {
     clock.getDelta();
@@ -606,7 +610,8 @@ async function chooseGame(ids: GameId[]): Promise<GameId> {
 
 async function boot(): Promise<void> {
   void navigator.storage?.persist?.();
-  const wanted = gameFromLocation();
+  // Налагоджувальні посилання ?tab=… / ?career=1 без game — перша гра (як до появи HT2).
+  const wanted = urlGame ?? (debugLink ? 'ht1' : null);
   const games = await availableGames();
   gameCount = games.length;
   let game: GameId | null = wanted;
@@ -618,6 +623,7 @@ async function boot(): Promise<void> {
   game ??= 'ht1';
   setLastGame(game);
   if (game === 'ht2') {
+    renderer.setAnimationLoop(null);
     const { runHt2 } = await import('./games/ht2/app');
     return runHt2({ renderer, overlay, setStatus, showImport: (again) => showImport(HT2_FILES, again), exit: gameCount > 1 ? exitToGameSelect : null });
   }

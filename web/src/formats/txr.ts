@@ -93,7 +93,15 @@ function findPfrm(bytes: Uint8Array, idField: Uint8Array, after: number): Channe
   if (idField.length >= 12 && String.fromCharCode(...idField.subarray(0, 4)) === 'LOFF') {
     pos = new DataView(idField.buffer, idField.byteOffset).getUint32(8, true);
   }
-  return readPfrmAt(bytes, pos);
+  // HT2: з міпмапами LOFF вказує на чанк LVMP (рівні зменшення), PFRM — після нього (розмір LVMP у даних не
+  // збігається з відстанню на 2 байти — шукаємо тег). Без цього бралися маски 1555 за замовчуванням: трава
+  // жовто-зелена з «дірками» у випадковій альфі.
+  const direct = readPfrmAt(bytes, pos);
+  if (direct) return direct;
+  for (let i = Math.max(pos, after); i + 24 <= bytes.length; i++) {
+    if (bytes[i] === 0x50 && bytes[i + 1] === 0x46 && bytes[i + 2] === 0x52 && bytes[i + 3] === 0x4d) return readPfrmAt(bytes, i);
+  }
+  return null;
 }
 
 /** Читає чанк PFRM за зсувом (або null). */

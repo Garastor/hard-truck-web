@@ -3,10 +3,10 @@ import { cachedSource, idbSourceFor, missingFiles, prefetchMissing } from '../..
 import type { FileSource } from '../../assets/loader';
 import { parseFon } from '../../formats/fon';
 import { PixelFont } from '../../ui/pixelFont';
-import { toast } from '../../ui/mobile';
 import type { GameId } from '../registry';
 import { HT2_FILES, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2MenuScreen, type MenuItem } from './menu';
+import { WorldViewer } from './world';
 
 /**
  * Дальнобойщики 2 у порті: джерело файлів (пристрій або ПК), меню з LOAD.RES гри, режими. Свій цикл кадрів і сцена —
@@ -54,8 +54,10 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   const art = await Ht2MenuArt.load((n) => source.read(n));
   ctx.setStatus(null);
 
+  // Налагодження: ?game=ht2&tab=world — одразу огляд світу (&region=ab).
+  let direct = new URLSearchParams(location.search).get('tab') === 'world';
   for (;;) {
-    const choice = await new Promise<'world' | 'files' | 'exit'>((resolve) => {
+    const choice = direct ? 'world' : await new Promise<'world' | 'files' | 'exit'>((resolve) => {
       let close = () => {};
       // Меню закривається перед будь-якою дією.
       const pick = (c: 'world' | 'files' | 'exit') => () => {
@@ -69,11 +71,25 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
       if (ctx.exit) items.push({ label: 'Вихід', action: pick('exit') });
       close = ht2MenuScreen(art, large, items, 'Дальнобойщики 2 — порт у розробці: поки лише огляд світу');
     });
+    direct = false;
     if (choice === 'exit') return ctx.exit?.();
     if (choice === 'files') {
       await ctx.showImport(true);
       continue;
     }
-    toast('Огляд світу HT2 — наступний крок (G2)', 4000);
+    await new Promise<void>((resolve) => {
+      const viewer: WorldViewer = new WorldViewer({
+        renderer: ctx.renderer,
+        source,
+        region: new URLSearchParams(location.search).get('region') ?? 'aa',
+        setStatus: ctx.setStatus,
+        onExit: () => {
+          viewer.dispose();
+          resolve();
+        },
+      });
+      void viewer.open(viewer.regionId);
+      Object.assign(window, { ht2: { viewer } });
+    });
   }
 }

@@ -162,3 +162,11 @@ describe.skipIf(!has)('HT2: набір файлів для пристрою', ()
     expect(detectGame(['readme.txt'])).toBeNull();
   });
 });
+
+describe.skipIf(!has)('HT2: TXR з міпмапами (LVMP перед PFRM)', () => {
+  it('ce1.res: трава — 565 без альфи, ліс For22_01 — 4444 з альфою', () => {
+    const a = parseRmp(read('ENV/ce1.res'));
+    expect(parseTxr(a.textures.get('txr/grass_ce1.txr')!).hasAlpha).toBe(false);
+    expect(parseTxr(a.textures.get('txr/for22_01.txr')!).hasAlpha).toBe(true);
+  });
+});

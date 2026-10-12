@@ -13,6 +13,21 @@ import { parsePlm } from '../formats/plm';
 export interface BuildOptions {
   /** Яку групу брати в перемикачах (LOD тощо). */
   switchGroup?: number;
+  /**
+   * Освітлення (HT2): вершини типу 37 мають нормалі, рушій освітлює сцену сонцем і розсіяним світлом
+   * (WEATHER.INI) — матеріали MeshLambert з нормалями. HT1 — без освітлення (текстури вже «засвічені»).
+   */
+  lit?: boolean;
+  /** Звідки брати шаблони, яких немає в цьому файлі (HT2: регіон → COMMON.B3D зі своїми матеріалами). */
+  fallback?: SceneAssembler;
+  /**
+   * Палітра для `col N`, якщо в архіві своєї немає (HT2: регіональні RES без палітри — common.plm з COMMON.RES).
+   * У HT2 вона ж задає колір-ключ прозорості: матеріал `ttx T col N` — прозорі пікселі кольору палітри N
+   * (ліси — col 256 = (50, 59, 18) → 565 0x31C2); `ttx` без col — чорні, як у HT1.
+   */
+  palette?: Uint8Array;
+  /** HT2: колір-ключ прозорості ttx — з `col N` (див. palette). */
+  colorKey?: boolean;
 }
 
 export interface BuiltScene {
@@ -28,10 +43,14 @@ export interface BuiltScene {
 interface VertexSource {
   positions: Float32Array;
   uvs: Float32Array;
+  normals?: Float32Array | null;
 }
 
-/** Полігони за матеріалом; ord — порядковий номер полігона в даних для кожного трикутника. */
-type Batches = Map<number, { pos: number[]; uv: number[]; ord: number[]; layer?: number[] }>;
+/**
+ * Полігони за матеріалом; ord — порядковий номер полігона в даних для кожного трикутника; nrm — нормалі
+ * (режим lit; null — у джерелі нормалей немає, рахуємо з геометрії).
+ */
+type Batches = Map<number, { pos: number[]; uv: number[]; ord: number[]; layer?: number[]; nrm?: number[] | null }>;
 
 /**
  * Шари в одній площині (фасад тунелю на суцільній стіні лісу): оригінал малює полігони по черзі й пізніший
@@ -51,18 +70,24 @@ export class MaterialLibrary {
   private readonly texCache = new Map<string, THREE.Texture | null>();
   private readonly rmpByName = new Map<string, Material>();
   readonly palette: Uint8Array | null;
+  /** Колір-ключ прозорості з `col N` матеріалу ttx (HT2). */
+  private readonly colorKey: boolean;
   missingTextures = 0;
 
   constructor(
     private readonly b3d: B3d,
     private readonly rmp: RmpArchive,
+    private readonly lit = false,
+    fallbackPalette: Uint8Array | null = null,
+    colorKey = false,
   ) {
     for (const line of rmp.materials) {
       const m = parseMaterial(line);
       this.rmpByName.set(m.name.toLowerCase(), m);
     }
     const plm = [...rmp.palettes.values()][0];
-    this.palette = plm ? parsePlm(plm).palette : null;
+    this.palette = plm ? parsePlm(plm).palette : fallbackPalette;
+    this.colorKey = colorKey;
   }
 
   material(index: number): THREE.Material {
@@ -75,7 +100,8 @@ export class MaterialLibrary {
     // (кожна видна лише зі своєї кімнати; двобічні — мерехтіли одна крізь одну).
     const params: THREE.MeshBasicMaterialParameters = { side: THREE.FrontSide };
     if (def && def.tex > 0) {
-      const tex = this.texture(def.tex, def.flags.has('notile'), def.transparentTex);
+      const key = def.transparentTex ? (this.colorKey && def.col !== null && this.palette ? def.col : 0) : null;
+      const tex = this.texture(def.tex, def.flags.has('notile'), key);
       if (tex) {
         params.map = tex;
         if (def.transparentTex || (tex.userData.hasAlpha as boolean)) {
@@ -111,7 +137,7 @@ export class MaterialLibrary {
       params.opacity = 1 - def.params.transp[0];
       params.depthWrite = false;
     }
-    mat = new THREE.MeshBasicMaterial(params);
+    mat = this.lit ? new THREE.MeshLambertMaterial(params as THREE.MeshLambertMaterialParameters) : new THREE.MeshBasicMaterial(params);
     mat.name = name;
     // Опис матеріалу з архіву — для ефектів, що читають параметри (move, noz).
     mat.userData.def = def;
@@ -123,8 +149,9 @@ export class MaterialLibrary {
    * Текстура з архіву. keyBlack — матеріал ttx: у 16-бітних текстурах оригіналу альфа-каналу немає,
    * прозорість задає чорний колір (знаки, дерева, диски коліс) — робимо його прозорим.
    */
-  private texture(oneBased: number, clamp: boolean, keyBlack = false): THREE.Texture | null {
-    const key = `${oneBased}/${clamp ? 'c' : 'r'}/${keyBlack ? 'k' : ''}`;
+  private texture(oneBased: number, clamp: boolean, colorKey: number | null = null): THREE.Texture | null {
+    const keyBlack = colorKey !== null;
+    const key = `${oneBased}/${clamp ? 'c' : 'r'}/${keyBlack ? `k${colorKey}` : ''}`;
     if (this.texCache.has(key)) return this.texCache.get(key)!;
     const file = this.rmp.order.TEXTUREFILES[oneBased - 1];
     const bytes = file ? this.rmp.textures.get(file) : undefined;
@@ -134,7 +161,12 @@ export class MaterialLibrary {
         const img = parseTxr(bytes);
         if (keyBlack && !img.hasAlpha) {
           const d = img.data;
-          for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] <= 12) d[i + 3] = 0;
+          if (colorKey && this.palette) {
+            // Колір палітри N, зведений до 565 (як пікселі текстури): порівнюємо в розрядності каналів 5-6-5.
+            const c = (colorKey - 1) * 3;
+            const kr = this.palette[c] >> 3, kg = this.palette[c + 1] >> 2, kb = this.palette[c + 2] >> 3;
+            for (let i = 0; i < d.length; i += 4) if (d[i] >> 3 === kr && d[i + 1] >> 2 === kg && d[i + 2] >> 3 === kb) d[i + 3] = 0;
+          } else for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] <= 12) d[i + 3] = 0;
           img.hasAlpha = true;
         }
         const t = new THREE.DataTexture(img.data, img.width, img.height, THREE.RGBAFormat);
@@ -241,6 +273,8 @@ export class SceneAssembler {
   private switchTarget: Map<string, THREE.Group[][]> | null = null;
   /** Будуємо кімнати світу (а не модель): екземпляри з порожнім простором — привʼязка до спостерігача. */
   private buildingRooms = false;
+  private readonly lit: boolean;
+  private readonly fallback: SceneAssembler | null;
 
   constructor(
     readonly b3d: B3d,
@@ -248,7 +282,9 @@ export class SceneAssembler {
     opts: BuildOptions = {},
   ) {
     this.switchGroup = opts.switchGroup ?? 0;
-    this.lib = new MaterialLibrary(b3d, rmp);
+    this.lib = new MaterialLibrary(b3d, rmp, opts.lit, opts.palette ?? null, opts.colorKey);
+    this.lit = opts.lit ?? false;
+    this.fallback = opts.fallback ?? null;
     for (const b of b3d.blocks) if (b.name) this.topByName.set(b.name.toLowerCase(), b);
     const collect = (b: Block, parent: THREE.Matrix4) => {
       let m = parent;
@@ -267,7 +303,7 @@ export class SceneAssembler {
 
   /** Матриця простору (блок 24, зокрема вкладеного) за імʼям, або null. */
   space(name: string): THREE.Matrix4 | null {
-    return this.spaces.get(name.toLowerCase())?.clone() ?? null;
+    return this.spaces.get(name.toLowerCase())?.clone() ?? this.fallback?.space(name) ?? null;
   }
 
   /** Встановлює стан перемикача (усі екземпляри з цим імʼям). */
@@ -280,7 +316,7 @@ export class SceneAssembler {
     const key = name.toLowerCase();
     if (this.templateCache.has(key)) return this.templateCache.get(key)!;
     const blk = this.topByName.get(key);
-    if (!blk) return null;
+    if (!blk) return this.fallback?.template(name) ?? null;
     const grp = new THREE.Group();
     grp.name = blk.name;
     const batches: Batches = new Map();
@@ -347,20 +383,25 @@ export class SceneAssembler {
     for (const [matIndex, b] of batches) {
       if (!b.pos.length) continue;
       // Трикутники за шаром: шар 0 — звичайний матеріал, вищі — копія зі зсувом глибини.
-      const byLayer = new Map<number, { pos: number[]; uv: number[] }>();
+      const byLayer = new Map<number, { pos: number[]; uv: number[]; nrm?: number[] | null }>();
       if (!b.layer) byLayer.set(0, b);
       else
         for (let t = 0; t < b.pos.length / 9; t++) {
           const l = b.layer[t] ?? 0;
           let part = byLayer.get(l);
-          if (!part) byLayer.set(l, (part = { pos: [], uv: [] }));
+          if (!part) byLayer.set(l, (part = { pos: [], uv: [], nrm: b.nrm ? [] : null }));
           part.pos.push(...b.pos.slice(t * 9, t * 9 + 9));
           part.uv.push(...b.uv.slice(t * 6, t * 6 + 6));
+          if (b.nrm) part.nrm!.push(...b.nrm.slice(t * 9, t * 9 + 9));
         }
       for (const [layer, part] of byLayer) {
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.Float32BufferAttribute(part.pos, 3));
         g.setAttribute('uv', new THREE.Float32BufferAttribute(part.uv, 2));
+        if (this.lit) {
+          if (part.nrm && part.nrm.length === part.pos.length) g.setAttribute('normal', new THREE.Float32BufferAttribute(part.nrm, 3));
+          else g.computeVertexNormals();
+        }
         g.computeBoundingSphere();
         const mesh = new THREE.Mesh(g, layer ? this.layerMaterial(matIndex, layer) : this.lib.material(matIndex));
         mesh.matrixAutoUpdate = false;
@@ -392,15 +433,22 @@ export class SceneAssembler {
   private addPolys(polys: Polygon[], vs: VertexSource, batches: Batches): void {
     for (const p of polys) {
       let b = batches.get(p.material);
-      if (!b) batches.set(p.material, (b = { pos: [], uv: [], ord: [] }));
+      if (!b) batches.set(p.material, (b = { pos: [], uv: [], ord: [], nrm: this.lit ? [] : null }));
       const ord = this.polyOrder++;
       const idx = p.indices;
+      // Нормалі (lit): з полігона, інакше з вершин; якщо їх немає хоч в одного полігона партії — рахуємо з геометрії.
+      const nsrc = this.lit ? (p.normals ? 'poly' : vs.normals ? 'verts' : null) : null;
+      if (this.lit && !nsrc) b.nrm = null;
       for (let k = 1; k + 1 < idx.length; k++) {
         for (const corner of [0, k, k + 1]) {
           const vi = idx[corner];
           b.pos.push(vs.positions[vi * 3], vs.positions[vi * 3 + 1], vs.positions[vi * 3 + 2]);
           if (p.uvs) b.uv.push(p.uvs[corner * 2], p.uvs[corner * 2 + 1]);
           else b.uv.push(vs.uvs[vi * 2], vs.uvs[vi * 2 + 1]);
+          if (b.nrm) {
+            if (nsrc === 'poly') b.nrm.push(p.normals![corner * 3], p.normals![corner * 3 + 1], p.normals![corner * 3 + 2]);
+            else b.nrm.push(vs.normals![vi * 3], vs.normals![vi * 3 + 1], vs.normals![vi * 3 + 2]);
+          }
         }
         b.ord.push(ord);
       }
@@ -445,18 +493,18 @@ export class SceneAssembler {
           grp.userData.baseMatrix = m.clone();
           grp.userData.space = d.name1.toLowerCase();
           const b: Batches = new Map();
-          const vsrc = { positions: d.positions, uvs: d.uvs };
+          const vsrc = { positions: d.positions, uvs: d.uvs, normals: d.t === 36 ? d.normals : null };
           if (block.groups) for (const g of block.groups) for (const child of g) this.visit(child, vsrc, b, grp, depth + 1);
           this.flush(b, grp);
           into.add(grp);
           return;
         }
-        cur = { positions: d.positions, uvs: d.uvs };
+        cur = { positions: d.positions, uvs: d.uvs, normals: d.t === 36 ? d.normals : null };
         break;
       }
       case 7:
       case 37:
-        cur = { positions: d.positions, uvs: d.uvs };
+        cur = { positions: d.positions, uvs: d.uvs, normals: d.t === 37 ? d.normals : null };
         break;
       case 8:
       case 35:
@@ -747,7 +795,9 @@ function buildSky(asm: SceneAssembler): THREE.Group | null {
   sky.add(inner);
   inner.traverse((o) => {
     if (!(o instanceof THREE.Mesh)) return;
-    const m = (o.material as THREE.MeshBasicMaterial).clone();
+    const src = o.material as THREE.MeshBasicMaterial;
+    // Небо не освітлюється (у режимі lit матеріали — Lambert).
+    const m = src.isMeshBasicMaterial ? src.clone() : new THREE.MeshBasicMaterial({ map: src.map, color: src.color, alphaTest: src.alphaTest, transparent: src.transparent, opacity: src.opacity });
     m.depthWrite = false;
     m.depthTest = false;
     // Купол поруч із камерою (≈ 46 м) — туман за відстанню його б не зачепив: частка туману — за висотою над
