@@ -211,7 +211,7 @@ export class Traffic {
 }
 
 /** Варіант кольору: матеріали `<…>1` моделі → `<…>N` (Fiat_all1 → Fiat_all3), якщо такий є в TRUCKS.B3D. */
-function recolor(root: THREE.Object3D, trucks: Ht2Trucks, n: number): void {
+export function recolor(root: THREE.Object3D, trucks: Ht2Trucks, n: number): void {
   const names = trucks.asm.b3d.materials.map((m) => m.toLowerCase());
   const swap = new Map<THREE.Material, THREE.Material>();
   root.traverse((o) => {

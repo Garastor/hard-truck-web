@@ -19,7 +19,7 @@ import { Police } from './police';
 import { Mafia } from './mafia';
 import { RaceMode } from './race';
 import { Trailer } from './trailer';
-import { Truckers, truckerNames } from './truckers';
+import { Truckers, truckerKinds, truckerNames } from './truckers';
 import { parseUpgrades, tuning, type Tuning } from './upgrades';
 import { NavMap } from '../../ui/navMap';
 import { Music } from './music';
@@ -200,11 +200,11 @@ export class Ht2Drive {
       this.race = new RaceMode(this, this.roads, (k, fb) => this.raceMessages.get(k) ?? fb);
       this.race.onFinish = () => o.onExit();
     }
+    const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
     if (!o.race) {
       const names = await o.source.read('names.sch').then(readSch).catch(() => []);
-      this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r));
+      this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r), truckerKinds(vehicles, this.trucks));
     }
-    const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
     this.traffic = new Traffic(this.world.scene, this.rapier, this.roads, this.trucks, trafficKinds(vehicles, this.trucks), (r) => this.world.loaded.has(r));
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);
     this.input.onCommand = (cmd) => {

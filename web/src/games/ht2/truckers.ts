@@ -2,15 +2,17 @@ import * as THREE from 'three';
 import { AutoPilot } from '../../game/autopilot';
 import { TruckVehicle } from '../../game/truckVehicle';
 import { buildTruckModel } from '../../game/trucks';
-import { isList, str, type SExpr } from '../../formats/sexpr';
-import { drivable, truckDef } from './trucks';
+import { isList, num, str, type SExpr } from '../../formats/sexpr';
+import { drivable, truckDef, type Ht2Trucks } from './trucks';
+import { recolor } from './traffic';
 import type { Ht2Roads, RoadLine } from './roads';
 import type { Ht2Drive } from './drive';
 
 /**
  * Далекобійники-суперники HT2 (перша версія): у світі їх 50 (`ENV/GAME.CNF`: `(aitruck 50)`), імена — `names.sch`
  * (`("ВИТАЛИЙ" male trucker 1)`). Порт не моделює всіх 50 — довкола гравця їздять до MAX вантажівок з кузовом
- * (група lorries vehicle.tech) на тому ж автопілоті, що й гравець (клавіша P): зʼявляються на дорогах завантажених
+ * (клас trucker типу lorry з evehicles.sch: `(vehicle MERCEDES_LORRY2 "MercedesR" 1 lorry trucker …)`, число —
+ * варіант фарбування) на тому ж автопілоті, що й гравець (клавіша P): зʼявляються на дорогах завантажених
  * регіонів за SPAWN_MIN…SPAWN_MAX від гравця, зникають далі за DESPAWN або перекинувшись. Це повноцінні тіла фізики:
  * зіткнення з ними — як з гравцем. Замовлень і торгівлі вони поки не ведуть (гіпотеза: у грі — конкуренти за вантажі).
  */
@@ -24,6 +26,15 @@ export interface Rival {
   truck: TruckVehicle;
   pilot: AutoPilot;
   bad: number;
+}
+
+/** Машини далекобійників з evehicles.sch: тип lorry, клас trucker, модель є серед вантажівок (vehicle.tech). */
+export function truckerKinds(sch: SExpr[], trucks: Ht2Trucks): { model: string; variant: number }[] {
+  const ok = new Set(drivable(trucks).map((r) => r.carNode));
+  return sch
+    .filter((e): e is SExpr[] => isList(e) && e[0] === 'vehicle' && e[4] === 'lorry' && (e[5] === 'trucker' || (isList(e[5]) && e[5].includes('trucker'))))
+    .map((e) => ({ model: str(e[2]), variant: num(e[3]) }))
+    .filter((k) => ok.has(k.model));
 }
 
 /** Імена далекобійників з names.sch. */
@@ -41,6 +52,7 @@ export class Truckers {
     private readonly roads: Ht2Roads,
     private readonly names: string[],
     private readonly loaded: (region: string) => boolean,
+    private readonly kinds: { model: string; variant: number }[] = [],
   ) {}
 
   get positions(): THREE.Vector3[] {
@@ -74,7 +86,10 @@ export class Truckers {
 
   private spawn(player: THREE.Vector3): void {
     const lines = this.roads.lines.filter((l) => this.loaded(l.region));
-    const pool = drivable(this.drive.trucksData).filter((r) => r.group === 'lorries');
+    const all = drivable(this.drive.trucksData);
+    const pool = this.kinds.length
+      ? this.kinds.map((k) => ({ rec: all.find((r) => r.carNode === k.model)!, variant: k.variant }))
+      : all.filter((r) => r.group === 'lorries').map((rec) => ({ rec, variant: 0 }));
     if (!lines.length || !pool.length) return;
     for (let attempt = 0; attempt < 10; attempt++) {
       const line: RoadLine = lines[Math.floor(Math.random() * lines.length)];
@@ -84,10 +99,11 @@ export class Truckers {
       const d = a.distanceTo(player);
       if (d < SPAWN_MIN || d > SPAWN_MAX) continue;
       if (this.list.some((r) => r.truck.visual.position.distanceTo(a) < 40)) continue;
-      const rec = pool[Math.floor(Math.random() * pool.length)];
+      const { rec, variant } = pool[Math.floor(Math.random() * pool.length)];
       const def = truckDef(this.drive.trucksData, rec);
       const model = def && buildTruckModel(this.drive.trucksData.asm, def, false);
       if (!def || !model) return;
+      if (variant > 0) recolor(model.root, this.drive.trucksData, variant + 1);
       const forward = b.clone().sub(a).setY(0).normalize();
       const truck = new TruckVehicle(this.drive.rapierWorld, def, model, { position: this.drive.groundAtPublic(a), forward });
       this.drive.world.scene.add(truck.visual);
