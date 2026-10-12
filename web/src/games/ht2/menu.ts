@@ -84,8 +84,10 @@ export function ht2MenuScreen(art: Ht2MenuArt | null, font: PixelFont | null, it
       c.height = font.height + 2;
       font.draw(c.getContext('2d')!, text, 1, 1, 'rgb(240,220,138)');
       c.className = 'ht2-item-text';
-      c.style.width = `${c.width * 3}px`;
-      c.style.height = `${c.height * 3}px`;
+      // Шрифт ×3, довгі пункти — дрібніше, щоб уміститись у колонку до краю сцени.
+      const k = Math.min(3, (W - x - 16) / c.width);
+      c.style.width = `${c.width * k}px`;
+      c.style.height = `${c.height * k}px`;
       b.append(c);
     } else b.textContent = it.label;
     b.addEventListener('click', () => {
@@ -170,48 +172,9 @@ export function ht2SingleScreen(art: Ht2MenuArt, o: SingleScreen): () => void {
     repaint();
   };
 
-  const button = (key: keyof typeof SINGLE, tex: string, label: string, opts: { selected?: () => boolean; disabled?: boolean; action: () => void }) => {
+  const button = (key: keyof typeof SINGLE, tex: string, label: string, opts: TexButtonOptions) => {
     const [x, y] = SINGLE[key];
-    const b = document.createElement('button');
-    b.className = 'menu-abs ht2-tex-button';
-    b.style.left = `${x}px`;
-    b.style.top = `${y}px`;
-    b.setAttribute('aria-label', label);
-    const img = document.createElement('img');
-    img.alt = '';
-    img.draggable = false;
-    b.append(img);
-    let hover = false;
-    let down = false;
-    const paint = () => {
-      const st = opts.disabled ? 'f' : opts.selected?.() ? (hover ? 'ph' : 'pp') : down ? 'ap' : hover ? 'a' : 'p';
-      img.src = art.image(`s/${tex}_${st}.txr`) ?? art.image(`s/${tex}_p.txr`) ?? '';
-    };
-    b.addEventListener('pointerenter', () => {
-      hover = true;
-      paint();
-    });
-    b.addEventListener('pointerleave', () => {
-      hover = false;
-      down = false;
-      paint();
-    });
-    b.addEventListener('pointerdown', () => {
-      down = true;
-      paint();
-    });
-    b.addEventListener('pointerup', () => {
-      down = false;
-      paint();
-    });
-    b.addEventListener('click', () => {
-      if (opts.disabled) return;
-      opts.action();
-      repaint();
-    });
-    paint();
-    stage.append(b);
-    painters.push(paint);
+    painters.push(texButton(art, stage, `s/${tex}`, x, y, label, { ...opts, after: repaint }));
   };
   button('new', 'new', 'Нова гра', { action: o.onNew });
   button('arcade', 'arcad', 'Аркадний', {
@@ -289,4 +252,104 @@ export function ht2SingleScreen(art: Ht2MenuArt, o: SingleScreen): () => void {
     root.remove();
     document.body.classList.remove('in-menu');
   };
+}
+
+interface TexButtonOptions {
+  selected?: () => boolean;
+  disabled?: boolean;
+  action: () => void;
+  /** Після дії (перемалювати сусідні перемикачі). */
+  after?: () => void;
+}
+
+/**
+ * Кнопка-текстура LOAD.RES у точці (x, y) сцени: `<base>_<стан>.txr`. Повертає функцію перемальовування.
+ * Стани: `_p` — звичайна, `_a` — під пальцем/мишею, `_ap` — натиснута, `_pp` / `_ph` — вибрана (перемикач) і вибрана
+ * під пальцем, `_f` — недоступна.
+ */
+function texButton(art: Ht2MenuArt, stage: HTMLElement, base: string, x: number, y: number, label: string, opts: TexButtonOptions): () => void {
+  const b = document.createElement('button');
+  b.className = 'menu-abs ht2-tex-button';
+  b.style.left = `${x}px`;
+  b.style.top = `${y}px`;
+  b.setAttribute('aria-label', label);
+  const img = document.createElement('img');
+  img.alt = '';
+  img.draggable = false;
+  b.append(img);
+  let hover = false;
+  let down = false;
+  const paint = () => {
+    const st = opts.disabled ? 'f' : opts.selected?.() ? (hover ? 'ph' : 'pp') : down ? 'ap' : hover ? 'a' : 'p';
+    img.src = art.image(`${base}_${st}.txr`) ?? art.image(`${base}_p.txr`) ?? '';
+  };
+  b.addEventListener('pointerenter', () => {
+    hover = true;
+    paint();
+  });
+  b.addEventListener('pointerleave', () => {
+    hover = false;
+    down = false;
+    paint();
+  });
+  b.addEventListener('pointerdown', () => {
+    down = true;
+    paint();
+  });
+  b.addEventListener('pointerup', () => {
+    down = false;
+    paint();
+  });
+  b.addEventListener('click', () => {
+    if (opts.disabled) return;
+    opts.action();
+    opts.after?.();
+  });
+  paint();
+  stage.append(b);
+  return paint;
+}
+
+/** Сцена 800×600 з фоном LOAD.RES, вписана у вікно; повертає (stage, root, close). */
+function screen(art: Ht2MenuArt, background: string): { stage: HTMLElement; root: HTMLElement; close: () => void } {
+  const root = document.createElement('div');
+  root.className = 'menu-screen ht2-menu';
+  const stage = document.createElement('div');
+  stage.className = 'menu-stage ht2-stage';
+  root.append(stage);
+  const bg = art.background(background);
+  if (bg) stage.append(bg);
+  const fit = () => {
+    const k = Math.min(window.innerWidth / W, window.innerHeight / H);
+    stage.style.transform = `translate(-50%, -50%) scale(${k})`;
+  };
+  window.addEventListener('resize', fit);
+  fit();
+  document.body.append(root);
+  document.body.classList.add('in-menu');
+  return {
+    stage,
+    root,
+    close: () => {
+      window.removeEventListener('resize', fit);
+      root.remove();
+      document.body.classList.remove('in-menu');
+    },
+  };
+}
+
+/**
+ * Підтвердження виходу (`e/backexit.txr`: «ВЫЙТИ ИЗ ИГРЫ»), кнопки `e/ok`, `e/canc` — місця знайдено зіставленням з
+ * гніздами фону. Повертає true — вийти.
+ */
+export function ht2ExitScreen(art: Ht2MenuArt): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sc = screen(art, 'e/backexit.txr');
+    const done = (v: boolean) => () => {
+      sc.close();
+      resolve(v);
+    };
+    texButton(art, sc.stage, 'e/ok', 290, 304, 'Так, вийти', { action: done(true) });
+    texButton(art, sc.stage, 'e/canc', 381, 304, 'Скасувати', { action: done(false) });
+  });
 }

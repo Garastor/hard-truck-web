@@ -5,7 +5,7 @@ import { parseFon } from '../../formats/fon';
 import { PixelFont } from '../../ui/pixelFont';
 import type { GameId } from '../registry';
 import { HT2_FILES, ht2DevSource } from './files';
-import { Ht2MenuArt, ht2MenuScreen, ht2SingleScreen, type MenuItem } from './menu';
+import { Ht2MenuArt, ht2ExitScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem } from './menu';
 import { loadSettings, saveSettings, type Ht2Settings } from './settings';
 import { parseIni } from '../../formats/ini';
 import { decodeCp1251 } from '../../formats/binary';
@@ -94,7 +94,11 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
       close = ht2MenuScreen(art, large, items, note);
     }));
     direct = null;
-    if (choice === 'exit') return ctx.exit?.();
+    if (choice === 'exit') {
+      // Підтвердження — екран оригіналу «ВЫЙТИ ИЗ ИГРЫ».
+      if (art && !(await ht2ExitScreen(art))) continue;
+      return ctx.exit?.();
+    }
     if (choice === 'single' && art) {
       // Екран одиночної гри оригіналу: нова гра / завантажити, режим, повзунки.
       const next = await new Promise<Choice | null>((resolve) => {
