@@ -17,6 +17,7 @@ import { Traffic, trafficKinds } from './traffic';
 import { CareerMode } from './careerMode';
 import { Police } from './police';
 import { Mafia } from './mafia';
+import { Signs } from './signs';
 import { WeatherDrift } from './weather';
 import { iniNum, parseIni } from '../../formats/ini';
 import { decodeCp1251 } from '../../formats/binary';
@@ -89,6 +90,7 @@ export class Ht2Drive {
   careerMode: CareerMode | null = null;
   police: Police | null = null;
   mafia: Mafia | null = null;
+  private signs: Signs | null = null;
   /** Коротке повідомлення на табло (текст і скільки ще показувати, с). */
   private notice: { text: string; time: number } | null = null;
   race: RaceMode | null = null;
@@ -195,15 +197,16 @@ export class Ht2Drive {
     this.camPos.copy(spawn.position).addScaledVector(spawn.forward, -14).add(new THREE.Vector3(0, 6, 0));
     this.camLook.copy(spawn.position);
 
+    // Описи регіонів (міста, товари, СТО, вказівники) — необовʼязкові файли.
+    const mods = await Promise.all(HT2_MOD_REGIONS.map((region) => o.source.read(`ENV/mod_${region}.sch`).then((b) => ({ region, sch: readSch(b) })).catch(() => null)));
+    const regionMods = mods.filter((m): m is { region: string; sch: SExpr[] } => !!m);
+    if (!o.race) this.signs = new Signs(regionMods, this.world.regions.values());
     if (o.career) {
-      const [merch, messages, restable, mods] = await Promise.all([
+      const [merch, messages, restable] = await Promise.all([
         o.source.read('merchandise.sch').then(readSch).catch(() => []),
         o.source.read('Ms.sch').then(readSch).catch(() => []),
         o.source.read('restable.sch').then(readSch).catch(() => []),
-        // Описи регіонів (міста, товари, СТО) — необовʼязкові.
-        Promise.all(HT2_MOD_REGIONS.map((region) => o.source.read(`ENV/mod_${region}.sch`).then((b) => ({ region, sch: readSch(b) })).catch(() => null))),
       ]);
-      const regionMods = mods.filter((m): m is { region: string; sch: SExpr[] } => !!m);
       this.careerMode = new CareerMode(this, o.career, merch, messages, parseUpgrades(restable), parseTowns(regionMods), parseServices(regionMods));
       this.police = new Police(this.world.scene, this.rapier, this.trucks, this.world.regions.values());
       this.mafia = new Mafia(this.world.scene, this.rapier, this.trucks, this.world.regions.values(), (p) => this.groundAtPublic(p).y - 2.5);
@@ -612,6 +615,8 @@ export class Ht2Drive {
     const mafia = this.careerMode && !this.paused ? this.mafia?.update(dt, this.truck.visual.position, !!this.careerMode.career.order) : null;
     if (mafia === 'robbed') void this.careerMode!.robbed();
     if (mafia === 'escaped') this.notice = { text: 'Мафія відстала', time: 4 };
+    const sign = this.signs?.update(this.truck.visual.position, this.truck.forward());
+    if (sign) this.notice = { text: sign, time: 6 };
     const chaser = this.mafia?.chaser;
     this.map?.update(dt, this.truck.visual.position, this.truck.forward(), [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? []), ...(chaser ? [chaser] : [])], this.careerMode?.target() ?? null);
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
