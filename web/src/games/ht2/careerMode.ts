@@ -5,6 +5,7 @@ import { findStores, makeOrders, parseGoods, type Goods, type Store, type Town }
 import { FUEL_PRICE, REPAIR_PER_PERCENT, TIME_SCALE, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
 import { toThree } from './world';
 import { install, type Upgrade } from './upgrades';
+import { USED_DAMAGE, type ForSale, type Market } from './market';
 import type { Ht2Drive } from './drive';
 
 /**
@@ -122,6 +123,12 @@ export class CareerMode {
       void this.atSto(this.stoNames[sto]);
       return;
     }
+    const market = this.drive.markets?.at(p);
+    if (market && this.shownAt !== `m${market.id}`) {
+      this.shownAt = `m${market.id}`;
+      void this.atMarket(market);
+      return;
+    }
     const fuel = this.fuelSpots.findIndex((d) => Math.hypot(d[0] - gx, d[1] - gy) < FUEL_RADIUS);
     if (fuel >= 0 && this.shownAt !== `f${fuel}` && (c.fuel ?? this.tank) < this.tank - 1) {
       this.shownAt = `f${fuel}`;
@@ -174,39 +181,47 @@ export class CareerMode {
     }
   }
 
-  /** Купівля вантажівки на складі: стара — в залік за половину ціни (гіпотеза). */
-  private async buyTruck(store: Store): Promise<void> {
+  /**
+   * Ринок вантажівок (parking MARKET_* з mod_*.sch): машини, що стоять на місцях ринку сьогодні; стара — у залік за
+   * половину ціни (гіпотеза), вживана — дешевша, але з пошкодженням.
+   */
+  private async atMarket(m: Market): Promise<void> {
     const c = this.career;
-    // Вантажівки з кузовом і тягачі (з напівпричепом STrailerM).
-    const list = this.drive.drivableTrucks().filter((r) => r.carNode !== c.truck && !/^Storm/i.test(r.carNode)).sort((a, b) => a.price - b.price);
-    const current = this.drive.drivableTrucks().find((r) => r.carNode === c.truck);
-    const tradeIn = Math.round((current?.price ?? 0) * 0.5);
-    const trailer = this.drive.trucksData.records.find((r) => r.carNode === 'STrailerM');
-    const load = (r: (typeof list)[number]) => (r.group === 'tractors' ? `тягач, причіп ${Math.round((trailer?.cargoLoad ?? 0) / 1000)} т` : `${Math.round(r.cargoLoad / 1000)} т`);
-    const labels = list.map((r) => `${r.carNode} (${r.horsePower} к.с., ${load(r)}): ${formatMoney(r.price - tradeIn)}`);
-    const i = await modal(
-      this.drive.overlay,
-      `Вантажівки — «${store.town}»`,
-      `Ваша ${current?.carNode ?? c.truck} — у залік ${formatMoney(tradeIn)}. Гроші: ${formatMoney(c.money)}.`,
-      [...labels, 'Назад'],
-    );
-    const r = list[i];
-    if (!r) return;
-    const cost = r.price - tradeIn;
-    if (c.money < cost) {
-      await modal(this.drive.overlay, 'Вантажівки', this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'), ['Гаразд']);
-      return;
+    this.busy = true;
+    this.drive.paused = true;
+    try {
+      const day = Math.floor(c.time / 86400);
+      const markets = this.drive.markets!;
+      const list = markets.stock(m, day).filter((s) => s.rec.carNode !== c.truck);
+      const current = this.drive.drivableTrucks().find((r) => r.carNode === c.truck);
+      const tradeIn = Math.round((current?.price ?? 0) * 0.5);
+      const trailer = this.drive.trucksData.records.find((r) => r.carNode === 'STrailerM');
+      const load = (r: ForSale['rec']) => (r.group === 'tractors' ? `тягач, причіп ${Math.round((trailer?.cargoLoad ?? 0) / 1000)} т` : `${Math.round(r.cargoLoad / 1000)} т`);
+      const labels = list.map((s) => `${s.rec.carNode}${s.used ? ' (вживана)' : ''} — ${s.rec.horsePower} к.с., ${load(s.rec)}: ${formatMoney(s.price - tradeIn)}`);
+      const title = `${m.name || 'Ринок'}${m.town ? ` «${m.town}»` : ''}`;
+      const i = await modal(this.drive.overlay, title, `Ваша ${current?.carNode ?? c.truck} — у залік ${formatMoney(tradeIn)}. Гроші: ${formatMoney(c.money)}.`, [...labels, 'Поїхали']);
+      const s = list[i];
+      if (!s) return;
+      const cost = s.price - tradeIn;
+      if (c.money < cost) {
+        await modal(this.drive.overlay, title, this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'), ['Гаразд']);
+        return;
+      }
+      if (c.order) {
+        await modal(this.drive.overlay, title, 'Спершу доставте вантаж.', ['Гаразд']);
+        return;
+      }
+      c.money -= cost;
+      c.truck = s.rec.carNode;
+      c.damage = s.used ? USED_DAMAGE : 0;
+      c.fuel = null;
+      markets.sell(m, day, s);
+      this.drive.changeTruck(s.rec.carNode);
+      this.persist();
+    } finally {
+      this.drive.paused = false;
+      this.busy = false;
     }
-    if (c.order) {
-      await modal(this.drive.overlay, 'Вантажівки', 'Спершу доставте вантаж.', ['Гаразд']);
-      return;
-    }
-    c.money -= cost;
-    c.truck = r.carNode;
-    c.damage = 0;
-    c.fuel = null;
-    this.drive.changeTruck(r.carNode);
-    this.persist();
   }
 
   private async atFuel(): Promise<void> {
@@ -281,8 +296,7 @@ export class CareerMode {
           const h = (o.deadline * TIME_SCALE) / 3600;
           return `${o.goods.name} ×${o.units} → ${to.town}: ${formatMoney(o.pay)}, ${h < 1 ? `${Math.round(h * 60)} хв` : `${h.toFixed(1)} год`}${o.urgent ? ' (терміново)' : ''}`;
         });
-        const i = await modal(this.drive.overlay, `Склад «${store.town}»`, box, [...buttons, 'Купити вантажівку', 'Не брати']);
-        if (i === buttons.length) await this.buyTruck(store);
+        const i = await modal(this.drive.overlay, `Склад «${store.town}»`, box, [...buttons, 'Не брати']);
         const o = orders[i];
         if (o) {
           c.order = { ...o, deadline: o.deadline * TIME_SCALE, taken: c.time, integrity: 1 };

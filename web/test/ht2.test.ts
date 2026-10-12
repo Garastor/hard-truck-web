@@ -21,6 +21,7 @@ import { detectGame } from '../src/games/registry';
 import { findStores, orderPay, parseGoods, parseServices, parseTowns } from '../src/games/ht2/economy';
 import { HT2_MOD_REGIONS } from '../src/games/ht2/files';
 import { install, parseUpgrades, tuning } from '../src/games/ht2/upgrades';
+import { parseMarkets } from '../src/games/ht2/market';
 
 const GAME = resolve(import.meta.dirname, '..', '..', 'Game', 'Hard Truck 2');
 const has = existsSync(join(GAME, 'king.exe'));
@@ -263,6 +264,16 @@ describe.skipIf(!has)('HT2: описи регіонів (ENV/mod_*.sch)', () => 
     expect(goods.get('BREAD')?.trucks).toBe(true);
     expect(goods.get('C_PIZZA')?.trucks).toBe(false);
     expect(goods.get('FUEL')?.fuel).toBe(true);
+  });
+  it('ринки вантажівок: parking MARKET_* з місцями-вузлами WAY', () => {
+    const ways = HT2_REGIONS.map((id) => ({ way: parseWay(read(`ENV/${id}.way`)) }));
+    const markets = parseMarkets(mods, ways);
+    expect(markets.length).toBe(15);
+    const aj = markets.find((m) => m.id === 1)!;
+    expect(aj.name).toBe('Барахолка');
+    expect(aj.town).toBe('Приозерск');
+    expect(aj.spots.length).toBe(5);
+    expect(markets.some((m) => m.name === '??')).toBe(false);
   });
   it('СТО: покращення за вузлом, шини — біти варіантів', () => {
     const sto = parseServices(mods);

@@ -18,6 +18,7 @@ import { CareerMode } from './careerMode';
 import { Police } from './police';
 import { Mafia } from './mafia';
 import { Signs } from './signs';
+import { Markets, parseMarkets } from './market';
 import { WeatherDrift } from './weather';
 import { iniNum, parseIni } from '../../formats/ini';
 import { decodeCp1251 } from '../../formats/binary';
@@ -91,6 +92,7 @@ export class Ht2Drive {
   police: Police | null = null;
   mafia: Mafia | null = null;
   private signs: Signs | null = null;
+  markets: Markets | null = null;
   /** Коротке повідомлення на табло (текст і скільки ще показувати, с). */
   private notice: { text: string; time: number } | null = null;
   race: RaceMode | null = null;
@@ -201,6 +203,7 @@ export class Ht2Drive {
     const mods = await Promise.all(HT2_MOD_REGIONS.map((region) => o.source.read(`ENV/mod_${region}.sch`).then((b) => ({ region, sch: readSch(b) })).catch(() => null)));
     const regionMods = mods.filter((m): m is { region: string; sch: SExpr[] } => !!m);
     if (!o.race) this.signs = new Signs(regionMods, this.world.regions.values());
+    if (o.career) this.markets = new Markets(this.world.scene, this.rapier, this.trucks, parseMarkets(regionMods, this.world.regions.values()), (p) => this.groundAtPublic(p).y - 2.5);
     if (o.career) {
       const [merch, messages, restable] = await Promise.all([
         o.source.read('merchandise.sch').then(readSch).catch(() => []),
@@ -615,6 +618,7 @@ export class Ht2Drive {
     const mafia = this.careerMode && !this.paused ? this.mafia?.update(dt, this.truck.visual.position, !!this.careerMode.career.order) : null;
     if (mafia === 'robbed') void this.careerMode!.robbed();
     if (mafia === 'escaped') this.notice = { text: 'Мафія відстала', time: 4 };
+    if (this.markets && this.careerMode) this.markets.update(this.truck.visual.position, Math.floor(this.careerMode.career.time / 86400));
     const sign = this.signs?.update(this.truck.visual.position, this.truck.forward());
     if (sign) this.notice = { text: sign, time: 6 };
     const chaser = this.mafia?.chaser;
@@ -729,6 +733,7 @@ export class Ht2Drive {
     this.traffic?.dispose();
     this.police?.dispose();
     this.mafia?.dispose();
+    this.markets?.dispose();
     this.race?.dispose();
     this.truckers?.dispose();
     this.trailer?.dispose();
