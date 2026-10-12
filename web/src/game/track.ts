@@ -15,6 +15,32 @@ export interface Portal {
   b: THREE.Vector3;
 }
 
+/**
+ * Горизонтальний портал — обидва кути на одній висоті: прямокутник по осях X/Z між ними (відкритий верх виїмки, як у
+ * MOUNT room_004 ↔ room_902/900 над спуском до тунелю). Решта порталів — вертикальні: від a до b по горизонталі,
+ * між їхніми висотами.
+ */
+export function isHorizontalPortal(p: Portal): boolean {
+  return Math.abs(p.a.y - p.b.y) < 0.01;
+}
+
+/** Чотири кути прямокутника порталу (Three.js) у порядку обходу. */
+export function portalCorners(p: Portal, out: THREE.Vector3[]): THREE.Vector3[] {
+  const [a, b, c, d] = out;
+  if (isHorizontalPortal(p)) {
+    a.set(p.a.x, p.a.y, p.a.z);
+    b.set(p.b.x, p.a.y, p.a.z);
+    c.set(p.b.x, p.a.y, p.b.z);
+    d.set(p.a.x, p.a.y, p.b.z);
+  } else {
+    a.set(p.a.x, p.a.y, p.a.z);
+    b.set(p.b.x, p.a.y, p.b.z);
+    c.set(p.b.x, p.b.y, p.b.z);
+    d.set(p.a.x, p.b.y, p.a.z);
+  }
+  return out;
+}
+
 export interface Room {
   name: string;
   portals: Portal[];
@@ -98,8 +124,24 @@ export class Track {
   }
 }
 
-/** Перетин відрізка з вертикальним прямокутником порталу (у площині XZ Three.js + висота Y). */
+/** Перетин відрізка з прямокутником порталу (вертикальним — у площині XZ Three.js + висота Y; горизонтальним — площина Y). */
 function segmentCrossesPortal(p0: THREE.Vector3, p1: THREE.Vector3, portal: Portal): boolean {
+  if (isHorizontalPortal(portal)) {
+    const y = portal.a.y;
+    const s0 = p0.y - y;
+    const s1 = p1.y - y;
+    if (s0 === 0 || Math.sign(s0) === Math.sign(s1)) return false;
+    const t = s0 / (s0 - s1);
+    const ix = p0.x + (p1.x - p0.x) * t;
+    const iz = p0.z + (p1.z - p0.z) * t;
+    // Той самий запас 5 %, що й уздовж вертикального порталу.
+    const mx = Math.abs(portal.b.x - portal.a.x) * 0.05;
+    const mz = Math.abs(portal.b.z - portal.a.z) * 0.05;
+    return (
+      ix >= Math.min(portal.a.x, portal.b.x) - mx && ix <= Math.max(portal.a.x, portal.b.x) + mx &&
+      iz >= Math.min(portal.a.z, portal.b.z) - mz && iz <= Math.max(portal.a.z, portal.b.z) + mz
+    );
+  }
   const ax = portal.a.x;
   const az = portal.a.z;
   const bx = portal.b.x;

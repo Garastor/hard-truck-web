@@ -5,7 +5,7 @@
  * не малює невидиме.
  */
 import * as THREE from 'three';
-import type { Portal, Track } from '../game/track';
+import { isHorizontalPortal, portalCorners, type Portal, type Track } from '../game/track';
 
 interface Rect {
   x0: number;
@@ -69,6 +69,14 @@ export class RoomVisibility {
 
   /** Камера біля порталу: ближче за NEAR_PORTAL до його площини і в межах прорізу (з тим самим запасом). */
   private near(p: Portal, c: THREE.Vector3): boolean {
+    if (isHorizontalPortal(p)) {
+      const n = NEAR_PORTAL;
+      return (
+        Math.abs(c.y - p.a.y) < n &&
+        c.x > Math.min(p.a.x, p.b.x) - n && c.x < Math.max(p.a.x, p.b.x) + n &&
+        c.z > Math.min(p.a.z, p.b.z) - n && c.z < Math.max(p.a.z, p.b.z) + n
+      );
+    }
     const dx = p.b.x - p.a.x;
     const dz = p.b.z - p.a.z;
     const len = Math.hypot(dx, dz);
@@ -82,11 +90,7 @@ export class RoomVisibility {
 
   /** Прямокутник порталу на екрані, обрізаний поточним; null — портал не видно. */
   private portalRect(p: Portal, vp: THREE.Matrix4, clip: Rect): Rect | null {
-    const [a, b, c, d] = this.corners;
-    a.set(p.a.x, p.a.y, p.a.z);
-    b.set(p.b.x, p.a.y, p.b.z);
-    c.set(p.b.x, p.b.y, p.b.z);
-    d.set(p.a.x, p.b.y, p.a.z);
+    portalCorners(p, this.corners);
     let x0 = Infinity;
     let y0 = Infinity;
     let x1 = -Infinity;

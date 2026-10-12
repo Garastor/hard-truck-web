@@ -4,7 +4,10 @@ import type { RmpArchive } from '../formats/rmp';
  * Звук вантажівки на Web Audio з оригінальних WAV (секції SOUNDFILES/SOUNDS архіву RMP).
  * Як в оригіналі (HTruck.exe 0x4872b8): idleSound — холостий хід, fullSound — під навантаженням,
  * gearSound — перемикання, startSound — запуск двигуна. Висота тону ∝ обертам.
- * iOS/Chrome дозволяють звук лише після жесту користувача — контекст відновлюється на першому дотику.
+ * iOS/Chrome дозволяють звук лише після жесту користувача. Аудіоконтекст — один на всю гру, а не новий на кожну
+ * трасу: новий контекст, створений після довгого завантаження траси без свіжого жесту, iOS запускав призупиненим, і
+ * звук зникав на весь заїзд. Розблоковують його події, що на iOS вважаються жестом (pointerup/touchend/click/keydown;
+ * pointerdown від дотику — ні), а після згортання чи дзвінка (стан «interrupted») — ще й повернення на вкладку.
  */
 export interface LoopSound {
   set(volume: number, rate?: number, balance?: number): void;
@@ -14,21 +17,37 @@ export interface LoopSound {
 /** Оберти холостого ходу, об/хв (Engine: idle 5 об/с). */
 const IDLE_RPM = 300;
 
+let shared: AudioContext | null = null;
+
+function sharedContext(): AudioContext {
+  if (shared) return shared;
+  const ctx = new AudioContext();
+  shared = ctx;
+  const unlock = () => {
+    if (ctx.state !== 'running') void ctx.resume().catch(() => undefined);
+  };
+  for (const ev of ['pointerup', 'touchend', 'click', 'keydown']) window.addEventListener(ev, unlock, { capture: true, passive: true });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) unlock();
+  });
+  return ctx;
+}
+
 export class EngineAudio {
   private readonly ctx: AudioContext;
   private readonly master: GainNode;
   private readonly buffers = new Map<string, AudioBuffer>();
   private idle: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
   private full: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
-  private readonly unlock = () => void this.ctx.resume();
+  /** Звуки, що повторюються, — зупинити разом із трасою (контекст спільний і не закривається). */
+  private readonly loops = new Set<AudioBufferSourceNode>();
 
   private constructor() {
-    this.ctx = new AudioContext();
+    this.ctx = sharedContext();
+    void this.ctx.resume().catch(() => undefined);
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.6;
     this.master.connect(this.ctx.destination);
-    window.addEventListener('pointerdown', this.unlock);
-    window.addEventListener('keydown', this.unlock);
   }
 
   static async create(rmp: RmpArchive): Promise<EngineAudio> {
@@ -65,6 +84,7 @@ export class EngineAudio {
     gain.gain.value = 0;
     src.connect(gain).connect(this.master);
     src.start();
+    this.loops.add(src);
     return { src, gain };
   }
 
@@ -84,6 +104,7 @@ export class EngineAudio {
     const pan = this.ctx.createStereoPanner();
     src.connect(gain).connect(pan).connect(this.master);
     src.start(0, Math.random() * buf.duration);
+    this.loops.add(src);
     const k = 0.1;
     return {
       set: (volume, rate = 1, balance = 0) => {
@@ -93,6 +114,7 @@ export class EngineAudio {
         pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, balance)), t, k);
       },
       stop: () => {
+        this.loops.delete(src);
         try {
           src.stop();
         } catch {
@@ -159,9 +181,16 @@ export class EngineAudio {
     this.master.gain.setTargetAtTime(m ? 0 : 0.6, this.ctx.currentTime, 0.05);
   }
 
+  /** Звуки траси замовкають; спільний контекст лишається для наступної траси. */
   dispose(): void {
-    window.removeEventListener('pointerdown', this.unlock);
-    window.removeEventListener('keydown', this.unlock);
-    void this.ctx.close();
+    for (const src of this.loops) {
+      try {
+        src.stop();
+      } catch {
+        /* уже зупинено */
+      }
+    }
+    this.loops.clear();
+    this.master.disconnect();
   }
 }

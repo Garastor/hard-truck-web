@@ -24,7 +24,7 @@ import { EngineAudio, type LoopSound } from '../audio/engineAudio';
 import { DriveHud, odometerDigits } from '../ui/driveHud';
 import { RouteProgress } from '../game/raceProgress';
 import type { PixelFont } from '../ui/pixelFont';
-import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, EVENT_RAIN, Track, type Room } from '../game/track';
+import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, EVENT_RAIN, Track, isHorizontalPortal, type Room } from '../game/track';
 import { AutoPilot, WayNet } from '../game/autopilot';
 import { RoomVisibility } from '../render/roomVisibility';
 import { toast } from '../ui/mobile';
@@ -539,12 +539,19 @@ export class DriveSession {
   private lights: TruckLights | null = null;
   /** Відблиски ліхтарів на дорозі — власні, у формі ліхтарів (див. WetReflections; оригінальні білборди сховані). */
   private readonly wetReflections: WetReflections[] = [];
-  /** Власне освітлення світу фарами гравця вночі (в оригіналі немає; див. render/headlights.ts). */
+  /** Власне освітлення світу фарами гравця (в оригіналі немає; див. render/headlights.ts). */
   private headlightsFx: Headlights | null = null;
-  /** Фари гравця вручну (L): null — як в оригіналі, самі вночі й у дощ. */
+  /**
+   * Фари гравця вручну (L): null — самі вночі й на дощовій трасі (зокрема в тунелях, де не капає); на сухій денній
+   * трасі за замовчуванням вимкнені.
+   */
   private lightsOverride: boolean | null = null;
   private get headlights(): boolean {
-    return this.lightsOverride ?? (this.night || (this.raining && (this.glassRain?.raining ?? true)));
+    return this.lightsOverride ?? (this.night || this.raining);
+  }
+  /** Машина під дахом — у кімнаті з подією 4 «tunnel_rain» (тунелі). */
+  private get sheltered(): boolean {
+    return this.currentRoom?.events.some((e) => e.type === EVENT_RAIN) ?? false;
   }
   private updateLights(state: { throttle: number; brake: number }): void {
     const wet = this.raining && (this.glassRain?.raining ?? true);
@@ -632,7 +639,7 @@ export class DriveSession {
     s.col = col;
     s.track = new Track(built.assembler.b3d);
     // Проходи між кімнатами — без огорож сусідніх кімнат (портали в системі гри: x, y = −z Three.js).
-    openPortals(col, [...s.track.rooms.values()].flatMap((r) => r.portals.map((p) => ({ a: [p.a.x, -p.a.z] as [number, number], b: [p.b.x, -p.b.z] as [number, number] }))));
+    openPortals(col, [...s.track.rooms.values()].flatMap((r) => r.portals.filter((p) => !isHorizontalPortal(p)).map((p) => ({ a: [p.a.x, -p.a.z] as [number, number], b: [p.b.x, -p.b.z] as [number, number] }))));
     // Колізії — окремо для кожної кімнати: геометрія сусідніх кімнат перетинається в просторі
     // (тунель траси крізь зал бази), а оригінал перевіряє зіткнення лише з кімнатою машини.
     const byRoom = (polys: number[][][], rooms: string[]) => {
@@ -661,6 +668,9 @@ export class DriveSession {
     s.modelSwitch = model.setSwitch;
     s.modelStates = model.switchStates;
     s.spawn = s.findSpawn();
+    // База: на прохання користувача — трохи далі від тунелів, ніж Observer оригіналу, щоб було видно вказівники
+    // «Погрузка» й «Запчасти» і зручно повернути.
+    if (raceKind === 'free') s.spawn.position = s.groundAt(s.spawn.position.clone().addScaledVector(s.spawn.forward, -BASE_SPAWN_BACK).setY(s.spawn.position.y - 2.5));
     s.room = s.locate(s.spawn.position) ?? s.track.guessRoom(s.spawn.position);
     s.prevPos.copy(s.spawn.position);
     for (const r of s.track.rooms.values()) for (const e of r.events) if (e.type === EVENT_CHECKPOINT) s.checkpoints.add(e.param);
@@ -1391,8 +1401,9 @@ export class DriveSession {
     this.updateLights(state);
     const wet = this.raining && (this.glassRain?.raining ?? true);
     this.syncToggles();
-    this.wetReflections.forEach((r, i) => r.update(this.camera, i === 0 ? this.headlights : this.night || wet, wet));
-    this.headlightsFx?.update(this.headlights ? (this.night ? 1 : wet ? DAY_RAIN_HEADLIGHTS : 0) : 0, this.truck.forward());
+    // Відблиски на дорозі — лише на дощових трасах; фари світять і на сухих (якщо ввімкнені), у тунелях — на повну.
+    this.wetReflections.forEach((r, i) => r.update(this.camera, this.raining && (i === 0 ? this.headlights : this.night || wet), wet));
+    this.headlightsFx?.update(this.headlights ? (this.night || this.sheltered ? 1 : DAY_HEADLIGHTS) : 0, this.truck.forward());
     this.updateSurface(dt);
     this.checkDeath(dt);
     this.effects?.update(dt);
@@ -1420,7 +1431,7 @@ export class DriveSession {
     const soft = this.cabStyleNow === '2d' && !!this.cab2dLoader;
     let pouring = false;
     if (this.raining) {
-      const sheltered = this.currentRoom?.events.some((e) => e.type === EVENT_RAIN) ?? false;
+      const sheltered = this.sheltered;
       pouring = !sheltered;
       if (this.rain) this.rain.root.visible = !sheltered && !soft;
       if (this.glassRain) this.glassRain.raining = !sheltered;
@@ -1775,8 +1786,11 @@ export class DriveSession {
 /** Підказку про повторний імпорт для дощу 2D-кабіни показуємо раз за сеанс. */
 let rainHintShown = false;
 
-/** Сила власного світла фар у денний дощ відносно ночі (на око: помітне на темному асфальті, не засвічує). */
-const DAY_RAIN_HEADLIGHTS = 0.45;
+/** Наскільки далі від тунелів бази ставити машину, м (на око: з кабіни в ландшафті телефона видно всі вказівники). */
+const BASE_SPAWN_BACK = 21;
+
+/** Сила власного світла фар удень (дощ чи суша) відносно ночі й тунелю (на око: помітне на асфальті, не засвічує). */
+const DAY_HEADLIGHTS = 0.45;
 
 function fmtTime(t: number): string {
   const m = Math.floor(t / 60);
