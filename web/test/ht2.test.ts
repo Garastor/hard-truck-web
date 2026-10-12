@@ -22,6 +22,7 @@ import { findStores, orderPay, parseGoods, parseServices, parseTowns } from '../
 import { HT2_MOD_REGIONS } from '../src/games/ht2/files';
 import { install, parseUpgrades, tuning } from '../src/games/ht2/upgrades';
 import { parseMarkets } from '../src/games/ht2/market';
+import { TERRAIN, terrainHeightAt, terrainHeights } from '../src/games/ht2/terrain';
 import { defaultSettings, timeScale } from '../src/games/ht2/settings';
 import { parseIni } from '../src/formats/ini';
 
@@ -218,7 +219,7 @@ describe.skipIf(!has)('HT2: економіка', () => {
   it('склади з вузлів WAY: 11 баз, у кожної 5 місць', () => {
     const regions = HT2_REGIONS.map((id) => ({ id, way: parseWay(read(`ENV/${id}.way`)) }));
     const stores = findStores(regions);
-    expect(stores.map((s) => s.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]); // 10 (aa) — без землі в порту
+    expect(stores.map((s) => s.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]); // 10 — «Алмазный» на рельєфі aa
     expect(stores.every((s) => s.docks.length === 5)).toBe(true);
     expect(stores.find((s) => s.id === 3)!.town).toBe('Южный');
   });
@@ -291,5 +292,21 @@ describe.skipIf(!has)('HT2: налаштування одиночної гри (
     const s = defaultSettings(parseIni(decodeCp1251(read('TRUCK.INI'))));
     expect(s).toEqual({ arcade: false, traffic: 1, dayLength: 0.5, weather: 0.6 });
     expect(timeScale(s)).toBe(10);
+  });
+});
+
+describe.skipIf(!has)('HT2: процедурний рельєф aa (MTR/terrain0–2.raw)', () => {
+  it('дороги WAY регіону лежать на рельєфі (крок і початок сітки — підібрані)', () => {
+    const heights = terrainHeights([0, 1, 2].map((i) => parseHeightmap(read(`MTR/terrain${i}.raw`))));
+    expect(heights.length).toBe(TERRAIN.n * TERRAIN.n);
+    const way = parseWay(read('ENV/aa.way'));
+    const errs: number[] = [];
+    for (const r of way.rooms)
+      for (const s of r.segments)
+        for (let i = 0; i < s.points.length; i += 3) errs.push(Math.abs(terrainHeightAt(heights, s.points[i], s.points[i + 1]) - s.points[i + 2]));
+    errs.sort((a, b) => a - b);
+    // Медіана розбіжності — сантиметри, 90 % точок — у межах 0,5 м (поодинокі — мости й насипи).
+    expect(errs[Math.floor(errs.length / 2)]).toBeLessThan(0.2);
+    expect(errs[Math.floor(errs.length * 0.9)]).toBeLessThan(0.5);
   });
 });

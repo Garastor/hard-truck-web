@@ -9,6 +9,9 @@ import { HT2_REGIONS, regionFiles, type TexLevel } from './files';
 import { Weather, type DayTime, type Sky } from './weather';
 import { buildGlows, buildTrees } from './trees';
 import { mergeStatic } from '../../render/mergeStatic';
+import { walk } from '../../formats/b3d';
+import { parseHeightmap } from '../../formats/heightmap';
+import { buildTerrainMesh, terrainHeights } from './terrain';
 
 /**
  * Відкритий світ Дальнобойщиків 2 (G3): 39 регіонів `ENV/<код>` у спільній системі координат гри. Межі регіону —
@@ -31,6 +34,8 @@ export interface RegionInfo {
 export interface LoadedRegion {
   id: string;
   built: BuiltScene;
+  /** Процедурний рельєф ($$GeneratorOfTerrain, регіон aa): висоти сітки для колізій (terrain.ts). */
+  terrain?: Float32Array;
 }
 
 /** Точка гри → Three.js. */
@@ -62,9 +67,30 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
   built.root.add(trees);
   const glows = buildGlows(scene, rmp);
   built.root.add(glows);
+  // Процедурний рельєф: генератор $$GeneratorOfTerrain (лише aa) — сітка з MTR/terrain0–2.raw.
+  let terrain: Float32Array | undefined;
+  let terrainMesh: THREE.Mesh | null = null;
+  if ([...walk(scene.blocks)].some(([b]) => b.data.t === 40 && b.data.name2 === '$$GeneratorOfTerrain')) {
+    try {
+      const tiles = await Promise.all([0, 1, 2].map((i) => source.read(`MTR/terrain${i}.raw`).then(parseHeightmap)));
+      terrain = terrainHeights(tiles);
+      const tex = (name: string) => {
+        const i = scene.materials.findIndex((m) => m.toLowerCase() === name);
+        return i >= 0 ? ((built.assembler.lib.material(i) as THREE.MeshLambertMaterial).map ?? null) : null;
+      };
+      terrainMesh = buildTerrainMesh(terrain, tex('ter000'), tex('ter100'));
+      built.root.add(terrainMesh);
+    } catch (e) {
+      console.warn('HT2: рельєф не побудовано', e);
+    }
+  }
   const dispose = built.dispose;
   built.dispose = () => {
     dispose();
+    if (terrainMesh) {
+      terrainMesh.geometry.dispose();
+      (terrainMesh.material as THREE.Material).dispose();
+    }
     for (const g of [trees, glows])
       g.traverse((o) => {
         if (o instanceof THREE.Mesh || o instanceof THREE.Sprite) {
@@ -73,7 +99,7 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
         }
       });
   };
-  return { id, built };
+  return { id, built, terrain };
 }
 
 function boundsOf(way: Way): [number, number, number, number] {

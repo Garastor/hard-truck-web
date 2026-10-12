@@ -22,6 +22,7 @@ import { Markets, parseMarkets } from './market';
 import { WorldMap, type MapPoint } from './worldMap';
 import { GlassRain } from '../../render/glassRain';
 import { Dents } from './dents';
+import { terrainCollider } from './terrain';
 import { parseMsk } from '../../formats/msk';
 import { findStores } from './economy';
 import { WeatherDrift } from './weather';
@@ -349,11 +350,13 @@ export class Ht2Drive {
   private addRegion(reg: LoadedRegion): void {
     const col = levelCollision(reg.built.assembler.b3d);
     const cs: RAPIER.Collider[] = [];
+    // Процедурний рельєф (aa) — heightfield.
+    if (reg.terrain) cs.push(terrainCollider(this.rapier, reg.terrain));
     const floor = addCollisionPolys(this.rapier, col.floors, 1.0);
     const walls = addCollisionPolys(this.rapier, col.walls, 0.4);
     if (floor) cs.push(floor);
     if (walls) cs.push(walls);
-    if (!col.hasFloor) {
+    if (!col.hasFloor && !reg.terrain) {
       const c = groundFromMeshes(this.rapier, reg.built.root);
       if (c) cs.push(c);
     }
