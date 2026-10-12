@@ -28,6 +28,12 @@ export interface BuildOptions {
   palette?: Uint8Array;
   /** HT2: колір-ключ прозорості ttx — з `col N` (див. palette). */
   colorKey?: boolean;
+  /**
+   * Перемикач за відстанню (10): яка група — «зблизька». HT1 — 1 (група 0 далі за r), HT2 — 0: і плитки рельєфу
+   * (група 0 — детальна, 1 — 4 вершини), і деталі вантажівок (група 0 — модель, 1 — порожньо, рама й двигун
+   * інакше зникали поруч з камерою).
+   */
+  nearGroup?: 0 | 1;
 }
 
 export interface BuiltScene {
@@ -232,29 +238,34 @@ export class SideSwitch extends THREE.Object3D {
   }
 }
 
-/** Тип 10 (форма 1 — сфера [x, y, z, r]): група 0 — камера далі за r від центру, група 1 — ближче. */
+/** Тип 10 (форма 1 — сфера [x, y, z, r]): HT1 — група 0, коли камера далі за r від центру, група 1 — ближче. */
 export class DistanceSwitch extends THREE.Object3D {
   readonly isLOD = true;
   autoUpdate = true;
   readonly sphere: THREE.Vector4;
+  /** Група «зблизька» (HT1 — 1, HT2 — 0; див. BuildOptions.nearGroup). */
+  nearGroup: 0 | 1 = 1;
   private static readonly tmp = new THREE.Vector3();
 
-  constructor(sphere: [number, number, number, number] = [0, 0, 0, 0]) {
+  constructor(sphere: [number, number, number, number] = [0, 0, 0, 0], nearGroup: 0 | 1 = 1) {
     super();
     this.sphere = new THREE.Vector4(...sphere);
+    this.nearGroup = nearGroup;
   }
 
   update(camera: THREE.Camera): void {
     const p = this.worldToLocal(camera.getWorldPosition(DistanceSwitch.tmp));
-    // Група 0 — камера ДАЛІ за r, група 1 — ближче (перевірено: з протилежним вибором зникали дорога й машини).
+    // HT1: група 0 — камера ДАЛІ за r, група 1 — ближче (перевірено: з протилежним вибором зникали дорога й машини).
     const near = Math.hypot(p.x - this.sphere.x, p.y - this.sphere.y, p.z - this.sphere.z) < this.sphere.w;
-    if (this.children[0]) this.children[0].visible = !near;
-    if (this.children[1]) this.children[1].visible = near;
+    const n = this.nearGroup;
+    if (this.children[n]) this.children[n].visible = near;
+    if (this.children[1 - n]) this.children[1 - n].visible = !near;
   }
 
   override copy(source: this, recursive?: boolean): this {
     super.copy(source, recursive);
     this.sphere.copy(source.sphere);
+    this.nearGroup = source.nearGroup;
     return this;
   }
 }
@@ -274,6 +285,7 @@ export class SceneAssembler {
   /** Будуємо кімнати світу (а не модель): екземпляри з порожнім простором — привʼязка до спостерігача. */
   private buildingRooms = false;
   private readonly lit: boolean;
+  private readonly nearGroup: 0 | 1;
   private readonly fallback: SceneAssembler | null;
 
   constructor(
@@ -284,6 +296,7 @@ export class SceneAssembler {
     this.switchGroup = opts.switchGroup ?? 0;
     this.lib = new MaterialLibrary(b3d, rmp, opts.lit, opts.palette ?? null, opts.colorKey);
     this.lit = opts.lit ?? false;
+    this.nearGroup = opts.nearGroup ?? 1;
     this.fallback = opts.fallback ?? null;
     for (const b of b3d.blocks) if (b.name) this.topByName.set(b.name.toLowerCase(), b);
     const collect = (b: Block, parent: THREE.Matrix4) => {
@@ -597,12 +610,13 @@ export class SceneAssembler {
     } else if (d.t === 10 && d.shape.kind === 1 && block.groups.length >= 2 && !this.buildingRooms) {
       // Перемикач за відстанню: група 0 — камера далі за r від центру сфери, група 1 — ближче (LOD машин і
       // обʼєктів трас; з протилежним вибором зникали дорога й машини).
-      const sw = new DistanceSwitch(d.shape.v as [number, number, number, number]);
+      const sw = new DistanceSwitch(d.shape.v as [number, number, number, number], this.nearGroup);
       for (const [gi, g] of block.groups.slice(0, 2).entries()) {
         const go = new THREE.Group();
         const b: Batches = new Map();
         for (const child of g) this.visit(child, cur, b, go, depth + 1);
         this.flush(b, go);
+        // До першого кадру видима група 0 (HT1 — «здалеку», HT2 — детальна: з неї габарити колізії вантажівки).
         go.visible = gi === 0;
         sw.add(go);
       }

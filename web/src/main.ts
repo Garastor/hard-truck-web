@@ -333,7 +333,8 @@ for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-tab]')) {
   });
 }
 const initialTab = params.get('tab');
-if (initialTab && initialTab !== 'scene') document.querySelector<HTMLButtonElement>(`[data-tab="${initialTab}"]`)?.click();
+// ?tab= — налагоджувальні вкладки першої гри; у другій (?game=ht2&tab=world|drive) їх обробляє games/ht2.
+if (initialTab && initialTab !== 'scene' && urlGame !== 'ht2') document.querySelector<HTMLButtonElement>(`[data-tab="${initialTab}"]`)?.click();
 
 levelSel.addEventListener('change', open);
 // У режимі їзди панель згорнута; кнопка ☰ тимчасово її показує.

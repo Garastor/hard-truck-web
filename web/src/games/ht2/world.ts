@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { FileSource } from '../../assets/loader';
 import { parseB3d } from '../../formats/b3d';
-import { parseRmp } from '../../formats/rmp';
+import { parseRmp, type RmpArchive } from '../../formats/rmp';
 import { decodeCp1251 } from '../../formats/binary';
 import { parseWay, type Way } from '../../formats/way';
 import { SceneAssembler, buildScene, type BuiltScene } from '../../render/sceneBuilder';
@@ -37,10 +37,14 @@ export function toThree(x: number, y: number, z: number, out = new THREE.Vector3
   return out.set(x, z, -y);
 }
 
-/** Спільні об'єкти (небо, анімовані предмети, ліхтарі): COMMON.B3D + текстури common1.res (з палітрою common.plm). */
-export async function loadCommon(source: FileSource, tex: TexLevel = '1'): Promise<SceneAssembler> {
+/**
+ * Спільні об'єкти (небо, анімовані предмети, ліхтарі): COMMON.B3D + текстури common1.res (з палітрою common.plm
+ * і звуками — двигун, сигнал, удари).
+ */
+export async function loadCommon(source: FileSource, tex: TexLevel = '1'): Promise<{ asm: SceneAssembler; rmp: RmpArchive }> {
   const [b3d, res] = await Promise.all([source.read('COMMON/COMMON.B3D'), source.read(`COMMON/common${tex}.res`)]);
-  return new SceneAssembler(parseB3d(b3d), parseRmp(res), { lit: true, colorKey: true });
+  const rmp = parseRmp(res);
+  return { asm: new SceneAssembler(parseB3d(b3d), rmp, { lit: true, colorKey: true, nearGroup: 0 }), rmp };
 }
 
 export async function loadRegion(source: FileSource, id: string, common: SceneAssembler | null, tex: TexLevel = '1', dir = 'ENV'): Promise<LoadedRegion> {
@@ -49,7 +53,7 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
   const scene = parseB3d(b3d);
   const rmp = parseRmp(res);
   const palette = common?.lib.palette ?? null;
-  const built = buildScene(scene, rmp, { lit: true, colorKey: true, fallback: common ?? undefined, palette: palette ?? undefined });
+  const built = buildScene(scene, rmp, { lit: true, colorKey: true, nearGroup: 0, fallback: common ?? undefined, palette: palette ?? undefined });
   const trees = buildTrees(scene, rmp, palette);
   built.root.add(trees);
   const dispose = built.dispose;
@@ -96,10 +100,13 @@ export class Ht2World {
   private lastCheck = 0;
   private readonly waiters: (() => void)[] = [];
   onChange: (() => void) | null = null;
+  /** Регіон завантажено (true) чи вивантажено (false) — для колізій режиму їзди. */
+  onRegion: ((reg: LoadedRegion, loaded: boolean) => void) | null = null;
 
   private constructor(
     private readonly source: FileSource,
-    private readonly common: SceneAssembler,
+    readonly common: SceneAssembler,
+    readonly commonRmp: RmpArchive,
     private readonly weather: Weather | null,
   ) {
     this.scene.background = new THREE.Color(0x8fb4d8);
@@ -116,7 +123,7 @@ export class Ht2World {
       source.read('WEATHER.INI').then((b) => Weather.parse(decodeCp1251(b))).catch(() => null),
       Promise.all(HT2_REGIONS.map((id) => source.read(regionFiles(id).way).then(parseWay).catch(() => null))),
     ]);
-    const w = new Ht2World(source, common, weather);
+    const w = new Ht2World(source, common.asm, common.rmp, weather);
     HT2_REGIONS.forEach((id, i) => {
       const way = ways[i];
       if (way) w.regions.set(id, { id, way, bounds: boundsOf(way) });
@@ -191,6 +198,7 @@ export class Ht2World {
     for (const [id, reg] of this.loaded) {
       if (distToBounds(this.regions.get(id)!.bounds, x, y) > UNLOAD_R) {
         this.scene.remove(reg.built.root);
+        this.onRegion?.(reg, false);
         reg.built.dispose();
         this.loaded.delete(id);
         this.onChange?.();
@@ -204,6 +212,7 @@ export class Ht2World {
       .then((reg) => {
         this.loaded.set(next, reg);
         this.scene.add(reg.built.root);
+        this.onRegion?.(reg, true);
         if (!this.sky && reg.built.sky) {
           this.sky = reg.built.sky;
           this.scene.add(this.sky);

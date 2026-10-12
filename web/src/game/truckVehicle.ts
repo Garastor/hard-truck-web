@@ -144,6 +144,8 @@ export class TruckVehicle {
   readonly rollLiftByTruck = ROLL_LIFT_BY_TRUCK;
 
   private readonly wheelRadius: number;
+  /** Кількість коліс (HT1 — 4, HT2 — 4 або 6); керовані — перші два, «передні» гальма — теж. */
+  private readonly wheels: number;
   private readonly driven: boolean[];
   private readonly wheelVisual: { obj: THREE.Object3D; base: THREE.Matrix4 }[];
   private readonly suspRest = SUSPENSION.rest;
@@ -193,7 +195,8 @@ export class TruckVehicle {
     this.tractionControl = setup.tractionControl ?? false;
     this.surfaceEffects = setup.surfaceEffects ?? true;
     this.wheelRadius = tech.wheelRadius;
-    this.driven = [0, 1, 2, 3].map((i) => (tech.drivingWheels[i] ?? 1) !== 0);
+    this.wheels = model.wheels.length;
+    this.driven = Array.from({ length: this.wheels }, (_, i) => (tech.drivingWheels[i] ?? 1) !== 0);
     this.engine = new Engine({
       maxTorque: tech.maxRotMomentum * (setup.torque ?? 1),
       tachMaxPower: tech.tachMaxPower,
@@ -282,7 +285,7 @@ export class TruckVehicle {
     );
 
     this.ctrl = world.createVehicleController(this.body);
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < this.wheels; i++) {
       const p = new THREE.Vector3().setFromMatrixPosition(model.wheelBase[i]);
       const c = g2t(p);
       this.ctrl.addWheel({ x: c.x, y: c.y + this.suspAnchor, z: c.z }, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, this.suspRest, this.wheelRadius);
@@ -363,7 +366,7 @@ export class TruckVehicle {
     // Гальма: сила колеса = педаль × B (передні 0,49·breakpower, задні 0,35·breakpower — ЗіЛ, s6);
     // опір кочення ≈ 0,015·N (накат s7). Rapier бере гальмо як імпульс за крок — множимо на dt.
     const nDriven = this.driven.filter(Boolean).length || 2;
-    const wheelLoad = (this.mass * 9.81) / 4;
+    const wheelLoad = (this.mass * 9.81) / this.wheels;
     // Rapier ігнорує гальмо колеса, на яке діє сила двигуна, тож гальмування двигуном (сила проти руху)
     // переносимо в гальмо того ж колеса.
     // Двигун гальмує лише з відпущеним газом (сила проти руху); з газом — завжди тягне, зокрема з місця й назад.
@@ -373,7 +376,7 @@ export class TruckVehicle {
     // Межа зчеплення Rapier спільна для повороту, тяги й гальмування; під час гальмування — вища
     // (оригінал гальмує до ≈ 0,55 g незалежно від бічного зчеплення).
     const grip = (TIRE_GRIP + (TIRE_GRIP_BRAKING - TIRE_GRIP) * brakePedal) * this.grip * this.surfaceGrip * this.weatherGrip;
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < this.wheels; i++) {
       this.ctrl.setWheelFrictionSlip(i, grip);
       let engine = this.driven[i] ? eng.force / nDriven : 0;
       // АПС: не більше 90 % межі зчеплення колеса (гіпотеза) — колесо не зривається в буксування.
@@ -403,7 +406,7 @@ export class TruckVehicle {
     const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
     const t = this.body.translation();
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < this.wheels; i++) {
       if (!this.ctrl.wheelIsInContact(i)) continue;
       const excess = this.suspRest - (this.ctrl.wheelSuspensionLength(i) ?? this.suspRest) - S.bump_from;
       if (excess <= 0) continue;
@@ -412,7 +415,7 @@ export class TruckVehicle {
       const at = new THREE.Vector3(c.x, c.y, c.z).applyQuaternion(q).add(new THREE.Vector3(t.x, t.y, t.z));
       const v = this.body.velocityAtPoint(at);
       const closing = -(v.x * up.x + v.y * up.y + v.z * up.z); // > 0 — кузов іде вниз, підвіска стискається
-      const force = (this.mass / 4) * (S.bump_stiffness * excess + S.bump_damping * Math.max(0, closing));
+      const force = (this.mass / this.wheels) * (S.bump_stiffness * excess + S.bump_damping * Math.max(0, closing));
       this.body.applyImpulseAtPoint({ x: up.x * force * dt, y: up.y * force * dt, z: up.z * force * dt }, at, true);
     }
   }
@@ -431,8 +434,8 @@ export class TruckVehicle {
     const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
     const chassisFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
-    const wheelMass = this.mass / 4;
-    for (let i = 0; i < 4; i++) {
+    const wheelMass = this.mass / this.wheels;
+    for (let i = 0; i < this.wheels; i++) {
       if (!this.ctrl.wheelIsInContact(i)) continue;
       const load = this.ctrl.wheelSuspensionForce(i) ?? 0;
       const p = this.ctrl.wheelContactPoint(i);
@@ -474,11 +477,11 @@ export class TruckVehicle {
    */
   groundHeight(): number {
     let sum = 0;
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < this.wheels; i++) {
       const anchor = g2t(new THREE.Vector3().setFromMatrixPosition(this.wheelVisual[i].base)).y + this.suspAnchor;
       sum += anchor - (this.ctrl.wheelSuspensionLength(i) ?? this.suspRest) - this.wheelRadius;
     }
-    return sum / 4;
+    return sum / this.wheels;
   }
 
   /**
@@ -501,7 +504,7 @@ export class TruckVehicle {
     const up = new THREE.Vector3();
     const ground = new THREE.Vector3();
     let n = 0;
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < this.wheels; i++) {
       if (!this.ctrl.wheelIsInContact(i)) continue;
       const p = this.ctrl.wheelContactPoint(i);
       const nr = this.ctrl.wheelContactNormal(i);
@@ -556,7 +559,7 @@ export class TruckVehicle {
     this.visual.quaternion.set(r.x, r.y, r.z, r.w);
     if (this.shadow) this.placeShadow();
     // Колеса: підвіска (зсув по Z гри), поворот керма (навколо Z), обертання (навколо X).
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < this.wheels; i++) {
       const w = this.wheelVisual[i];
       const len = this.ctrl.wheelSuspensionLength(i) ?? this.suspRest;
       const steer = this.ctrl.wheelSteering(i) ?? 0;

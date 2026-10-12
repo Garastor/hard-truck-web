@@ -7,8 +7,9 @@ export interface TruckDef {
   index: number;
   carNode: string;
   prefix: string;
-  wheelSpaces: [string, string, string, string];
-  wheelNodes: [string, string, string, string];
+  /** Простори й вузли коліс: HT1 — 4 (FL, FR, BL, BR); HT2 — 4 або 6 (пари спереду назад, ліве — парне). */
+  wheelSpaces: string[];
+  wheelNodes: string[];
   cockpitSpace: string;
   /** 2D-кабіна (панель) — маска з програмного набору ресурсів, напр. `msk\kam_pan.msk` (див. assets/cab2d.ts). */
   panelMask: string;
@@ -154,7 +155,7 @@ export function buildTruckModel(asm: SceneAssembler, def: TruckDef, dynamic = fa
   const wheels: THREE.Object3D[] = [];
   const wheelBase: THREE.Matrix4[] = [];
   // У TCH wheel_space0..3 = FL, FR, BL, BR; вузли коліс — wheel_node_fl/fr/bl/br.
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < def.wheelSpaces.length; i++) {
     const m = asm.space(def.wheelSpaces[i]) ?? new THREE.Matrix4();
     const tpl = asm.template(def.wheelNodes[i]);
     const w = new THREE.Group();

@@ -43,8 +43,25 @@
 body.game-ht2 #bar,
 body.game-ht2 #menu,
 body.game-ht2 #stats,
-body.game-ht2 #gallery {
-  display: none;
+body.game-ht2 #gallery,
+body.game-ht2 .drive-hud {
+  display: none !important;
+}
+
+/* Табло їзди (поки текстом): швидкість, передача, оберти. */
+.ht2-drive-bar {
+  position: fixed;
+  left: 50%;
+  top: max(8px, env(safe-area-inset-top));
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 6px 12px;
+  border: 1px solid #8c8c8c;
+  background: rgba(16, 18, 20, 0.62);
+  color: rgb(123, 255, 255);
+  font: 700 14px/1 Tahoma, Arial, sans-serif;
+  white-space: pre;
+  pointer-events: none;
 }
 
 .ht2-hud {

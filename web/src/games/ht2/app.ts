@@ -7,6 +7,7 @@ import type { GameId } from '../registry';
 import { HT2_FILES, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2MenuScreen, type MenuItem } from './menu';
 import { WorldViewer } from './viewer';
+import { Ht2Drive } from './drive';
 
 /**
  * Дальнобойщики 2 у порті: джерело файлів (пристрій або ПК), меню з LOAD.RES гри, режими. Свій цикл кадрів і сцена —
@@ -54,27 +55,50 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   const art = await Ht2MenuArt.load((n) => source.read(n));
   ctx.setStatus(null);
 
-  // Налагодження: ?game=ht2&tab=world — одразу огляд світу (&region=ab).
-  let direct = new URLSearchParams(location.search).get('tab') === 'world';
+  // Налагодження: ?game=ht2&tab=world — одразу огляд світу (&region=ab); &tab=drive — їзда (&truck=Kamaz).
+  const params = new URLSearchParams(location.search);
+  let direct: 'world' | 'drive' | null = params.get('tab') === 'world' ? 'world' : params.get('tab') === 'drive' ? 'drive' : null;
   for (;;) {
-    const choice = direct ? 'world' : await new Promise<'world' | 'files' | 'exit'>((resolve) => {
+    const choice = direct ?? (await new Promise<'world' | 'drive' | 'files' | 'exit'>((resolve) => {
       let close = () => {};
       // Меню закривається перед будь-якою дією.
-      const pick = (c: 'world' | 'files' | 'exit') => () => {
+      const pick = (c: 'world' | 'drive' | 'files' | 'exit') => () => {
         close();
         resolve(c);
       };
       const items: MenuItem[] = [
+        { label: 'Їзда', action: pick('drive') },
         { label: 'Огляд світу', action: pick('world') },
         { label: 'Файли гри', action: pick('files') },
       ];
       if (ctx.exit) items.push({ label: 'Вихід', action: pick('exit') });
-      close = ht2MenuScreen(art, large, items, 'Дальнобойщики 2 — порт у розробці: поки лише огляд світу');
-    });
-    direct = false;
+      close = ht2MenuScreen(art, large, items, 'Дальнобойщики 2 — порт у розробці: вільна їзда й огляд світу');
+    }));
+    direct = null;
     if (choice === 'exit') return ctx.exit?.();
     if (choice === 'files') {
       await ctx.showImport(true);
+      continue;
+    }
+    if (choice === 'drive') {
+      await new Promise<void>((resolve) => {
+        let drive: Ht2Drive | null = null;
+        const exit = () => {
+          drive?.dispose();
+          ctx.setStatus(null);
+          resolve();
+        };
+        Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck') })
+          .then((d) => {
+            drive = d;
+            Object.assign(window, { ht2: { drive } });
+          })
+          .catch((e) => {
+            console.error(e);
+            ctx.setStatus(`Помилка: ${(e as Error).message}`);
+            setTimeout(exit, 4000);
+          });
+      });
       continue;
     }
     await new Promise<void>((resolve) => {
