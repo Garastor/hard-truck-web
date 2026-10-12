@@ -18,6 +18,7 @@ import { CareerMode } from './careerMode';
 import { Police } from './police';
 import { RaceMode } from './race';
 import { Trailer } from './trailer';
+import { parseUpgrades, tuning, type Tuning } from './upgrades';
 import { NavMap } from '../../ui/navMap';
 import { Music } from './music';
 import { SceneAssembler } from '../../render/sceneBuilder';
@@ -145,7 +146,7 @@ export class Ht2Drive {
     if (!def) throw new Error('Немає моделі вантажівки');
     this.def = def;
     if (o.career && !o.career.truck) o.career.truck = def.carNode;
-    this.tank = rec.tank;
+    this.tank = rec.tank * this.tuning.tank;
     this.cabPrefix = rec.prefixCab;
     this.fuelConsumption = rec.fuelConsumption;
 
@@ -167,7 +168,8 @@ export class Ht2Drive {
     const model = buildTruckModel(this.trucks.asm, def, false);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня`);
     this.cargoMass = o.career?.order ? o.career.order.goods.mass * o.career.order.units : 0;
-    this.truck = new TruckVehicle(this.rapier, def, model, spawn, { cargoMass: this.hitched ? 0 : this.cargoMass });
+    this.truck = new TruckVehicle(this.rapier, def, model, spawn, this.setup(this.cargoMass));
+    this.truck.setDamage({ power: 1, lostGears: 0, brakes: this.tuning.brakes });
     this.world.scene.add(this.truck.visual);
     this.hitch();
     this.mountLamps();
@@ -177,11 +179,12 @@ export class Ht2Drive {
     this.camLook.copy(spawn.position);
 
     if (o.career) {
-      const [merch, messages] = await Promise.all([
+      const [merch, messages, restable] = await Promise.all([
         o.source.read('merchandise.sch').then(readSch).catch(() => []),
         o.source.read('Ms.sch').then(readSch).catch(() => []),
+        o.source.read('restable.sch').then(readSch).catch(() => []),
       ]);
-      this.careerMode = new CareerMode(this, o.career, merch, messages);
+      this.careerMode = new CareerMode(this, o.career, merch, messages, parseUpgrades(restable));
       this.police = new Police(this.world.scene, this.rapier, this.trucks, this.world.regions.values());
     }
     if (o.race) {
@@ -302,10 +305,22 @@ export class Ht2Drive {
     if (!model) return;
     this.world.scene.remove(this.truck.visual);
     this.truck.dispose();
-    this.truck = new TruckVehicle(this.rapier, this.def, model, { position, forward }, { cargoMass: this.hitched ? 0 : mass });
+    this.truck = new TruckVehicle(this.rapier, this.def, model, { position, forward }, this.setup(mass));
+    this.truck.setDamage({ power: 1, lostGears: 0, brakes: this.tuning.brakes });
     this.world.scene.add(this.truck.visual);
     this.hitch();
     this.mountLamps();
+  }
+
+  /** Покращення кар'єри (restable.sch) — множники моменту, гальм, зчеплення, бака (гіпотези, див. upgrades.ts). */
+  get tuning(): Tuning {
+    return tuning(this.opts.career?.upgrades);
+  }
+
+  /** Параметри фізики вантажівки: вантаж (у тягача — у причепі), покращення. */
+  private setup(cargo: number) {
+    const t = this.tuning;
+    return { cargoMass: this.hitched ? 0 : cargo, torque: t.torque, grip: t.grip };
   }
 
   /** Запис vehicle.tech поточної вантажівки. */
@@ -406,7 +421,7 @@ export class Ht2Drive {
     const def = rec && truckDef(this.trucks, rec);
     if (!rec || !def) return;
     this.def = def;
-    this.tank = rec.tank;
+    this.tank = rec.tank * this.tuning.tank;
     this.fuelConsumption = rec.fuelConsumption;
     this.cabPrefix = rec.prefixCab;
     this.cockpit = g2t(def.tech.viewer);
@@ -414,6 +429,13 @@ export class Ht2Drive {
       this.overlayScene.remove(this.cab);
       this.cab = null;
     }
+    this.setCargo(this.cargoMass);
+  }
+
+  /** Нові покращення: бак і перебудова фізики вантажівки (момент, гальма, зчеплення — при створенні). */
+  applyTuning(): void {
+    const rec = this.rec;
+    if (rec) this.tank = rec.tank * this.tuning.tank;
     this.setCargo(this.cargoMass);
   }
 
@@ -541,7 +563,7 @@ export class Ht2Drive {
     this.world.update(this.camera, this.truck.visual.position);
     this.careerMode?.update(dt, state.throttle);
     const fine = this.police?.update(dt, this.truck.visual.position, this.truck.speedKmh);
-    if (fine && this.careerMode) void this.careerMode.fine(fine.over);
+    if (fine && this.careerMode && !this.tuning.antiRadar) void this.careerMode.fine(fine.over);
     this.map?.update(dt, this.truck.visual.position, this.truck.forward(), this.traffic?.cars.map((c) => c.pos) ?? [], this.careerMode?.target() ?? null);
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
     this.bar.textContent = this.careerMode ? `${drive}\n${this.careerMode.hud()}` : this.race ? `${drive}\n${this.race.hud()}` : drive;

@@ -19,6 +19,7 @@ import { decodeCp1251 } from '../src/formats/binary';
 import { HT2_FILES, HT2_REGIONS, HT2_REQUIRED } from '../src/games/ht2/files';
 import { detectGame } from '../src/games/registry';
 import { findStores, orderPay, parseGoods } from '../src/games/ht2/economy';
+import { install, parseUpgrades, tuning } from '../src/games/ht2/upgrades';
 
 const GAME = resolve(import.meta.dirname, '..', '..', 'Game', 'Hard Truck 2');
 const has = existsSync(join(GAME, 'king.exe'));
@@ -221,5 +222,22 @@ describe.skipIf(!has)('HT2: економіка', () => {
     const g = { id: 'X', name: 'X', mass: 10, volume: 0.1, price: 100, ratio: 0.8, illegal: false, forMafia: false };
     expect(orderPay(g, 100, 5000, false)).toBe(Math.round((5000 * 0.115 + 0.4 * 100) * 3));
     expect(orderPay(g, 100, 5000, true)).toBeGreaterThan(orderPay(g, 100, 5000, false));
+  });
+});
+
+describe.skipIf(!has)('HT2: покращення (restable.sch)', () => {
+  it('ціни й ключі з файла, взаємовиключні варіанти', () => {
+    const ups = parseUpgrades(readSch(read('restable.sch')));
+    const by = Object.fromEntries(ups.map((u) => [u.key, u]));
+    expect(by['PR_FORCED_ENGINE:1'].price).toBe(12500);
+    expect(by['PR_FORCED_ENGINE:1'].original).toBe('Forced engine');
+    expect(by['PR_BRAKES:1'].price).toBe(4500);
+    expect(by['PR_TIRES:1'].price).toBe(2000);
+    expect(by['PR_EXTRA_TANK:1'].price).toBe(500);
+    expect(ups.length).toBe(6);
+    const owned = install(['PR_TIRES:2', 'PR_ABS:1'], by['PR_TIRES:1']);
+    expect(owned).toEqual(['PR_ABS:1', 'PR_TIRES:1']);
+    expect(tuning(owned).grip).toBeGreaterThan(1);
+    expect(tuning([]).torque).toBe(1);
   });
 });

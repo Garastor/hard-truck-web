@@ -4,6 +4,7 @@ import { isList, str, type SExpr } from '../../formats/sexpr';
 import { findStores, makeOrders, parseGoods, type Goods, type Store } from './economy';
 import { FUEL_PRICE, REPAIR_PER_PERCENT, TIME_SCALE, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
 import { toThree } from './world';
+import { install, type Upgrade } from './upgrades';
 import type { Ht2Drive } from './drive';
 
 /**
@@ -37,6 +38,7 @@ export class CareerMode {
     readonly career: Ht2Career,
     merchandise: SExpr[],
     messages: SExpr[] = [],
+    private readonly upgrades: Upgrade[] = [],
   ) {
     for (const m of messages) if (isList(m) && typeof m[0] === 'string') this.messages.set(m[0], str(m[m.length - 1]));
     this.goods = parseGoods(merchandise);
@@ -85,7 +87,7 @@ export class CareerMode {
     const dv = Math.hypot(v.x - this.prevVel.x, v.y - this.prevVel.y, v.z - this.prevVel.z);
     this.prevVel.set(v.x, v.y, v.z);
     if (dv > HIT_MIN) {
-      c.damage = Math.min(1, c.damage + dv * 0.004);
+      c.damage = Math.min(1, c.damage + dv * 0.004 * this.drive.tuning.damage);
       if (c.order) c.order.integrity = Math.max(0, c.order.integrity - dv * 0.01);
     }
     const p = this.drive.truck.visual.position;
@@ -108,7 +110,7 @@ export class CareerMode {
       return;
     }
     const sto = this.sto.findIndex((d) => Math.hypot(d[0] - gx, d[1] - gy) < STO_RADIUS);
-    if (sto >= 0 && this.shownAt !== `r${sto}` && c.damage > 0.01) {
+    if (sto >= 0 && this.shownAt !== `r${sto}`) {
       this.shownAt = `r${sto}`;
       void this.atSto();
       return;
@@ -264,25 +266,53 @@ export class CareerMode {
     }
   }
 
+  /** СТО: ремонт (якщо є пошкодження) і покращення (restable.sch). */
   private async atSto(): Promise<void> {
     const c = this.career;
     this.busy = true;
     this.drive.paused = true;
     try {
-      const cost = Math.round(c.damage * 100 * REPAIR_PER_PERCENT);
-      const i = await modal(this.drive.overlay, 'СТО', `Пошкодження машини ${Math.round(c.damage * 100)}%. Ремонт: ${formatMoney(cost)}.`, ['Ремонт', 'Не треба']);
-      if (i === 0) {
-        if (c.money < cost) await modal(this.drive.overlay, 'СТО', 'НЕ ХВАТАЕТ ДЕНЕГ', ['Гаразд']);
-        else {
-          c.money -= cost;
-          c.damage = 0;
-          this.persist();
-        }
+      for (;;) {
+        const cost = Math.round(c.damage * 100 * REPAIR_PER_PERCENT);
+        const damaged = c.damage > 0.01;
+        const text = damaged ? `Пошкодження машини ${Math.round(c.damage * 100)}%. Ремонт: ${formatMoney(cost)}.` : 'Машина справна.';
+        const options = [...(damaged ? ['Ремонт'] : []), 'Покращення', 'Поїхали'];
+        const pick = options[await modal(this.drive.overlay, 'СТО', `${text} Гроші: ${formatMoney(c.money)}.`, options)];
+        if (pick === 'Ремонт') {
+          if (c.money < cost) await modal(this.drive.overlay, 'СТО', this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'), ['Гаразд']);
+          else {
+            c.money -= cost;
+            c.damage = 0;
+            this.persist();
+          }
+        } else if (pick === 'Покращення') await this.shopUpgrades();
+        else break;
       }
     } finally {
       this.drive.paused = false;
       this.busy = false;
     }
+  }
+
+  /** Покращення: список з цінами; встановлене — позначка; купівля — одразу на машину (перебудова фізики). */
+  private async shopUpgrades(): Promise<void> {
+    const c = this.career;
+    const owned = c.upgrades ?? [];
+    const labels = this.upgrades.map((u) => `${owned.includes(u.key) ? '✓ ' : ''}${u.name} — ${u.effect}: ${owned.includes(u.key) ? 'встановлено' : formatMoney(u.price)}`);
+    const i = await modal(this.drive.overlay, 'Покращення', `Гроші: ${formatMoney(c.money)}. Дія покращень — припущення порту.`, [...labels, 'Назад']);
+    const u = this.upgrades[i];
+    if (!u || owned.includes(u.key)) return;
+    if (c.money < u.price) {
+      await modal(this.drive.overlay, 'Покращення', this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'), ['Гаразд']);
+      return;
+    }
+    c.money -= u.price;
+    const tank = this.tank;
+    c.upgrades = install(owned, u);
+    this.drive.applyTuning();
+    // Додатковий бак — порожній (доливається на заправці).
+    if (c.fuel !== null && this.tank !== tank) c.fuel = Math.min(c.fuel, this.tank);
+    this.persist();
   }
 
   /** Куди їхати (Three.js): склад призначення, без вантажу — найближчий склад. */

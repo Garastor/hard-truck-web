@@ -28,6 +28,8 @@ export interface Ht2Career {
   order: ActiveOrder | null;
   delivered: number;
   earned: number;
+  /** Встановлені покращення (`PR_ID:варіант`, див. upgrades.ts); переходять на нову вантажівку (гіпотеза). */
+  upgrades?: string[];
   /** Остання позиція (координати гри) і склад, де стоїмо. */
   pos?: [number, number, number];
   heading?: [number, number];
