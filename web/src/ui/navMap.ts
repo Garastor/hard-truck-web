@@ -17,7 +17,7 @@ export class NavMap {
   private readonly roads = new Path2D();
   private timer = 0;
 
-  constructor(parent: HTMLElement, net: WayNet) {
+  constructor(parent: HTMLElement, net: Pick<WayNet, 'lines'>) {
     this.el = document.createElement('canvas');
     this.el.className = 'pixel nav-map';
     this.el.width = this.el.height = SIZE;
@@ -30,8 +30,8 @@ export class NavMap {
     parent.append(this.el);
   }
 
-  /** Перемальовуємо 10 разів на секунду. */
-  update(dt: number, me: THREE.Vector3, heading: THREE.Vector3, rivals: THREE.Vector3[]): void {
+  /** Перемальовуємо 10 разів на секунду. target — куди їхати (зелена точка; далі за край карти — на краю). */
+  update(dt: number, me: THREE.Vector3, heading: THREE.Vector3, rivals: THREE.Vector3[], target?: THREE.Vector3 | null): void {
     if ((this.timer -= dt) > 0) return;
     this.timer = 0.1;
     const ctx = this.ctx;
@@ -55,6 +55,17 @@ export class NavMap {
     ctx.globalAlpha = 1;
     ctx.fillStyle = '#e00000';
     for (const r of rivals) ctx.fillRect(r.x - 2.5 / k, r.z - 2.5 / k, 5 / k, 5 / k);
+    if (target) {
+      const dx = target.x - me.x;
+      const dz = target.z - me.z;
+      const d = Math.hypot(dx, dz);
+      const lim = (SIZE / 2 - 6) / k;
+      const f = d > lim ? lim / d : 1;
+      ctx.fillStyle = '#20e020';
+      ctx.beginPath();
+      ctx.arc(me.x + dx * f, me.z + dz * f, 4 / k, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
     // Гравець — стрілка вгору в центрі.
     ctx.fillStyle = '#f8e000';

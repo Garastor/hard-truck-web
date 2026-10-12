@@ -15,6 +15,7 @@ import { AutoPilot } from '../../game/autopilot';
 import { Ht2Roads } from './roads';
 import { Traffic, trafficKinds } from './traffic';
 import { CareerMode } from './careerMode';
+import { NavMap } from '../../ui/navMap';
 import type { Ht2Career } from './career';
 
 /**
@@ -63,6 +64,7 @@ export class Ht2Drive {
   autopilot: AutoPilot | null = null;
   traffic: Traffic | null = null;
   careerMode: CareerMode | null = null;
+  private map: NavMap | null = null;
   /** Пауза (вікно складу чи СТО): фізика й час стоять. */
   paused = false;
   /** Маса вантажу в кузові, кг (фізика: центр мас і загальна маса). */
@@ -140,6 +142,7 @@ export class Ht2Drive {
     this.input.onCommand = (cmd) => {
       if (cmd === 'camera') this.camMode = NEXT_CAM[this.camMode];
       if (cmd === 'autopilot') this.autopilot = this.autopilot ? null : new AutoPilot(this.roads);
+      if (cmd === 'map' && this.map) this.map.el.hidden = !this.map.el.hidden;
       if (cmd === 'reset') this.recover();
       if (cmd === 'horn') this.audio?.playOnce('horn');
       if (cmd === 'engine') {
@@ -149,6 +152,8 @@ export class Ht2Drive {
     };
     document.body.classList.add('driving');
     this.touch = this.input.mountTouch(o.overlay);
+    // Мінікарта: осьові лінії доріг (без зворотних смуг), машини трафіку, ціль кар'єри.
+    this.map = new NavMap(o.overlay, { lines: this.roads.lines.filter((l) => !l.name.endsWith('r')) });
     this.hud.className = 'ht2-hud';
     const back = document.createElement('button');
     back.textContent = '← Меню';
@@ -275,6 +280,7 @@ export class Ht2Drive {
     this.updateCamera(dt);
     this.world.update(this.camera, this.truck.visual.position);
     this.careerMode?.update(dt, state.throttle);
+    this.map?.update(dt, this.truck.visual.position, this.truck.forward(), this.traffic?.cars.map((c) => c.pos) ?? [], this.careerMode?.target() ?? null);
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
     this.bar.textContent = this.careerMode ? `${drive}
 ${this.careerMode.hud()}` : drive;
@@ -369,6 +375,7 @@ ${this.careerMode.hud()}` : drive;
     document.body.classList.remove('driving');
     this.input.dispose();
     this.touch?.remove();
+    this.map?.dispose();
     this.hud.remove();
     this.bar.remove();
     this.audio?.dispose();

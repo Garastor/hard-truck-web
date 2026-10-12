@@ -129,7 +129,7 @@ export class CareerMode {
         if (can <= 0) await modal(this.drive.overlay, 'Заправка', 'НЕ ХВАТАЕТ ДЕНЕГ', ['Гаразд']);
         else {
           c.money -= Math.round(can * FUEL_PRICE);
-          c.fuel = (c.fuel ?? 0) + can;
+          c.fuel = Math.min(this.tank, (c.fuel ?? 0) + can);
           if (!this.drive.truck.engineOn) this.drive.truck.engineOn = true;
           this.persist();
         }
@@ -220,6 +220,16 @@ export class CareerMode {
       this.drive.paused = false;
       this.busy = false;
     }
+  }
+
+  /** Куди їхати (Three.js): склад призначення, без вантажу — найближчий склад. */
+  target(): THREE.Vector3 | null {
+    const c = this.career;
+    const p = this.drive.truck.visual.position;
+    const store = c.order
+      ? this.stores.find((s) => s.id === c.order!.to)
+      : this.stores.reduce<Store | null>((best, s) => (!best || Math.hypot(s.center[0] - p.x, s.center[1] + p.z) < Math.hypot(best.center[0] - p.x, best.center[1] + p.z) ? s : best), null);
+    return store ? toThree(...store.center) : null;
   }
 
   /** Табло: гроші, стан, вантаж і куди, залишок часу, годинник. */
