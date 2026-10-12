@@ -8,6 +8,7 @@ import { decodeCp1251 } from '../../formats/binary';
 import { parseWay } from '../../formats/way';
 import { HT2_REGIONS, regionFiles, type TexLevel } from './files';
 import { Weather, type DayTime, type Sky } from './weather';
+import { buildTrees } from './trees';
 
 /**
  * Поле зору: TRUCK.INI [RENDER] ypyramid=0.9 — висота «піраміди огляду» на відстані 1 (як у HT1, де 1.5):
@@ -41,7 +42,22 @@ export async function loadCommon(source: FileSource, tex: TexLevel = '1'): Promi
 export async function loadRegion(source: FileSource, id: string, common: SceneAssembler | null, tex: TexLevel = '1', dir = 'ENV'): Promise<LoadedRegion> {
   const f = regionFiles(id, tex, dir);
   const [b3d, res] = await Promise.all([source.read(f.b3d), source.read(f.res)]);
-  const built = buildScene(parseB3d(b3d), parseRmp(res), { lit: true, colorKey: true, fallback: common ?? undefined, palette: common?.lib.palette ?? undefined });
+  const scene = parseB3d(b3d);
+  const rmp = parseRmp(res);
+  const palette = common?.lib.palette ?? null;
+  const built = buildScene(scene, rmp, { lit: true, colorKey: true, fallback: common ?? undefined, palette: palette ?? undefined });
+  const trees = buildTrees(scene, rmp, palette);
+  built.root.add(trees);
+  const dispose = built.dispose;
+  built.dispose = () => {
+    dispose();
+    trees.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        (o.material as THREE.MeshLambertMaterial).map?.dispose();
+        (o.material as THREE.Material).dispose();
+      }
+    });
+  };
   return { id, built };
 }
 
