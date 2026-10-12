@@ -150,7 +150,8 @@ export class Ht2Drive {
     back.addEventListener('click', () => o.onExit());
     this.bar.className = 'ht2-drive-bar';
     this.hud.append(back);
-    document.body.append(this.hud, this.bar);
+    // У шарі overlay — під вікнами складу й СТО (вони теж там, вище).
+    o.overlay.append(this.hud, this.bar);
     window.addEventListener('resize', this.onResize);
     this.resize();
     this.last = performance.now();

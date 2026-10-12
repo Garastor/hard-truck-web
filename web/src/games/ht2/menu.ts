@@ -56,8 +56,9 @@ export function ht2MenuScreen(art: Ht2MenuArt | null, font: PixelFont | null, it
   const bg = art?.background('m/back_main.txr');
   if (bg) stage.append(bg);
 
-  const x = 612;
-  let y = 210;
+  // Пункти — великі цілі для пальця: шрифт ×3, крок 52 px сцени (на телефоні 812×375 — ≈ 22 px тексту).
+  const x = 598;
+  let y = 150;
   for (const it of items) {
     const b = document.createElement('button');
     b.className = 'menu-abs ht2-item';
@@ -72,21 +73,22 @@ export function ht2MenuScreen(art: Ht2MenuArt | null, font: PixelFont | null, it
       c.height = font.height + 2;
       font.draw(c.getContext('2d')!, text, 1, 1, 'rgb(240,220,138)');
       c.className = 'ht2-item-text';
-      c.style.width = `${c.width * 2}px`;
-      c.style.height = `${c.height * 2}px`;
+      c.style.width = `${c.width * 3}px`;
+      c.style.height = `${c.height * 3}px`;
       b.append(c);
     } else b.textContent = it.label;
     b.addEventListener('click', () => {
       if (!it.disabled) void it.action();
     });
     stage.append(b);
-    y += 34;
+    y += 52;
   }
   if (note) {
     const n = document.createElement('div');
     n.className = 'menu-abs menu-note';
     n.style.left = '16px';
-    n.style.top = `${H - 30}px`;
+    n.style.top = `${H - 40}px`;
+    n.style.fontSize = '20px';
     n.textContent = note;
     stage.append(n);
   }

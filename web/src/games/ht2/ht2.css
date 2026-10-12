@@ -51,15 +51,18 @@ body.game-ht2 .drive-hud {
 /* Табло їзди (поки текстом): швидкість, передача, оберти. */
 .ht2-drive-bar {
   position: fixed;
-  left: 50%;
+  /* Ліворуч, за кнопкою «Меню»: праворуч угорі — сенсорні кнопки (вид, відновитися, сигнал, «•••»). */
+  left: calc(max(8px, env(safe-area-inset-left)) + 84px);
   top: max(8px, env(safe-area-inset-top));
-  transform: translateX(-50%);
-  z-index: 5;
+  max-width: calc(100vw - 84px - 4 * 52px - 24px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 1;
   padding: 6px 12px;
   border: 1px solid #8c8c8c;
   background: rgba(16, 18, 20, 0.62);
   color: rgb(123, 255, 255);
-  font: 700 14px/1 Tahoma, Arial, sans-serif;
+  font: 700 13px/1.25 Tahoma, Arial, sans-serif;
   white-space: pre;
   pointer-events: none;
 }
