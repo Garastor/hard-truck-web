@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { modal } from '../../ui/careerUi';
 import { isList, str, type SExpr } from '../../formats/sexpr';
 import { findStores, makeOrders, parseGoods, type Goods, type Store, type Town } from './economy';
-import { FUEL_PRICE, REPAIR_PER_PERCENT, TIME_SCALE, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
+import { FUEL_PRICE, REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
 import { toThree } from './world';
 import { install, type Upgrade } from './upgrades';
 import { USED_DAMAGE, type ForSale, type Market } from './market';
@@ -75,7 +75,7 @@ export class CareerMode {
     const p = this.drive.truck.visual.position;
     const dist = Math.min(50, p.distanceTo(this.lastPos));
     this.lastPos.copy(p);
-    const perMeter = (this.drive.fuelConsumption * 10) / 100 / 1000;
+    const perMeter = ((this.drive.fuelConsumption * 10) / 100 / 1000) * (this.drive.arcade ? 0.5 : 1);
     c.fuel = Math.max(0, c.fuel - dist * perMeter * (0.5 + 0.5 * throttle) - (this.drive.truck.engineOn ? dt * 0.0005 : 0));
     if (c.fuel <= 0 && this.drive.truck.engineOn) this.drive.truck.engineOn = false;
   }
@@ -89,13 +89,13 @@ export class CareerMode {
   update(dt: number, throttle = 0): void {
     const c = this.career;
     if (this.busy) return;
-    c.time += dt * TIME_SCALE;
+    c.time += dt * this.drive.timeScale;
     this.burn(dt, throttle);
     const v = this.drive.truck.body.linvel();
     const dv = Math.hypot(v.x - this.prevVel.x, v.y - this.prevVel.y, v.z - this.prevVel.z);
     this.prevVel.set(v.x, v.y, v.z);
     if (dv > HIT_MIN) {
-      c.damage = Math.min(1, c.damage + dv * 0.004 * this.drive.tuning.damage);
+      c.damage = Math.min(1, c.damage + dv * 0.004 * this.drive.tuning.damage * (this.drive.arcade ? 0.5 : 1));
       if (c.order) c.order.integrity = Math.max(0, c.order.integrity - dv * 0.01);
     }
     const p = this.drive.truck.visual.position;
@@ -293,13 +293,13 @@ export class CareerMode {
         box.textContent = 'Замовлення на доставку:';
         const buttons = orders.map((o) => {
           const to = this.stores.find((s) => s.id === o.to)!;
-          const h = (o.deadline * TIME_SCALE) / 3600;
+          const h = (o.deadline * this.drive.timeScale) / 3600;
           return `${o.goods.name} ×${o.units} → ${to.town}: ${formatMoney(o.pay)}, ${h < 1 ? `${Math.round(h * 60)} хв` : `${h.toFixed(1)} год`}${o.urgent ? ' (терміново)' : ''}`;
         });
         const i = await modal(this.drive.overlay, `Склад «${store.town}»`, box, [...buttons, 'Не брати']);
         const o = orders[i];
         if (o) {
-          c.order = { ...o, deadline: o.deadline * TIME_SCALE, taken: c.time, integrity: 1 };
+          c.order = { ...o, deadline: o.deadline * this.drive.timeScale, taken: c.time, integrity: 1 };
           this.drive.setCargo(o.goods.mass * o.units);
         }
       }

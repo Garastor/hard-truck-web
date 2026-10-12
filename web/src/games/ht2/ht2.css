@@ -39,6 +39,62 @@
   cursor: default;
 }
 
+/* Кнопки-текстури екранів LOAD.RES (s/backsing): зображення стану, без рамок браузера. */
+.ht2-tex-button {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  line-height: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ht2-tex-button img {
+  display: block;
+  pointer-events: none;
+}
+
+/* Круглі кнопки повзунків — прозорі зони поверх намальованих на фоні. */
+.ht2-round {
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ht2-round:active {
+  background: rgba(120, 255, 120, 0.25);
+}
+
+.ht2-slider {
+  width: 126px;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+
+.ht2-slider > div {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(#8f8, #2a2);
+  box-shadow: 0 0 6px #6f6;
+}
+
+.ht2-save {
+  width: 118px;
+  color: #9f9;
+  font: 600 11px/1.3 Arial, sans-serif;
+  text-shadow: 0 0 3px #000;
+  white-space: pre-line;
+}
+
 /* Режим HT2: панель і кнопки першої гри сховані. */
 body.game-ht2 #bar,
 body.game-ht2 #menu,

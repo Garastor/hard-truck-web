@@ -53,6 +53,7 @@ export class Truckers {
     private readonly names: string[],
     private readonly loaded: (region: string) => boolean,
     private readonly kinds: { model: string; variant: number }[] = [],
+    private readonly max = MAX,
   ) {}
 
   get positions(): THREE.Vector3[] {
@@ -79,7 +80,7 @@ export class Truckers {
       const line = this.roads.nearest(r.truck.visual.position);
       if (far || r.bad > 3 || (line && !this.loaded(line.line.region)) || r.truck.body.translation().y < -500) this.remove(i);
     }
-    if ((this.timer -= dt) > 0 || this.list.length >= MAX) return;
+    if ((this.timer -= dt) > 0 || this.list.length >= this.max) return;
     this.timer = 2;
     this.spawn(player);
   }

@@ -63,13 +63,15 @@ export class WeatherDrift {
     start = 0.75,
     private readonly rate = 0.13,
     private readonly rnd = Math.random,
+    /** Поріг негоди (повзунок «погода», settings.ts). */
+    private readonly threshold = BAD,
   ) {
     this.value = start;
     this.target = start;
   }
 
   get bad(): boolean {
-    return this.value < BAD;
+    return this.value < this.threshold;
   }
 
   /** gameSeconds — ігровий час, що минув. */

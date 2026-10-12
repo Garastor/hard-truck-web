@@ -33,7 +33,8 @@ import { Music } from './music';
 import { SceneAssembler } from '../../render/sceneBuilder';
 import { parseB3d } from '../../formats/b3d';
 import { parseRmp } from '../../formats/rmp';
-import { TIME_SCALE, dayTime, type Ht2Career } from './career';
+import { dayTime, type Ht2Career } from './career';
+import { badWeather, timeScale, type Ht2Settings } from './settings';
 
 /**
  * Їзда у світі Дальнобойщиків 2 (G4): вантажівка з vehicle.tech і TRUCKS.B3D на тій самій фізиці, що й у першій
@@ -53,6 +54,8 @@ export interface Ht2DriveOptions {
   trailer?: string | null;
   /** Погода для перевірки: `bad` — одразу негода з дощем, `good` — без змін погоди. */
   weather?: string | null;
+  /** Налаштування одиночної гри (екран s/backsing). */
+  settings?: Ht2Settings | null;
   /** Кар'єра (гроші, замовлення); без — вільна їзда. */
   career?: Ht2Career | null;
   /** Гонка на Кільці (регіон dr) з суперниками. */
@@ -224,13 +227,13 @@ export class Ht2Drive {
     const ini = await o.source.read('TRUCK.INI').then((b) => parseIni(decodeCp1251(b))).catch(() => null);
     const wstart = ini ? iniNum(ini, 'EFFECTS', 'wstart', 0.75) : 0.75;
     const wtemp = ini ? iniNum(ini, 'EFFECTS', 'wtemp', 0.13) : 0.13;
-    this.weather = new WeatherDrift(o.weather === 'bad' ? 0 : wstart, o.weather ? 0 : wtemp);
+    this.weather = new WeatherDrift(o.weather === 'bad' ? 0 : wstart, o.weather ? 0 : wtemp, Math.random, badWeather(o.settings));
     const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
     if (!o.race) {
       const names = await o.source.read('names.sch').then(readSch).catch(() => []);
-      this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r), truckerKinds(vehicles, this.trucks));
+      this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r), truckerKinds(vehicles, this.trucks), Math.round(4 * (o.settings?.traffic ?? 1)));
     }
-    this.traffic = new Traffic(this.world.scene, this.rapier, this.roads, this.trucks, trafficKinds(vehicles, this.trucks), (r) => this.world.loaded.has(r));
+    this.traffic = new Traffic(this.world.scene, this.rapier, this.roads, this.trucks, trafficKinds(vehicles, this.trucks), (r) => this.world.loaded.has(r), Math.round(12 * (o.settings?.traffic ?? 1)));
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);
     this.input.onCommand = (cmd) => {
       if (cmd === 'camera') this.camMode = NEXT_CAM[this.camMode];
@@ -348,6 +351,16 @@ export class Ht2Drive {
     this.mountLamps();
   }
 
+  /** Ігрових секунд за реальну (повзунок «тривалість доби»). */
+  get timeScale(): number {
+    return timeScale(this.opts.settings);
+  }
+
+  /** Аркада: менші пошкодження й витрата пального (гіпотеза, settings.ts). */
+  get arcade(): boolean {
+    return !!this.opts.settings?.arcade;
+  }
+
   /** Покращення кар'єри (restable.sch) — множники моменту, гальм, зчеплення, бака (гіпотези, див. upgrades.ts). */
   get tuning(): Tuning {
     return tuning(this.opts.career?.upgrades);
@@ -425,9 +438,9 @@ export class Ht2Drive {
 
   /** Пора доби (світло й туман з WEATHER.INI) і фари. */
   private updateDayTime(dt: number): void {
-    const t = this.careerMode ? this.careerMode.career.time : (this.freeTime += dt * TIME_SCALE);
+    const t = this.careerMode ? this.careerMode.career.time : (this.freeTime += dt * this.timeScale);
     const p = dayTime(t);
-    if (!this.race) this.weather.update(dt * TIME_SCALE);
+    if (!this.race) this.weather.update(dt * this.timeScale);
     const sky = this.weather.bad ? 'bad' : 'good';
     if (sky !== this.sky) {
       this.sky = sky;

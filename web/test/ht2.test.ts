@@ -22,6 +22,8 @@ import { findStores, orderPay, parseGoods, parseServices, parseTowns } from '../
 import { HT2_MOD_REGIONS } from '../src/games/ht2/files';
 import { install, parseUpgrades, tuning } from '../src/games/ht2/upgrades';
 import { parseMarkets } from '../src/games/ht2/market';
+import { defaultSettings, timeScale } from '../src/games/ht2/settings';
+import { parseIni } from '../src/formats/ini';
 
 const GAME = resolve(import.meta.dirname, '..', '..', 'Game', 'Hard Truck 2');
 const has = existsSync(join(GAME, 'king.exe'));
@@ -281,5 +283,13 @@ describe.skipIf(!has)('HT2: описи регіонів (ENV/mod_*.sch)', () => 
     expect(sto.get('sto_ac')?.has('PR_TIRES:2')).toBe(true);
     expect(sto.get('sto_ak')?.has('PR_TIRES:1')).toBe(false);
     expect(sto.get('sto_ak')?.has('PR_EXTRA_TANK:1')).toBe(true);
+  });
+});
+
+describe.skipIf(!has)('HT2: налаштування одиночної гри (TRUCK.INI)', () => {
+  it('повзунки з [EFFECTS]: trafs, days, weats, arcad', () => {
+    const s = defaultSettings(parseIni(decodeCp1251(read('TRUCK.INI'))));
+    expect(s).toEqual({ arcade: false, traffic: 1, dayLength: 0.5, weather: 0.6 });
+    expect(timeScale(s)).toBe(10);
   });
 });

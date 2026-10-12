@@ -67,6 +67,8 @@ export class Traffic {
     private readonly kinds: TrafficKind[],
     /** Чи завантажено регіон (машини — лише там, де є дорога й колізії). */
     private readonly loaded: (region: string) => boolean,
+    /** Найбільше машин довкола (повзунок «насиченість трас»). */
+    private readonly maxCars = MAX_CARS,
   ) {}
 
   /** Модель машини потрібного кольору (кешується; повертається копія). */
@@ -90,7 +92,7 @@ export class Traffic {
       if (c.pos.distanceTo(player) > DESPAWN || !this.loaded(c.line.region)) this.remove(i);
     }
     this.spawnTimer -= dt;
-    if (this.cars.length < MAX_CARS && this.spawnTimer <= 0 && this.kinds.length) {
+    if (this.cars.length < this.maxCars && this.spawnTimer <= 0 && this.kinds.length) {
       this.spawnTimer = 0.5;
       this.spawn(player);
     }

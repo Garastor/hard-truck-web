@@ -5,13 +5,16 @@ import { parseFon } from '../../formats/fon';
 import { PixelFont } from '../../ui/pixelFont';
 import type { GameId } from '../registry';
 import { HT2_FILES, ht2DevSource } from './files';
-import { Ht2MenuArt, ht2MenuScreen, type MenuItem } from './menu';
+import { Ht2MenuArt, ht2MenuScreen, ht2SingleScreen, type MenuItem } from './menu';
+import { loadSettings, saveSettings, type Ht2Settings } from './settings';
+import { parseIni } from '../../formats/ini';
+import { decodeCp1251 } from '../../formats/binary';
 import { WorldViewer } from './viewer';
 import { Ht2Drive } from './drive';
 import { formatMoney, loadCareer, newCareer, type Ht2Career } from './career';
 import { modal } from '../../ui/careerUi';
 
-type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'files' | 'exit';
+type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files' | 'exit';
 
 /**
  * Дальнобойщики 2 у порті: джерело файлів (пристрій або ПК), меню з LOAD.RES гри, режими. Свій цикл кадрів і сцена —
@@ -59,6 +62,9 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   const font = (name: string) => source.read(name).then((b) => new PixelFont(parseFon(b))).catch(() => null);
   const [large] = await Promise.all([font('LARGE.FON')]);
   const art = await Ht2MenuArt.load((n) => source.read(n));
+  // Налаштування одиночної гри: збережені в браузері, інакше — з TRUCK.INI гри.
+  const ini = await source.read('TRUCK.INI').then((b) => parseIni(decodeCp1251(b))).catch(() => null);
+  let settings: Ht2Settings = loadSettings(ini);
   ctx.setStatus(null);
 
   // Налагодження: ?game=ht2&tab=world — одразу огляд світу (&region=ab); &tab=drive — вільна їзда (&truck=Kamaz);
@@ -76,9 +82,8 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
         resolve(c);
       };
       const items: MenuItem[] = [];
-      if (saved) items.push({ label: 'Продовжити', action: pick('career') });
       items.push(
-        { label: 'Нова гра', action: pick('new') },
+        { label: art ? 'Одиночна гра' : 'Нова гра', action: pick(art ? 'single' : 'new') },
         { label: 'Вільна їзда', action: pick('drive') },
         { label: 'Гонка на Кільці', action: pick('race') },
         { label: 'Огляд світу', action: pick('world') },
@@ -90,6 +95,29 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
     }));
     direct = null;
     if (choice === 'exit') return ctx.exit?.();
+    if (choice === 'single' && art) {
+      // Екран одиночної гри оригіналу: нова гра / завантажити, режим, повзунки.
+      const next = await new Promise<Choice | null>((resolve) => {
+        const close = ht2SingleScreen(art, {
+          hasSave: !!saved,
+          saveText: saved ? `${saved.driver}
+${formatMoney(saved.money)}
+доставок: ${saved.delivered}` : '',
+          settings,
+          onNew: () => (close(), resolve('new')),
+          onLoad: () => (close(), resolve('career')),
+          onCancel: () => (close(), resolve(null)),
+          onChange: (s) => {
+            settings = s;
+            saveSettings(s);
+          },
+          note: (t, parent) => void modal(parent, 'Одиночна гра', t, ['Гаразд']),
+        });
+      });
+      if (!next) continue;
+      direct = next;
+      continue;
+    }
     if (choice === 'files') {
       await ctx.showImport(true);
       continue;
@@ -107,7 +135,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           ctx.setStatus(null);
           resolve();
         };
-        Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck'), trailer: params.get('trailer'), weather: params.get('weather'), career, race: choice === 'race' })
+        Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck'), trailer: params.get('trailer'), weather: params.get('weather'), career, race: choice === 'race', settings })
           .then((d) => {
             drive = d;
             Object.assign(window, { ht2: { drive } });
