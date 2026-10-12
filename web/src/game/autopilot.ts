@@ -77,6 +77,9 @@ export class AutoPilot {
   readonly state: ControlState = { steer: 0, throttle: 0, brake: 0, handbrake: false };
   /** Бажана крейсерська швидкість, км/год. */
   cruise = 60;
+  /** Сповільнення перед поворотом: підсилення за кривизною й найменша частка крейсерської (тягач з причепом — сильніше). */
+  bendGain = 2.2;
+  bendFloor = 0.3;
   private stuck = 0;
   private reversing = 0;
   /** Бічний зсув для обгону (м), плавно змінюється. */
@@ -139,7 +142,7 @@ export class AutoPilot {
     // Кривизна попереду → зниження швидкості.
     const toFar = far.clone().sub(pos).setY(0).normalize();
     const bend = 1 - Math.max(0, toFar.dot(forward));
-    const want = this.cruise * (1 - Math.min(0.7, bend * 2.2));
+    const want = this.cruise * (1 - Math.min(1 - this.bendFloor, bend * this.bendGain));
     s.throttle = speedKmh < want ? Math.min(1, (want - speedKmh) / 10 + 0.3) : 0;
     s.brake = speedKmh > want + 8 ? Math.min(1, (speedKmh - want) / 20) : 0;
     if (blockDist < 9 && speedKmh > 8) {

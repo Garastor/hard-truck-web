@@ -107,7 +107,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           ctx.setStatus(null);
           resolve();
         };
-        Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck'), career, race: choice === 'race' })
+        Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck'), trailer: params.get('trailer'), career, race: choice === 'race' })
           .then((d) => {
             drive = d;
             Object.assign(window, { ht2: { drive } });

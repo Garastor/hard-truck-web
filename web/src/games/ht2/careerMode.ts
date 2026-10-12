@@ -72,8 +72,7 @@ export class CareerMode {
 
   /** Обʼєм кузова (площа × висота, гіпотеза) і вантажопідйомність. */
   private capacity(): { mass: number; volume: number } {
-    const t = this.drive.truck.def.tech;
-    return { mass: t.cargoLoad, volume: Math.max(1, t.bodySquare * t.bodyHeight) };
+    return this.drive.cargoSpace;
   }
 
   /** Крок: час, удари, пальне, табло; зупинка біля складу/СТО/заправки — вікно. */
@@ -146,11 +145,13 @@ export class CareerMode {
   /** Купівля вантажівки на складі: стара — в залік за половину ціни (гіпотеза). */
   private async buyTruck(store: Store): Promise<void> {
     const c = this.career;
-    // Лише вантажівки з кузовом (lorries): тягачам потрібен напівпричіп, а причепів у порту ще немає.
-    const list = this.drive.drivableTrucks().filter((r) => r.group === 'lorries' && r.carNode !== c.truck).sort((a, b) => a.price - b.price);
+    // Вантажівки з кузовом і тягачі (з напівпричепом STrailerM).
+    const list = this.drive.drivableTrucks().filter((r) => r.carNode !== c.truck && !/^Storm/i.test(r.carNode)).sort((a, b) => a.price - b.price);
     const current = this.drive.drivableTrucks().find((r) => r.carNode === c.truck);
     const tradeIn = Math.round((current?.price ?? 0) * 0.5);
-    const labels = list.map((r) => `${r.carNode} (${r.horsePower} к.с., ${Math.round(r.cargoLoad / 1000)} т): ${formatMoney(r.price - tradeIn)}`);
+    const trailer = this.drive.trucksData.records.find((r) => r.carNode === 'STrailerM');
+    const load = (r: (typeof list)[number]) => (r.group === 'tractors' ? `тягач, причіп ${Math.round((trailer?.cargoLoad ?? 0) / 1000)} т` : `${Math.round(r.cargoLoad / 1000)} т`);
+    const labels = list.map((r) => `${r.carNode} (${r.horsePower} к.с., ${load(r)}): ${formatMoney(r.price - tradeIn)}`);
     const i = await modal(
       this.drive.overlay,
       `Вантажівки — «${store.town}»`,

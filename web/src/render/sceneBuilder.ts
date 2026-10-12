@@ -456,8 +456,13 @@ export class SceneAssembler {
       // Нормалі (lit): з полігона, інакше з вершин; якщо їх немає хоч в одного полігона партії — рахуємо з геометрії.
       const nsrc = this.lit ? (p.normals ? 'poly' : vs.normals ? 'verts' : null) : null;
       if (this.lit && !nsrc) b.nrm = null;
+      // Біт 0x80 формату (лише в HT2: 145, 177, 179…) — смуга трикутників: вершини йдуть «зигзагом» (перевірено
+      // на всіх 4-кутниках TRUCKS.B3D і регіонів: з бітом — 1 і 3 по один бік діагоналі 0–2, без — по різні).
+      // Віяло на такій смузі лишало діагональні дірки (дах і задня стінка причепа). Без біта — віяло (HT1).
+      const strip = (p.format & 0x80) !== 0;
       for (let k = 1; k + 1 < idx.length; k++) {
-        for (const corner of [0, k, k + 1]) {
+        const corners = !strip ? [0, k, k + 1] : k % 2 ? [k - 1, k, k + 1] : [k, k - 1, k + 1];
+        for (const corner of corners) {
           const vi = idx[corner];
           b.pos.push(vs.positions[vi * 3], vs.positions[vi * 3 + 1], vs.positions[vi * 3 + 2]);
           if (p.uvs) b.uv.push(p.uvs[corner * 2], p.uvs[corner * 2 + 1]);

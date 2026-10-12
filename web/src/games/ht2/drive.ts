@@ -17,6 +17,7 @@ import { Traffic, trafficKinds } from './traffic';
 import { CareerMode } from './careerMode';
 import { Police } from './police';
 import { RaceMode } from './race';
+import { Trailer } from './trailer';
 import { NavMap } from '../../ui/navMap';
 import { Music } from './music';
 import { SceneAssembler } from '../../render/sceneBuilder';
@@ -38,6 +39,8 @@ export interface Ht2DriveOptions {
   onExit(): void;
   /** car_node вантажівки (Zil, ZilR, Kamaz…); без — з GAME.CNF. */
   truck?: string | null;
+  /** Напівпричіп для тягача (car_node запису `trailers`); типово — STrailerM. */
+  trailer?: string | null;
   /** Кар'єра (гроші, замовлення); без — вільна їзда. */
   career?: Ht2Career | null;
   /** Гонка на Кільці (регіон dr) з суперниками. */
@@ -51,6 +54,8 @@ export class Ht2Drive {
   readonly camera = new THREE.PerspectiveCamera(FOV, 1, 0.5, 4000);
   private rapier!: RAPIER.World;
   truck!: TruckVehicle;
+  /** Напівпричіп (лише в тягачів). */
+  trailer: Trailer | null = null;
   private def!: TruckDef;
   private readonly input = new Input();
   private audio: EngineAudio | null = null;
@@ -153,11 +158,18 @@ export class Ht2Drive {
     if (saved) await this.world.ready(saved[0], saved[1]);
     if (saved) this.rapier.step();
     const spawn = this.spawnAt(saved ?? start);
+    if (!saved && rec.group === 'tractors' && !o.race && o.trailer !== 'none') {
+      // Старт бази (GAME.CNF) — упритул до будівлі позаду: причіп (до 14 м) зʼявлявся б у ній. Тягач — на 10 м
+      // далі дорогою.
+      const ahead = spawn.position.clone().addScaledVector(spawn.forward, 10);
+      spawn.position.copy(this.groundAt(ahead.setY(ahead.y - 2.5)));
+    }
     const model = buildTruckModel(this.trucks.asm, def, false);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня`);
     this.cargoMass = o.career?.order ? o.career.order.goods.mass * o.career.order.units : 0;
-    this.truck = new TruckVehicle(this.rapier, def, model, spawn, { cargoMass: this.cargoMass });
+    this.truck = new TruckVehicle(this.rapier, def, model, spawn, { cargoMass: this.hitched ? 0 : this.cargoMass });
     this.world.scene.add(this.truck.visual);
+    this.hitch();
     this.mountLamps();
     this.safe = spawn;
     this.cockpit = g2t(def.tech.viewer);
@@ -183,7 +195,11 @@ export class Ht2Drive {
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);
     this.input.onCommand = (cmd) => {
       if (cmd === 'camera') this.camMode = NEXT_CAM[this.camMode];
-      if (cmd === 'autopilot') this.autopilot = this.autopilot ? null : new AutoPilot(this.roads);
+      if (cmd === 'autopilot') {
+        this.autopilot = this.autopilot ? null : new AutoPilot(this.roads);
+        // З напівпричепом — повільніше в поворотах (кермо на швидкості обмежене).
+        if (this.autopilot && this.trailer) Object.assign(this.autopilot, { cruise: 45, bendGain: 5, bendFloor: 0.25 });
+      }
       if (cmd === 'map' && this.map) this.map.el.hidden = !this.map.el.hidden;
       if (cmd === 'lights') this.lightsManual = !this.lamps[0]?.visible;
       if (cmd === 'reset') this.recover();
@@ -278,15 +294,60 @@ export class Ht2Drive {
   /** Новий вантаж у кузові: машину перебудовуємо на тому ж місці (маса й центр мас — при створенні). */
   setCargo(mass: number): void {
     this.cargoMass = mass;
-    const position = this.truck.visual.position.clone().add(new THREE.Vector3(0, 0.3, 0));
+    // Від фізичного тіла (модель синхронізується лише в кадрі).
+    const t = this.truck.body.translation();
+    const position = new THREE.Vector3(t.x, t.y + 0.3, t.z);
     const forward = this.truck.forward();
     const model = buildTruckModel(this.trucks.asm, this.def, false);
     if (!model) return;
     this.world.scene.remove(this.truck.visual);
     this.truck.dispose();
-    this.truck = new TruckVehicle(this.rapier, this.def, model, { position, forward }, { cargoMass: mass });
+    this.truck = new TruckVehicle(this.rapier, this.def, model, { position, forward }, { cargoMass: this.hitched ? 0 : mass });
     this.world.scene.add(this.truck.visual);
+    this.hitch();
     this.mountLamps();
+  }
+
+  /** Запис vehicle.tech поточної вантажівки. */
+  private get rec() {
+    return this.trucks.records.find((r) => r.carNode === this.def.carNode);
+  }
+
+  /** Тягач (vehicle.tech: група tractors) — вантаж везе напівпричіп. */
+  private get hitched(): boolean {
+    return this.rec?.group === 'tractors';
+  }
+
+  /**
+   * Напівпричіп тягача: STrailerM (кузов-модуль) або заданий; у «Шторма» — свій STrailerStorm. Вантаж — у
+   * причепі. Старий причіп прибираємо.
+   */
+  private hitch(): void {
+    if (this.trailer) {
+      this.world.scene.remove(this.trailer.visual);
+      this.trailer.dispose();
+      this.trailer = null;
+    }
+    const rec = this.rec;
+    // Гонка на Кільці — без причепів (як у суперників).
+    if (!rec || rec.group !== 'tractors' || this.opts.trailer === 'none' || this.opts.race) return;
+    const trailers = this.trucks.records.filter((r) => r.group === 'trailers');
+    const want = /^Storm/i.test(rec.carNode) ? 'STrailerStorm' : this.opts.trailer || 'STrailerM';
+    const tr = trailers.find((r) => r.carNode.toLowerCase() === want.toLowerCase()) ?? trailers[0];
+    const def = tr && truckDef(this.trucks, tr);
+    if (!tr || !def) return;
+    this.trailer = new Trailer(this.rapier, this.trucks.asm, def, tr, { body: this.truck.body, saddle: rec.lowSaddle }, this.cargoMass);
+    this.world.scene.add(this.trailer.visual);
+    this.truck.towing = true;
+    const trailerBody = this.trailer.body.handle;
+    this.truck.rayFilter = (c) => c.parent()?.handle !== trailerBody;
+    this.truck.setTowLoad(this.trailer.kingpinLoad);
+  }
+
+  /** Вантажопідйомність і обʼєм (площа × висота, гіпотеза): кузова вантажівки або напівпричепа. */
+  get cargoSpace(): { mass: number; volume: number } {
+    const t = this.trailer?.rec ?? this.def.tech;
+    return { mass: t.cargoLoad, volume: Math.max(1, t.bodySquare * t.bodyHeight) };
   }
 
   /**
@@ -359,6 +420,7 @@ export class Ht2Drive {
   /** Відновитися: на останню надійну точку дороги. */
   recover(): void {
     if (this.safe) this.truck.reset({ position: this.safe.position.clone(), forward: this.safe.forward.clone() });
+    this.trailer?.reset();
   }
 
   private resize(): void {
@@ -458,17 +520,19 @@ export class Ht2Drive {
     const tp = this.truck.body.translation();
     let state = this.autopilot ? this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt, this.traffic?.cars.map((c) => c.pos)) : manual;
     if (this.race?.holding) state = { ...state, throttle: 0, brake: 1 };
-    this.traffic?.update(dt, this.truck.visual.position);
+    this.traffic?.update(dt, this.truck.visual.position, this.trailer?.points());
     this.acc += dt;
     const step = this.rapier.timestep;
     while (this.acc >= step) {
       this.truck.update(step, state);
+      this.trailer?.update(step, this.truck.brakePedal(state), this.def.tech.brakePower);
       this.race?.control(step);
       this.rapier.step();
       this.acc -= step;
     }
     this.race?.after(dt);
     this.truck.syncVisual();
+    this.trailer?.syncVisual();
     this.audio?.update(this.truck.rpm, state.throttle, this.truck.engineOn);
     this.trackSafe(dt);
     this.updateDayTime(dt);
@@ -555,8 +619,10 @@ export class Ht2Drive {
       this.camera.near = 1;
       this.camera.updateProjectionMatrix();
     }
-    const dist = this.camMode === 'far' ? 28 : 13;
-    const height = this.camMode === 'far' ? 12 : 5;
+    // З напівпричепом — далі й вище: причіп (13 м) інакше закриває дорогу.
+    const tow = this.trailer ? 1.7 : 1;
+    const dist = (this.camMode === 'far' ? 28 : 13) * tow;
+    const height = (this.camMode === 'far' ? 12 : 5) * tow;
     const flat = fwd.clone().setY(0).normalize();
     const want = v.position.clone().addScaledVector(flat, -dist).addScaledVector(up, height);
     this.camPos.lerp(want, 1 - Math.exp(-dt * 4));
@@ -581,6 +647,7 @@ export class Ht2Drive {
     this.traffic?.dispose();
     this.police?.dispose();
     this.race?.dispose();
+    this.trailer?.dispose();
     this.truck?.dispose();
     this.world.dispose();
     this.trucks.asm.dispose();

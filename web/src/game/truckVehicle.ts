@@ -26,6 +26,8 @@ const ACKERMANN = 0.208;
  * показував ширше коло — великий крок часу спотворював, тож на нього не орієнтуємось.)
  */
 const TIRE_GRIP = 0.84;
+/** Спад керма зі швидкістю (с/м) для тягача з напівпричепом. */
+const TOW_STEER_B = 0.12;
 const TIRE_GRIP_BRAKING = 1.0;
 /**
  * Параметри бічних сил шин (підібрані під телеметрію s9: кермо до упору на 8,5 м/с — ≈ 51°/с;
@@ -142,6 +144,26 @@ export class TruckVehicle {
   readonly suspension = SUSPENSION;
   /** Поправки roll_lift за вантажівкою — для підбору в консолі. */
   readonly rollLiftByTruck = ROLL_LIFT_BY_TRUCK;
+  /** Тягне напівпричіп (Дальнобойщики 2): бічні сили коліс обмежуються навантаженням, а не масою тягача. */
+  towing = false;
+  /**
+   * Фільтр променів коліс: напівпричіп нависає над задньою віссю, і в цистерни дно нижче за кріплення коліс — без
+   * фільтра тягач «ставав» колесами на власний причіп і перекидався.
+   */
+  rayFilter: ((c: RAPIER.Collider) => boolean) | undefined = undefined;
+
+  /**
+   * Навантаження на сідло, Н (напівпричіп): задня підвіска тягача (колеса з 2-го) жорсткішає пропорційно — у Rapier
+   * сила пружини масштабується масою шасі, і вага причепа інакше стискала її до упору. Частка задніх коліс у вазі
+   * тягача — половина (гіпотеза).
+   */
+  setTowLoad(newtons: number): void {
+    const f = 1 + newtons / (this.mass * 9.81 * 0.5);
+    for (let i = 2; i < this.wheels; i++) {
+      this.ctrl.setWheelSuspensionStiffness(i, SUSPENSION.stiffness * f);
+      this.ctrl.setWheelMaxSuspensionForce(i, this.mass * 40 * f);
+    }
+  }
 
   private readonly wheelRadius: number;
   /** Кількість коліс (HT1 — 4, HT2 — 4 або 6); керовані — перші два, «передні» гальма — теж. */
@@ -154,6 +176,10 @@ export class TruckVehicle {
   private steerAngle = 0;
   /** Задній хід: гравець утримує гальмо на місці (тоді «гальмо» — це газ назад). */
   private reverseMode = false;
+  /** Педаль гальма з урахуванням заднього ходу (на R «гальмо» везе назад, а гальмує «газ»). */
+  brakePedal(input: ControlState): number {
+    return this.reverseMode ? input.throttle : input.brake;
+  }
   /** Скільки утримується гальмо на місці (для вмикання задньої). */
   private reverseHold = 0;
   private brakeTime = 0;
@@ -333,7 +359,10 @@ export class TruckVehicle {
 
     // Кермо як в оригіналі (s6): межа залежить від швидкості 1,04/(1 + 0,056·v) ≤ 0,913,
     // кут колеса = 0,684 × кермо; внутрішнє колесо повертається більше (Аккерман, cot o − cot i = 0,208).
-    const limit = Math.min(STEER_MAX, STEER_A / (1 + STEER_B * Math.abs(v)));
+    // З напівпричепом кермо на швидкості ще менше (гіпотеза порту): інакше повне кермо на 25 км/год дає радіус,
+    // менший за базу причепа, і зчіпка складається.
+    const tow = this.towing ? 1 / (1 + TOW_STEER_B * Math.abs(v)) : 1;
+    const limit = Math.min(STEER_MAX, STEER_A / (1 + STEER_B * Math.abs(v))) * tow;
     this.steerAngle = -input.steer * limit * STEER_TO_WHEEL;
     const inner = Math.abs(this.steerAngle);
     const outer = inner > 1e-4 ? Math.atan(1 / (1 / Math.tan(inner) + ACKERMANN)) : 0;
@@ -394,7 +423,7 @@ export class TruckVehicle {
       } else this.ctrl.setWheelEngineForce(i, -engine);
       this.ctrl.setWheelBrake(i, force * dt);
     }
-    this.ctrl.updateVehicle(dt);
+    this.ctrl.updateVehicle(dt, undefined, undefined, this.rayFilter);
     this.applyBumpStops(dt);
     this.applyTireLateral(dt);
   }
@@ -438,6 +467,8 @@ export class TruckVehicle {
     for (let i = 0; i < this.wheels; i++) {
       if (!this.ctrl.wheelIsInContact(i)) continue;
       const load = this.ctrl.wheelSuspensionForce(i) ?? 0;
+      // Тягач з напівпричепом: колеса під сідлом тримають і частину причепа — межа кроку за навантаженням.
+      const stepMass = this.towing ? Math.max(wheelMass, load / 9.81) : wheelMass;
       const p = this.ctrl.wheelContactPoint(i);
       if (load <= 0 || !p) continue;
       const fwd = chassisFwd.clone().applyAxisAngle(up, this.ctrl.wheelSteering(i) ?? 0);
@@ -451,13 +482,13 @@ export class TruckVehicle {
       // Бічна сила (перпендикулярно колесу): росте з кутом проковзування до межі, у заносі — TIRE.slide.
       let force = mu * TIRE.mu * this.grip * this.surfaceGrip * this.weatherGrip * load;
       // Не «перестрибувати» нуль бокової швидкості за один крок (стійкість на малій швидкості).
-      force = Math.min(force, (wheelMass * Math.abs(vLat)) / dt);
+      force = Math.min(force, (stepMass * Math.abs(vLat)) / dt);
       const impulse = right.multiplyScalar(-Math.sign(vLat) * force * dt);
       if (x > 1) {
         // Занос: колесо ще й гальмує вздовж руху — тим сильніше, чим глибший занос; вантажівка
         // втрачає швидкість, доки шина знову не зачепиться (тоді — різкий доворот).
         const drag = Math.min(TIRE.slide_drag_max, TIRE.slide_drag * (x - 1)) * TIRE.mu * this.grip * this.surfaceGrip * this.weatherGrip * load;
-        const limited = Math.min(drag, (wheelMass * Math.abs(vLong)) / dt);
+        const limited = Math.min(drag, (stepMass * Math.abs(vLong)) / dt);
         impulse.addScaledVector(fwd, -Math.sign(vLong) * limited * dt);
       }
       // Точку прикладання піднімаємо до висоти центру мас на частку TIRE.roll_lift: перекидальний момент трохи

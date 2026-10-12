@@ -79,7 +79,9 @@ export function truckDef(t: Ht2Trucks, r: TechRecord): TruckDef | null {
       horsePower: r.horsePower,
       price: r.price,
       frictionCoeff: 1.4,
-      centerMass: r.centerMass,
+      // CenterMassInB3D у vehicle.tech — у системі моделі (x, уперед, угору): у причепа STrailerM (0; −3,22; −0,5)
+      // друге число — середня вісь. TruckVehicle чекає (x, висота, уперед), як у TCH першої гри.
+      centerMass: [r.centerMass[0], r.centerMass[2], r.centerMass[1]],
       cargoBottom: r.cargoBottom,
       bodyHeight: r.bodyHeight,
       bodySquare: r.bodySquare,

@@ -83,7 +83,8 @@ export class Traffic {
     return tpl.clone();
   }
 
-  update(dt: number, player: THREE.Vector3): void {
+  /** player — гравець; extra — інші точки, яких машини не мають наїхати (напівпричіп гравця). */
+  update(dt: number, player: THREE.Vector3, extra: readonly THREE.Vector3[] = []): void {
     for (let i = this.cars.length - 1; i >= 0; i--) {
       const c = this.cars[i];
       if (c.pos.distanceTo(player) > DESPAWN || !this.loaded(c.line.region)) this.remove(i);
@@ -93,7 +94,8 @@ export class Traffic {
       this.spawnTimer = 0.5;
       this.spawn(player);
     }
-    for (const c of this.cars) this.drive(c, dt, player);
+    const avoid = [player, ...extra];
+    for (const c of this.cars) this.drive(c, dt, avoid);
   }
 
   private spawn(player: THREE.Vector3): void {
@@ -143,22 +145,27 @@ export class Traffic {
   }
 
   /** Рух смугою: дистанція до машин попереду (і гравця) — пригальмувати; кінець лінії — наступна лінія. */
-  private drive(c: Car, dt: number, player: THREE.Vector3): void {
+  private drive(c: Car, dt: number, avoid: readonly THREE.Vector3[]): void {
     const a = c.line.pts[c.seg];
     const b = c.line.pts[c.seg + 1];
     const dir = b.clone().sub(a);
     const len = dir.length() || 1;
     dir.divideScalar(len);
     let ahead = Infinity;
-    for (const o of [...this.cars.map((x) => x.pos), player]) {
+    let blocked = false;
+    for (const o of [...this.cars.map((x) => x.pos), ...avoid]) {
       if (o === c.pos) continue;
       const rel = o.clone().sub(c.pos);
       const along = rel.dot(dir);
       const side = rel.clone().addScaledVector(dir, -along).length();
       if (along > 0 && side < 3 && along < ahead) ahead = along;
+      // Гравець (тягач чи причіп) упритул спереду — стоп одразу: кінематична машина інакше штовхає його з
+      // «нескінченною» масою (на перехресті вантажівка з причепом виїжджає збоку, гальмувати пізно).
+      if (avoid.includes(o) && along > 0 && along < c.halfLen + 5 && side < 2.5) blocked = true;
     }
     const want = ahead < GAP ? 0 : ahead < GAP * 3 ? c.cruise * ((ahead - GAP) / (GAP * 2)) : c.cruise;
     c.speed += THREE.MathUtils.clamp(want - c.speed, -8 * dt, 3 * dt);
+    if (blocked) c.speed = 0;
     let move = c.speed * dt;
     while (move > 0) {
       const p0 = c.line.pts[c.seg];

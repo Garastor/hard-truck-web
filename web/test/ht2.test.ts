@@ -8,7 +8,7 @@ import { parseRmp, parseMaterial } from '../src/formats/rmp';
 import { parsePlm } from '../src/formats/plm';
 import { parseTxr } from '../src/formats/txr';
 import { parseMsk } from '../src/formats/msk';
-import { parseB3d, walk } from '../src/formats/b3d';
+import { parseB3d, walk, type Block } from '../src/formats/b3d';
 import { isSdte } from '../src/formats/sdte';
 import { assoc, isList, num, readSch, str } from '../src/formats/sexpr';
 import { parseWay } from '../src/formats/way';
@@ -47,6 +47,36 @@ describe.skipIf(!has)('HT2: B3D', () => {
     }
     expect(verts).toBeGreaterThan(0);
     expect(polys).toBeGreaterThan(0);
+  });
+});
+
+describe.skipIf(!has)('HT2: порядок вершин полігонів', () => {
+  // Біт 0x80 формату — смуга трикутників («зигзаг»: вершини 1 і 3 по один бік діагоналі 0–2), без нього — опуклий
+  // багатокутник по колу (віяло). На цьому тримається триангуляція в SceneAssembler.addPolys.
+  it('TRUCKS.B3D: 4-кутники з 0x80 — зигзаг, без — по колу', () => {
+    const b = parseB3d(read('COMMON/TRUCKS.B3D'));
+    const count = { strip: [0, 0], plain: [0, 0] };
+    const visit = (blk: Block, pos: Float32Array | number[] | null) => {
+      const d = blk.data;
+      const cur = d.t === 7 || d.t === 6 || d.t === 37 || d.t === 36 ? d.positions : pos;
+      if ((d.t === 8 || d.t === 35) && cur)
+        for (const p of d.polys) {
+          if (p.indices.length !== 4) continue;
+          const P = p.indices.map((i) => [cur[i * 3], cur[i * 3 + 1], cur[i * 3 + 2]]);
+          const sub = (u: number[], v: number[]) => [u[0] - v[0], u[1] - v[1], u[2] - v[2]];
+          const cross = (u: number[], v: number[]) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+          const diag = sub(P[2], P[0]);
+          const s1 = cross(diag, sub(P[1], P[0]));
+          const s3 = cross(diag, sub(P[3], P[0]));
+          const zigzag = s1[0] * s3[0] + s1[1] * s3[1] + s1[2] * s3[2] > 0;
+          count[p.format & 0x80 ? 'strip' : 'plain'][zigzag ? 0 : 1]++;
+        }
+      for (const g of blk.groups ?? []) for (const c of g) visit(c, cur);
+    };
+    for (const blk of b.blocks) visit(blk, null);
+    // Зигзаг серед 0x80 — переважна більшість (решта — вироджені/неплоскі), серед інших — жодного.
+    expect(count.strip[0]).toBeGreaterThan(count.strip[1] * 10);
+    expect(count.plain[0]).toBe(0);
   });
 });
 
