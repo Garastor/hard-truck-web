@@ -8,6 +8,7 @@ import { SceneAssembler, buildScene, type BuiltScene } from '../../render/sceneB
 import { HT2_REGIONS, regionFiles, type TexLevel } from './files';
 import { Weather, type DayTime, type Sky } from './weather';
 import { buildTrees } from './trees';
+import { mergeStatic } from '../../render/mergeStatic';
 
 /**
  * Відкритий світ Дальнобойщиків 2 (G3): 39 регіонів `ENV/<код>` у спільній системі координат гри. Межі регіону —
@@ -54,6 +55,9 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
   const rmp = parseRmp(res);
   const palette = common?.lib.palette ?? null;
   const built = buildScene(scene, rmp, { lit: true, colorKey: true, nearGroup: 0, fallback: common ?? undefined, palette: palette ?? undefined });
+  // Нерухома геометрія регіону — одна сітка на матеріал у клітинці (було ≈ 500 мешів на регіон).
+  const merged = mergeStatic(built.root);
+  built.stats.meshes = merged.after;
   const trees = buildTrees(scene, rmp, palette);
   built.root.add(trees);
   const dispose = built.dispose;
