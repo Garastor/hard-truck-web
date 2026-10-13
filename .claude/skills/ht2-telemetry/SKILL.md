@@ -22,7 +22,9 @@ description: Записати й розібрати телеметрію ори�
    .venv/Scripts/python -I tools/re/ht2/record.py re/telemetry/ht2/drive 10 > re/telemetry/ht2/drive_log.txt 2>&1
    ```
    Лог: `машина @0x…, пишу …csv`, кожні 30 с — швидкість/передача/оберти/паливо.
-2. Розбір CSV (стовпці `t,x,y,z,kmh,v,steer,rpm,gear,gas,fuel,odo,n0,unk_b8,fx,fy,fz,raw90`) — коротким
+2. Розбір: `.venv/Scripts/python -I tools/re/ht2/analyze.py <csv> [--skip 39-52]` — таблиці прискорень, вибігу,
+   гальмування, поворотів; узбіччя/асфальт — відстань від ліній WAY у порту (`window.ht2.drive.roads.lines`).
+   Свої питання — CSV (стовпці `t,x,y,z,kmh,v,steer,rpm,gear,gas,fuel,odo,n0,unk_b8,fx,fy,fz,raw90`) — коротким
    Python-скриптом у scratchpad: відрізки (розгін, перемикання — `gear` = 1 на кадр і `unk_b8` = 20 + ціль,
    кермо до упору — Ctrl), швидкості зміни, витрата палива.
 3. Якщо мітка не знаходить машину (інша версія гри, інший клас) — `stopgo.py` (користувач: стоїть → розгін →
