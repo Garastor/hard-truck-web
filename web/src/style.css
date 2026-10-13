@@ -259,7 +259,8 @@ body.bar-open #fps {
   .touch-btn.left,
   .touch-btn.right,
   .touch-btn.brake,
-  .touch-btn.gas {
+  .touch-btn.gas,
+  .touch-btn.sharp {
     display: none;
   }
 }
@@ -319,6 +320,14 @@ body.bar-open #fps {
 
 .touch-btn.brake {
   right: calc(var(--sr) + 92px * var(--ui, 1));
+}
+
+/* «Різко» (Дальнобойщики 2, Ctrl): смуга над педалями (ліворуч над кермом — мінікарта), перемикач. */
+.touch-btn.sharp {
+  right: var(--sr);
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 92px * var(--ui, 1));
+  width: calc(172px * var(--ui, 1));
+  height: calc(36px * var(--ui, 1));
 }
 
 /* Угорі праворуч: вид, відновитися, сигнал, група «ще». */

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { HT2_ENGINE, HT2_ROLL_LIFT } from './controls';
 import { AutoPilot, type WayLine } from '../../game/autopilot';
 import { TruckVehicle } from '../../game/truckVehicle';
 import { buildTruckModel } from '../../game/trucks';
@@ -181,7 +182,7 @@ export class RaceMode {
       const def = rec && truckDef(drive.trucksData, rec);
       const model = def && buildTruckModel(drive.trucksData.asm, def, false);
       if (!p || !def || !model) continue;
-      const truck = new TruckVehicle(drive.rapierWorld, def, model, { position: drive.groundAtPublic(p), forward: dir });
+      const truck = new TruckVehicle(drive.rapierWorld, def, model, { position: drive.groundAtPublic(p), forward: dir }, { engine: HT2_ENGINE, rollLift: HT2_ROLL_LIFT });
       drive.world.scene.add(truck.visual);
       const pilot = new AutoPilot(this.route);
       pilot.cruise = 75 + (k % 4) * 6;

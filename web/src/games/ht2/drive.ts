@@ -1,4 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
+import { HT2_ENGINE, HT2_INPUT, HT2_ROLL_LIFT } from './controls';
 import * as THREE from 'three';
 import type { FileSource } from '../../assets/loader';
 import { EngineAudio } from '../../audio/engineAudio';
@@ -42,6 +43,9 @@ import { parseRmp } from '../../formats/rmp';
 import { dayTime, type Ht2Career } from './career';
 import { badWeather, timeScale, type Ht2Settings } from './settings';
 
+/** Опір кочення поза асфальтом, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
+const OFFROAD_ROLL = 5;
+
 /**
  * Їзда у світі Дальнобойщиків 2 (G4): вантажівка з vehicle.tech і TRUCKS.B3D на тій самій фізиці, що й у першій
  * грі (TruckVehicle: Rapier + двигун/коробка з HTruck.exe — гіпотеза, що в HT2 вони ті самі), колізії — з `hit_*`
@@ -78,7 +82,8 @@ export class Ht2Drive {
   /** Напівпричіп (лише в тягачів). */
   trailer: Trailer | null = null;
   private def!: TruckDef;
-  private readonly input = new Input();
+  /** Керування й двигун — криві Дальнобойщиків 2 (телеметрія king.exe, controls.ts). */
+  private readonly input = new Input(HT2_INPUT);
   private audio: EngineAudio | null = null;
   private camMode: CamMode = 'chase';
   private readonly camPos = new THREE.Vector3();
@@ -437,7 +442,7 @@ export class Ht2Drive {
   /** Параметри фізики вантажівки: вантаж (у тягача — у причепі), покращення. */
   private setup(cargo: number) {
     const t = this.tuning;
-    return { cargoMass: this.hitched ? 0 : cargo, torque: t.torque, grip: t.grip };
+    return { cargoMass: this.hitched ? 0 : cargo, torque: t.torque, grip: t.grip, engine: HT2_ENGINE, rollLift: HT2_ROLL_LIFT, surfaceEffects: !this.arcade };
   }
 
   /** Запис vehicle.tech поточної вантажівки. */
@@ -702,9 +707,32 @@ export class Ht2Drive {
     rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle(this.truck.rpm / 60, this.def.tachScale));
   }
 
+  /**
+   * Покриття під машиною: поза асфальтом (далі від осі дороги WAY, ніж половина її ширини) — опір кочення ×5 (у порту: −0,53…0,66 м/с² на 4-й–5-й, як виміряно).
+   * Телеметрія king.exe (симулятор, ZilR): на узбіччі прискорення на 4-й/5-й передачі на ≈ 0,6 м/с² менше, ніж на
+   * асфальті (≈ +0,06 g опору). Зчеплення поза дорогою — як на асфальті (не виміряно, гіпотеза).
+   */
+  private updateSurface(): void {
+    const p = this.truck.visual.position;
+    const n = this.roads?.nearest(p);
+    if (!n) return;
+    const a = n.line.pts[n.seg];
+    const b = n.line.pts[n.seg + 1];
+    // Лінії руху зсунуті на w/4 від осі: на дорозі, якщо до найближчої лінії ≤ w/4 (по горизонталі).
+    const qx = a.x + (b.x - a.x) * n.t - p.x;
+    const qz = a.z + (b.z - a.z) * n.t - p.z;
+    const off = Math.hypot(qx, qz) > n.line.width / 4 + 0.5;
+    this.offRoad = off;
+    this.truck.setSurface(1, off ? OFFROAD_ROLL : 1);
+  }
+
+  /** Машина поза дорогою (для тестів). */
+  offRoad = false;
+
   /** Крок гри (також для тестів — без requestAnimationFrame). */
   update(dt: number): void {
     if (this.paused) return;
+    this.input.speedKmh = this.truck.speedKmh;
     const manual = this.input.update(dt);
     const tp = this.truck.body.translation();
     const rivals = this.truckers?.positions ?? [];
@@ -712,6 +740,7 @@ export class Ht2Drive {
     if (this.race?.holding) state = { ...state, throttle: 0, brake: 1 };
     this.traffic?.update(dt, this.truck.visual.position, [...(this.trailer?.points() ?? []), ...rivals]);
     const obstacles = [this.truck.visual.position, ...(this.trailer?.points() ?? []), ...(this.traffic?.cars.map((c) => c.pos) ?? [])];
+    this.updateSurface();
     this.acc += dt;
     const step = this.rapier.timestep;
     while (this.acc >= step) {

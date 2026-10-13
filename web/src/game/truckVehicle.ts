@@ -4,7 +4,7 @@ import type { LightGeometry } from '../render/truckLights';
 import { GROUP_BUMPER, GROUP_MOVABLE, g2t, groups } from '../physics/world';
 import type { ControlState } from '../input/input';
 import { visibleBox, type TruckDef, type TruckModel } from './trucks';
-import { Engine, GEAR_R } from './engine';
+import { Engine, GEAR_R, type EngineProfile } from './engine';
 
 /**
  * Вантажівка на DynamicRayCastVehicleController (Rapier).
@@ -119,6 +119,10 @@ export interface TruckSetup {
   seatRaise?: number;
   /** Покриття дороги впливає на зчеплення й опір (симулятор; в аркаді — ні). */
   surfaceEffects?: boolean;
+  /** Відмінності двигуна й коробки гри (Дальнобойщики 2). */
+  engine?: EngineProfile;
+  /** Висота прикладання бічної сили шин (частка висоти центру мас, див. TIRE.roll_lift) — замість налаштувань першої гри. */
+  rollLift?: number;
 }
 
 /** Тінь над дорогою, м — щоб не мерехтіла з дорогою (гіпотеза порту). */
@@ -194,6 +198,7 @@ export class TruckVehicle {
   private surfaceGrip = 1;
   private surfaceRoll = 1;
   private readonly surfaceEffects: boolean;
+  private readonly rollLift: number | undefined;
   /** Тестовий режим: дощ (у кар'єрі він уже в setup.grip). */
   weatherGrip = 1;
   setSurface(grip: number, roll: number): void {
@@ -218,6 +223,7 @@ export class TruckVehicle {
   ) {
     const tech = def.tech;
     this.grip = setup.grip ?? 1;
+    this.rollLift = setup.rollLift;
     this.tractionControl = setup.tractionControl ?? false;
     this.surfaceEffects = setup.surfaceEffects ?? true;
     this.wheelRadius = tech.wheelRadius;
@@ -230,7 +236,7 @@ export class TruckVehicle {
       reverse: tech.reverseCoeff,
       gears: tech.gears,
       wheelRadius: tech.wheelRadius,
-    });
+    }, setup.engine);
 
     // Модель у системі гри → обгортка, що повертає її у систему Three.js.
     const gameFrame = new THREE.Group();
@@ -383,7 +389,7 @@ export class TruckVehicle {
     const brake = this.reverseMode ? input.throttle : input.brake;
 
     const eng = this.engine;
-    eng.update(dt, gas, brake, v, this.reverseMode);
+    eng.update(dt, gas, brake, v, this.reverseMode, !!input.sharp);
     this.rpm = this.engineOn ? eng.rpm : Math.max(0, this.rpm - 3000 * dt);
     this.gear = eng.displayGear === GEAR_R ? -1 : eng.displayGear - 1;
 
@@ -495,7 +501,7 @@ export class TruckVehicle {
       // менший за фізичний (як rollInfluence у Bullet) — бічне тертя 1,15 інакше перекидало б у кожному повороті.
       const com = this.body.worldCom();
       const h = (com.x - p.x) * up.x + (com.y - p.y) * up.y + (com.z - p.z) * up.z;
-      const lift = ROLL_LIFT_BY_TRUCK[this.def.prefix.toLowerCase()] ?? TIRE.roll_lift;
+      const lift = this.rollLift ?? ROLL_LIFT_BY_TRUCK[this.def.prefix.toLowerCase()] ?? TIRE.roll_lift;
       const at = { x: p.x + up.x * h * lift, y: p.y + up.y * h * lift, z: p.z + up.z * h * lift };
       this.body.applyImpulseAtPoint(impulse, at, true);
     }

@@ -1,0 +1,49 @@
+/**
+ * Профіль керування Дальнобойщиків 2 (games/ht2/controls.ts) проти телеметрії king.exe (ZilR, 2026-10-13,
+ * re/notes/ht2-telemetry.md): газ від часу утримання, перемикання автомата за обертами, холості.
+ */
+import { describe, expect, it } from 'vitest';
+import { Engine, GEAR_N } from '../src/game/engine';
+import { HT2_ENGINE } from '../src/games/ht2/controls';
+
+// ZilR з vehicle.tech: tach_with_max_power 26,67 об/с, головна 5,29, колесо 0,533.
+const zilr = () =>
+  new Engine({ maxTorque: 950, tachMaxPower: 1600, rearAxle: 5.29, reverse: -4, gears: [7.44, 4.1, 2.29, 1.47, 1.0], wheelRadius: 0.533 }, HT2_ENGINE);
+
+describe('HT2: двигун і коробка ZilR', () => {
+  it('холості 4,0 об/с, газ за часом утримання — як у записі', () => {
+    const e = zilr();
+    expect(e.idle).toBeCloseTo(4.0, 2);
+    const gasAt = (t: number) => HT2_ENGINE.throttle!(t, false);
+    expect(gasAt(1)).toBeCloseTo(0.528, 3);
+    expect(gasAt(4)).toBeCloseTo(0.739, 3);
+    expect(HT2_ENGINE.throttle!(1, true)).toBeCloseTo(0.832, 3);
+    expect(gasAt(100)).toBeLessThan(0.83);
+  });
+
+  it('вгору на 16 / 29 / 50 / 77 км/год (± 2), вниз на 15,5 / 27,5 / 46,5 / 69,5 (± 3)', () => {
+    const e = zilr();
+    const dt = 1 / 60;
+    const ups: number[] = [];
+    let gear = GEAR_N;
+    // Швидкість росте 1,5 м/с² — як на розгоні ZilR; газ утримано.
+    for (let v = 0; v < 28; v += 1.5 * dt) {
+      e.update(dt, 1, 0, v);
+      if (!e.shifting && e.gear !== gear) {
+        if (e.gear > gear && gear >= 2) ups.push(v * 3.6);
+        gear = e.gear;
+      }
+    }
+    expect(ups.map((k) => Math.round(k))).toHaveLength(4);
+    [16, 29, 50, 77].forEach((k, i) => expect(Math.abs(ups[i] - k)).toBeLessThan(2.5));
+    const downs: number[] = [];
+    for (let v = 28; v > 1; v -= 1.5 * dt) {
+      e.update(dt, 0, 0, v);
+      if (!e.shifting && e.gear !== gear) {
+        if (e.gear < gear && e.gear >= 2) downs.push(v * 3.6);
+        gear = e.gear;
+      }
+    }
+    [69.5, 46.5, 27.5, 15.5].forEach((k, i) => expect(Math.abs(downs[i] - k)).toBeLessThan(3));
+  });
+});

@@ -23,7 +23,8 @@ HZ = float(sys.argv[2]) if len(sys.argv) > 2 else 10
 MARK = struct.pack("<I", 0x00531AA0)
 MARK_OFF = 0x8C
 SIZE = 0xC0
-COLS = "t,x,y,z,kmh,v,steer,rpm,gear,gas,fuel,odo,n0,unk_b8,fx,fy,fz,raw90"
+RAW = 0x200
+COLS = "t,x,y,z,kmh,v,steer,rpm,gear,gas,fuel,odo,n0,unk_b8,fx,fy,fz,raw90," + ",".join(f"m{i}" for i in range(12))
 
 
 def say(msg):
@@ -74,7 +75,9 @@ def read_state(p, P):
     fx, fy, fz = struct.unpack_from("<3f", d, 0)
     # +0x90 буває і float (−0,6…1 на ходу), і цілим (3 на стоянці) — пишемо ще й сирим цілим.
     raw90 = struct.unpack_from("<i", d, o + 0x90)[0]
-    return x, y, z, v * 3.6, v, steer, rpm, gear, gas, fuel, odo, n0, unk, fx, fy, fz, raw90
+    # 12 float від P−0xb0 (рядки матриці орієнтації кузова — гіпотеза; для кренів і тангажу).
+    m = struct.unpack_from("<12f", d, 0)
+    return (x, y, z, v * 3.6, v, steer, rpm, gear, gas, fuel, odo, n0, unk, fx, fy, fz, raw90, *m)
 
 
 def main():
@@ -98,6 +101,7 @@ def main():
             p, car = None, None
             if out:
                 out.close()
+                raw.close()
                 out = None
             continue
         if car is None:
@@ -112,6 +116,8 @@ def main():
             name = f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}.csv"
             out = open(name, "w", encoding="utf-8")
             out.write(COLS + "\n")
+            # Поруч — сирий обʼєкт [P − RAW, P + RAW) кожного кадру (поля, яких ще не знаємо: гальмо, колеса…).
+            raw = open(name[:-4] + f"_raw_{car:08x}.bin", "wb")
             rows = 0
             t0 = t
             say(f"машина @0x{car:08x}, пишу {name}")
@@ -120,12 +126,15 @@ def main():
             say("обʼєкт машини зник — шукаю знову")
             car = None
             out.close()
+            raw.close()
             out = None
             continue
-        out.write(f"{t - t0:.2f}," + ",".join(f"{v:.4g}" if isinstance(v, float) else str(v) for v in s) + "\n")
+        raw.write((p.read(car - RAW, 2 * RAW) or b"").ljust(2 * RAW, b"\0"))
+        out.write(f"{t - t0:.2f}," + ",".join(f"{v:.7g}" if isinstance(v, float) else str(v) for v in s) + "\n")
         rows += 1
         if rows % int(HZ * 30) == 0:
             out.flush()
+            raw.flush()
             say(f"{rows} рядків; {s[3]:.0f} км/год, передача {s[7]}, оберти {s[6]:.1f}, паливо {s[9]:.3f}")
         time.sleep(max(0, 1 / HZ - (time.time() - t)))
 

@@ -9,9 +9,26 @@ export interface ControlState {
   throttle: number;
   brake: number;
   handbrake: boolean;
+  /** «Різко» (Ctrl у Дальнобойщиках 2): кермо до упору швидше й газ вище (див. InputProfile, engine.ts). */
+  sharp?: boolean;
 }
 
-type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake';
+/**
+ * Керування з клавіатури, що відрізняється від першої гри (Дальнобойщики 2 — телеметрія king.exe,
+ * re/notes/ht2-telemetry.md). Без профілю — як у першій грі.
+ */
+export interface InputProfile {
+  /** Час повороту керма від центру до упору, с, за швидкістю машини й режимом «різко». */
+  steerRamp: (kmh: number, sharp: boolean) => number;
+  /** Форма наростання: частка часу x → кермо x^steerPower. */
+  steerPower: number;
+  /** Повернення до нуля, 1/с (експоненційно). */
+  steerReturn: number;
+  /** Клавіша Ctrl і сенсорна кнопка «різко». */
+  sharp: boolean;
+}
+
+type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake' | 'sharp';
 /** Значок сигналу (ріжок, за зразком користувача) — однотонний контур, як решта кнопок. */
 const HORN_SVG =
   '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M2.5 8.6v4.6M2.5 10.9H5"/><path d="M5 9h7.5c3.2 0 6-1.6 8-4.3.6-.8 1.5-.4 1.5.5v13.4c0 .9-.9 1.3-1.5.5-2-2.4-3.5-3.6-5.6-4.2"/><path d="M5 12.9h1.4"/><path d="M6.4 12.9c0 2.4 1.2 3.8 3.4 3.8h3.4"/><rect x="8.6" y="12.6" width="6.4" height="2.9" rx="1.45"/></svg>';
@@ -105,6 +122,10 @@ function inverseSmoothstep(y: number): number {
 export class Input {
   readonly state: ControlState = { steer: 0, throttle: 0, brake: 0, handbrake: false };
   private readonly held = new Set<Action>();
+  /** Швидкість машини, км/год (для профілю: кермо на швидкості повертається повільніше). */
+  speedKmh = 0;
+  /** «Різко» з сенсорної кнопки — перемикач (утримувати разом з кермом одним пальцем незручно). */
+  private sharpLatched = false;
   private steerSmooth = 0;
   private steerHold = 0;
   private steerDir = 0;
@@ -124,7 +145,7 @@ export class Input {
   /** Одноразові події (перемкнути камеру, скинути вантажівку). */
   onCommand: ((cmd: Command) => void) | null = null;
 
-  constructor() {
+  constructor(private readonly profile: InputProfile | null = null) {
     window.addEventListener('keydown', this.onKey);
     window.addEventListener('keyup', this.onKey);
   }
@@ -157,7 +178,7 @@ export class Input {
   };
 
   private key(e: KeyboardEvent): void {
-    const a = Input.KEYS[e.code];
+    const a = Input.KEYS[e.code] ?? (this.profile?.sharp && (e.code === 'ControlLeft' || e.code === 'ControlRight') ? 'sharp' : undefined);
     if (a) {
       e.preventDefault();
       if (e.type === 'keydown') this.held.add(a);
@@ -188,9 +209,11 @@ export class Input {
       padBrake = p.buttons[6]?.value ?? 0;
       break;
     }
+    const sharp = this.held.has('sharp') || this.sharpLatched;
+    if (this.profile) this.steerProfile(dt, target, sharp, this.profile);
     // Кермо з клавіатури як в оригіналі (телеметрія s6, поля [0x22f]/[0x230]): при утриманні — плавна
     // S-крива від 0 до повного за 1,1 с; відпустив — експоненційно до нуля (≈ 4,3 1/с).
-    if (target !== 0) {
+    else if (target !== 0) {
       if (Math.sign(target) !== this.steerDir) {
         // Нова сторона: продовжуємо з поточного положення керма по тій самій кривій.
         this.steerDir = Math.sign(target);
@@ -208,7 +231,26 @@ export class Input {
     this.state.throttle = Math.max(this.held.has('gas') ? 1 : 0, padGas);
     this.state.brake = Math.max(this.held.has('brake') ? 1 : 0, padBrake);
     this.state.handbrake = this.held.has('handbrake');
+    this.state.sharp = sharp;
     return this.state;
+  }
+
+  /**
+   * Кермо Дальнобойщиків 2 (телеметрія king.exe): утримання — кермо x^p за час ramp(швидкість, «різко»);
+   * клавіша в інший бік — спершу повернення до нуля, далі наростання; відпустив — експоненційно до нуля.
+   */
+  private steerProfile(dt: number, target: number, sharp: boolean, p: InputProfile): void {
+    const s = this.steerSmooth;
+    if (target !== 0 && s * target >= -0.02) {
+      const ramp = p.steerRamp(this.speedKmh, sharp);
+      const x = Math.min(1, Math.max(0, s * target) ** (1 / p.steerPower) + dt / ramp);
+      this.steerSmooth = target * x ** p.steerPower;
+      this.steerDir = target;
+    } else {
+      this.steerDir = 0;
+      this.steerSmooth *= Math.exp(-p.steerReturn * dt);
+      if (Math.abs(this.steerSmooth) < 1e-3) this.steerSmooth = 0;
+    }
   }
 
   /**
@@ -276,6 +318,15 @@ export class Input {
     btn('right', '', 'right', undefined, ICONS.right);
     btn('brake', '', 'brake', undefined, ICONS.brake);
     btn('gas', '', 'gas', undefined, ICONS.gas);
+    if (this.profile?.sharp) {
+      // «Різко» (Ctrl): на дотик — перемикач, підсвічений, поки ввімкнений.
+      btn('sharp', 'РІЗКО');
+      const b = ui.lastElementChild as HTMLElement;
+      b.addEventListener('pointerdown', () => {
+        this.sharpLatched = !this.sharpLatched;
+        b.classList.toggle('on', this.sharpLatched);
+      });
+    }
     btn('cam', '', undefined, 'camera', ICONS.cam);
     btn('reset', '', undefined, 'reset', ICONS.reset);
     btn('horn', '', undefined, 'horn', HORN_SVG);

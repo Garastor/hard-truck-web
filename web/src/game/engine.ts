@@ -22,6 +22,8 @@ export interface EngineSpec {
 /** Тривалість перемикання: автомат (0x243), на нейтраль (0x244), с. */
 const SHIFT_AUTO = 0.3;
 const SHIFT_NEUTRAL = 0.1;
+/** Найменший проміжок між перемиканнями автомата за обертами (профіль другої гри), с. */
+const SHIFT_GAP = 0.5;
 /** Після перемикання оберти й сила плавно «зчіплюються» з колесами (0x246), с. */
 const CLUTCH_TIME = 1.0;
 /** Вгору, якщо сила на вищій передачі > поточна × 1,1. */
@@ -37,6 +39,32 @@ const CLUTCH_SLIP_BELOW = 0.5;
 const CLUTCH_SLIP_N = 0.75;
 /** Газ із клавіатури: g = t / (t + 1,2). */
 const THROTTLE_RAMP = 1.2;
+
+/**
+ * Відмінності двигуна й коробки гри від першої (Дальнобойщики 2 — телеметрія king.exe,
+ * re/notes/ht2-telemetry.md). Без профілю — як у першій грі.
+ */
+export interface EngineProfile {
+  /** Газ із клавіатури за часом утримання t, с; sharp — режим «різко» (Ctrl). */
+  throttle?: (t: number, sharp: boolean) => number;
+  /** Тривалість перемикання автоматом і на нейтраль/задню, с. */
+  shiftAuto?: number;
+  shiftNeutral?: number;
+  /** Холості оберти, частка n₀. */
+  idle?: number;
+  /** Пробуксовка зчеплення дає повний газ (перша гра); у другій газ на рушанні наростає звичайно. */
+  slipFullGas?: boolean;
+  /**
+   * Автомат за обертами (замість порівняння сил першої гри), незалежно від газу: вгору, коли оберти, звʼязані з
+   * колесами, ≥ up·n₀; вниз, коли < (downA + downB / k)·n₀, де k — відношення передатних чисел нижчої й
+   * поточної передачі.
+   */
+  shiftByRpm?: { up: number; downA: number; downB: number };
+  /** На нейтраль при гальмуванні нижче цієї швидкості, м/с (перша гра — 6). */
+  neutralBelow?: number;
+  /** Оберти під час і після перемикання не стрибають до n₀, а йдуть до звʼязаних з колесами з цією швидкістю, об/с². */
+  rpmFollow?: number;
+}
 
 export const GEAR_R = 0;
 export const GEAR_N = 1;
@@ -64,9 +92,17 @@ export class Engine {
   /** Час після завершення перемикання (для «зчеплення»). */
   private sinceShift = Infinity;
 
-  constructor(readonly spec: EngineSpec) {
+  private readonly shiftAuto: number;
+  private readonly shiftNeutral: number;
+
+  constructor(
+    readonly spec: EngineSpec,
+    private readonly profile: EngineProfile = {},
+  ) {
     this.n0 = spec.tachMaxPower / 60;
-    this.idle = this.n0 * 0.25;
+    this.idle = this.n0 * (profile.idle ?? 0.25);
+    this.shiftAuto = profile.shiftAuto ?? SHIFT_AUTO;
+    this.shiftNeutral = profile.shiftNeutral ?? SHIFT_NEUTRAL;
     this.n = this.idle;
     this.ratios = [spec.rearAxle * spec.reverse, 0, ...spec.gears.map((g) => spec.rearAxle * g)];
   }
@@ -117,20 +153,22 @@ export class Engine {
 
   /**
    * Крок. gas/brake — входи 0…1 (клавіатура — 0/1); wheelSpeed — лінійна швидкість ведучих коліс, м/с
-   * (+ уперед); wantReverse — гравець просить задній хід (стоїть і тримає гальмо).
+   * (+ уперед); wantReverse — гравець просить задній хід (стоїть і тримає гальмо); sharp — «різко» (профіль).
    */
-  update(dt: number, gas: number, brake: number, wheelSpeed: number, wantReverse = false): void {
+  update(dt: number, gas: number, brake: number, wheelSpeed: number, wantReverse = false, sharp = false): void {
     // Газ наростає поступово, як у грі з клавіатури.
     this.gasTime = gas > 0 ? this.gasTime + dt : 0;
-    this.throttle = gas > 0 ? gas * (this.gasTime / (this.gasTime + THROTTLE_RAMP)) : 0;
+    const curve = this.profile.throttle ? this.profile.throttle(this.gasTime, sharp) : this.gasTime / (this.gasTime + THROTTLE_RAMP);
+    this.throttle = gas > 0 ? gas * curve : 0;
     const stopped = Math.abs(wheelSpeed) < 0.3;
 
     // Вибір передачі (автомат).
     if (!this.shift) {
-      if (wantReverse && stopped && this.gear !== GEAR_R) this.startShift(GEAR_R, SHIFT_NEUTRAL);
-      else if (this.gear === GEAR_R && !wantReverse && gas > 0 && wheelSpeed > -2) this.startShift(2, SHIFT_NEUTRAL);
-      else if (this.gear === GEAR_N && gas > 0) this.startShift(2, SHIFT_NEUTRAL);
-      else if (this.gear >= 2 && brake > 0 && gas === 0 && Math.abs(wheelSpeed) < 6) this.startShift(GEAR_N, SHIFT_NEUTRAL);
+      if (wantReverse && stopped && this.gear !== GEAR_R) this.startShift(GEAR_R, this.shiftNeutral);
+      else if (this.gear === GEAR_R && !wantReverse && gas > 0 && wheelSpeed > -2) this.startShift(2, this.shiftNeutral);
+      else if (this.gear === GEAR_N && gas > 0) this.startShift(2, this.shiftNeutral);
+      else if (this.gear >= 2 && brake > 0 && gas === 0 && Math.abs(wheelSpeed) < (this.profile.neutralBelow ?? 6)) this.startShift(GEAR_N, this.shiftNeutral);
+      else if (this.gear >= 2 && this.profile.shiftByRpm) this.shiftByRpm(wheelSpeed, this.profile.shiftByRpm);
       else if (this.gear >= 2 && gas > 0 && this.sinceShift > CLUTCH_TIME) this.autoShift(wheelSpeed);
     }
 
@@ -139,7 +177,8 @@ export class Engine {
       const s = this.shift;
       s.t += dt;
       const k = Math.min(1, s.t / s.dur);
-      this.n = k * this.n0 + (1 - k) * s.nStart;
+      // Друга гра: оберти на мить перемикання не змінюються.
+      if (!this.profile.rpmFollow) this.n = k * this.n0 + (1 - k) * s.nStart;
       this.force = 0;
       if (s.t >= s.dur) {
         this.gear = s.target;
@@ -166,12 +205,16 @@ export class Engine {
       // Пробуксовка зчеплення: повний газ, оберти між «зчепленими» і робочими.
       const f = Math.max(0, locked) / slipLimit;
       this.n = Math.max(this.idle, f * Math.max(0, locked) + (1 - f) * CLUTCH_SLIP_N * this.n0);
-      if (gas > 0) this.throttle = gas;
+      if (gas > 0 && this.profile.slipFullGas !== false) this.throttle = gas;
     } else {
       // «Зчеплення»: протягом 1 с після перемикання оберти плавно переходять від n₀ до жорсткого
       // звʼязку з колесами (сила рахується від поточних обертів — у грі вона не наростає з нуля).
-      const b = Math.min(1, this.sinceShift / CLUTCH_TIME);
-      this.n = Math.max(b * locked + (1 - b) * this.n0, this.idle);
+      const follow = this.profile.rpmFollow;
+      if (follow) this.n = Math.max(this.n + Math.max(-follow * dt, Math.min(follow * dt, locked - this.n)), this.idle);
+      else {
+        const b = Math.min(1, this.sinceShift / CLUTCH_TIME);
+        this.n = Math.max(b * locked + (1 - b) * this.n0, this.idle);
+      }
     }
     this.force = this.wheelForce(this.gear, this.n, this.throttle);
   }
@@ -191,13 +234,28 @@ export class Engine {
     this.shift = { target, t: 0, dur, nStart: this.n, from: this.gear };
   }
 
+  /** Автомат за обертами (профіль другої гри). */
+  private shiftByRpm(wheelSpeed: number, r: { up: number; downA: number; downB: number }): void {
+    // Між перемиканнями — щонайменше SHIFT_GAP (у записі два поспіль вниз — через 0,65 с), інакше на межі
+    // 2 → 3 вона перемикалася б туди й назад.
+    if (this.sinceShift < SHIFT_GAP) return;
+    const top = Math.max(2, Math.min(this.topGear, this.gearLimit));
+    if (this.gear > top) return this.startShift(top, this.shiftAuto);
+    const n = this.lockedN(this.gear, wheelSpeed);
+    if (this.gear < top && n >= r.up * this.n0) return this.startShift(this.gear + 1, this.shiftAuto);
+    if (this.gear > 2) {
+      const k = this.ratios[this.gear - 1] / this.ratios[this.gear];
+      if (n < (r.downA + r.downB / k) * this.n0) this.startShift(this.gear - 1, this.shiftAuto);
+    }
+  }
+
   /** Автомат: вгору, якщо на вищій передачі сила більша за поточну × 1,1 (0x4aa76c). */
   private autoShift(wheelSpeed: number): void {
     const current = this.wheelForce(this.gear, this.lockedN(this.gear, wheelSpeed), 1);
     let best = 0;
     let bestForce = 0;
     const top = Math.max(2, Math.min(this.topGear, this.gearLimit));
-    if (this.gear > top) return this.startShift(top, SHIFT_AUTO);
+    if (this.gear > top) return this.startShift(top, this.shiftAuto);
     for (let g = this.gear + 1; g <= top; g++) {
       const f = this.wheelForce(g, this.lockedN(g, wheelSpeed), 1);
       if (f > current * UPSHIFT_GAIN && f > bestForce) {
@@ -205,7 +263,7 @@ export class Engine {
         bestForce = f;
       }
     }
-    if (best) return this.startShift(best, SHIFT_AUTO);
+    if (best) return this.startShift(best, this.shiftAuto);
     // Вниз (0x4aa76c): якщо виграш у силі на нижчій передачі більший за половину максимально
     // можливого (різниця сил обох передач при n₀) — інакше на підйомі машина «застрягає» на високій.
     if (this.gear > 2) {
@@ -213,7 +271,7 @@ export class Engine {
       const nLow = this.lockedN(g, wheelSpeed);
       const gain = this.wheelForce(g, nLow, 1) - current;
       const maxGain = this.wheelForce(g, this.n0, 1) - this.wheelForce(this.gear, this.n0, 1);
-      if (nLow < this.n0 * 2 && gain > DOWNSHIFT_SHARE * maxGain) this.startShift(g, SHIFT_AUTO);
+      if (nLow < this.n0 * 2 && gain > DOWNSHIFT_SHARE * maxGain) this.startShift(g, this.shiftAuto);
     }
   }
 }

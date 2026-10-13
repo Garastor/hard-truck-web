@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { HT2_ENGINE, HT2_ROLL_LIFT } from './controls';
 import { AutoPilot } from '../../game/autopilot';
 import { TruckVehicle } from '../../game/truckVehicle';
 import { buildTruckModel } from '../../game/trucks';
@@ -106,7 +107,7 @@ export class Truckers {
       if (!def || !model) return;
       if (variant > 0) recolor(model.root, this.drive.trucksData, variant + 1);
       const forward = b.clone().sub(a).setY(0).normalize();
-      const truck = new TruckVehicle(this.drive.rapierWorld, def, model, { position: this.drive.groundAtPublic(a), forward });
+      const truck = new TruckVehicle(this.drive.rapierWorld, def, model, { position: this.drive.groundAtPublic(a), forward }, { engine: HT2_ENGINE, rollLift: HT2_ROLL_LIFT });
       this.drive.world.scene.add(truck.visual);
       const pilot = new AutoPilot(this.roads);
       pilot.cruise = 50 + Math.random() * 25;
