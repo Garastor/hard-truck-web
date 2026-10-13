@@ -62,7 +62,7 @@ def find_car(p):
 
 
 def read_state(p, P):
-    """Стан машини або None (обʼєкт зник). Вектор уперед — гіпотеза (рядок матриці перед позицією)."""
+    """Стан машини або None (обʼєкт зник). fx, fy, fz — бічний вектор кузова (m0…m2; уперед — m3…m5, угору — m6…m8)."""
     d = p.read(P - 0xB0, 0xB0 + SIZE)
     if not d or len(d) < 0xB0 + SIZE or d[0xB0 + MARK_OFF : 0xB0 + MARK_OFF + 4] != MARK:
         return None
@@ -75,7 +75,8 @@ def read_state(p, P):
     fx, fy, fz = struct.unpack_from("<3f", d, 0)
     # +0x90 буває і float (−0,6…1 на ходу), і цілим (3 на стоянці) — пишемо ще й сирим цілим.
     raw90 = struct.unpack_from("<i", d, o + 0x90)[0]
-    # 12 float від P−0xb0 (рядки матриці орієнтації кузова — гіпотеза; для кренів і тангажу).
+    # 12 float від P−0xb0: бічний вектор (m0…m2; asin(m2) — крен), уперед (m3…m5; asin(m5) — тангаж), угору (m6…m8),
+    # позиція (m9…m11).
     m = struct.unpack_from("<12f", d, 0)
     return (x, y, z, v * 3.6, v, steer, rpm, gear, gas, fuel, odo, n0, unk, fx, fy, fz, raw90, *m)
 

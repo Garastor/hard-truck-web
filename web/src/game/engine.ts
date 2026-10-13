@@ -64,6 +64,8 @@ export interface EngineProfile {
   neutralBelow?: number;
   /** Оберти під час і після перемикання не стрибають до n₀, а йдуть до звʼязаних з колесами з цією швидкістю, об/с². */
   rpmFollow?: number;
+  /** Гальмування двигуном: частка maxTorque/n₀ на оберт (перша гра — 0,1). */
+  engineBrake?: number;
 }
 
 export const GEAR_R = 0;
@@ -137,7 +139,7 @@ export class Engine {
 
   /** Гальмування двигуном (0x4aa320): лінійне за обертами. */
   engineBrake(n: number): number {
-    return -0.1 * (this.spec.maxTorque / this.n0) * n;
+    return -(this.profile.engineBrake ?? 0.1) * (this.spec.maxTorque / this.n0) * n;
   }
 
   /** Сила на колесах для передачі g при обертах n і газі g (0x4aa46c + 0x4aa4f4). */

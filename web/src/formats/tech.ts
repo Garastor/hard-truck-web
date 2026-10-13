@@ -132,7 +132,9 @@ function readRecord(r: BinReader, index: number): TechRecord {
   const tank = r.f32();
   const fuelTimeEndurance = r.f32();
   r.skip(36);
-  const gearCount = r.u32(); // разом з нейтраллю
+  // Передач уперед, без нейтралі (+0x98; поле на 8 Б раніше, +0x90, — разом з нейтраллю). Телеметрія king.exe:
+  // ZilR (6) вмикає шосту — 0,714 — на 112 км/год.
+  const gearCount = r.u32();
   r.skip(4);
   const fuelConsumption = r.f32();
   r.skip(4);
@@ -148,7 +150,7 @@ function readRecord(r: BinReader, index: number): TechRecord {
   const rearAxleCoeff = r.f32();
   const reverseCoeff = r.f32();
   const allGears = f(14); // [0] — нейтраль
-  const gears = allGears.slice(1, Math.max(1, gearCount));
+  const gears = allGears.slice(1, 1 + gearCount);
   const tachMaxPower = r.f32() * 60;
   const cargoLoad = r.f32();
   const bodyMass = r.f32();

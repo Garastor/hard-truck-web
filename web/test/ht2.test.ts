@@ -158,7 +158,7 @@ describe.skipIf(!has)('HT2: vehicle.tech', () => {
     expect(zil.mass).toBe(4100);
     expect(zil.horsePower).toBe(185);
     expect(zil.price).toBe(18000);
-    expect(zil.gears.map((g) => +g.toFixed(2))).toEqual([7.44, 4.1, 2.29, 1.47, 1]);
+    expect(zil.gears.map((g) => +g.toFixed(2))).toEqual([7.44, 4.1, 2.29, 1.47, 1, 0.71]);
     expect(zil.tachMaxPower).toBeCloseTo(1200, 0);
     expect(zil.wheelRadius).toBeCloseTo(0.533, 3);
   });
