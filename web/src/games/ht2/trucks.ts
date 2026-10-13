@@ -3,11 +3,12 @@ import { parseB3d, type Block } from '../../formats/b3d';
 import { parseRmp } from '../../formats/rmp';
 import { parseTech, type TechRecord } from '../../formats/tech';
 import { SceneAssembler } from '../../render/sceneBuilder';
+import { readTextures } from './files';
 import type { TruckDef } from '../../game/trucks';
 
 /**
  * Вантажівки Дальнобойщиків 2: параметри — `vehicle.tech` (formats/tech.ts), моделі — `COMMON/TRUCKS.B3D`
- * (+ текстури TRUCKS1.RES, кольори й колір-ключ — палітра common.plm).
+ * (+ текстури TRUCKS.RES, кольори й колір-ключ — палітра common.plm).
  *
  * Модель збірна: група `<prefix>` (car_node) з посиланнями (18) на деталі в просторах `<prefix>…Space` і
  * групами коліс `<prefix>wheel0…N` — у кожній посилання на простір `<prefix>WheelNSpace` і модель колеса
@@ -23,7 +24,7 @@ export async function loadTrucks(source: FileSource, palette: Uint8Array | null)
   const [tech, b3d, res] = await Promise.all([
     source.read('vehicle.tech'),
     source.read('COMMON/TRUCKS.B3D'),
-    source.read('COMMON/TRUCKS1.RES'),
+    readTextures(source, 'COMMON/TRUCKS.RES'),
   ]);
   const asm = new SceneAssembler(parseB3d(b3d), parseRmp(res), { lit: true, colorKey: true, palette: palette ?? undefined, nearGroup: 0 });
   return { records: parseTech(tech).records, asm };

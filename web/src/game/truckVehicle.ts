@@ -123,6 +123,10 @@ export interface TruckSetup {
   engine?: EngineProfile;
   /** Висота прикладання бічної сили шин (частка висоти центру мас, див. TIRE.roll_lift) — замість налаштувань першої гри. */
   rollLift?: number;
+  /** Межа керма (частка STEER_TO_WHEEL) за швидкістю, м/с — замість межі першої гри 1,04/(1 + 0,056·v) ≤ 0,913. */
+  steerLimit?: (speed: number) => number;
+  /** Кут коліс ∝ |кермо|^steerPower (перша гра — 1, лінійно). */
+  steerPower?: number;
 }
 
 /** Тінь над дорогою, м — щоб не мерехтіла з дорогою (гіпотеза порту). */
@@ -199,6 +203,8 @@ export class TruckVehicle {
   private surfaceRoll = 1;
   private readonly surfaceEffects: boolean;
   private readonly rollLift: number | undefined;
+  private readonly steerLimit: ((speed: number) => number) | undefined;
+  private readonly steerPower: number;
   /** Тестовий режим: дощ (у кар'єрі він уже в setup.grip). */
   weatherGrip = 1;
   setSurface(grip: number, roll: number): void {
@@ -224,6 +230,8 @@ export class TruckVehicle {
     const tech = def.tech;
     this.grip = setup.grip ?? 1;
     this.rollLift = setup.rollLift;
+    this.steerLimit = setup.steerLimit;
+    this.steerPower = setup.steerPower ?? 1;
     this.tractionControl = setup.tractionControl ?? false;
     this.surfaceEffects = setup.surfaceEffects ?? true;
     this.wheelRadius = tech.wheelRadius;
@@ -368,8 +376,9 @@ export class TruckVehicle {
     // З напівпричепом кермо на швидкості ще менше (гіпотеза порту): інакше повне кермо на 25 км/год дає радіус,
     // менший за базу причепа, і зчіпка складається.
     const tow = this.towing ? 1 / (1 + TOW_STEER_B * Math.abs(v)) : 1;
-    const limit = Math.min(STEER_MAX, STEER_A / (1 + STEER_B * Math.abs(v))) * tow;
-    this.steerAngle = -input.steer * limit * STEER_TO_WHEEL;
+    const limit = (this.steerLimit ? this.steerLimit(Math.abs(v)) : Math.min(STEER_MAX, STEER_A / (1 + STEER_B * Math.abs(v)))) * tow;
+    const steer = this.steerPower === 1 ? input.steer : Math.sign(input.steer) * Math.abs(input.steer) ** this.steerPower;
+    this.steerAngle = -steer * limit * STEER_TO_WHEEL;
     const inner = Math.abs(this.steerAngle);
     const outer = inner > 1e-4 ? Math.atan(1 / (1 / Math.tan(inner) + ACKERMANN)) : 0;
     const left = this.steerAngle > 0; // + — вліво

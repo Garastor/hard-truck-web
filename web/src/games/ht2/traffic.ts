@@ -197,9 +197,9 @@ export class Traffic {
     const p1 = c.line.pts[c.seg + 1];
     c.pos.copy(p0).lerp(p1, c.t);
     const fwd = p1.clone().sub(p0).normalize();
-    const q = new THREE.Quaternion().setFromRotationMatrix(
-      new THREE.Matrix4().lookAt(new THREE.Vector3(), fwd.clone().negate(), new THREE.Vector3(0, 1, 0)),
-    );
+    // lookAt ставить +Z від цілі до ока: ціль — уперед, тож −Z (перед моделі) дивиться за рухом (з −fwd машини
+    // їхали задом наперед — помітив користувач).
+    const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), fwd, new THREE.Vector3(0, 1, 0)));
     // Плавний поворот на зламах ламаної.
     c.root.quaternion.slerp(q, Math.min(1, dt * 6));
     c.root.position.copy(c.pos);

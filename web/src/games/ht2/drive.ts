@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { HT2_ENGINE, HT2_INPUT, HT2_ROLL_LIFT } from './controls';
+import { HT2_ENGINE, HT2_INPUT, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER } from './controls';
 import * as THREE from 'three';
 import type { FileSource } from '../../assets/loader';
 import { EngineAudio } from '../../audio/engineAudio';
@@ -33,7 +33,6 @@ import { RaceMode } from './race';
 import { Trailer } from './trailer';
 import { Truckers, truckerKinds, truckerNames } from './truckers';
 import { parseUpgrades, tuning, type Tuning } from './upgrades';
-import { HT2_MOD_REGIONS } from './files';
 import { parseServices, parseTowns } from './economy';
 import { NavMap } from '../../ui/navMap';
 import { Music } from './music';
@@ -41,6 +40,7 @@ import { SceneAssembler } from '../../render/sceneBuilder';
 import { parseB3d } from '../../formats/b3d';
 import { parseRmp } from '../../formats/rmp';
 import { dayTime, type Ht2Career } from './career';
+import { HT2_MOD_REGIONS, readTextures } from './files';
 import { badWeather, timeScale, type Ht2Settings } from './settings';
 
 /** Опір кочення поза асфальтом, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
@@ -120,7 +120,7 @@ export class Ht2Drive {
   private cab: THREE.Group | null = null;
   private cabParts: { rule?: THREE.Object3D; speed?: THREE.Object3D; tacho?: THREE.Object3D } = {};
   private cabAsm: SceneAssembler | null = null;
-  /** Вода на склі кабіни й двірники (як у першій грі: маски glass_1/glass_2.msk з CABINES1.RES, Wiper*). */
+  /** Вода на склі кабіни й двірники (як у першій грі: маски glass_1/glass_2.msk з CABINES.RES, Wiper*). */
   private glassRain: GlassRain | null = null;
   /** Вмʼятини гравця (перемикачі пошкоджень моделі); у кар'єрі — зберігаються. */
   dents: Dents | null = null;
@@ -442,7 +442,7 @@ export class Ht2Drive {
   /** Параметри фізики вантажівки: вантаж (у тягача — у причепі), покращення. */
   private setup(cargo: number) {
     const t = this.tuning;
-    return { cargoMass: this.hitched ? 0 : cargo, torque: t.torque, grip: t.grip, engine: HT2_ENGINE, rollLift: HT2_ROLL_LIFT, surfaceEffects: !this.arcade };
+    return { cargoMass: this.hitched ? 0 : cargo, torque: t.torque, grip: t.grip, engine: HT2_ENGINE, rollLift: HT2_ROLL_LIFT, steerLimit: HT2_STEER_LIMIT, steerPower: HT2_STEER_POWER, surfaceEffects: !this.arcade };
   }
 
   /** Запис vehicle.tech поточної вантажівки. */
@@ -626,13 +626,13 @@ export class Ht2Drive {
     }
   }
 
-  /** Інтер'єр кабіни `<prefixCab>Cab` (CABINES.B3D, текстури CABINES1.RES) — вантажиться при першому вигляді з кабіни. */
+  /** Інтер'єр кабіни `<prefixCab>Cab` (CABINES.B3D, текстури CABINES.RES) — вантажиться при першому вигляді з кабіни. */
   private async loadCab(): Promise<void> {
     if (this.cabLoading || this.cab) return;
     this.cabLoading = true;
     try {
       if (!this.cabAsm) {
-        const [b3d, res] = await Promise.all([this.opts.source.read('COMMON/CABINES.B3D'), this.opts.source.read('COMMON/CABINES1.RES')]);
+        const [b3d, res] = await Promise.all([this.opts.source.read('COMMON/CABINES.B3D'), readTextures(this.opts.source, 'COMMON/CABINES.RES')]);
         this.cabRmp = parseRmp(res);
         this.cabAsm = new SceneAssembler(parseB3d(b3d), this.cabRmp, { lit: true, colorKey: true, nearGroup: 0, type4Space: true, palette: this.world.common.lib.palette ?? undefined });
         // Світло в кабіні — розсіяне світло пори доби (WEATHER.INI envamb) і трохи неба: уночі кабіна темна.

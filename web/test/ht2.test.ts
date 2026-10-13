@@ -190,8 +190,12 @@ describe.skipIf(!has)('HT2: набір файлів для пристрою', ()
   });
   it('шлях з архіву → канонічний', () => {
     expect(HT2_FILES.canonical('Hard Truck 2/ENV/AA.B3D')).toBe('ENV/aa.b3d');
+    // Повні текстури — потрібні, половинні — запасні (імпортовані раніше), чверть — не беремо.
+    expect(HT2_FILES.canonical('x/COMMON/trucks.res')).toBe('COMMON/TRUCKS.RES');
     expect(HT2_FILES.canonical('x/COMMON/trucks1.res')).toBe('COMMON/TRUCKS1.RES');
-    expect(HT2_FILES.canonical('ENV/aa.res')).toBeNull();
+    expect(HT2_FILES.canonical('ENV/aa.res')).toBe('ENV/aa.res');
+    expect(HT2_FILES.canonical('ENV/aa1.res')).toBe('ENV/aa1.res');
+    expect(HT2_FILES.canonical('ENV/aa2.res')).toBeNull();
   });
   it('гра за списком файлів', () => {
     expect(detectGame(['Hard Truck 2/king.exe', 'Hard Truck 2/LOAD.RES'])).toBe('ht2');

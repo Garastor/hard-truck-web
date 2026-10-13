@@ -93,7 +93,7 @@ export class Police {
     const box = visibleBox(model);
     frame.position.y = -box.min.y;
     root.position.copy(p.pos);
-    root.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), p.heading.clone().negate(), new THREE.Vector3(0, 1, 0)));
+    root.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), p.heading, new THREE.Vector3(0, 1, 0)));
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
     p.body = this.rapier.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(p.pos.x, p.pos.y, p.pos.z).setRotation(root.quaternion));

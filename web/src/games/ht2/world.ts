@@ -5,7 +5,7 @@ import { parseRmp, type RmpArchive } from '../../formats/rmp';
 import { decodeCp1251 } from '../../formats/binary';
 import { parseWay, type Way } from '../../formats/way';
 import { SceneAssembler, buildScene, type BuiltScene } from '../../render/sceneBuilder';
-import { HT2_REGIONS, regionFiles, type TexLevel } from './files';
+import { HT2_REGIONS, readTextures, regionFiles, type TexLevel } from './files';
 import { Weather, type DayTime, type Sky } from './weather';
 import { buildGlows, buildTrees } from './trees';
 import { mergeStatic } from '../../render/mergeStatic';
@@ -44,18 +44,18 @@ export function toThree(x: number, y: number, z: number, out = new THREE.Vector3
 }
 
 /**
- * Спільні об'єкти (небо, анімовані предмети, ліхтарі): COMMON.B3D + текстури common1.res (з палітрою common.plm
+ * Спільні об'єкти (небо, анімовані предмети, ліхтарі): COMMON.B3D + текстури COMMON.RES (з палітрою common.plm
  * і звуками — двигун, сигнал, удари).
  */
-export async function loadCommon(source: FileSource, tex: TexLevel = '1'): Promise<{ asm: SceneAssembler; rmp: RmpArchive }> {
-  const [b3d, res] = await Promise.all([source.read('COMMON/COMMON.B3D'), source.read(`COMMON/common${tex}.res`)]);
+export async function loadCommon(source: FileSource, tex: TexLevel = ''): Promise<{ asm: SceneAssembler; rmp: RmpArchive }> {
+  const [b3d, res] = await Promise.all([source.read('COMMON/COMMON.B3D'), (tex ? source.read(`COMMON/common${tex}.res`) : readTextures(source, 'COMMON/COMMON.RES'))]);
   const rmp = parseRmp(res);
   return { asm: new SceneAssembler(parseB3d(b3d), rmp, { lit: true, colorKey: true, nearGroup: 0 }), rmp };
 }
 
-export async function loadRegion(source: FileSource, id: string, common: SceneAssembler | null, tex: TexLevel = '1', dir = 'ENV'): Promise<LoadedRegion> {
+export async function loadRegion(source: FileSource, id: string, common: SceneAssembler | null, tex: TexLevel = '', dir = 'ENV'): Promise<LoadedRegion> {
   const f = regionFiles(id, tex, dir);
-  const [b3d, res] = await Promise.all([source.read(f.b3d), source.read(f.res)]);
+  const [b3d, res] = await Promise.all([source.read(f.b3d), readTextures(source, f.res)]);
   const scene = parseB3d(b3d);
   const rmp = parseRmp(res);
   const palette = common?.lib.palette ?? null;

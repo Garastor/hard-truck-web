@@ -156,7 +156,7 @@ export class Markets {
       const at = spot.pos.clone();
       at.y = this.ground(spot.pos);
       root.position.copy(at);
-      root.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), spot.heading.clone().negate(), new THREE.Vector3(0, 1, 0)));
+      root.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), spot.heading, new THREE.Vector3(0, 1, 0)));
       const size = box.getSize(new THREE.Vector3());
       const center = box.getCenter(new THREE.Vector3());
       const body = this.rapier.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(at.x, at.y, at.z).setRotation(root.quaternion));

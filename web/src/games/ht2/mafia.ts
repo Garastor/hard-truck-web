@@ -149,7 +149,7 @@ export class Mafia {
     c.pos.copy(a).lerp(b, c.t);
     const root = c.post.root!;
     root.position.copy(c.pos);
-    if (dir.lengthSq() > 1e-4) root.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), dir.setY(0).normalize().negate(), new THREE.Vector3(0, 1, 0)));
+    if (dir.lengthSq() > 1e-4) root.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), dir.setY(0).normalize(), new THREE.Vector3(0, 1, 0)));
     c.post.body!.setNextKinematicTranslation(c.pos);
     c.post.body!.setNextKinematicRotation(root.quaternion);
     c.close = gap < CATCH_R ? c.close + dt : 0;
@@ -189,7 +189,7 @@ export class Mafia {
     const box = visibleBox(model);
     frame.position.y = -box.min.y;
     root.position.copy(p.home);
-    root.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), p.heading.clone().negate(), new THREE.Vector3(0, 1, 0)));
+    root.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), p.heading, new THREE.Vector3(0, 1, 0)));
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
     p.body = this.rapier.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(p.home.x, p.home.y, p.home.z).setRotation(root.quaternion));
