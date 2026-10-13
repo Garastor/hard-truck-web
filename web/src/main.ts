@@ -116,7 +116,9 @@ function syncUrl(): void {
   if (!debugLink) return history.replaceState(null, '', location.pathname);
   if (career || careerCfg) return history.replaceState(null, '', '?career=1');
   const p = new URLSearchParams({ level: levelSel.value, tab });
-  if (tab === 'trucks' || tab === 'drive') p.set('truck', truckSel.value);
+  // Поки список вантажівок не завантажено, значення порожнє — лишаємо те, що було в адресі.
+  const truck = truckSel.value || params.get('truck');
+  if ((tab === 'trucks' || tab === 'drive') && truck) p.set('truck', truck);
   history.replaceState(null, '', `?${p}`);
 }
 
@@ -156,7 +158,9 @@ async function ensureTrucks(): Promise<void> {
   if (trucks.length) return;
   trucks = parseTrucks(decodeCp1251(await source.read('TRUCK.TCH')));
   for (const t of trucks) truckSel.add(new Option(`${t.carNode} (${t.tech.horsePower} к.с., $${t.tech.price})`, String(t.index)));
-  truckSel.value = params.get('truck') ?? '1';
+  // Збережена в адресі вантажівка — лише якщо така є (порожнє чи застаріле значення лишало список порожнім).
+  const want = params.get('truck');
+  truckSel.value = trucks.some((t) => String(t.index) === want) ? want! : trucks.some((t) => t.index === 1) ? '1' : String(trucks[0]?.index ?? '');
 }
 
 function showTruck(): void {
@@ -343,7 +347,11 @@ if (initialTab && initialTab !== 'scene' && urlGame !== 'ht2') document.querySel
 levelSel.addEventListener('change', open);
 // У режимі їзди панель згорнута; кнопка ☰ тимчасово її показує.
 $('menu').addEventListener('click', () => document.body.classList.toggle('bar-open'));
-truckSel.addEventListener('change', () => (tab === 'drive' ? void startDrive() : showTruck()));
+truckSel.addEventListener('change', () => {
+  syncUrl();
+  if (tab === 'drive') void startDrive();
+  else showTruck();
+});
 $('fullscreen').addEventListener('click', () => void toggleFullscreen());
 // Поміняти місцями кермо й педалі (сенсорний екран; те саме, що «Кермо й педалі» в «Опціях»).
 $('swapToggle').addEventListener('click', () => {
