@@ -11,6 +11,8 @@ export interface GameCard {
   meta: GameMeta;
   /** Фон головного меню гри (null — LOAD.RES недоступний). */
   art: HTMLCanvasElement | null;
+  /** Файлів гри ще немає на пристрої — вибір відкриє імпорт. */
+  missing?: boolean;
 }
 
 const W = 760;
@@ -87,7 +89,7 @@ export function gameSelectScreen(cards: GameCard[], fonts: { small: PixelFont | 
       stage.append(b);
       buttons.push(b);
       write(card.meta.title, CARD_Y + CARD_H + 14, true, GOLD, x + CARD_W / 2);
-      write(card.meta.subtitle, CARD_Y + CARD_H + 40, false, DIM, x + CARD_W / 2);
+      write(card.missing ? 'Файли гри ще не імпортовано — натисніть' : card.meta.subtitle, CARD_Y + CARD_H + 40, false, DIM, x + CARD_W / 2);
     });
     const setFocus = (i: number) => {
       focus = i;

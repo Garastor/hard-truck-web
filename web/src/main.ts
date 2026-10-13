@@ -631,14 +631,15 @@ function exitToGameSelect(): void {
   location.assign(location.pathname.replace(/ht[12]\/(index\.html)?$/i, ''));
 }
 
-async function chooseGame(ids: GameId[]): Promise<GameId> {
+async function chooseGame(ids: readonly GameId[], available: GameId[]): Promise<GameId> {
   const [small, large] = await hudFonts();
   const { gameSelectScreen } = await import('./games/select');
   const sourceOf = (id: GameId): FileSource => (id === 'ht1' ? cachedSource(devServerSource) : cachedSource(ht2DevSource, HT2_FILES));
   const cards = await Promise.all(
     ids.map(async (id) => {
-      const art = await MenuArt.load((n) => sourceOf(id).read(n));
-      return { meta: GAMES[id], art: art?.background(GAMES[id].menuBackground) ?? null };
+      const missing = !available.includes(id);
+      const art = missing ? null : await MenuArt.load((n) => sourceOf(id).read(n)).catch(() => null);
+      return { meta: GAMES[id], art: art?.background(GAMES[id].menuBackground) ?? null, missing };
     }),
   );
   return gameSelectScreen(cards, { small, large }, lastGame());
@@ -651,12 +652,13 @@ async function boot(): Promise<void> {
   const games = await availableGames();
   gameCount = games.length;
   let game: GameId | null = wanted;
-  if (!game) {
-    if (games.length > 1) game = await chooseGame(games);
-    else if (games.length === 1) game = games[0];
-    else game = await showImport(null);
+  // Вибір гри — завжди з обома іграми; ще не імпортовану — імпорт (як для першої гри), далі файли вже на пристрої.
+  gameCount = GAME_IDS.length;
+  while (!game) {
+    const pick = await chooseGame(GAME_IDS, games);
+    if (games.includes(pick)) game = pick;
+    else if ((await showImport(FILE_SETS[pick], true)) === pick) game = pick;
   }
-  game ??= 'ht1';
   setLastGame(game);
   if (game === 'ht2') {
     renderer.setAnimationLoop(null);
