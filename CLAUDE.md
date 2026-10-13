@@ -3,6 +3,27 @@
 Порт гри *Hard Truck / Дальнобойщики* (SoftLab-NSK, 1998) у браузер. Основна платформа — **мобільні** (touch, ландшафт, PWA).
 Мова спілкування та документації — **українська**.
 
+## Дві гри — не плутати
+Проєкт портує **дві** гри одним рушієм. Перед роботою визначити, якої гри стосується задача.
+
+| | Дальнобойщики (HT1, 1998) | Дальнобойщики 2 (HT2, King of the Road, 2001) |
+|---|---|---|
+| Оригінал (лише читати) | `Game/Hard Truck/` (`HTruck.exe`) | `D:\Games\Hard Truck 2` = `Game/Hard Truck 2` (junction; `king.exe`) |
+| Код гри | `web/src/modes/drive.ts`, `web/src/ui/*`, `game/{career,track,raceProgress,movables,trucks}.ts` | `web/src/games/ht2/*` (лише HT2) |
+| Dev-файли / вхід | `/game/…`, `/ht1/` | `/game2/…`, `/ht2/` |
+| План / журнал | `Docs/04-roadmap.md`, `Docs/progress.md` | `Docs/08-ht2-plan.md` (+ розділ HT2 у `progress.md`) |
+| Тести | `web/test/*.test.ts` | `web/test/ht2.test.ts` |
+| Реверс / нотатки | Ghidra `re/htruck`, `re/notes/*.md` (без префікса) | `re/notes/ht2-*.md` (`king.exe` у Ghidra не імпортовано) |
+| Телеметрія оригіналу | `tools/re/telemetry.py`, дані `re/telemetry/*` | `tools/re/ht2/*`, дані `re/telemetry/ht2/`, скіл `ht2-telemetry` |
+| Збереження (localStorage) | `ht.careers.v1`, `ht.*` | `ht2.career.v1`, `ht2.settings.v1` |
+
+- **Спільне ядро** (`web/src/{formats,render,physics,input,audio,assets}`, `game/truckVehicle.ts`, `game/engine.ts`,
+  `game/autopilot.ts`) використовують обидві гри: змінювати так, щоб поведінка іншої гри не змінилась
+  (відмінності HT2 — параметрами/опціями з `games/ht2`, не правкою значень HT1), і проганяти тести обох.
+- Вибір гри — `web/src/games/registry.ts` (профілі), `select.ts` (меню вибору, коли ігор кілька).
+- Висновки телеметрії/реверсу однієї гри не переносити на іншу без перевірки (напр., у HT2 інші криві газу й
+  керма, миттєві перемикання — `re/notes/ht2-telemetry.md`).
+
 ## Ключові документи
 - План і статус: `Docs/04-roadmap.md` (оновлювати чекбокси), журнал: `Docs/progress.md`
 - Формати: `Docs/01-analysis.md`, `Docs/formats/b3d.md`; правила оригіналу: `Docs/gameplay.md`
@@ -31,6 +52,7 @@
 - Хук `.githooks/pre-commit` (tsc + тести при змінах у `web/`): у новому клоні — `git config core.hooksPath .githooks`
 
 ## Скіли й агенти (`.claude/`)
+- `ht2-telemetry` — запис і розбір телеметрії `king.exe` (лише HT2)
 - `verify-in-game` — перевірка зміни в браузері (окрема вкладка, `ht.dev`, знімок, мобільний вʼюпорт)
 - `step-done` — закриття кроку: tsc, тести, `progress.md`/roadmap, коміт
 - агент `re-analyst` — реверс HTruck.exe зі стислим висновком (декомпіляція не засмічує основну розмову)

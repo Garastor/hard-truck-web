@@ -1,7 +1,7 @@
 """Пошук полів швидкості машин у king.exe (лише читання памʼяті): знімки сторінок, що змінюються, позиції машин,
 швидкість з позиції й кореляція кожного float у цих сторінках зі швидкістю. Потрібен NumPy.
 
-    python -I tools/re/velscan.py OUT.txt [N=30] [HZ=2]
+    python -I tools/re/ht2/velscan.py OUT.txt [N=30] [HZ=2]
 """
 import os
 import sys
@@ -9,6 +9,8 @@ import time
 
 import numpy as np
 
+# telemetry.py (першої гри) — спільний доступ до памʼяті процесу (Proc, find_pid).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import telemetry as T  # noqa: E402
 

@@ -4,14 +4,16 @@
 пошук трійок float і double, що поводяться як позиція машини (щосекунди зсув 0,3…60 м, загалом > 5 м), запис
 кандидатів у OUT_<номер>.txt. Гравцю нічого не треба узгоджувати — досить їздити.
 
-    python -I tools/re/snapscan.py auto OUT_PREFIX [N]     # чекає гру, знімає до її закриття
-    python -I tools/re/snapscan.py once OUT.txt [N]        # один цикл зараз
+    python -I tools/re/ht2/snapscan.py auto OUT_PREFIX [N]     # чекає гру, знімає до її закриття
+    python -I tools/re/ht2/snapscan.py once OUT.txt [N]        # один цикл зараз
 """
 import os
 import struct
 import sys
 import time
 
+# telemetry.py (першої гри) — спільний доступ до памʼяті процесу (Proc, find_pid).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import telemetry as T  # noqa: E402
 

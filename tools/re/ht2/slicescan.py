@@ -1,14 +1,16 @@
 """Пошук у памʼяті king.exe копій фрагментів запису vehicle.tech (лише читання): для машини NAME перевіряє
 кілька відрізків запису (передатні числа, гальма, момент…) і друкує, де вони трапляються поза таблицею техніки.
 
-    python -I tools/re/slicescan.py NAME
+    python -I tools/re/ht2/slicescan.py NAME
 """
 import os
 import sys
 
+# telemetry.py (першої гри) — спільний доступ до памʼяті процесу (Proc, find_pid).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import telemetry as T  # noqa: E402
-from telemetry2 import tech_records  # noqa: E402
+from techtable import tech_records  # noqa: E402
 
 sys.stdout.reconfigure(encoding="utf-8")
 SLICES = {

@@ -3,7 +3,7 @@
 кілька разів зупиняється й розганяється (трафік їде рівно). Фаза 2: запис вікон памʼяті навколо знайденого
 обʼєкта (формат snapscan.py — для winanalyze.py / regionanalyze.py).
 
-    python -I tools/re/stopgo.py PREFIX [SECS1=90] [SECS2=60]
+    python -I tools/re/ht2/stopgo.py PREFIX [SECS1=90] [SECS2=60]
 """
 import json
 import os
@@ -12,6 +12,8 @@ import time
 
 import numpy as np
 
+# telemetry.py (першої гри) — спільний доступ до памʼяті процесу (Proc, find_pid).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import telemetry as T  # noqa: E402
 

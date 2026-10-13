@@ -1,13 +1,15 @@
 """Запис вікон памʼяті king.exe навколо заданих адрес (лише читання), формат snapscan.py — для winanalyze.py /
 regionanalyze.py. Адреси — з stopgo.py (поки гра не перезапущена).
 
-    python -I tools/re/recwin.py PREFIX SECS HZ ADDR...
+    python -I tools/re/ht2/recwin.py PREFIX SECS HZ ADDR...
 """
 import json
 import os
 import sys
 import time
 
+# telemetry.py (першої гри) — спільний доступ до памʼяті процесу (Proc, find_pid).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import telemetry as T  # noqa: E402
 

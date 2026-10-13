@@ -4,7 +4,7 @@
 методів класу) і пише CSV 10 разів на секунду. Після перезапуску гри чи завантаження — шукає обʼєкт знову.
 Зсуви й одиниці — див. re/notes/ht2-telemetry.md (кермо, оберти, передача — гіпотези).
 
-    python -I tools/re/ht2rec.py [OUT_PREFIX=re/telemetry/ht2/drive] [HZ=10]
+    python -I tools/re/ht2/record.py [OUT_PREFIX=re/telemetry/ht2/drive] [HZ=10]
 """
 import math
 import os
@@ -12,6 +12,8 @@ import struct
 import sys
 import time
 
+# telemetry.py (першої гри) — спільний доступ до памʼяті процесу (Proc, find_pid).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import telemetry as T  # noqa: E402
 
@@ -21,7 +23,7 @@ HZ = float(sys.argv[2]) if len(sys.argv) > 2 else 10
 MARK = struct.pack("<I", 0x00531AA0)
 MARK_OFF = 0x8C
 SIZE = 0xC0
-COLS = "t,x,y,z,kmh,v,steer,rpm,gear,gas,fuel,odo,vmax,unk_b8,fx,fy,fz,raw90"
+COLS = "t,x,y,z,kmh,v,steer,rpm,gear,gas,fuel,odo,n0,unk_b8,fx,fy,fz,raw90"
 
 
 def say(msg):
@@ -67,12 +69,12 @@ def read_state(p, P):
     x, y, z = struct.unpack_from("<3f", d, o)
     if not plausible(x, y, z):
         return None
-    steer, v, rpm, _, vmax, odo, gas, fuel = struct.unpack_from("<8f", d, o + 0x90)
+    steer, v, rpm, _, n0, odo, gas, fuel = struct.unpack_from("<8f", d, o + 0x90)
     gear, unk = struct.unpack_from("<2i", d, o + 0xB4)
     fx, fy, fz = struct.unpack_from("<3f", d, 0)
     # +0x90 буває і float (−0,6…1 на ходу), і цілим (3 на стоянці) — пишемо ще й сирим цілим.
     raw90 = struct.unpack_from("<i", d, o + 0x90)[0]
-    return x, y, z, v * 3.6, v, steer, rpm, gear, gas, fuel, odo, vmax, unk, fx, fy, fz, raw90
+    return x, y, z, v * 3.6, v, steer, rpm, gear, gas, fuel, odo, n0, unk, fx, fy, fz, raw90
 
 
 def main():

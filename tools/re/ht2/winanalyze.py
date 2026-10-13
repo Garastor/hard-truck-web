@@ -3,7 +3,7 @@
 Для кожного обʼєкта: позиція — три float на зсуві WIN (центр вікна); швидкість — з різниці позицій; шукаємо float-поля
 вікна, що найсильніше корелюють зі швидкістю, і поля, що змінюються взагалі.
 
-    python -I tools/re/winanalyze.py re/telemetry/ht2/rec_10
+    python -I tools/re/ht2/winanalyze.py re/telemetry/ht2/rec_10
 """
 import json
 import math

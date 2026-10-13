@@ -1,11 +1,13 @@
 """Пошук 32-бітних вказівників у памʼяті king.exe на адреси з діапазонів (лише читання).
 
-    python -I tools/re/ptrscan.py ADDR_LO ADDR_HI     # усі dword зі значенням у [LO, HI)
+    python -I tools/re/ht2/ptrscan.py ADDR_LO ADDR_HI     # усі dword зі значенням у [LO, HI)
 """
 import os
 import struct
 import sys
 
+# telemetry.py (першої гри) — спільний доступ до памʼяті процесу (Proc, find_pid).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import telemetry as T  # noqa: E402
 

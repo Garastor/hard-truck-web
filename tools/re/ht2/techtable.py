@@ -3,15 +3,17 @@
 Обʼєкт машини шукаємо за копією полів запису vehicle.tech (маса, радіус колеса ×2, бак, час на пальному —
 зсув +0x60 запису, як у TRUCK.TCH першої гри).
 
-    python -I tools/re/telemetry2.py find [ІМʼЯ]            # копії запису машини (ZilR, Zil…) у памʼяті
-    python -I tools/re/telemetry2.py dump ADDR [SIZE]       # поля як float/int (з telemetry.py)
-    python -I tools/re/telemetry2.py record ADDR SECS OUT.csv [--size N] [--hz 20]
-    python -I tools/re/telemetry2.py analyze OUT.csv
+    python -I tools/re/ht2/techtable.py find [ІМʼЯ]            # копії запису машини (ZilR, Zil…) у памʼяті
+    python -I tools/re/ht2/techtable.py dump ADDR [SIZE]       # поля як float/int (з telemetry.py)
+    python -I tools/re/ht2/techtable.py record ADDR SECS OUT.csv [--size N] [--hz 20]
+    python -I tools/re/ht2/techtable.py analyze OUT.csv
 """
 import os
 import struct
 import sys
 
+# telemetry.py (першої гри) — спільний доступ до памʼяті процесу (Proc, find_pid).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import telemetry as T  # noqa: E402
 

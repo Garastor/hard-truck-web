@@ -1,7 +1,7 @@
 """Збирає вікна памʼяті одного циклу snapscan.py в суцільні ділянки (за кадрами) й шукає в них машину:
 трійки float з плавним рухом (позиція), швидкість з позиції, поля, що корелюють зі швидкістю.
 
-    python -I tools/re/regionanalyze.py re/telemetry/ht2/rec_10 [--out region.npz-like prefix]
+    python -I tools/re/ht2/regionanalyze.py re/telemetry/ht2/rec_10 [--out region.npz-like prefix]
 """
 import json
 import math

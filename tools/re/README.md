@@ -17,3 +17,6 @@ python -I tools/re/install_watcom_cspec.py
 
 MCP: `.mcp.json` у корені підключає `pyghidra-mcp` до Claude Code (стає доступним після перезапуску сесії).
 Ghidra-проєкт може бути відкритий лише одним процесом: не запускати `gq.py`, поки працює MCP-сервер, і навпаки.
+
+Телеметрія: `telemetry.py` — перша гра (`HTruck.exe`); другої (`king.exe`) — окрема тека [`ht2/`](ht2/README.md)
+(скіл `ht2-telemetry`). `ht2/*` бере з `telemetry.py` лише доступ до памʼяті (`Proc`, `find_pid`).

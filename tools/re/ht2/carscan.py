@@ -1,11 +1,13 @@
 """Пошук обʼєкта машини в купі king.exe: float маси й радіуса колеса поруч (до 64 байтів), лише читання.
 
-    python -I tools/re/carscan.py MASS RWHEEL
+    python -I tools/re/ht2/carscan.py MASS RWHEEL
 """
 import os
 import struct
 import sys
 
+# telemetry.py (першої гри) — спільний доступ до памʼяті процесу (Proc, find_pid).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import telemetry as T  # noqa: E402
 
