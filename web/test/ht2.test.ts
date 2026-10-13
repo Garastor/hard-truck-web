@@ -252,7 +252,7 @@ describe.skipIf(!has)('HT2: покращення (restable.sch)', () => {
 });
 
 describe.skipIf(!has)('HT2: описи регіонів (ENV/mod_*.sch)', () => {
-  const mods = HT2_MOD_REGIONS.map((region) => ({ region, sch: readSch(read(`ENV/mod_${region}.sch`)) }));
+  const mods = (has ? HT2_MOD_REGIONS : []).map((region) => ({ region, sch: readSch(read(`ENV/mod_${region}.sch`)) }));
   it('міста: назви й товари складів', () => {
     const towns = parseTowns(mods);
     expect(towns.get(0)?.name).toBe('Приозерск');

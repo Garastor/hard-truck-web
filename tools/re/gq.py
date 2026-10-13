@@ -20,9 +20,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 os.environ.setdefault("GHIDRA_INSTALL_DIR", str(ROOT / "tools" / "ghidra_12.1.4_PUBLIC"))
 os.environ.setdefault("JAVA_HOME", r"C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot")
-EXE = ROOT / "Game" / "Hard Truck" / "HTruck.exe"
+# GQ_GAME=ht2 — проєкт re/king (king.exe Дальнобойщиків 2, tools/re/ht2/setup_ghidra_king.py); інакше — HTruck.exe.
+HT2 = os.environ.get("GQ_GAME") == "ht2"
+EXE = ROOT / "Game" / ("Hard Truck 2" if HT2 else "Hard Truck") / ("king.exe" if HT2 else "HTruck.exe")
 PROJECT_DIR = ROOT / "re"
-PROJECT_NAME = "htruck"
+PROJECT_NAME = "king" if HT2 else "htruck"
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -274,7 +276,7 @@ def cmd_mkfunc(c, *targets):
             DisassembleCommand(a, None, True).applyTo(c.program, ConsoleTaskMonitor())
             ok = CreateFunctionCmd(a).applyTo(c.program, ConsoleTaskMonitor())
             f = c.fm.getFunctionAt(a)
-            if f:
+            if f and not HT2:  # king.exe — MSVC, домовленість за замовчуванням
                 f.setCallingConvention("__watcall")
             print(t, "OK" if ok and f else "FAIL")
 
