@@ -5,22 +5,24 @@ import { parseTxr } from '../../formats/txr';
 
 /**
  * Дерева Дальнобойщиків 2 — генератор `$$TreeGenerator1` (блок 40): центр і радіус обмежувальної сфери, `i1`.
- * Оригінал будує дерево процедурно (гілки випадкової довжини й кута, до 100 листків-квадів з текстур
- * `tree0…3*`), зображення дерева цілком — в атласах `tree01*` (ялина | береза) і `tree23*` (ще два види), по
- * 128×256 на дерево: саме дерево ≈ 115 px завширшки, справа — смужка кори.
+ * Поведінка — за king.exe (re/notes/ht2-trees.md): біти `i1` 4–7 — вид N (атлас `tree<2⌊N/2⌋><2⌊N/2⌋+1>`), 8–11 —
+ * форма (0…6), біт 0 — шар гілок зблизька (`tree<N>`, ще не в порту), біт 1 — тінь.
  *
- * Порт малює кожне дерево двома перехрещеними квадами з атласу (так оригінал виглядає здалеку). Гіпотези:
- * вид — `i1 & 3` (0, 1 — tree01, 2, 3 — tree23); висота — діаметр сфери, основа — центр мінус радіус;
- * поворот — від позиції (випадковий, але сталий). Колір-ключ — запис 256 палітри common.plm (як у лісах).
+ * Основа — площина з атласу, що повертається до камери навколо осі стовбура (циліндричний білборд, як в оригіналі;
+ * у порту — у вершинному шейдері). Форми 3 і 4 беруть увесь атлас (листяне дерево `tree23`, кущ `tree45`), площина
+ * завширшки з висоту; решта — половину (`tree01`: дві ялини, вибір — за позицією), ширина — частина висоти
+ * (форма 0 — ½, 2 — ⅔; 1, 5, 6 — гіпотеза ½). u — від краю половини, 0,45 її ширини (без смужки кори).
+ * Висота — діаметр сфери, основа — центр мінус радіус (гіпотеза). Колір-ключ — запис 256 палітри common.plm.
  */
-const TREE_W = 115 / 256;
-
 interface TreeSpot {
   x: number;
   y: number;
   z: number;
   r: number;
+  /** Вид (біти 4–7 i1). */
   kind: number;
+  /** Форма (біти 8–11 i1). */
+  shape: number;
 }
 
 export function collectTrees(b3d: B3d): TreeSpot[] {
@@ -30,7 +32,7 @@ export function collectTrees(b3d: B3d): TreeSpot[] {
     if (d.t !== 40 || d.name2 !== '$$TreeGenerator1') continue;
     const [x, y, z, r] = d.bound;
     if (r <= 0) continue;
-    out.push({ x, y, z, r, kind: d.i1 & 3 });
+    out.push({ x, y, z, r, kind: (d.i1 >> 4) & 15, shape: (d.i1 >> 8) & 15 });
   }
   return out;
 }
@@ -57,34 +59,45 @@ function atlasTexture(rmp: RmpArchive, pattern: RegExp, palette: Uint8Array | nu
   return t;
 }
 
-/** Два перехрещені вертикальні квади висотою 1 (z угору), основа в нулі; u — половина атласу [u0, u0 + TREE_W]. */
-function crossGeometry(u0: number): THREE.BufferGeometry {
-  const w = TREE_W / 2; // півширина квада відносно висоти (дерево в атласі — 115 × 256 px)
-  const pos: number[] = [];
-  const uv: number[] = [];
-  const nrm: number[] = [];
-  const quad = (ax: number, ay: number) => {
-    const corners: [number, number, number, number][] = [
-      [-ax * w, -ay * w, 0, 0],
-      [ax * w, ay * w, 0, 1],
-      [ax * w, ay * w, 1, 1],
-      [-ax * w, -ay * w, 1, 0],
-    ];
-    for (const i of [0, 1, 2, 0, 2, 3]) {
-      const [x, y, z, s] = corners[i];
-      pos.push(x, y, z);
-      // Текстура: v = 0 — низ (TGA знизу вгору вже перевернуто парсером: рядок 0 — верх зображення).
-      uv.push(u0 + s * TREE_W, 1 - z);
-      nrm.push(0, 0, 1);
-    }
-  };
-  quad(1, 0);
-  quad(0, 1);
+/** Ширина площини (частка висоти) за формою; null — увесь атлас (форми 3, 4). */
+function shapeWidth(shape: number): { width: number; full: boolean } {
+  if (shape === 3 || shape === 4) return { width: 1, full: true };
+  if (shape === 2) return { width: 1 / 1.5, full: false };
+  return { width: 0.5, full: false };
+}
+
+/** Площина висотою 1 (z угору), основа в нулі, x — від −w/2 до w/2; u — [u0, u0 + uw]. */
+function planeGeometry(width: number, u0: number, uw: number): THREE.BufferGeometry {
+  const w = width / 2;
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  // Рядок 0 текстури — верх зображення: v = 1 − z.
+  g.setAttribute('position', new THREE.Float32BufferAttribute([-w, 0, 0, w, 0, 0, w, 0, 1, -w, 0, 0, w, 0, 1, -w, 0, 1], 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute([u0, 1, u0 + uw, 1, u0 + uw, 0, u0, 1, u0 + uw, 0, u0, 0], 2));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1], 3));
   return g;
+}
+
+/**
+ * Матеріал циліндричного білборда: вершина x — уздовж напрямку ⟂ осі стовбура (локальна z) і напрямку на камеру,
+ * z — уздовж осі. Нормаль — вісь стовбура (освітлення як у перехрещених квадів раніше).
+ */
+function billboardMaterial(map: THREE.Texture): THREE.MeshLambertMaterial {
+  const mat = new THREE.MeshLambertMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide });
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader.replace(
+      '#include <project_vertex>',
+      `mat4 bbM = modelViewMatrix * instanceMatrix;
+      vec4 bbC = bbM * vec4(0.0, 0.0, 0.0, 1.0);
+      vec3 bbUp = (bbM * vec4(0.0, 0.0, 1.0, 0.0)).xyz;
+      float bbS = length((bbM * vec4(1.0, 0.0, 0.0, 0.0)).xyz);
+      vec3 bbR = cross(normalize(bbUp), normalize(-bbC.xyz));
+      bbR = length(bbR) > 1e-4 ? normalize(bbR) : normalize((bbM * vec4(1.0, 0.0, 0.0, 0.0)).xyz);
+      vec4 mvPosition = vec4(bbC.xyz + bbR * transformed.x * bbS + bbUp * transformed.z, 1.0);
+      gl_Position = projectionMatrix * mvPosition;`,
+    );
+  };
+  mat.customProgramCacheKey = () => 'ht2-tree-billboard';
+  return mat;
 }
 
 /** Група дерев регіону (система координат гри — додавати в корінь регіону). */
@@ -93,26 +106,42 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
   group.name = 'trees';
   const spots = collectTrees(b3d);
   if (!spots.length) return group;
-  const atlases = [atlasTexture(rmp, /tree01[^/]*\.txr$/i, palette), atlasTexture(rmp, /tree23[^/]*\.txr$/i, palette)];
+  const atlases = new Map<number, THREE.Texture | null>();
+  const atlas = (pair: number) => {
+    if (!atlases.has(pair)) atlases.set(pair, atlasTexture(rmp, new RegExp(`tree${2 * pair}${2 * pair + 1}[^/]*\\.txr$`, 'i'), palette));
+    return atlases.get(pair)!;
+  };
+  // Групи інстансів: атлас × половина (0, 1; 2 — увесь) × форма ширини.
+  const groups = new Map<string, { tex: THREE.Texture; u0: number; uw: number; width: number; list: TreeSpot[] }>();
+  for (const s of spots) {
+    const tex = atlas(s.kind >> 1);
+    if (!tex) continue;
+    const { width, full } = shapeWidth(s.shape);
+    // Половина атласу — за позицією (у грі — парність цілої частини координати; гіпотеза щодо якої).
+    const half = full ? 2 : Math.floor(Math.abs(s.x)) & 1;
+    const key = `${s.kind >> 1}:${half}:${width}`;
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = { tex, u0: half === 2 ? 0 : half * 0.5, uw: half === 2 ? 0.95 : 0.45, width, list: [] }));
+    g.list.push(s);
+  }
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
-  const zAxis = new THREE.Vector3(0, 0, 1);
-  for (let kind = 0; kind < 4; kind++) {
-    const tex = atlases[kind >> 1];
-    const list = spots.filter((s) => s.kind === kind);
-    if (!tex || !list.length) continue;
-    const mat = new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.DoubleSide });
-    mat.name = `tree${kind}`;
-    const mesh = new THREE.InstancedMesh(crossGeometry((kind & 1) * 0.5), mat, list.length);
-    list.forEach((s, i) => {
+  const mats = new Map<THREE.Texture, THREE.MeshLambertMaterial>();
+  for (const [key, g] of groups) {
+    let mat = mats.get(g.tex);
+    if (!mat) mats.set(g.tex, (mat = billboardMaterial(g.tex)));
+    mat.name = `tree ${g.tex.name}`;
+    const mesh = new THREE.InstancedMesh(planeGeometry(g.width, g.u0, g.uw), mat, g.list.length);
+    mesh.name = `trees ${key}`;
+    g.list.forEach((s, i) => {
       const h = 2 * s.r;
-      const angle = ((Math.sin(s.x * 12.9898 + s.y * 78.233) * 43758.5453) % 1) * Math.PI;
-      q.setFromAxisAngle(zAxis, angle);
       m.compose(new THREE.Vector3(s.x, s.y, s.z - s.r), q, new THREE.Vector3(h, h, h));
       mesh.setMatrixAt(i, m);
     });
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
+    // Білборд виходить за межі геометрії в локальній площині — сфера з запасом.
+    if (mesh.boundingSphere) mesh.boundingSphere.radius += 50;
     group.add(mesh);
   }
   return group;
