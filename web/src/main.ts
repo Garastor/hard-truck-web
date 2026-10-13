@@ -31,6 +31,7 @@ import {
 import { HUD_CYAN, PixelFont, box, pixelCanvas, uiScale } from './ui/pixelFont';
 import { parseFon } from './formats/fon';
 import { installDevTools } from './dev/devTools';
+import { motionOnGesture, requestMotionPermission } from './input/input';
 
 /**
  * Переглядач ресурсів (Фази 1–2): обліт локацій, галерея текстур і масок.
@@ -204,12 +205,14 @@ async function startDrive(): Promise<void> {
     scene.fog = new THREE.Fog(0x8fb4d8, 150, 900);
     // Rapier (WASM ~2 МБ) вантажимо лише при вході в режим їзди.
     const { DriveSession } = await import('./modes/drive');
-    // Суперники: кількість з ?ai= (за замовчуванням 3, як aicar у truck.ini), інші моделі вантажівок.
-    const nAi = Number(params.get('ai') ?? 3);
+    // Суперники (тестовий режим): кількість з ?ai= або списку «Суперники»; інші моделі вантажівок, по колу, якщо
+    // суперників більше, ніж моделей.
+    const nAi = Number(params.get('ai') ?? rivalsSel.value);
     // Правила з довідки: Кольцо — 3 кола; Полигон — поодинці; комерційні — до фінішу; база — вільна їзда.
     const id = levelSel.value as LevelId;
     const kind = cfg?.kind ?? (id === 'CIRCUIT' ? 'laps' : id === 'MENU3D' ? 'free' : 'route');
-    const rivals = cfg?.rivals ?? (id === 'TRIAL' || id === 'MENU3D' ? [] : trucks.filter((t) => t !== def).slice(0, nAi));
+    const others = trucks.filter((t) => t !== def);
+    const rivals = cfg?.rivals ?? (id === 'TRIAL' || id === 'MENU3D' || !others.length ? [] : Array.from({ length: nAi }, (_, i) => others[i % others.length]));
     drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup);
     drive.onSettingsCommand = (cmd) => {
       if (cmd === 'swap') return setSwap(!loadSwap());
@@ -237,6 +240,7 @@ async function startDrive(): Promise<void> {
       // Місце групи, яке виставляє база кар'єри (поруч із вікном закупівлі), — тут не потрібне.
       document.documentElement.style.removeProperty('--base-group-right');
     }
+    drive.input.onTiltDenied = () => toast(TILT_DENIED, 8000);
     if (loadControl() === 'tilt') drive.setTilt(true);
     drive.night = id === 'NIGHT';
     if (!cfg) drive.setWeather(weatherSel.value === 'rain');
@@ -381,6 +385,29 @@ weatherSel.addEventListener('change', () => {
     /* приватний режим */
   }
   if (drive && !careerCfg) drive.setWeather(weatherSel.value === 'rain');
+});
+
+// Кількість суперників у тестовому режимі (за замовчуванням 10; у кар'єрі — з налаштувань гри).
+const RIVALS_KEY = 'ht.testRivals';
+const RIVALS_MAX = 15;
+const rivalsSel = $<HTMLSelectElement>('rivals');
+for (let n = 0; n <= RIVALS_MAX; n++) rivalsSel.add(new Option(`Суперників: ${n}`, String(n)));
+rivalsSel.value = '10';
+try {
+  const saved = localStorage.getItem(RIVALS_KEY);
+  if (saved !== null && Number(saved) >= 0 && Number(saved) <= RIVALS_MAX) rivalsSel.value = String(Number(saved));
+} catch {
+  /* приватний режим */
+}
+rivalsSel.addEventListener('change', () => {
+  try {
+    localStorage.setItem(RIVALS_KEY, rivalsSel.value);
+  } catch {
+    /* приватний режим */
+  }
+  // Новий склад — новий заїзд (лише в тестовому режимі; ?ai= у адресі має перевагу — прибираємо його).
+  if (params.has('ai')) params.delete('ai');
+  if (tab === 'drive' && !careerCfg) void startDrive();
 });
 
 // Налаштування керування: кермо праворуч, педалі ліворуч (зберігається в цьому браузері).
@@ -734,6 +761,10 @@ function loadControl(): ControlMode {
     return 'buttons';
   }
 }
+const TILT_DENIED = 'Без дозволу на датчик руху нахил не працює (Safari: Параметри → Safari → Рух і орієнтація).';
+// Застосунок з початкового екрана після перезапуску забуває дозвіл на датчик руху: збережено «нахил» — питаємо
+// на першому дотику (ще в меню), а не посеред заїзду.
+if (loadControl() === 'tilt') void motionOnGesture();
 function saveControl(c: ControlMode): void {
   try {
     localStorage.setItem(CONTROL_KEY, c);
@@ -764,9 +795,8 @@ async function optionsDialog(): Promise<void> {
         async setControl(c) {
           if (c === 'tilt') {
             // iOS дає доступ до датчика руху лише за жестом користувача — питаємо тут, у натисканні.
-            const DOE = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> };
-            if (DOE.requestPermission && (await DOE.requestPermission().catch(() => 'denied')) !== 'granted') {
-              toast('Без дозволу на датчик руху нахил не працює (Safari: Параметри → Safari → Рух і орієнтація).', 8000);
+            if ((await requestMotionPermission()) !== 'granted') {
+              toast(TILT_DENIED, 8000);
               return loadControl();
             }
           }

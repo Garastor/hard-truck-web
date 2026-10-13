@@ -48,6 +48,51 @@ const ICONS = {
 
 type Command = 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror' | 'cab' | 'swap';
 
+/**
+ * Дозвіл на датчик руху (iOS 13+: DeviceOrientationEvent.requestPermission). Питати можна лише в жесті користувача;
+ * застосунок з початкового екрана після перезапуску дозвіл забуває, хоч налаштування «нахил» збережене. Тому, коли
+ * запит без жесту не пройшов, чекаємо першого дотику (touchend/click — на iOS це жест) і питаємо в ньому.
+ */
+const MOTION = (typeof DeviceOrientationEvent === 'undefined' ? {} : DeviceOrientationEvent) as { requestPermission?: () => Promise<string> };
+let motionGranted = typeof MOTION.requestPermission !== 'function';
+
+/** 'granted' — є дозвіл; 'denied' — відмова; 'gesture' — потрібен жест користувача. */
+export async function requestMotionPermission(): Promise<'granted' | 'denied' | 'gesture'> {
+  if (motionGranted) return 'granted';
+  try {
+    // Виклик — синхронно (до першого await), щоб у обробнику дотику він ще рахувався жестом.
+    motionGranted = (await MOTION.requestPermission!()) === 'granted';
+    return motionGranted ? 'granted' : 'denied';
+  } catch {
+    return 'gesture';
+  }
+}
+
+let motionWaiters: ((r: 'granted' | 'denied') => void)[] = [];
+let motionArmed = false;
+
+/** Попросити дозвіл на першому дотику (наприклад, ще в головному меню, якщо збережено керування нахилом). */
+export function motionOnGesture(): Promise<'granted' | 'denied'> {
+  if (motionGranted) return Promise.resolve('granted');
+  const done = new Promise<'granted' | 'denied'>((r) => motionWaiters.push(r));
+  if (!motionArmed) {
+    motionArmed = true;
+    const events = ['touchend', 'click'] as const;
+    const onGesture = () => {
+      void requestMotionPermission().then((r) => {
+        if (r === 'gesture') return; // не зарахувалось жестом — чекаємо наступного дотику
+        for (const e of events) window.removeEventListener(e, onGesture, true);
+        motionArmed = false;
+        const ws = motionWaiters;
+        motionWaiters = [];
+        for (const w of ws) w(r);
+      });
+    };
+    for (const e of events) window.addEventListener(e, onGesture, true);
+  }
+  return done;
+}
+
 /** Час повороту керма з клавіатури від центру до краю, с, і швидкість повернення, 1/с (оригінал, s6). */
 const STEER_RAMP = 1.1;
 const STEER_RETURN = 4.3;
@@ -71,6 +116,10 @@ export class Input {
     this.tilt = Math.max(-1, Math.min(1, angle / 25));
   };
   tiltEnabled = false;
+  /** Сенсорні кнопки (кнопки керма ховаються, поки кермують нахилом). */
+  private touchEl: HTMLElement | null = null;
+  /** Нахил вимкнено сам (відмова в дозволі на датчик руху). */
+  onTiltDenied: (() => void) | null = null;
   private readonly onKey = (e: KeyboardEvent) => this.key(e);
   /** Одноразові події (перемкнути камеру, скинути вантажівку). */
   onCommand: ((cmd: Command) => void) | null = null;
@@ -162,25 +211,42 @@ export class Input {
     return this.state;
   }
 
-  /** Вмикає/вимикає кермування нахилом (iOS вимагає дозволу на жест користувача). */
+  /**
+   * Вмикає/вимикає кермування нахилом. iOS вимагає дозволу в жесті користувача: якщо його ще немає (старт траси
+   * після перезапуску застосунку), нахил лишається ввімкненим, а дозвіл питаємо на першому дотику.
+   */
   async toggleTilt(): Promise<boolean> {
     if (this.tiltEnabled) {
-      window.removeEventListener('deviceorientation', this.onOrient);
-      this.tiltEnabled = false;
-      this.tilt = null;
+      this.setTiltOn(false);
       return false;
     }
-    const DOE = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> };
-    if (DOE.requestPermission && (await DOE.requestPermission().catch(() => 'denied')) !== 'granted') return false;
-    window.addEventListener('deviceorientation', this.onOrient);
-    this.tiltEnabled = true;
+    this.setTiltOn(true);
+    // Поза жестом iOS може відповісти відмовою, хоч користувач не відмовляв, — питаємо лише в дотику.
+    void motionOnGesture().then((g) => {
+      if (g === 'denied' && this.tiltEnabled) {
+        this.setTiltOn(false);
+        this.onTiltDenied?.();
+      }
+    });
     return true;
+  }
+
+  private setTiltOn(on: boolean): void {
+    this.tiltEnabled = on;
+    if (on) window.addEventListener('deviceorientation', this.onOrient);
+    else {
+      window.removeEventListener('deviceorientation', this.onOrient);
+      this.tilt = null;
+    }
+    this.touchEl?.classList.toggle('tilt-on', on);
   }
 
   /** Сенсорні кнопки поверх гри (мультитач через Pointer Events). */
   mountTouch(parent: HTMLElement): HTMLElement {
     const ui = document.createElement('div');
     ui.className = 'touch-ui';
+    ui.classList.toggle('tilt-on', this.tiltEnabled);
+    this.touchEl = ui;
     const btn = (cls: string, label: string, action?: Action, cmd?: Command, svg?: string) => {
       const b = document.createElement('button');
       b.className = `touch-btn ${cls}`;

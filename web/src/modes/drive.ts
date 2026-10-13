@@ -559,7 +559,7 @@ export class DriveSession {
     this.lights?.update(this.headlights, false, reverse ? state.throttle > 0 : state.brake > 0, reverse);
     for (const o of this.opponents) o.lights?.update(this.night, wet, o.pilot.state.brake > 0, o.truck.gear < 0);
   }
-  /** Кермування нахилом телефона (дозвіл на iOS питають в «Опціях», за жестом). */
+  /** Кермування нахилом телефона (дозвіл на iOS — в «Опціях» або на першому дотику, див. Input.toggleTilt). */
   setTilt(on: boolean): void {
     if (on !== this.input.tiltEnabled) void this.input.toggleTilt();
   }

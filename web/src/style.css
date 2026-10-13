@@ -264,6 +264,12 @@ body.bar-open #fps {
   }
 }
 
+/* Кермування нахилом телефона: кнопки керма не потрібні. */
+.touch-ui.tilt-on .touch-btn.left,
+.touch-ui.tilt-on .touch-btn.right {
+  display: none;
+}
+
 /* Сенсорні кнопки — у стилі табличок табло: квадратні, тонка рамка, напівпрозорий темний фон, блакитні значки. */
 .touch-btn {
   position: absolute;
@@ -813,6 +819,7 @@ body.career .tabs,
 body.career #level,
 body.career #truck,
 body.career #weather,
+body.career #rivals,
 body.career #toMenu,
 body.career #stats {
   display: none;
