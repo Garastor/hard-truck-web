@@ -12,7 +12,7 @@ import { parseTxr } from '../../formats/txr';
  * у порту — у вершинному шейдері). Форми 3 і 4 беруть увесь атлас (листяне дерево `tree23`, кущ `tree45`), площина
  * завширшки з висоту; решта — половину (`tree01`: дві ялини, вибір — за парністю виду), ширина — частина висоти
  * (форма 0 — ½, 2 — ⅔; 1, 5, 6 — гіпотеза ½). u — від краю половини, 0,45 її ширини (без смужки кори).
- * Основа — центр сфери (він на рівні землі), висота — діаметр (гіпотеза). Колір-ключ — запис 256 палітри common.plm.
+ * Основа — центр сфери (він на рівні землі), висота — радіус (за знімками оригіналу). Колір-ключ — запис 256 палітри common.plm.
  */
 interface TreeSpot {
   x: number;
@@ -124,19 +124,22 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
     return atlases.get(pair)!;
   };
   // Групи інстансів: атлас × половина (0, 1; 2 — увесь) × форма ширини.
-  const groups = new Map<string, { tex: THREE.Texture; u0: number; uw: number; width: number; crown: number; list: TreeSpot[] }>();
+  const groups = new Map<string, { tex: THREE.Texture; u0: number; uw: number; width: number; crown: number; trunk: boolean; list: TreeSpot[] }>();
   for (const s of spots) {
     const tex = atlas(s.kind >> 1);
     if (!tex) continue;
     const { width, full, crown: crownFrom } = shapeOf(s.shape);
-    // Зображення на весь атлас (листяні tree23/tree45 регіону aa) — зі своїм стовбуром, без смужки кори: від землі.
-    const crown = full ? 0 : crownFrom;
+    // Крона — від землі (знімки оригіналу: голих стовбурів здалеку не видно; param_13 0,2/0,3 у 0x005c6ac0 — не
+    // початок крони). Стовбур зі смужки кори — лише в половинних атласах, усередині крони.
+    void crownFrom;
+    const crown = 0;
+    const trunk = !full;
     // Половина атласу — за парністю виду (атлас tree<2k><2k+1>: парний вид — ліва, непарний — права; у регіоні ap
     // tree01 — темна | блакитна ялина, tree23 — темна | світла хвоя).
     const half = full ? 2 : s.kind & 1;
     const key = `${s.kind >> 1}:${half}:${width}:${crown}`;
     let g = groups.get(key);
-    if (!g) groups.set(key, (g = { tex, u0: half === 2 ? 0 : half * 0.5, uw: half === 2 ? 0.95 : 0.45, width, crown, list: [] }));
+    if (!g) groups.set(key, (g = { tex, u0: half === 2 ? 0 : half * 0.5, uw: half === 2 ? 0.95 : 0.45, width, crown, trunk, list: [] }));
     g.list.push(s);
   }
   const m = new THREE.Matrix4();
@@ -148,13 +151,14 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
     mat.name = `tree ${g.tex.name}`;
     // Крона — від частки висоти до верху; стовбур — смужка кори від землі до середини (видно крізь крону).
     const parts = [planeGeometry(g.width, g.u0, g.uw, g.crown, 1)];
-    if (g.crown > 0) parts.push(planeGeometry(TRUNK_W, g.u0 + BARK_U0, BARK_UW, 0, TRUNK_TOP));
+    if (g.trunk) parts.push(planeGeometry(TRUNK_W, g.u0 + BARK_U0, BARK_UW, 0, TRUNK_TOP));
     for (const [pi, geo] of parts.entries()) {
       const mesh = new THREE.InstancedMesh(geo, mat, g.list.length);
       mesh.name = `trees ${key}${pi ? ' trunk' : ''}`;
       g.list.forEach((s, i) => {
-        const h = 2 * s.r;
-        // Центр сфери генератора — на рівні землі (z ≈ дорога поруч), тож основа — центр, не центр мінус радіус.
+        // Центр сфери генератора — на рівні землі (z ≈ дорога поруч): основа — центр, верх — центр + радіус (висота =
+        // радіус; з діаметром дерева виходили вдвічі вищими за оригінал — знімки користувача).
+        const h = s.r;
         m.compose(new THREE.Vector3(s.x, s.y, s.z), q, new THREE.Vector3(h, h, h));
         mesh.setMatrixAt(i, m);
       });
