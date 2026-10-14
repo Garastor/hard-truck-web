@@ -23,7 +23,8 @@ import { buildTruckModel, parseTrucks, type TruckDef } from '@engine/vehicle/tru
 import type { DriveSession } from './modes/drive';
 import type { TruckSetup } from '@engine/vehicle/truckVehicle';
 import { currentDriver, listCareers, loadCareer, newCareer, setCurrentDriver, truckSpec, type Career } from './game/career';
-import { CareerGame, HOME_SVG, modal, setHudFont, type LevelKind } from './ui/careerUi';
+import { CareerGame, HOME_SVG, type LevelKind } from './ui/careerUi';
+import { modal, setHudFont } from '@engine/ui/modal';
 import {
   MenuArt, driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
   type ControlMode, type OptionsState, type QualityLevel,

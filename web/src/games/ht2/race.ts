@@ -3,7 +3,7 @@ import { HT2_ENGINE, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER, HT2_BRAKE 
 import { AutoPilot, type WayLine } from '@engine/vehicle/autopilot';
 import { TruckVehicle } from '@engine/vehicle/truckVehicle';
 import { buildTruckModel } from '@engine/vehicle/trucks';
-import { modal } from '../../ui/careerUi';
+import { modal } from '@engine/ui/modal';
 import type { Ht2Roads } from './roads';
 import { drivable, truckDef } from './trucks';
 import { toThree } from './world';

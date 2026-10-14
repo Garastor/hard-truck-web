@@ -12,7 +12,7 @@ import { decodeCp1251 } from '@engine/formats/binary';
 import { WorldViewer } from './viewer';
 import { Ht2Drive } from './drive';
 import { formatMoney, loadCareer, newCareer, type Ht2Career } from './career';
-import { modal } from '../../ui/careerUi';
+import { modal } from '@engine/ui/modal';
 
 type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files' | 'exit';
 

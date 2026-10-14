@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { modal } from '../../ui/careerUi';
+import { modal } from '@engine/ui/modal';
 import { isList, str, type SExpr } from '@engine/formats/sexpr';
 import { findStores, makeOrders, parseGoods, type Goods, type Store, type Town } from './economy';
 import { FUEL_PRICE, REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
