@@ -880,7 +880,9 @@ export class Ht2Drive {
     const flat = fwd.clone().setY(0).normalize();
     const want = v.position.clone().addScaledVector(flat, -dist).addScaledVector(up, height);
     this.camPos.lerp(want, 1 - Math.exp(-dt * 4));
-    const look = far ? v.position.clone().addScaledVector(up, 2) : this.camPos.clone().addScaledVector(flat, Math.cos(CHASE_PITCH)).addScaledVector(up, -Math.sin(CHASE_PITCH));
+    // Точка погляду — від бажаної (не відсталої) позиції камери під нахилом CHASE_PITCH на 20 м: камера, що відстає
+    // в повороті, однаково дивиться на машину (від відсталої позиції машина виходила з кадру).
+    const look = far ? v.position.clone().addScaledVector(up, 2) : want.clone().addScaledVector(flat, 20 * Math.cos(CHASE_PITCH)).addScaledVector(up, -20 * Math.sin(CHASE_PITCH));
     this.camLook.lerp(look, 1 - Math.exp(-dt * 10));
     this.camera.position.copy(this.camPos);
     this.camera.lookAt(this.camLook);

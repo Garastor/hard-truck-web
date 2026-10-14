@@ -24,7 +24,15 @@ MARK = struct.pack("<I", 0x00531AA0)
 MARK_OFF = 0x8C
 SIZE = 0xC0
 RAW = 0x200
-COLS = "t,x,y,z,kmh,v,steer,rpm,gear,gas,fuel,odo,n0,unk_b8,fx,fy,fz,raw90," + ",".join(f"m{i}" for i in range(12))
+COLS = (
+    "t,x,y,z,kmh,v,steer,rpm,gear,gas,fuel,odo,n0,unk_b8,fx,fy,fz,raw90,"
+    + ",".join(f"m{i}" for i in range(12))
+    + ",camx,camy,camz,"
+    + ",".join(f"c{i}" for i in range(9))
+)
+# Камера (глобальні дані king.exe): матриця 3×3 @0x007029c8 (рядки: вправо, погляд, угору), позиція @0x007029ec.
+CAM_MAT = 0x007029C8
+CAM_POS = 0x007029EC
 
 
 def say(msg):
@@ -78,7 +86,10 @@ def read_state(p, P):
     # 12 float від P−0xb0: бічний вектор (m0…m2; asin(m2) — крен), уперед (m3…m5; asin(m5) — тангаж), угору (m6…m8),
     # позиція (m9…m11).
     m = struct.unpack_from("<12f", d, 0)
-    return (x, y, z, v * 3.6, v, steer, rpm, gear, gas, fuel, odo, n0, unk, fx, fy, fz, raw90, *m)
+    cam = (p.read(CAM_MAT, 0x30) or b"").ljust(0x30, b"\0")
+    c = struct.unpack_from("<9f", cam, 0)
+    cp = struct.unpack_from("<3f", cam, CAM_POS - CAM_MAT)
+    return (x, y, z, v * 3.6, v, steer, rpm, gear, gas, fuel, odo, n0, unk, fx, fy, fz, raw90, *m, *cp, *c)
 
 
 def main():
