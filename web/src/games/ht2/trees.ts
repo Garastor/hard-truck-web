@@ -75,6 +75,8 @@ const BARK_U0 = 0.46;
 const BARK_UW = 0.025;
 /** Ширина стовбура — частка висоти дерева (за знімком оригіналу — тонкий; гіпотеза). */
 const TRUNK_W = 0.025;
+/** Верх стовбура — частка висоти: на знімку оригіналу стовбур видно крізь крону до ≈ середини дерева. */
+const TRUNK_TOP = 0.5;
 
 /** Площина (z угору) від z0 до z1, x — від −w/2 до w/2; u — [u0, u0 + uw], v — від низу зображення до верху. */
 function planeGeometry(width: number, u0: number, uw: number, z0 = 0, z1 = 1): THREE.BufferGeometry {
@@ -144,9 +146,9 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
     let mat = mats.get(g.tex);
     if (!mat) mats.set(g.tex, (mat = billboardMaterial(g.tex)));
     mat.name = `tree ${g.tex.name}`;
-    // Крона — від частки висоти до верху; стовбур — смужка кори від землі трохи під крону.
+    // Крона — від частки висоти до верху; стовбур — смужка кори від землі до середини (видно крізь крону).
     const parts = [planeGeometry(g.width, g.u0, g.uw, g.crown, 1)];
-    if (g.crown > 0) parts.push(planeGeometry(TRUNK_W, g.u0 + BARK_U0, BARK_UW, 0, g.crown + 0.1));
+    if (g.crown > 0) parts.push(planeGeometry(TRUNK_W, g.u0 + BARK_U0, BARK_UW, 0, TRUNK_TOP));
     for (const [pi, geo] of parts.entries()) {
       const mesh = new THREE.InstancedMesh(geo, mat, g.list.length);
       mesh.name = `trees ${key}${pi ? ' trunk' : ''}`;
