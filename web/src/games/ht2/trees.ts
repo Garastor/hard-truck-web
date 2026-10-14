@@ -52,8 +52,10 @@ function atlasTexture(rmp: RmpArchive, pattern: RegExp, palette: Uint8Array | nu
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
   t.magFilter = THREE.LinearFilter;
-  t.minFilter = THREE.LinearMipmapLinearFilter;
-  t.generateMipmaps = true;
+  // Без міпмапів: з ними дерева здалеку розмиті й «худнуть» (відсікання прозорих пікселів на зменшених рівнях);
+  // в оригіналі здалеку чіткі (порівняння знімків користувача).
+  t.minFilter = THREE.LinearFilter;
+  t.generateMipmaps = false;
   t.name = file!;
   t.needsUpdate = true;
   return t;
@@ -131,10 +133,10 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
     const tex = atlas(s.kind >> 1);
     if (!tex) continue;
     const { width, full, crown: crownFrom } = shapeOf(s.shape);
-    // Крона — від землі (знімки оригіналу: голих стовбурів здалеку не видно; param_13 0,2/0,3 у 0x005c6ac0 — не
-    // початок крони). Стовбур зі смужки кори — лише в половинних атласах, усередині крони.
-    void crownFrom;
-    const crown = 0;
+    // Крона: форма 2 (хвоя tree23 біля повороту за «Южним») — з 0,3 висоти, під нею видно стовбур (знімок
+    // оригіналу); форма 0 (ялини біля бази) — від землі. Решта форм — від землі (гіпотеза). Стовбур зі смужки кори —
+    // лише в половинних атласах (до половини висоти, за кроною).
+    const crown = s.shape === 2 ? crownFrom : 0;
     const trunk = !full;
     // Половина атласу — за парністю виду (атлас tree<2k><2k+1>: парний вид — ліва, непарний — права; у регіоні ap
     // tree01 — темна | блакитна ялина, tree23 — темна | світла хвоя).
@@ -173,8 +175,8 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
       const mesh = new THREE.InstancedMesh(geo, pi ? trunkMat(g.tex) : mat, g.list.length);
       mesh.name = `trees ${key}${pi ? ' trunk' : ''}`;
       g.list.forEach((s, i) => {
-        // Центр сфери генератора — на рівні землі (z ≈ дорога поруч): основа — центр, верх — центр + радіус (висота =
-        // радіус; з діаметром дерева виходили вдвічі вищими за оригінал — знімки користувача).
+        // Центр сфери генератора — на рівні землі (z ≈ дорога поруч): основа — центр, висота — радіус (користувач:
+        // до висоти претензій немає).
         const h = s.r;
         m.compose(new THREE.Vector3(s.x, s.y, s.z), q, new THREE.Vector3(h, h, h));
         mesh.setMatrixAt(i, m);
