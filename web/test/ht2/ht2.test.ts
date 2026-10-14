@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { join, relative } from 'node:path';
 import { parseRmp, parseMaterial } from '@engine/formats/rmp';
 import { parsePlm } from '@engine/formats/plm';
 import { parseTxr } from '@engine/formats/txr';
@@ -16,17 +16,18 @@ import { parseTech } from '@engine/formats/tech';
 import { parseHeightmap } from '@engine/formats/heightmap';
 import { parseOvl } from '@engine/formats/ovl';
 import { decodeCp1251 } from '@engine/formats/binary';
-import { HT2_FILES, HT2_REGIONS, HT2_REQUIRED } from '../src/games/ht2/files';
+import { HT2_FILES, HT2_REGIONS, HT2_REQUIRED } from '@ht2/files';
 import { detectGame } from '@app/registry';
+import { HT2_DIR } from '../gameDirs';
 import { findStores, orderPay, parseGoods, parseServices, parseTowns } from '@ht2/career/economy';
-import { HT2_MOD_REGIONS } from '../src/games/ht2/files';
+import { HT2_MOD_REGIONS } from '@ht2/files';
 import { install, parseUpgrades, tuning } from '@ht2/career/upgrades';
 import { parseMarkets } from '@ht2/career/market';
 import { TERRAIN, terrainHeightAt, terrainHeights } from '@ht2/world/terrain';
 import { defaultSettings, timeScale } from '@ht2/ui/settings';
 import { parseIni } from '@engine/formats/ini';
 
-const GAME = resolve(import.meta.dirname, '..', '..', 'Game', 'Hard Truck 2');
+const GAME = HT2_DIR;
 const has = existsSync(join(GAME, 'king.exe'));
 
 function files(ext: RegExp, dir = GAME): string[] {

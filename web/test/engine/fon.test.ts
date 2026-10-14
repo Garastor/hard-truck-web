@@ -2,12 +2,14 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { parseFon } from '@engine/formats/fon';
+import { join } from 'node:path';
+import { HT1_DIR } from '../gameDirs';
 
-const read = (n: string) => new Uint8Array(readFileSync(`../Game/Hard Truck/${n}`));
+const read = (n: string) => new Uint8Array(readFileSync(join(HT1_DIR, n)));
 const cp = (ch: string) => new TextEncoder().encode(ch)[0] && ch.charCodeAt(0) < 128 ? ch.charCodeAt(0) : 0xc0 + 'АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ'.indexOf(ch);
 
 // Без файлів гри (CI на GitHub) — пропускаємо.
-describe.skipIf(!existsSync('../Game/Hard Truck/MENU.FON'))('FON', () => {
+describe.skipIf(!existsSync(join(HT1_DIR, 'MENU.FON')))('FON', () => {
   // large.fon — лише великі кириличні, цифри й частина латиниці.
   it.each([
     ['MENU.FON', 6, 8, '0123456789ABCZ$%АБЯЖ'],

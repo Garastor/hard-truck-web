@@ -8,9 +8,11 @@ import {
   damageEffects, loadGood, newCareer, recoverCost, repair, roadRepairStep, rollMarket, settleTrip, truckSetup,
   truckSpec, unloadGood,
 } from '@ht1/career/career';
+import { join } from 'node:path';
+import { HT1_DIR } from '../gameDirs';
 
 // Без файлів гри (CI на GitHub) — тести пропускаються.
-const TCH = '../Game/Hard Truck/TRUCK.TCH';
+const TCH = join(HT1_DIR, 'TRUCK.TCH');
 const has = existsSync(TCH);
 const defs = has ? parseTrucks(decodeCp1251(new Uint8Array(readFileSync(TCH)))) : [];
 const specs = defs.map(truckSpec);

@@ -3,11 +3,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { parseB3d, walk } from '@engine/formats/b3d';
 import { floorCovers, levelCollision } from '@engine/physics/collision';
+import { HT1_DIR } from '../gameDirs';
 
-const GAME = resolve(import.meta.dirname, '..', '..', 'Game', 'Hard Truck');
+const GAME = HT1_DIR;
 const LEVELS: [string, string][] = [
   ['CIRCUIT', 'CIRC2.B3D'],
   ['COUNT', 'COUNT2.B3D'],
