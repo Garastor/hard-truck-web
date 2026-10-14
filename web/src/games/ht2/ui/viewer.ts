@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { FileSource } from '@engine/assets/source';
-import { HT2_REGIONS } from './files';
-import { Ht2World, toThree } from './world';
-import type { DayTime, Sky } from './weather';
+import { HT2_REGIONS } from '../files';
+import { Ht2World, toThree } from '../world/world';
+import type { DayTime, Sky } from '../world/weather';
 
 /**
  * Поле зору: TRUCK.INI [RENDER] ypyramid=0.9 — висота «піраміди огляду» на відстані 1 (як у HT1, де 1.5):

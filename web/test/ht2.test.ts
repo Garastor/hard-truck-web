@@ -18,12 +18,12 @@ import { parseOvl } from '@engine/formats/ovl';
 import { decodeCp1251 } from '@engine/formats/binary';
 import { HT2_FILES, HT2_REGIONS, HT2_REQUIRED } from '../src/games/ht2/files';
 import { detectGame } from '@app/registry';
-import { findStores, orderPay, parseGoods, parseServices, parseTowns } from '../src/games/ht2/economy';
+import { findStores, orderPay, parseGoods, parseServices, parseTowns } from '@ht2/career/economy';
 import { HT2_MOD_REGIONS } from '../src/games/ht2/files';
-import { install, parseUpgrades, tuning } from '../src/games/ht2/upgrades';
-import { parseMarkets } from '../src/games/ht2/market';
-import { TERRAIN, terrainHeightAt, terrainHeights } from '../src/games/ht2/terrain';
-import { defaultSettings, timeScale } from '../src/games/ht2/settings';
+import { install, parseUpgrades, tuning } from '@ht2/career/upgrades';
+import { parseMarkets } from '@ht2/career/market';
+import { TERRAIN, terrainHeightAt, terrainHeights } from '@ht2/world/terrain';
+import { defaultSettings, timeScale } from '@ht2/ui/settings';
 import { parseIni } from '@engine/formats/ini';
 
 const GAME = resolve(import.meta.dirname, '..', '..', 'Game', 'Hard Truck 2');

@@ -1,13 +1,13 @@
 import * as THREE from 'three';
-import { HT2_ENGINE, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER, HT2_BRAKE } from './controls';
+import { HT2_ENGINE, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER, HT2_BRAKE } from '../vehicles/controls';
 import { AutoPilot } from '@engine/vehicle/autopilot';
 import { TruckVehicle } from '@engine/vehicle/truckVehicle';
 import { buildTruckModel } from '@engine/vehicle/trucks';
 import { isList, num, str, type SExpr } from '@engine/formats/sexpr';
-import { drivable, truckDef, type Ht2Trucks } from './trucks';
+import { drivable, truckDef, type Ht2Trucks } from '../vehicles/trucks';
 import { recolor } from './traffic';
-import type { Ht2Roads, RoadLine } from './roads';
-import type { Ht2Drive } from './drive';
+import type { Ht2Roads, RoadLine } from '../world/roads';
+import type { Ht2Drive } from '../drive';
 
 /**
  * Далекобійники-суперники HT2 (перша версія): у світі їх 50 (`ENV/GAME.CNF`: `(aitruck 50)`), імена — `names.sch`

@@ -4,8 +4,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { Engine, GEAR_N } from '@engine/vehicle/engine';
-import { HT2_ENGINE } from '../src/games/ht2/controls';
-import { Climate, gameTimeScale, illumOn, sunDirection, sunHeight } from '../src/games/ht2/climate';
+import { HT2_ENGINE } from '@ht2/vehicles/controls';
+import { Climate, gameTimeScale, illumOn, sunDirection, sunHeight } from '@ht2/world/climate';
 
 // ZilR з vehicle.tech: tach_with_max_power 26,67 об/с, головна 5,29, колесо 0,533.
 const zilr = () =>

@@ -4,13 +4,13 @@ import { parseFon } from '@engine/formats/fon';
 import { PixelFont } from '@engine/ui/pixelFont';
 import type { GameContext } from '@engine/gameContext';
 import { HT2_FILES, ht2DevSource } from './files';
-import { Ht2MenuArt, ht2ExitScreen, ht2MainScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem, type RoundKey } from './menu';
-import { loadSettings, saveSettings, type Ht2Settings } from './settings';
+import { Ht2MenuArt, ht2ExitScreen, ht2MainScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem, type RoundKey } from './ui/menu';
+import { loadSettings, saveSettings, type Ht2Settings } from './ui/settings';
 import { parseIni } from '@engine/formats/ini';
 import { decodeCp1251 } from '@engine/formats/binary';
-import { WorldViewer } from './viewer';
+import { WorldViewer } from './ui/viewer';
 import { Ht2Drive } from './drive';
-import { formatMoney, loadCareer, newCareer, type Ht2Career } from './career';
+import { formatMoney, loadCareer, newCareer, type Ht2Career } from './career/career';
 import { modal } from '@engine/ui/modal';
 
 type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files' | 'exit';

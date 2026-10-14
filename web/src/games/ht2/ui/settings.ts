@@ -1,5 +1,5 @@
 import { iniNum, type Ini } from '@engine/formats/ini';
-import { gameTimeScale } from './climate';
+import { gameTimeScale } from '../world/climate';
 
 /**
  * Налаштування одиночної гри HT2 — повзунки й перемикачі екрана `s/backsing` (LOAD.RES). Початкові значення —

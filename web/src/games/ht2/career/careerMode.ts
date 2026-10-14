@@ -3,10 +3,10 @@ import { modal } from '@engine/ui/modal';
 import { isList, str, type SExpr } from '@engine/formats/sexpr';
 import { findStores, makeOrders, parseGoods, type Goods, type Store, type Town } from './economy';
 import { FUEL_PRICE, REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
-import { toThree } from './world';
+import { toThree } from '../world/world';
 import { install, type Upgrade } from './upgrades';
 import { USED_DAMAGE, type ForSale, type Market } from './market';
-import type { Ht2Drive } from './drive';
+import type { Ht2Drive } from '../drive';
 
 /**
  * Кар'єра в режимі їзди HT2: склади (замовлення й здача вантажу), СТО (ремонт), удари (пошкодження машини й

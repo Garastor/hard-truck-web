@@ -5,8 +5,8 @@ import { GROUP_WORLD, groups } from '@engine/physics/world';
 import { isList, num, str, type SExpr } from '@engine/formats/sexpr';
 import type { Way } from '@engine/formats/way';
 import type { TechRecord } from '@engine/formats/tech';
-import { drivable, truckDef, type Ht2Trucks } from './trucks';
-import { toThree } from './world';
+import { drivable, truckDef, type Ht2Trucks } from '../vehicles/trucks';
+import { toThree } from '../world/world';
 
 /**
  * Ринки вантажівок HT2 — `parking` з `ENV/mod_<регіон>.sch`:

@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import { visibleBox } from '@engine/vehicle/trucks';
 import { GROUP_WORLD, groups } from '@engine/physics/world';
 import type { Way } from '@engine/formats/way';
-import type { Ht2Trucks } from './trucks';
-import { toThree } from './world';
+import type { Ht2Trucks } from '../vehicles/trucks';
+import { toThree } from '../world/world';
 
 /**
  * Поліція Дальнобойщиків 2 (перша версія): пости в точках засідок `polamb_<регіон>_NN` (вузли WAY, 33 у світі) —

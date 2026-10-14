@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import { visibleBox } from '@engine/vehicle/trucks';
 import { GROUP_WORLD, groups } from '@engine/physics/world';
 import { isList, num, str, type SExpr } from '@engine/formats/sexpr';
-import type { Ht2Roads, RoadLine } from './roads';
-import type { Ht2Trucks } from './trucks';
+import type { Ht2Roads, RoadLine } from '../world/roads';
+import type { Ht2Trucks } from '../vehicles/trucks';
 
 /**
  * Трафік Дальнобойщиків 2: машини з `evehicles.sch` класу `dumb` («тупі» легковики, автобус, пікапи) — запис
