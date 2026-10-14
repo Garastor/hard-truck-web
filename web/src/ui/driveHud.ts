@@ -4,7 +4,7 @@
  * R червона, N біла, передачі зелені), міцність машини й цілість вантажу у відсотках; нижче — баланс і рядок гонки.
  */
 import type * as THREE from 'three';
-import { HUD_CYAN, PixelFont, box, hudScale, pixelCanvas } from './pixelFont';
+import { HUD_CYAN, PixelFont, box, hudScale, pixelCanvas } from '@engine/ui/pixelFont';
 
 export interface HudData {
   speedKmh: number;

@@ -4,13 +4,13 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { parseRmp, parseMaterial } from '../src/formats/rmp';
-import { parsePlm } from '../src/formats/plm';
-import { parseTxr } from '../src/formats/txr';
-import { parseMsk } from '../src/formats/msk';
-import { parseB3d, walk } from '../src/formats/b3d';
-import { parseIni, iniNum, iniNums } from '../src/formats/ini';
-import { decodeCp1251 } from '../src/formats/binary';
+import { parseRmp, parseMaterial } from '@engine/formats/rmp';
+import { parsePlm } from '@engine/formats/plm';
+import { parseTxr } from '@engine/formats/txr';
+import { parseMsk } from '@engine/formats/msk';
+import { parseB3d, walk } from '@engine/formats/b3d';
+import { parseIni, iniNum, iniNums } from '@engine/formats/ini';
+import { decodeCp1251 } from '@engine/formats/binary';
 
 const GAME = resolve(import.meta.dirname, '..', '..', 'Game', 'Hard Truck');
 const has = existsSync(GAME);

@@ -1,17 +1,17 @@
 import * as THREE from 'three';
 import type { FileSource } from '../../assets/loader';
-import { parseB3d } from '../../formats/b3d';
-import { parseRmp, type RmpArchive } from '../../formats/rmp';
-import { decodeCp1251 } from '../../formats/binary';
-import { parseWay, type Way } from '../../formats/way';
-import { SceneAssembler, buildScene, type BuiltScene } from '../../render/sceneBuilder';
+import { parseB3d } from '@engine/formats/b3d';
+import { parseRmp, type RmpArchive } from '@engine/formats/rmp';
+import { decodeCp1251 } from '@engine/formats/binary';
+import { parseWay, type Way } from '@engine/formats/way';
+import { SceneAssembler, buildScene, type BuiltScene } from '@engine/render/sceneBuilder';
 import { HT2_REGIONS, readTextures, regionFiles, type TexLevel } from './files';
 import { DAY_TIME_HOUR, Weather, type DayTime, type Sky } from './weather';
 import { TREE_LIGHT, buildGlows, buildTrees, type TreeSway } from './trees';
 import { illumOn, sunDirection } from './climate';
-import { mergeStatic } from '../../render/mergeStatic';
-import { walk } from '../../formats/b3d';
-import { parseHeightmap } from '../../formats/heightmap';
+import { mergeStatic } from '@engine/render/mergeStatic';
+import { walk } from '@engine/formats/b3d';
+import { parseHeightmap } from '@engine/formats/heightmap';
 import { buildTerrainMesh, terrainHeights } from './terrain';
 
 /**

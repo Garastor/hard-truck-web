@@ -4,8 +4,8 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { parseB3d, walk } from '../src/formats/b3d';
-import { floorCovers, levelCollision } from '../src/game/collision';
+import { parseB3d, walk } from '@engine/formats/b3d';
+import { floorCovers, levelCollision } from '@engine/physics/collision';
 
 const GAME = resolve(import.meta.dirname, '..', '..', 'Game', 'Hard Truck');
 const LEVELS: [string, string][] = [

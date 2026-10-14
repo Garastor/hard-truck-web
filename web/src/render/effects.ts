@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { SceneAssembler } from './sceneBuilder';
+import type { SceneAssembler } from '@engine/render/sceneBuilder';
 
 /**
  * Вибух і полумʼя з ресурсів траси: обʼєкт `explosion` — перемикач `ExplodeKey` на 6 станів (5 кадрів білборду

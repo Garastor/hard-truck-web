@@ -1,5 +1,5 @@
-import { parseB3d, type B3d } from '../formats/b3d';
-import { parseRmp, type RmpArchive } from '../formats/rmp';
+import { parseB3d, type B3d } from '@engine/formats/b3d';
+import { parseRmp, type RmpArchive } from '@engine/formats/rmp';
 
 /** Локації гри: тека, сцена/ресурси для апаратного рендеру (*2.B3D + *3.RMP) і програмного (*.B3D + *.RMP). */
 export const LEVELS = {

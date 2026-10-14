@@ -1,10 +1,10 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { buildTruckModel, visibleBox } from '../../game/trucks';
-import { GROUP_WORLD, groups } from '../../physics/world';
-import { isList, num, str, type SExpr } from '../../formats/sexpr';
-import type { Way } from '../../formats/way';
-import type { TechRecord } from '../../formats/tech';
+import { buildTruckModel, visibleBox } from '@engine/vehicle/trucks';
+import { GROUP_WORLD, groups } from '@engine/physics/world';
+import { isList, num, str, type SExpr } from '@engine/formats/sexpr';
+import type { Way } from '@engine/formats/way';
+import type { TechRecord } from '@engine/formats/tech';
 import { drivable, truckDef, type Ht2Trucks } from './trucks';
 import { toThree } from './world';
 

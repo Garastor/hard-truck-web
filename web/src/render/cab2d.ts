@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Msk } from '../formats/msk';
+import type { Msk } from '@engine/formats/msk';
 
 /**
  * 2D-кабіна, як у режимі оригіналу без 3D-кабіни (HTruck.exe 0x48fefc; розбір — re/notes/cab2d.md): растр

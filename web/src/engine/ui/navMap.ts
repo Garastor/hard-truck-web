@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { WayNet } from '../game/autopilot';
+import type { WayNet } from '../vehicle/autopilot';
 import { HUD_CYAN, frame, hudScale } from './pixelFont';
 
 /**

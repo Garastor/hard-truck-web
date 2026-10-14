@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { HT2_ENGINE, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER, HT2_BRAKE } from './controls';
-import { AutoPilot } from '../../game/autopilot';
-import { TruckVehicle } from '../../game/truckVehicle';
-import { buildTruckModel } from '../../game/trucks';
-import { isList, num, str, type SExpr } from '../../formats/sexpr';
+import { AutoPilot } from '@engine/vehicle/autopilot';
+import { TruckVehicle } from '@engine/vehicle/truckVehicle';
+import { buildTruckModel } from '@engine/vehicle/trucks';
+import { isList, num, str, type SExpr } from '@engine/formats/sexpr';
 import { drivable, truckDef, type Ht2Trucks } from './trucks';
 import { recolor } from './traffic';
 import type { Ht2Roads, RoadLine } from './roads';

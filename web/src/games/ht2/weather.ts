@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { iniNum, iniNums, parseIni, type Ini } from '../../formats/ini';
+import { iniNum, iniNums, parseIni, type Ini } from '@engine/formats/ini';
 import { dayFactor, dayPhase, sunHeight } from './climate';
 
 /**

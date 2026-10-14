@@ -9,29 +9,29 @@ import {
 import { GAMES, GAME_IDS, detectGame, gameFromLocation, lastGame, setLastGame, type GameId } from './games/registry';
 import { HT2_FILES, ht2DevSource } from './games/ht2/files';
 import { isIos, isStandalone, registerServiceWorker } from './ui/pwa';
-import { setSoftFont, soften } from './ui/softUi';
+import { setSoftFont, soften } from '@engine/ui/softUi';
 import { WIPER_TXR, loadCab2d, loadCab2dTexture } from './assets/cab2d';
 import { FpsMeter, FrameLimiter, QUALITY, loadQuality, loadShowFps, saveQuality, saveShowFps, type QualityId } from './ui/quality';
-import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from './ui/mobile';
-import { buildScene, type BuiltScene } from './render/sceneBuilder';
-import { parseTxr } from './formats/txr';
-import { parseMsk } from './formats/msk';
-import { parsePlm } from './formats/plm';
-import type { RgbaImage } from './formats/binary';
-import { decodeCp1251 } from './formats/binary';
-import { buildTruckModel, parseTrucks, type TruckDef } from './game/trucks';
+import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from '@engine/ui/mobile';
+import { buildScene, type BuiltScene } from '@engine/render/sceneBuilder';
+import { parseTxr } from '@engine/formats/txr';
+import { parseMsk } from '@engine/formats/msk';
+import { parsePlm } from '@engine/formats/plm';
+import type { RgbaImage } from '@engine/formats/binary';
+import { decodeCp1251 } from '@engine/formats/binary';
+import { buildTruckModel, parseTrucks, type TruckDef } from '@engine/vehicle/trucks';
 import type { DriveSession } from './modes/drive';
-import type { TruckSetup } from './game/truckVehicle';
+import type { TruckSetup } from '@engine/vehicle/truckVehicle';
 import { currentDriver, listCareers, loadCareer, newCareer, setCurrentDriver, truckSpec, type Career } from './game/career';
 import { CareerGame, HOME_SVG, modal, setHudFont, type LevelKind } from './ui/careerUi';
 import {
   MenuArt, driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
   type ControlMode, type OptionsState, type QualityLevel,
 } from './ui/menuScreens';
-import { HUD_CYAN, PixelFont, box, pixelCanvas, uiScale } from './ui/pixelFont';
-import { parseFon } from './formats/fon';
+import { HUD_CYAN, PixelFont, box, pixelCanvas, uiScale } from '@engine/ui/pixelFont';
+import { parseFon } from '@engine/formats/fon';
 import { installDevTools } from './dev/devTools';
-import { motionOnGesture, requestMotionPermission } from './input/input';
+import { motionOnGesture, requestMotionPermission } from '@engine/input/input';
 
 /**
  * Переглядач ресурсів (Фази 1–2): обліт локацій, галерея текстур і масок.

@@ -3,7 +3,7 @@
  * гравцю — табличка «Є нова версія» з кнопкою «Оновити» (перезавантаження посеред заїзду скинуло б його).
  * Лише у збірці й у захищеному контексті (HTTPS/localhost).
  */
-import { soften } from './softUi';
+import { soften } from '@engine/ui/softUi';
 
 export function registerServiceWorker(): void {
   if (!import.meta.env.PROD || !('serviceWorker' in navigator) || !isSecureContext) return;

@@ -1,8 +1,8 @@
 /** Економіка кар'єри на реальних вантажівках з TRUCK.TCH. */
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { decodeCp1251 } from '../src/formats/binary';
-import { parseTrucks } from '../src/game/trucks';
+import { decodeCp1251 } from '@engine/formats/binary';
+import { parseTrucks } from '@engine/vehicle/trucks';
 import {
   ROAD_REPAIR_TARGET, START_MONEY, applyWear, autoLoad, buyPart, buyTruck, canLoad, cargoValue, cargoWeight,
   damageEffects, loadGood, newCareer, recoverCost, repair, roadRepairStep, rollMarket, settleTrip, truckSetup,

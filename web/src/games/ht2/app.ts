@@ -1,14 +1,14 @@
 import type * as THREE from 'three';
 import { cachedSource, idbSourceFor, missingFiles, prefetchMissing } from '../../assets/gameFiles';
 import type { FileSource } from '../../assets/loader';
-import { parseFon } from '../../formats/fon';
-import { PixelFont } from '../../ui/pixelFont';
+import { parseFon } from '@engine/formats/fon';
+import { PixelFont } from '@engine/ui/pixelFont';
 import type { GameId } from '../registry';
 import { HT2_FILES, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2ExitScreen, ht2MainScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem, type RoundKey } from './menu';
 import { loadSettings, saveSettings, type Ht2Settings } from './settings';
-import { parseIni } from '../../formats/ini';
-import { decodeCp1251 } from '../../formats/binary';
+import { parseIni } from '@engine/formats/ini';
+import { decodeCp1251 } from '@engine/formats/binary';
 import { WorldViewer } from './viewer';
 import { Ht2Drive } from './drive';
 import { formatMoney, loadCareer, newCareer, type Ht2Career } from './career';

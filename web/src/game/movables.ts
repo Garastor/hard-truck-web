@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { walk, type B3d } from '../formats/b3d';
-import { GROUP_MOVABLE, groups } from '../physics/world';
+import { walk, type B3d } from '@engine/formats/b3d';
+import { GROUP_MOVABLE, groups } from '@engine/physics/world';
 
 /**
  * Рухомі предмети трас (`AnmObjNNNN` — ящики, бетонні блоки, розбита машина), розставлені просторами

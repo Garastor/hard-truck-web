@@ -167,6 +167,15 @@ export default defineConfig({
   // Відносні шляхи: збірка працює з будь-якої теки хостингу (GitHub Pages тощо).
   base: './',
   plugins: [gameFiles(), gameEntries(), precacheManifest()],
+  // Частини коду (Docs/09-structure-plan.md): спільний рушій, оболонка, ігри.
+  resolve: {
+    alias: {
+      '@engine': resolve(import.meta.dirname, 'src/engine'),
+      '@app': resolve(import.meta.dirname, 'src/app'),
+      '@ht1': resolve(import.meta.dirname, 'src/games/ht1'),
+      '@ht2': resolve(import.meta.dirname, 'src/games/ht2'),
+    },
+  },
   server: { host: true, port: 5173 },
   test: {
     include: ['test/**/*.test.ts'],

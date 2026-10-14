@@ -1,4 +1,4 @@
-import type { PixelFont } from '../ui/pixelFont';
+import type { PixelFont } from '@engine/ui/pixelFont';
 import type { GameId, GameMeta } from './registry';
 import './select.css';
 

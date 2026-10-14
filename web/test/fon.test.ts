@@ -1,7 +1,7 @@
 /** Растрові шрифти оригіналу: MENU.FON (6×9) і large.fon (12×17). */
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { parseFon } from '../src/formats/fon';
+import { parseFon } from '@engine/formats/fon';
 
 const read = (n: string) => new Uint8Array(readFileSync(`../Game/Hard Truck/${n}`));
 const cp = (ch: string) => new TextEncoder().encode(ch)[0] && ch.charCodeAt(0) < 128 ? ch.charCodeAt(0) : 0xc0 + 'АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ'.indexOf(ch);

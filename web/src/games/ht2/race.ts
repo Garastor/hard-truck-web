@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { HT2_ENGINE, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER, HT2_BRAKE } from './controls';
-import { AutoPilot, type WayLine } from '../../game/autopilot';
-import { TruckVehicle } from '../../game/truckVehicle';
-import { buildTruckModel } from '../../game/trucks';
+import { AutoPilot, type WayLine } from '@engine/vehicle/autopilot';
+import { TruckVehicle } from '@engine/vehicle/truckVehicle';
+import { buildTruckModel } from '@engine/vehicle/trucks';
 import { modal } from '../../ui/careerUi';
 import type { Ht2Roads } from './roads';
 import { drivable, truckDef } from './trucks';

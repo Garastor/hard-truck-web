@@ -6,19 +6,19 @@
  * 888/n — вітрина запчастини n, 666/10…50 — тунелі на траси. На трасах 666 — фініш (тунель на базу).
  */
 import * as THREE from 'three';
-import { soften } from './softUi';
+import { soften } from '@engine/ui/softUi';
 import callSignUrl from '../assets/call-sign.png';
 import {
   PARTS, TRACKS, TUNNELS, autoLoad, buyPart, buyTruck, canLoad, cargoVolume, cargoWeight, fmt,
   ROAD_REPAIR_TARGET, applyWear, cargoBroken, damageEffects, formatMoney as money, loadGood, recoverCost, repair, repairCost,
   roadRepairStep, saveCareer, settleTrip, truckSetup, truckValue, unloadGood, type Career, type TrackId, type TruckSpec,
 } from '../game/career';
-import { buildTruckModel, visibleBox, type TruckDef } from '../game/trucks';
-import type { TruckSetup } from '../game/truckVehicle';
+import { buildTruckModel, visibleBox, type TruckDef } from '@engine/vehicle/trucks';
+import type { TruckSetup } from '@engine/vehicle/truckVehicle';
 import type { Room } from '../game/track';
 import type { DriveSession } from '../modes/drive';
-import type { BuiltScene } from '../render/sceneBuilder';
-import { HUD_CYAN, PixelFont, frame, hudScale, inset, panel, pixelCanvas, uiScale } from './pixelFont';
+import type { BuiltScene } from '@engine/render/sceneBuilder';
+import { HUD_CYAN, PixelFont, frame, hudScale, inset, panel, pixelCanvas, uiScale } from '@engine/ui/pixelFont';
 
 export type LevelKind = 'laps' | 'route' | 'free';
 

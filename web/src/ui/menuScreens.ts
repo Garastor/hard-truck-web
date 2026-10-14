@@ -6,11 +6,11 @@
  * Координати кнопок у ресурсах не записані — знайдено зіставленням масок із рамками на фонах
  * (див. re/notes/menu.md).
  */
-import { parseRmp, type RmpArchive } from '../formats/rmp';
-import { parseTxr } from '../formats/txr';
-import { parseMsk } from '../formats/msk';
-import { parsePlm } from '../formats/plm';
-import type { RgbaImage } from '../formats/binary';
+import { parseRmp, type RmpArchive } from '@engine/formats/rmp';
+import { parseTxr } from '@engine/formats/txr';
+import { parseMsk } from '@engine/formats/msk';
+import { parsePlm } from '@engine/formats/plm';
+import type { RgbaImage } from '@engine/formats/binary';
 import { formatMoney, type Career, type Difficulty } from '../game/career';
 import { localizeBackground, localizeButton } from './menuLocale';
 import type { StorageInfo } from '../assets/gameFiles';

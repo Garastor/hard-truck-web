@@ -12,7 +12,13 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@engine/*": ["./src/engine/*"],
+      "@app/*": ["./src/app/*"],
+      "@ht1/*": ["./src/games/ht1/*"],
+      "@ht2/*": ["./src/games/ht2/*"]
+    }
   },
   "include": ["src", "test", "vite.config.ts"]
 }

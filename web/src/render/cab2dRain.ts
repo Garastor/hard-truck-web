@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import type { RgbaImage } from '../formats/binary';
-import { SceneCopy, WATER_FRAGMENT, WATER_LOOK, WATER_VERTEX, WaterBuffer, toLevels, waterUniforms, type Levels } from './waterBuffer';
+import type { RgbaImage } from '@engine/formats/binary';
+import { SceneCopy, WATER_FRAGMENT, WATER_LOOK, WATER_VERTEX, WaterBuffer, toLevels, waterUniforms, type Levels } from '@engine/render/waterBuffer';
 
 /**
  * Дощ на склі й двірники 2D-кабіни — як в оригіналі (HTruck.exe: об'єкт 0x4caa10, створюється лише в режимі без

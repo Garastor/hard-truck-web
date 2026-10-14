@@ -1,10 +1,10 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { buildTruckModel, visibleBox, type TruckDef } from '../../game/trucks';
-import { TIRE } from '../../game/truckVehicle';
-import { g2t } from '../../physics/world';
-import type { TechRecord } from '../../formats/tech';
-import type { SceneAssembler } from '../../render/sceneBuilder';
+import { buildTruckModel, visibleBox, type TruckDef } from '@engine/vehicle/trucks';
+import { TIRE } from '@engine/vehicle/truckVehicle';
+import { g2t } from '@engine/physics/world';
+import type { TechRecord } from '@engine/formats/tech';
+import type { SceneAssembler } from '@engine/render/sceneBuilder';
 
 /**
  * Напівпричіп Дальнобойщиків 2: модель `STrailer*` з TRUCKS.B3D (колеса — групи `…wheelN`), маса, центр мас і

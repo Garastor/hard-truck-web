@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import type { WayLine } from '../../game/autopilot';
-import type { Way } from '../../formats/way';
+import type { WayLine } from '@engine/vehicle/autopilot';
+import type { Way } from '@engine/formats/way';
 import { toThree } from './world';
 
 /**

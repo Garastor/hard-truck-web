@@ -1,5 +1,5 @@
-import { isList, num, str, type SExpr } from '../../formats/sexpr';
-import type { Way } from '../../formats/way';
+import { isList, num, str, type SExpr } from '@engine/formats/sexpr';
+import type { Way } from '@engine/formats/way';
 
 /**
  * Економіка Дальнобойщиків 2 (G6, перша версія).
