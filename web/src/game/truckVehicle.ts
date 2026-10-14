@@ -127,6 +127,8 @@ export interface TruckSetup {
   steerLimit?: (speed: number) => number;
   /** Кут коліс ∝ |кермо|^steerPower (перша гра — 1, лінійно). */
   steerPower?: number;
+  /** Педаль гальма за часом утримання, с (0…1), і множник сили гальм — замість t/(t + 1) першої гри. */
+  brake?: { pedal: (t: number) => number; scale: number };
 }
 
 /** Тінь над дорогою, м — щоб не мерехтіла з дорогою (гіпотеза порту). */
@@ -205,6 +207,7 @@ export class TruckVehicle {
   private readonly rollLift: number | undefined;
   private readonly steerLimit: ((speed: number) => number) | undefined;
   private readonly steerPower: number;
+  private readonly brakeProfile: { pedal: (t: number) => number; scale: number } | undefined;
   /** Тестовий режим: дощ (у кар'єрі він уже в setup.grip). */
   weatherGrip = 1;
   setSurface(grip: number, roll: number): void {
@@ -232,6 +235,7 @@ export class TruckVehicle {
     this.rollLift = setup.rollLift;
     this.steerLimit = setup.steerLimit;
     this.steerPower = setup.steerPower ?? 1;
+    this.brakeProfile = setup.brake;
     this.tractionControl = setup.tractionControl ?? false;
     this.surfaceEffects = setup.surfaceEffects ?? true;
     this.wheelRadius = tech.wheelRadius;
@@ -404,7 +408,8 @@ export class TruckVehicle {
 
     // Гальмо з клавіатури наростає як t/(t + 1) (поле [0x33a] оригіналу; телеметрія s6).
     this.brakeTime = brake > 0 ? this.brakeTime + dt : 0;
-    const brakePedal = brake > 0 ? brake * (this.brakeTime / (this.brakeTime + 1)) : 0;
+    const bp = this.brakeProfile;
+    const brakePedal = brake > 0 ? brake * (bp ? bp.pedal(this.brakeTime) : this.brakeTime / (this.brakeTime + 1)) : 0;
 
     // Сила двигуна — порівну на ведучі колеса (у Rapier відʼємна сила — уперед).
     // Гальма: сила колеса = педаль × B (передні 0,49·breakpower, задні 0,35·breakpower — ЗіЛ, s6);
@@ -427,7 +432,7 @@ export class TruckVehicle {
       if (this.tractionControl && engine > 0) engine = Math.min(engine, 0.9 * grip * wheelLoad);
       const share = i < 2 ? BRAKE_FRONT : BRAKE_REAR;
       const rolling = ROLLING_RESISTANCE * this.surfaceRoll * wheelLoad;
-      let force = brakePedal * share * tech.brakePower * this.brakeFactor + rolling;
+      let force = brakePedal * share * tech.brakePower * this.brakeFactor * (bp?.scale ?? 1) + rolling;
       if (input.handbrake && i >= 2) force += tech.brakePower;
       if (engineBrakes) {
         this.ctrl.setWheelEngineForce(i, 0);

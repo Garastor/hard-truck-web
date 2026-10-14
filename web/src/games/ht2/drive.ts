@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { HT2_ENGINE, HT2_INPUT, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER } from './controls';
+import { HT2_ENGINE, HT2_INPUT, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER, HT2_BRAKE } from './controls';
 import * as THREE from 'three';
 import type { FileSource } from '../../assets/loader';
 import { EngineAudio } from '../../audio/engineAudio';
@@ -458,7 +458,7 @@ export class Ht2Drive {
   /** Параметри фізики вантажівки: вантаж (у тягача — у причепі), покращення. */
   private setup(cargo: number) {
     const t = this.tuning;
-    return { cargoMass: this.hitched ? 0 : cargo, torque: t.torque, grip: t.grip, engine: HT2_ENGINE, rollLift: HT2_ROLL_LIFT, steerLimit: HT2_STEER_LIMIT, steerPower: HT2_STEER_POWER, surfaceEffects: !this.arcade };
+    return { cargoMass: this.hitched ? 0 : cargo, torque: t.torque, grip: t.grip, engine: HT2_ENGINE, rollLift: HT2_ROLL_LIFT, steerLimit: HT2_STEER_LIMIT, steerPower: HT2_STEER_POWER, brake: HT2_BRAKE, surfaceEffects: !this.arcade };
   }
 
   /** Запис vehicle.tech поточної вантажівки. */
