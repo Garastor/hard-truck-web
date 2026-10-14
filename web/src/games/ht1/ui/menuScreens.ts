@@ -11,9 +11,9 @@ import { parseTxr } from '@engine/formats/txr';
 import { parseMsk } from '@engine/formats/msk';
 import { parsePlm } from '@engine/formats/plm';
 import type { RgbaImage } from '@engine/formats/binary';
-import { formatMoney, type Career, type Difficulty } from '../game/career';
+import { formatMoney, type Career, type Difficulty } from '../career/career';
 import { localizeBackground, localizeButton } from './menuLocale';
-import type { StorageInfo } from '../assets/gameFiles';
+import type { StorageInfo } from '@engine/assets/gameStore';
 
 export class MenuArt {
   private readonly palette: Uint8Array | undefined;

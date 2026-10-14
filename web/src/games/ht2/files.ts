@@ -1,5 +1,5 @@
-import { matchRequired, type FileSet } from '../../assets/gameFiles';
-import type { FileSource } from '../../assets/loader';
+import { matchRequired, type FileSet } from '@engine/assets/gameStore';
+import { httpSource, type FileSource } from '@engine/assets/source';
 
 /**
  * Файли Дальнобойщиків 2 на пристрої. Текстури — повні набори (`<код>.res`, `COMMON.RES`, `TRUCKS.RES`…; на
@@ -75,7 +75,7 @@ export async function readTextures(source: FileSource, path: string): Promise<Ui
   }
 }
 
-export const HT2_FILES: FileSet = {
+export const HT2_FILES: FileSet<'ht2'> = {
   game: 'ht2',
   required: HT2_REQUIRED,
   prefix: 'ht2/',
@@ -83,10 +83,4 @@ export const HT2_FILES: FileSet = {
 };
 
 /** Dev-сервер ПК: файли HT2 за `/game2/` (vite.config.ts). */
-export const ht2DevSource: FileSource = {
-  async read(path) {
-    const res = await fetch(`/game2/${path.split('/').map(encodeURIComponent).join('/')}`);
-    if (!res.ok) throw new Error(`Не вдалося завантажити ${path}: ${res.status}`);
-    return new Uint8Array(await res.arrayBuffer());
-  },
-};
+export const ht2DevSource: FileSource = httpSource('/game2/');

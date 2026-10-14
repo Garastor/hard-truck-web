@@ -1,16 +1,18 @@
-import { cabStyle, setCabStyle } from './game/viewSettings';
+import { cabStyle, setCabStyle } from '@ht1/viewSettings';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { LEVELS, devServerSource, loadLevel, type FileSource, type LevelId, type LoadedLevel } from './assets/loader';
+import { HT1_FILES, LEVELS, devServerSource, idbSource, loadLevel, type LevelId, type LoadedLevel } from '@ht1/files';
+import type { FileSource } from '@engine/assets/source';
 import {
-  HT1_FILES, cachedSource, idbSource, importFiles, importZip, missingFiles, prefetchMissing, storageInfo, storeFile, zipNames,
-  type FileSet,
-} from './assets/gameFiles';
+  cachedSource, importFiles, importZip, missingFiles, prefetchMissing, storageInfo, storeFile, zipNames, type FileSet as AnyFileSet,
+} from '@engine/assets/gameStore';
 import { GAMES, GAME_IDS, detectGame, gameFromLocation, lastGame, setLastGame, type GameId } from './games/registry';
+
+type FileSet = AnyFileSet<GameId>;
 import { HT2_FILES, ht2DevSource } from './games/ht2/files';
 import { isIos, isStandalone, registerServiceWorker } from './ui/pwa';
 import { setSoftFont, soften } from '@engine/ui/softUi';
-import { WIPER_TXR, loadCab2d, loadCab2dTexture } from './assets/cab2d';
+import { WIPER_TXR, loadCab2d, loadCab2dTexture } from '@ht1/cab2d/cab2dFiles';
 import { FpsMeter, FrameLimiter, QUALITY, loadQuality, loadShowFps, saveQuality, saveShowFps, type QualityId } from './ui/quality';
 import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from '@engine/ui/mobile';
 import { buildScene, type BuiltScene } from '@engine/render/sceneBuilder';
@@ -20,18 +22,18 @@ import { parsePlm } from '@engine/formats/plm';
 import type { RgbaImage } from '@engine/formats/binary';
 import { decodeCp1251 } from '@engine/formats/binary';
 import { buildTruckModel, parseTrucks, type TruckDef } from '@engine/vehicle/trucks';
-import type { DriveSession } from './modes/drive';
+import type { DriveSession } from '@ht1/drive';
 import type { TruckSetup } from '@engine/vehicle/truckVehicle';
-import { currentDriver, listCareers, loadCareer, newCareer, setCurrentDriver, truckSpec, type Career } from './game/career';
-import { CareerGame, HOME_SVG, type LevelKind } from './ui/careerUi';
+import { currentDriver, listCareers, loadCareer, newCareer, setCurrentDriver, truckSpec, type Career } from '@ht1/career/career';
+import { CareerGame, HOME_SVG, type LevelKind } from '@ht1/career/careerUi';
 import { modal, setHudFont } from '@engine/ui/modal';
 import {
   MenuArt, driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
   type ControlMode, type OptionsState, type QualityLevel,
-} from './ui/menuScreens';
+} from '@ht1/ui/menuScreens';
 import { HUD_CYAN, PixelFont, box, pixelCanvas, uiScale } from '@engine/ui/pixelFont';
 import { parseFon } from '@engine/formats/fon';
-import { installDevTools } from './dev/devTools';
+import { installDevTools } from '@ht1/devTools';
 import { motionOnGesture, requestMotionPermission } from '@engine/input/input';
 
 /**
@@ -209,7 +211,7 @@ async function startDrive(): Promise<void> {
     controls.enabled = false;
     scene.fog = new THREE.Fog(0x8fb4d8, 150, 900);
     // Rapier (WASM ~2 МБ) вантажимо лише при вході в режим їзди.
-    const { DriveSession } = await import('./modes/drive');
+    const { DriveSession } = await import('@ht1/drive');
     // Суперники (тестовий режим): кількість з ?ai= або списку «Суперники»; інші моделі вантажівок, по колу, якщо
     // суперників більше, ніж моделей.
     const nAi = Number(params.get('ai') ?? rivalsSel.value);
@@ -635,7 +637,7 @@ function exitToGameSelect(): void {
 async function chooseGame(ids: readonly GameId[], available: GameId[]): Promise<GameId> {
   const [small, large] = await hudFonts();
   const { gameSelectScreen } = await import('./games/select');
-  const sourceOf = (id: GameId): FileSource => (id === 'ht1' ? cachedSource(devServerSource) : cachedSource(ht2DevSource, HT2_FILES));
+  const sourceOf = (id: GameId): FileSource => (id === 'ht1' ? cachedSource(devServerSource, HT1_FILES) : cachedSource(ht2DevSource, HT2_FILES));
   const cards = await Promise.all(
     ids.map(async (id) => {
       const missing = !available.includes(id);
@@ -666,14 +668,14 @@ async function boot(): Promise<void> {
     const { runHt2 } = await import('./games/ht2/app');
     return runHt2({ renderer, overlay, setStatus, showImport: (again) => showImport(HT2_FILES, again), exit: gameCount > 1 ? exitToGameSelect : null });
   }
-  const missing = await missingFiles().catch(() => HT1_FILES.required);
+  const missing = await missingFiles(HT1_FILES).catch(() => HT1_FILES.required);
   if (!missing.length && params.get('source') !== 'pc') {
     // Усі файли вже на пристрої — читаємо локально, навіть якщо ПК доступний (без Wi-Fi — швидше).
     source = idbSource;
   } else if (params.get('source') !== 'local' && (await devServerAvailable())) {
     // Файли з ПК, але кожен збережений на пристрої; решту докачуємо у фоні після першої локації.
-    source = cachedSource(devServerSource);
-    void prefetchMissing(devServerSource);
+    source = cachedSource(devServerSource, HT1_FILES);
+    void prefetchMissing(devServerSource, HT1_FILES);
     await startup();
     return;
   } else {
@@ -833,11 +835,11 @@ async function optionsDialog(): Promise<void> {
           setCabStyle(style);
           drive?.setCabStyle(style);
         },
-        storage: storageInfo,
+        storage: () => storageInfo(HT1_FILES),
         async reimport() {
           await showImport(HT1_FILES, true);
           // Файли тепер на пристрої — читаємо звідси (а не з ПК).
-          if (!(await missingFiles()).length) source = idbSource;
+          if (!(await missingFiles(HT1_FILES)).length) source = idbSource;
         },
 
       },

@@ -11,7 +11,7 @@
  *   ht.dev.still()                               — зупинити машину перед знімком екрана
  *   ht.dev.info()                                — траса, кімната, позиція, швидкість, камера, погода
  */
-import type { CamMode, DriveSession } from '../modes/drive';
+import type { CamMode, DriveSession } from './drive';
 
 interface DevHost {
   drive: () => DriveSession | null;

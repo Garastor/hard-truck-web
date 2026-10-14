@@ -1,6 +1,6 @@
 import type * as THREE from 'three';
-import { cachedSource, idbSourceFor, missingFiles, prefetchMissing } from '../../assets/gameFiles';
-import type { FileSource } from '../../assets/loader';
+import { cachedSource, idbSourceFor, missingFiles, prefetchMissing } from '@engine/assets/gameStore';
+import type { FileSource } from '@engine/assets/source';
 import { parseFon } from '@engine/formats/fon';
 import { PixelFont } from '@engine/ui/pixelFont';
 import type { GameId } from '../registry';

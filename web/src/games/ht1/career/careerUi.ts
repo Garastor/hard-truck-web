@@ -7,16 +7,16 @@
  */
 import * as THREE from 'three';
 import { soften } from '@engine/ui/softUi';
-import callSignUrl from '../assets/call-sign.png';
+import callSignUrl from './call-sign.png';
 import {
   PARTS, TRACKS, TUNNELS, autoLoad, buyPart, buyTruck, canLoad, cargoVolume, cargoWeight, fmt,
   ROAD_REPAIR_TARGET, applyWear, cargoBroken, damageEffects, formatMoney as money, loadGood, recoverCost, repair, repairCost,
   roadRepairStep, saveCareer, settleTrip, truckSetup, truckValue, unloadGood, type Career, type TrackId, type TruckSpec,
-} from '../game/career';
+} from './career';
 import { buildTruckModel, visibleBox, type TruckDef } from '@engine/vehicle/trucks';
 import type { TruckSetup } from '@engine/vehicle/truckVehicle';
-import type { Room } from '../game/track';
-import type { DriveSession } from '../modes/drive';
+import type { Room } from '../track/track';
+import type { DriveSession } from '../drive';
 import type { BuiltScene } from '@engine/render/sceneBuilder';
 import { HUD_CYAN, PixelFont, frame, hudScale, inset, panel, pixelCanvas, uiScale } from '@engine/ui/pixelFont';
 import { BUTTON_ZOOM, el, modal, pixelText } from '@engine/ui/modal';

@@ -7,7 +7,7 @@ import {
   ROAD_REPAIR_TARGET, START_MONEY, applyWear, autoLoad, buyPart, buyTruck, canLoad, cargoValue, cargoWeight,
   damageEffects, loadGood, newCareer, recoverCost, repair, roadRepairStep, rollMarket, settleTrip, truckSetup,
   truckSpec, unloadGood,
-} from '../src/game/career';
+} from '@ht1/career/career';
 
 // Без файлів гри (CI на GitHub) — тести пропускаються.
 const TCH = '../Game/Hard Truck/TRUCK.TCH';

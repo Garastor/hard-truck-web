@@ -5,7 +5,7 @@
  * не малює невидиме.
  */
 import * as THREE from 'three';
-import { isHorizontalPortal, portalCorners, type Portal, type Track } from '../game/track';
+import { isHorizontalPortal, portalCorners, type Portal, type Track } from './track';
 
 interface Rect {
   x0: number;

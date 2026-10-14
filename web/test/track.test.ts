@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import * as THREE from 'three';
 import { parseB3d } from '@engine/formats/b3d';
-import { Track, isHorizontalPortal } from '../src/game/track';
+import { Track, isHorizontalPortal } from '@ht1/track/track';
 
 const GAME = resolve(import.meta.dirname, '..', '..', 'Game', 'Hard Truck');
 const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);

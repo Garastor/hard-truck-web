@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { FileSource } from '../../assets/loader';
+import type { FileSource } from '@engine/assets/source';
 import { HT2_REGIONS } from './files';
 import { Ht2World, toThree } from './world';
 import type { DayTime, Sky } from './weather';
