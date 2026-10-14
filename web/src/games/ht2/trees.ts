@@ -77,6 +77,8 @@ const BARK_UW = 0.025;
 const TRUNK_W = 0.025;
 /** Верх стовбура — частка висоти: на знімку оригіналу стовбур видно крізь крону до ≈ середини дерева. */
 const TRUNK_TOP = 0.5;
+/** Наскільки стовбур відсунуто від камери за площину крони, м. */
+const TRUNK_PUSH = 0.4;
 
 /** Площина (z угору) від z0 до z1, x — від −w/2 до w/2; u — [u0, u0 + uw], v — від низу зображення до верху. */
 function planeGeometry(width: number, u0: number, uw: number, z0 = 0, z1 = 1): THREE.BufferGeometry {
@@ -93,7 +95,7 @@ function planeGeometry(width: number, u0: number, uw: number, z0 = 0, z1 = 1): T
  * Матеріал циліндричного білборда: вершина x — уздовж напрямку ⟂ осі стовбура (локальна z) і напрямку на камеру,
  * z — уздовж осі. Нормаль — вісь стовбура (освітлення як у перехрещених квадів раніше).
  */
-function billboardMaterial(map: THREE.Texture): THREE.MeshLambertMaterial {
+function billboardMaterial(map: THREE.Texture, push = 0): THREE.MeshLambertMaterial {
   const mat = new THREE.MeshLambertMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide });
   mat.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader.replace(
@@ -104,11 +106,11 @@ function billboardMaterial(map: THREE.Texture): THREE.MeshLambertMaterial {
       float bbS = length((bbM * vec4(1.0, 0.0, 0.0, 0.0)).xyz);
       vec3 bbR = cross(normalize(bbUp), normalize(-bbC.xyz));
       bbR = length(bbR) > 1e-4 ? normalize(bbR) : normalize((bbM * vec4(1.0, 0.0, 0.0, 0.0)).xyz);
-      vec4 mvPosition = vec4(bbC.xyz + bbR * transformed.x * bbS + bbUp * transformed.z, 1.0);
+      vec4 mvPosition = vec4(bbC.xyz + bbR * transformed.x * bbS + bbUp * transformed.z + normalize(bbC.xyz) * ${push.toFixed(2)}, 1.0);
       gl_Position = projectionMatrix * mvPosition;`,
     );
   };
-  mat.customProgramCacheKey = () => 'ht2-tree-billboard';
+  mat.customProgramCacheKey = () => `ht2-tree-billboard-${push}`;
   return mat;
 }
 
@@ -145,6 +147,21 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const mats = new Map<THREE.Texture, THREE.MeshLambertMaterial>();
+  /**
+   * Стовбур — у площині крони: без зсуву пікселі мерехтіли (крона й стовбур на однаковій глибині; знімки
+   * користувача). Стовбур відсунуто від камери на TRUNK_PUSH м — крона завжди перекриває його, він видно лише в
+   * прозорих проміжках і під кроною.
+   */
+  const trunkMats = new Map<THREE.Texture, THREE.MeshLambertMaterial>();
+  const trunkMat = (tex: THREE.Texture) => {
+    let m = trunkMats.get(tex);
+    if (!m) {
+      m = billboardMaterial(tex, TRUNK_PUSH);
+      m.name = `tree trunk ${tex.name}`;
+      trunkMats.set(tex, m);
+    }
+    return m;
+  };
   for (const [key, g] of groups) {
     let mat = mats.get(g.tex);
     if (!mat) mats.set(g.tex, (mat = billboardMaterial(g.tex)));
@@ -153,7 +170,7 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
     const parts = [planeGeometry(g.width, g.u0, g.uw, g.crown, 1)];
     if (g.trunk) parts.push(planeGeometry(TRUNK_W, g.u0 + BARK_U0, BARK_UW, 0, TRUNK_TOP));
     for (const [pi, geo] of parts.entries()) {
-      const mesh = new THREE.InstancedMesh(geo, mat, g.list.length);
+      const mesh = new THREE.InstancedMesh(geo, pi ? trunkMat(g.tex) : mat, g.list.length);
       mesh.name = `trees ${key}${pi ? ' trunk' : ''}`;
       g.list.forEach((s, i) => {
         // Центр сфери генератора — на рівні землі (z ≈ дорога поруч): основа — центр, верх — центр + радіус (висота =
