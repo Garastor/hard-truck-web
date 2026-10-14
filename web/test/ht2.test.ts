@@ -298,7 +298,8 @@ describe.skipIf(!has)('HT2: налаштування одиночної гри (
     const s = defaultSettings(ini);
     expect(s.arcade).toBe(/^arcad\s*=\s*1/m.test(decodeCp1251(read('TRUCK.INI'))));
     for (const v of [s.traffic, s.dayLength, s.weather]) expect(v >= 0 && v <= 1).toBe(true);
-    expect(timeScale({ ...s, dayLength: 0.5 })).toBe(10);
+    // Доба — timetemp = days · 0,005 + 0,02 реальних годин (king.exe): days=50 → 16,2 хв.
+    expect((86400 / timeScale({ ...s, dayLength: 0.5 }) / 60).toFixed(1)).toBe('16.2');
   });
 });
 

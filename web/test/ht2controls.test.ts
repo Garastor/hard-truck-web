@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { Engine, GEAR_N } from '../src/game/engine';
 import { HT2_ENGINE } from '../src/games/ht2/controls';
+import { Climate, gameTimeScale, illumOn, sunDirection, sunHeight } from '../src/games/ht2/climate';
 
 // ZilR з vehicle.tech: tach_with_max_power 26,67 об/с, головна 5,29, колесо 0,533.
 const zilr = () =>
@@ -45,5 +46,41 @@ describe('HT2: двигун і коробка ZilR', () => {
       }
     }
     [69.5, 46.5, 27.5, 15.5].forEach((k, i) => expect(Math.abs(downs[i] - k)).toBeLessThan(3));
+  });
+});
+
+describe('HT2: доба й погода (king.exe weatherandtime)', () => {
+  it('сонце: найнижче о 2:00, обрій о 6:00 і 22:00, найвище о 14:00', () => {
+    expect(sunHeight(2)).toBeCloseTo(-0.5);
+    expect(sunHeight(6)).toBeCloseTo(0);
+    expect(sunHeight(22)).toBeCloseTo(0);
+    expect(sunHeight(14)).toBeCloseTo(1.5);
+    expect(sunDirection(14)[2]).toBeCloseTo(Math.sin(1.5 * Math.PI / 5));
+  });
+  it('доба: повзунок 0,5 → 16,2 хв', () => {
+    expect(86400 / gameTimeScale(0.5) / 60).toBeCloseTo(16.2);
+  });
+  it('погода як на живій грі: θ₁ 4,84, θ₂ 1,32, повзунок 0,6 → w 0,334, вітер 1,79', () => {
+    const c = new Climate(0.6);
+    c.th1 = 4.84055;
+    c.th2 = 1.3177;
+    expect(c.w()).toBeCloseTo(0.334, 2);
+    c.t = 3; // не порив
+    expect(c.wind).toBeCloseTo(1.785, 1);
+    expect(c.rain).toBe(false);
+    expect(c.bad).toBe(0);
+  });
+  it('злива: дощ, грім, калюжі; без вітру дерева', () => {
+    const c = new Climate(0.6, 0.13, 'bad');
+    expect(c.rain && c.thunder).toBe(true);
+    expect(c.bad).toBeCloseTo(0.8);
+    expect(new Climate(0.6, 0.13, 'good').wind).toBe(0);
+  });
+  it('нічні вікна: 00 — ввечері й уранці, 08 — усю ніч', () => {
+    expect(illumOn(0, 22)).toBe(true);
+    expect(illumOn(0, 1)).toBe(false);
+    expect(illumOn(0, 5)).toBe(true);
+    expect(illumOn(8, 1)).toBe(true);
+    expect(illumOn(8, 12)).toBe(false);
   });
 });

@@ -71,14 +71,26 @@ export class Traffic {
     private readonly maxCars = MAX_CARS,
   ) {}
 
-  /** Модель машини потрібного кольору (кешується; повертається копія). */
-  private model(kind: TrafficKind): THREE.Object3D | null {
-    const key = `${kind.model}#${kind.variant}`;
+  /** Фари машин, що зʼявляються (king.exe: при створенні — з 22:00 до 6:00; ставить режим їзди). */
+  lights = false;
+
+  /**
+   * Модель машини потрібного кольору (кешується; повертається копія). З фарами — перемикачі моделі
+   * `refer_HeadLightKey` і `refer_SizeLightKey` у стані 1.
+   */
+  private model(kind: TrafficKind, lights: boolean): THREE.Object3D | null {
+    const key = `${kind.model}#${kind.variant}${lights ? '+L' : ''}`;
     let tpl = this.templates.get(key);
     if (!tpl) {
-      const base = this.trucks.asm.template(kind.model);
+      let base: THREE.Object3D | null;
+      if (lights) {
+        const dyn = this.trucks.asm.dynamicObject(kind.model);
+        dyn?.setSwitch('refer_HeadLightKey', 1);
+        dyn?.setSwitch('refer_SizeLightKey', 1);
+        base = dyn?.root ?? null;
+      } else base = this.trucks.asm.template(kind.model);
       if (!base) return null;
-      tpl = base.clone();
+      tpl = lights ? base : base.clone();
       if (kind.variant > 0) recolor(tpl, this.trucks, kind.variant + 1);
       this.templates.set(key, tpl);
     }
@@ -111,7 +123,7 @@ export class Traffic {
       if (d < SPAWN_MIN || d > SPAWN_MAX) continue;
       if (this.cars.some((c) => c.pos.distanceTo(p) < GAP * 2)) continue;
       const kind = this.kinds[Math.floor(Math.random() * this.kinds.length)];
-      const model = this.model(kind);
+      const model = this.model(kind, this.lights);
       if (!model) return;
       // Модель у системі гри → обгортка в системі Three.js (вперед −Z).
       const frame = new THREE.Group();

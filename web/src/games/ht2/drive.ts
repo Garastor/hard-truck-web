@@ -26,7 +26,7 @@ import { Dents } from './dents';
 import { terrainCollider } from './terrain';
 import { parseMsk } from '../../formats/msk';
 import { findStores } from './economy';
-import { WeatherDrift } from './weather';
+import { Climate, sunHeight, trafficLights } from './climate';
 import { iniNum, parseIni } from '../../formats/ini';
 import { decodeCp1251 } from '../../formats/binary';
 import { RaceMode } from './race';
@@ -39,9 +39,9 @@ import { Music } from './music';
 import { SceneAssembler } from '../../render/sceneBuilder';
 import { parseB3d } from '../../formats/b3d';
 import { parseRmp } from '../../formats/rmp';
-import { dayTime, type Ht2Career } from './career';
+import type { Ht2Career } from './career';
 import { HT2_MOD_REGIONS, readTextures } from './files';
-import { badWeather, timeScale, type Ht2Settings } from './settings';
+import { timeScale, type Ht2Settings } from './settings';
 
 /**
  * Камера за машиною — підібрана так, щоб кадр збігся зі знімком оригіналу в тій самій точці (ZilR біля бази «Южный»,
@@ -153,11 +153,16 @@ export class Ht2Drive {
   paused = false;
   /** Ігровий час вільної їзди, с від півночі (кар'єра — свій); старт — 10:00 (TRUCK.INI timestart=10). */
   private freeTime = 10 * 3600;
-  private period = '';
-  /** Погода: «якість» (TRUCK.INI wstart/wtemp) і поточний набір світла WEATHER.INI; негода — слизька дорога. */
-  private weather = new WeatherDrift();
-  private sky: 'good' | 'bad' = 'good';
+  /** Доба й погода як у king.exe (climate.ts): показник погоди, дощ, грім, вітер; дощ — слизька дорога. */
+  private climate = new Climate();
   raining = false;
+  /** Блискавка: час до наступної (с), час спалаху, спрайт `flash`. */
+  private boltTimer = 0;
+  private flashTime = 0;
+  private bolt: THREE.Sprite | null = null;
+  private rainSound: ReturnType<EngineAudio['loopSound']> = null;
+  private windSound: ReturnType<EngineAudio['loopSound']> = null;
+  private tick = 0;
   /** Фари: два прожектори на місцях Fara_FL/FR з vehicle.tech; вмикаються в сутінках і вночі або клавішею L. */
   private readonly lamps: THREE.SpotLight[] = [];
   private lightsManual: boolean | null = null;
@@ -277,11 +282,10 @@ export class Ht2Drive {
       this.race = new RaceMode(this, this.roads, (k, fb) => this.raceMessages.get(k) ?? fb);
       this.race.onFinish = () => o.onExit();
     }
-    // Погода: TRUCK.INI [EFFECTS] wstart / wtemp (гіпотеза: початкова «якість» і темп зміни за годину гри).
+    // Погода: повзунок «погода» і TRUCK.INI [EFFECTS] wtemp (період зміни, реальних годин); ?weather=bad|good — стала.
     const ini = await o.source.read('TRUCK.INI').then((b) => parseIni(decodeCp1251(b))).catch(() => null);
-    const wstart = ini ? iniNum(ini, 'EFFECTS', 'wstart', 0.75) : 0.75;
     const wtemp = ini ? iniNum(ini, 'EFFECTS', 'wtemp', 0.13) : 0.13;
-    this.weather = new WeatherDrift(o.weather === 'bad' ? 0 : wstart, o.weather ? 0 : wtemp, Math.random, badWeather(o.settings));
+    this.climate = new Climate(o.settings?.weather ?? 0.6, wtemp, o.weather === 'bad' ? 'bad' : o.weather ? 'good' : null);
     const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
     if (!o.race) {
       const names = await o.source.read('names.sch').then(readSch).catch(() => []);
@@ -530,29 +534,83 @@ export class Ht2Drive {
     }
   }
 
-  /** Пора доби (світло й туман з WEATHER.INI) і фари. */
+  /** Година доби гри (0…24). */
+  get hour(): number {
+    const t = this.careerMode ? this.careerMode.career.time : this.freeTime;
+    return (t / 3600) % 24;
+  }
+
+  /**
+   * Доба й погода (climate.ts): світло й туман плавно, дощ (w > 0,7) — слизька дорога й шум, вітер — дерева й шум,
+   * грім (w ≥ 0,8) — блискавка раз на 10 с. Фари гравця — у сутінках і вночі (висота сонця < 0,2) або клавішею L;
+   * трафік вмикає фари з 22:00 до 6:00.
+   */
   private updateDayTime(dt: number): void {
-    const t = this.careerMode ? this.careerMode.career.time : (this.freeTime += dt * this.timeScale);
-    const p = dayTime(t);
-    if (!this.race) this.weather.update(dt * this.timeScale);
-    const sky = this.weather.bad ? 'bad' : 'good';
-    if (sky !== this.sky) {
-      this.sky = sky;
-      this.period = '';
-      this.raining = sky === 'bad';
+    if (!this.careerMode) this.freeTime += dt * this.timeScale;
+    const hour = this.hour;
+    const c = this.climate;
+    if (!this.race) c.update(dt);
+    if (c.rain !== this.raining) {
+      this.raining = c.rain;
       this.truck.weatherGrip = this.raining ? 0.8 : 1;
-      this.notice = { text: this.raining ? 'Негода: дорога слизька' : 'Розпогодилось', time: 4 };
+      this.notice = { text: this.raining ? 'Дощ: дорога слизька' : 'Дощ скінчився', time: 4 };
     }
-    if (p !== this.period) {
-      this.period = p;
-      this.world.setLight(this.sky, p);
-      this.world.setNight(p !== 'day');
-      this.cabLight?.color.copy(this.world.ambientColor).multiplyScalar(1.4);
-    }
-    const on = this.lightsManual ?? (p === 'night' || p === 'sset' || p === 'srise');
+    this.updateThunder(dt);
+    this.tick++;
+    // Спалах: розсіяне світло (0,9, 1, 1) через кадр протягом 1 с (king.exe 0x005a9540).
+    this.world.setClimate(hour, c.bad, this.flashTime > 0 && this.tick % 2 === 1);
+    this.world.updateTrees(dt, c.wind);
+    const dusk = sunHeight(hour) < 0.2;
+    this.world.setNight(dusk);
+    this.cabLight?.color.copy(this.world.ambientColor).multiplyScalar(1.4);
+    if (this.traffic) this.traffic.lights = trafficLights(hour);
+    this.rainSound ??= this.audio?.loopSound('rain') ?? null;
+    this.windSound ??= this.audio?.loopSound('wind') ?? null;
+    this.rainSound?.set(this.sheltered ? 0 : c.rainVolume);
+    this.windSound?.set(c.windVolume);
+    const on = this.lightsManual ?? dusk;
     for (const l of this.lamps) l.visible = on;
     // Габарити вантажівки (SizeLightKey: 1 — горять) — разом з фарами.
     this.setTruckSwitch?.('refer_SizeLightKey', on ? 1 : 0);
+  }
+
+  /**
+   * Грім (king.exe 0x005a5400): раз на 10 с — блискавка (спрайт `flash` COMMON) за 300 м перед камерою, убік
+   * ±300 м, на 20 м вище; 1 с — спалах світла; звук `thunder`. Розмір і тривалість спрайта — гіпотеза.
+   */
+  private updateThunder(dt: number): void {
+    this.flashTime = Math.max(0, this.flashTime - dt);
+    if (this.bolt) {
+      this.bolt.visible = this.flashTime > 0.6 && this.tick % 3 !== 0;
+      // Текстура flash — 8 кадрів у ряд (ефект 0x005a4880: 8 кадрів): кадр за часом спалаху.
+      const map = this.bolt.material.map;
+      if (map) map.offset.x = Math.min(7, Math.floor((1 - this.flashTime) * 20)) / 8;
+    }
+    if (!this.climate.thunder) return;
+    if ((this.boltTimer -= dt) > 0) return;
+    this.boltTimer = 10;
+    this.flashTime = 1;
+    if (!this.bolt) {
+      const asm = this.world.common;
+      const i = asm.b3d.materials.findIndex((m) => m.toLowerCase() === 'flash');
+      const src = i >= 0 ? (asm.lib.material(i) as THREE.MeshBasicMaterial).map : null;
+      if (!src) return;
+      const map = src.clone();
+      map.repeat.set(1 / 8, 1);
+      this.bolt = new THREE.Sprite(new THREE.SpriteMaterial({ map, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
+      // Низ спрайта — у точці блискавки (гіпотеза: спрайт тягнеться вгору від неї).
+      this.bolt.center.set(0.5, 0);
+      this.bolt.scale.set(40, 160, 1);
+      this.world.scene.add(this.bolt);
+    }
+    const fwd = new THREE.Vector3();
+    this.camera.getWorldDirection(fwd);
+    fwd.y = 0;
+    fwd.normalize();
+    const side = new THREE.Vector3(-fwd.z, 0, fwd.x);
+    this.bolt.position.copy(this.camera.position).addScaledVector(fwd, 300).addScaledVector(side, Math.random() * 600 - 300);
+    this.bolt.position.y += 20;
+    this.audio?.play('thunder', 0.8);
   }
 
   /** Для гонки: поверхня під точкою, дані вантажівок, світ фізики. */
@@ -904,6 +962,8 @@ export class Ht2Drive {
 
   dispose(): void {
     this.careerMode?.persist();
+    this.rainSound?.stop();
+    this.windSound?.stop();
     this.opts.renderer.setAnimationLoop(null);
     window.removeEventListener('resize', this.onResize);
     document.body.classList.remove('driving');

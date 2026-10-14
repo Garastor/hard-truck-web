@@ -1,5 +1,6 @@
 import type { FileSource } from '../../assets/loader';
 import { HT2_MUSIC } from './files';
+import { MUTED } from '../../audio/engineAudio';
 
 /**
  * Музика Дальнобойщиків 2 (`MUSIC/track01l…12l.mp3`, тека з TRUCK.INI [INSTALL] MUSIC): треки по черзі з випадкового,
@@ -17,7 +18,7 @@ export class Music {
     private readonly source: FileSource,
     volume = 0.35,
   ) {
-    this.audio.volume = volume;
+    this.audio.volume = MUTED ? 0 : volume;
     this.audio.addEventListener('ended', () => void this.next());
   }
 

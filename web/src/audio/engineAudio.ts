@@ -19,6 +19,9 @@ const IDLE_RPM = 300;
 
 let shared: AudioContext | null = null;
 
+/** Налагодження: `?mute` в адресі — без звуку (тестові вкладки поруч із грою користувача). */
+export const MUTED = import.meta.env.DEV && new URLSearchParams(location.search).has('mute');
+
 function sharedContext(): AudioContext {
   if (shared) return shared;
   const ctx = new AudioContext();
@@ -46,7 +49,7 @@ export class EngineAudio {
     this.ctx = sharedContext();
     void this.ctx.resume().catch(() => undefined);
     this.master = this.ctx.createGain();
-    this.master.gain.value = 0.6;
+    this.master.gain.value = MUTED ? 0 : 0.6;
     this.master.connect(this.ctx.destination);
   }
 

@@ -58,7 +58,7 @@
 - агент `re-analyst` — реверс HTruck.exe зі стислим висновком (декомпіляція не засмічує основну розмову)
 
 ## Налагодження в браузері (dev)
-Адреса: `?tab=drive&level=COUNT&truck=1&ai=3` (тест), `&career=1` — кар'єра.
+Адреса: `?tab=drive&level=COUNT&truck=1&ai=3` (тест), `&career=1` — кар'єра, `&mute` — без звуку (тестові вкладки).
 `window.ht` — `scene`, `camera`, `built`, `level`, `drive`, **`dev`** (`web/src/dev/devTools.ts`): `ready()`,
 `setup({cam, weather, start, autopilot})`, `teleport('room_011' | {x, z, heading})`, `run(с)` (синхронно, без rAF —
 панель Claude Code часто прихована), `smoke(с)` (автопрохід, застрягання), `still()`, `info()`.
