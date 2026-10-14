@@ -19,7 +19,7 @@
 
 Одна сесія = одна задача з roadmap. Шаблон запиту:
 
-> **Фаза 2, задача «Матеріали з RMP».** Контекст: Docs/01-analysis.md §2.1.
+> **Фаза 2, задача «Матеріали з RMP».** Контекст: Docs/ht1/analysis.md §2.1.
 > Зроби: підтримку `tex/ttx/col/transp` у `web/src/convert/materials.ts`.
 > Готово, коли: CIRCUIT відкривається у превʼю без рожевих (відсутніх) текстур, тести зелені,
 > скріншот у мобільному вʼюпорті.
@@ -27,7 +27,7 @@
 Поради:
 - Завжди вказуйте **критерій «готово»** — Claude сам перевірить його тестами/превʼю.
 - Для великих задач просіть спершу **план** (Plan mode), потім реалізацію.
-- Після завершення фази просіть оновити чекбокси в `Docs/04-roadmap.md` і `CLAUDE.md`.
+- Після завершення фази просіть оновити чекбокси в `Docs/ht1/roadmap.md` і `CLAUDE.md`.
 
 ## 3. Корисні можливості Claude Code для цього проєкту
 
@@ -64,7 +64,7 @@
 | Скіл `verify-in-game` | `.claude/skills/verify-in-game/` | перевірка зміни в браузері: окрема вкладка, `ht.dev`, знімок, мобільний вʼюпорт |
 | Скіл `step-done` | `.claude/skills/step-done/` | закриття кроку: tsc, тести, журнал/roadmap, коміт |
 | Агент `re-analyst` | `.claude/agents/re-analyst.md` | реверс HTruck.exe окремо від основної розмови, висновок з адресами |
-| `ht.dev` | `web/src/dev/devTools.ts` | `ready`, `setup`, `teleport`, `run`, `smoke`, `still`, `info` — перевірки одним-двома викликами |
+| `ht.dev` | `web/src/games/ht1/devTools.ts` | `ready`, `setup`, `teleport`, `run`, `smoke`, `still`, `info` — перевірки одним-двома викликами |
 | Хук pre-commit | `.githooks/pre-commit` | tsc + тести при змінах у `web/`; увімкнути: `git config core.hooksPath .githooks` |
 
 ## 6. Чого не робить Claude без вашого підтвердження

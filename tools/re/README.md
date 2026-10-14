@@ -1,4 +1,4 @@
-# tools/re — реверс HTruck.exe
+# tools/re — реверс оригінальних ігор (HTruck.exe, king.exe)
 
 | Файл | Призначення |
 |------|-------------|
@@ -18,5 +18,6 @@ python -I tools/re/install_watcom_cspec.py
 MCP: `.mcp.json` у корені підключає `pyghidra-mcp` до Claude Code (стає доступним після перезапуску сесії).
 Ghidra-проєкт може бути відкритий лише одним процесом: не запускати `gq.py`, поки працює MCP-сервер, і навпаки.
 
-Телеметрія: `telemetry.py` — перша гра (`HTruck.exe`); другої (`king.exe`) — окрема тека [`ht2/`](ht2/README.md)
-(скіл `ht2-telemetry`). `ht2/*` бере з `telemetry.py` лише доступ до памʼяті (`Proc`, `find_pid`).
+Телеметрія (лише читання памʼяті запущеної гри): спільне — `procmem.py` (`Proc`, `find_pid`, команди
+`dump`/`record`/`analyze`); перша гра (`HTruck.exe`) — [`ht1/telemetry.py`](ht1/telemetry.py), друга (`king.exe`) —
+тека [`ht2/`](ht2/README.md) (скіл `ht2-telemetry`).

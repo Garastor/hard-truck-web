@@ -3,7 +3,7 @@ import type { InputProfile } from '@engine/input/input';
 
 /**
  * Керування Дальнобойщиків 2 з клавіатури — виміряне телеметрією king.exe (ZilR, 2026-10-13,
- * re/notes/ht2-telemetry.md, tools/re/ht2/record.py). Перша гра цих профілів не використовує.
+ * re/notes/ht2/telemetry.md, tools/re/ht2/record.py). Перша гра цих профілів не використовує.
  */
 
 /** Газ (поле +0xa8 обʼєкта машини) за часом утримання клавіші, с: медіана восьми натискань. */

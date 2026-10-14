@@ -3,45 +3,55 @@
 Порт гри *Hard Truck / Дальнобойщики* (SoftLab-NSK, 1998) у браузер. Основна платформа — **мобільні** (touch, ландшафт, PWA).
 Мова спілкування та документації — **українська**.
 
-## Дві гри — не плутати
-Проєкт портує **дві** гри одним рушієм. Перед роботою визначити, якої гри стосується задача.
+## Структура: рушій + ігри — не плутати
+Проєкт портує **дві** гри одним рушієм. Перед роботою визначити, чого стосується задача: рушію (обидві гри), першої
+гри чи другої. У кожної частини — своя тека в коді, тестах, нотатках і документах (Docs/09-structure-plan.md).
 
-| | Дальнобойщики (HT1, 1998) | Дальнобойщики 2 (HT2, King of the Road, 2001) |
-|---|---|---|
-| Оригінал (лише читати) | `Game/Hard Truck/` (`HTruck.exe`) | `D:\Games\Hard Truck 2` = `Game/Hard Truck 2` (junction; `king.exe`) |
-| Код гри | `web/src/modes/drive.ts`, `web/src/ui/*`, `game/{career,track,raceProgress,movables,trucks}.ts` | `web/src/games/ht2/*` (лише HT2) |
-| Dev-файли / вхід | `/game/…`, `/ht1/` | `/game2/…`, `/ht2/` |
-| План / журнал | `Docs/04-roadmap.md`, `Docs/progress.md` | `Docs/08-ht2-plan.md` (+ розділ HT2 у `progress.md`) |
-| Тести | `web/test/*.test.ts` | `web/test/ht2.test.ts` |
-| Реверс / нотатки | Ghidra `re/htruck`, `re/notes/*.md` (без префікса) | `re/notes/ht2-*.md` (`king.exe` у Ghidra не імпортовано) |
-| Телеметрія оригіналу | `tools/re/telemetry.py`, дані `re/telemetry/*` | `tools/re/ht2/*`, дані `re/telemetry/ht2/`, скіл `ht2-telemetry` |
-| Збереження (localStorage) | `ht.careers.v1`, `ht.*` | `ht2.career.v1`, `ht2.settings.v1` |
+| | Рушій (спільне) | Дальнобойщики (HT1, 1998) | Дальнобойщики 2 (HT2, 2001) |
+|---|---|---|---|
+| Код | `web/src/engine/` | `web/src/games/ht1/` | `web/src/games/ht2/` (world, vehicles, traffic, career, ui) |
+| Тести | `web/test/engine/`, `architecture.test.ts` | `web/test/ht1/` | `web/test/ht2/` |
+| Оригінал (лише читати) | — | `Game/Hard Truck/` (`HTruck.exe`) | `Game/Hard Truck 2` = `D:\Games\Hard Truck 2` (junction; `king.exe`) |
+| Dev-файли / вхід | — | `/game/…`, `/ht1/` | `/game2/…`, `/ht2/` |
+| План / журнал | `Docs/progress.md` (рушій, структура) | `Docs/ht1/roadmap.md`, `Docs/ht1/progress.md` | `Docs/ht2/plan.md`, `Docs/ht2/progress.md` |
+| Реверс / нотатки | — | Ghidra `re/htruck`, `re/notes/ht1/` | Ghidra `re/king`, `re/notes/ht2/` |
+| Телеметрія оригіналу | `tools/re/procmem.py` (читання памʼяті) | `tools/re/ht1/`, дані `re/telemetry/*` | `tools/re/ht2/`, дані `re/telemetry/ht2/`, скіл `ht2-telemetry` |
+| Збереження (localStorage) | `ht.swapControls`, `ht.quality` | `ht.careers.v1`, `ht.*` | `ht2.career.v1`, `ht2.settings.v1` |
 
-- **Спільне ядро** (`web/src/{formats,render,physics,input,audio,assets}`, `game/truckVehicle.ts`, `game/engine.ts`,
-  `game/autopilot.ts`) використовують обидві гри: змінювати так, щоб поведінка іншої гри не змінилась
-  (відмінності HT2 — параметрами/опціями з `games/ht2`, не правкою значень HT1), і проганяти тести обох.
-- Вибір гри — `web/src/games/registry.ts` (профілі), `select.ts` (меню вибору, коли ігор кілька).
+- `web/src/app/` — оболонка: вибір гри (`registry.ts`, `select.ts`), імпорт файлів, рендерер, PWA. Гра для оболонки —
+  `games/<гра>/index.ts` (GameModule: набір файлів, dev-сервер, `run(GameContext)`).
+- **Правила залежностей** (перевіряє `web/test/architecture.test.ts`): `engine/` не імпортує ігор і оболонки й не
+  містить ідентифікаторів ігор; ігри не імпортують одна одну; оболонка бере гру лише через її `index.ts`. Між
+  частинами — псевдоніми `@engine/…`, `@app/…`, `@ht1/…`, `@ht2/…`, усередині частини — відносні шляхи.
+- У `engine/` — **механізми** (формати, рендер, фізика, машина, керування), не поведінка гри: модуль іде туди, коли ним
+  користуються обидві гри й різниця — параметрами (профілі `EngineProfile`, `InputProfile`, опції `TruckSetup`).
+  Різна поведінка (дощ, фари, меню, кар'єра) — у теці гри. Змінювати спільне так, щоб інша гра не змінилась, і
+  проганяти тести обох.
 - Висновки телеметрії/реверсу однієї гри не переносити на іншу без перевірки (напр., у HT2 інші криві газу й
-  керма, миттєві перемикання — `re/notes/ht2-telemetry.md`).
+  керма, миттєві перемикання — `re/notes/ht2/telemetry.md`).
 
 ## Ключові документи
-- План і статус: `Docs/04-roadmap.md` (оновлювати чекбокси), журнал: `Docs/progress.md`
-- Формати: `Docs/01-analysis.md`, `Docs/formats/b3d.md`; правила оригіналу: `Docs/gameplay.md`
-- Реверс: `Docs/07-reverse-engineering.md`, нотатки `re/notes/*.md`
-- Гра на телефоні: `Docs/play-on-phone.md`
+- Перша гра: план і статус `Docs/ht1/roadmap.md` (оновлювати чекбокси), журнал `Docs/ht1/progress.md`, правила
+  оригіналу `Docs/ht1/gameplay.md`, аналіз файлів `Docs/ht1/analysis.md`
+- Друга гра: план `Docs/ht2/plan.md`, журнал `Docs/ht2/progress.md`, формати `Docs/ht2/formats.md`
+- Спільне: формат B3D `Docs/formats/b3d.md`, архітектура `Docs/03-architecture.md`, структура
+  `Docs/09-structure-plan.md`, реверс `Docs/07-reverse-engineering.md`, гра на телефоні `Docs/play-on-phone.md`
 
 ## Підхід
 Реімплементація рушія (TypeScript + Vite + Three.js + Rapier), яка читає оригінальні ресурси. Не емуляція `HTruck.exe`.
 Порт використовує «апаратний» набір локацій: `*2.B3D` + `*3.RMP`.
 
 ## Розташування
-- `Game/Hard Truck/` — оригінальна гра. **Лише читати. Ніколи не змінювати, не комітити, не публікувати.**
-- `web/` — порт: `src/formats` (парсери), `src/render` (SceneAssembler і перемикачі B3D, світло/відблиски, дощ на
-  склі, вибухи), `src/game` (вантажівки, фізика, двигун, траса, автопілот, кар'єра, рухомі предмети),
-  `src/modes/drive.ts` (їзда/гонка, погода, звуки, загибель), `src/ui` (меню LOAD.RES, табло, «Опції», мінікарта),
-  `src/audio`, `src/input`, `src/assets` (джерела файлів: dev-сервер або IndexedDB), `test/` (golden-тести)
-- `tools/probe/` — Python-зонди форматів; `tools/re/` — Ghidra: `gq.py` (CLI-запити), Watcom cspec, setup
-- `re/` — проєкт Ghidra і декомпіляція (не комітити, крім `re/notes/`)
+- `Game/` — оригінальні ігри. **Лише читати. Ніколи не змінювати, не комітити, не публікувати.**
+- `web/src/engine/` — `formats` (парсери), `render` (SceneAssembler і перемикачі B3D, злиття сіток, дощ на склі),
+  `physics` (Rapier, колізії рівня), `vehicle` (вантажівка, двигун і коробка, модель, автопілот), `input`, `audio`,
+  `assets` (джерела файлів, сховище IndexedDB), `ui` (піксельний шрифт, діалоги, мінікарта, меню LOAD.RES, якість)
+- `web/src/games/ht1/` — `app.ts` (меню, кар'єра, переглядач, технічна панель), `drive.ts` (їзда/гонка, погода,
+  звуки, загибель), `career/`, `track/`, `ui/` (меню, табло), `cab2d/`, `render/` (фари, відблиски, вибухи)
+- `web/src/games/ht2/` — `app.ts`, `drive.ts`, `race.ts`, `world/`, `vehicles/`, `traffic/`, `career/`, `ui/`
+- `tools/probe/` — Python-зонди форматів; `tools/re/` — Ghidra: `gq.py` (CLI-запити, `GQ_GAME=ht2` — king.exe),
+  Watcom cspec, setup; `tools/refactor/` — скрипти перенесення модулів і документів
+- `re/` — проєкти Ghidra і декомпіляція (не комітити, крім `re/notes/`)
 
 ## Команди
 - `npm run dev --prefix web` — dev-сервер (віддає файли гри за `/game/...`); превʼю: `.claude/launch.json` → `web`
@@ -54,12 +64,13 @@
 ## Скіли й агенти (`.claude/`)
 - `ht2-telemetry` — запис і розбір телеметрії `king.exe` (лише HT2)
 - `verify-in-game` — перевірка зміни в браузері (окрема вкладка, `ht.dev`, знімок, мобільний вʼюпорт)
-- `step-done` — закриття кроку: tsc, тести, `progress.md`/roadmap, коміт
+- `step-done` — закриття кроку: tsc, тести, журнал гри (`Docs/ht1|ht2/progress.md`)/roadmap, коміт
 - агент `re-analyst` — реверс HTruck.exe зі стислим висновком (декомпіляція не засмічує основну розмову)
 
 ## Налагодження в браузері (dev)
 Адреса: `?tab=drive&level=COUNT&truck=1&ai=3` (тест), `&career=1` — кар'єра, `&mute` — без звуку (тестові вкладки).
-`window.ht` — `scene`, `camera`, `built`, `level`, `drive`, **`dev`** (`web/src/dev/devTools.ts`): `ready()`,
+Друга гра: `/ht2/?tab=drive&truck=ZilR&mute`, `window.ht2.drive`.
+`window.ht` (перша гра) — `scene`, `camera`, `built`, `level`, `drive`, **`dev`** (`web/src/games/ht1/devTools.ts`): `ready()`,
 `setup({cam, weather, start, autopilot})`, `teleport('room_011' | {x, z, heading})`, `run(с)` (синхронно, без rAF —
 панель Claude Code часто прихована), `smoke(с)` (автопрохід, застрягання), `still()`, `info()`.
 **Вкладку користувача не перезавантажувати** — перевіряти в окремій (скіл `verify-in-game`). Зміни в збиранні сцени

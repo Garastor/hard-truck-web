@@ -1,6 +1,6 @@
 # 08. Розширення рушія «Клим»: Дальнобойщики 2 (King of the Road)
 
-Стан: **план** (2026-10-12). Позначки як у [04-roadmap.md](04-roadmap.md): `[x]` / `[~]` / `[ ]`.
+Стан: **план** (2026-10-12). Позначки як у [../ht1/roadmap.md](../ht1/roadmap.md): `[x]` / `[~]` / `[ ]`.
 Гра: GOG-версія *Hard Truck 2: King of the Road* (`king.exe`, MSVC 6, збірка 2004-01-14, DirectDraw/D3D7),
 локально — `D:\Games\Hard Truck 2` (**лише читати**, як і `Game/`).
 
@@ -111,7 +111,7 @@ interface GameProfile {
 - [x] Golden-тести на файлах HT2: B3D, RES, TXR, MSK — `web/test/ht2.test.ts`
 - [x] TXR «без масок» — це карти нерівностей `bump_*.txr` (du/dv), розбираються окремо
 - [x] `formats/sdte.ts` (розшифрування) + `formats/sexpr.ts` (S-вирази, cp1251) + тести на всіх `*.sch`/`GAME.CNF`
-- [x] Також: `way.ts`, `tech.ts`, `heightmap.ts`, `ovl.ts` — див. [formats/ht2.md](formats/ht2.md)
+- [x] Також: `way.ts`, `tech.ts`, `heightmap.ts`, `ovl.ts` — див. [formats.md](formats.md)
 
 ### G1. Профілі ігор і меню вибору (≈2 сесії)
 - [x] Реєстр ігор (`games/registry.ts`), набори файлів (`FileSet` у `assets/gameFiles.ts`); HT1 — без змін ключів

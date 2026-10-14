@@ -1,8 +1,8 @@
 # tools/re/ht2 — телеметрія king.exe (Дальнобойщики 2)
 
 Лише **читання** памʼяті запущеної гри (`D:\Games\Hard Truck 2\king.exe`), нічого не пише в процес.
-Спільний доступ до памʼяті (`Proc`, `find_pid`) — з `tools/re/telemetry.py` (першої гри); решта — тут.
-Висновки — `re/notes/ht2-telemetry.md`; записи — `re/telemetry/ht2/` (не комітити).
+Спільний доступ до памʼяті (`Proc`, `find_pid`, команди `dump`/`record`/`analyze`) — `tools/re/procmem.py`; решта — тут.
+Висновки — `re/notes/ht2/telemetry.md`; записи — `re/telemetry/ht2/` (не комітити).
 Скіл: `.claude/skills/ht2-telemetry`.
 
 | Файл | Призначення |

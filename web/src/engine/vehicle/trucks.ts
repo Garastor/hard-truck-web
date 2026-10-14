@@ -11,7 +11,7 @@ export interface TruckDef {
   wheelSpaces: string[];
   wheelNodes: string[];
   cockpitSpace: string;
-  /** 2D-кабіна (панель) — маска з програмного набору ресурсів, напр. `msk\kam_pan.msk` (див. assets/cab2d.ts). */
+  /** 2D-кабіна (панель) — маска з програмного набору ресурсів, напр. `msk\kam_pan.msk` (перша гра: games/ht1/cab2d/cab2dFiles.ts). */
   panelMask: string;
   /** Екранні координати (x, y) 2D-приладів панелі для зовнішньої камери (TachScale/SpeedScale у TCH). */
   tachScale: [number, number];
@@ -19,7 +19,7 @@ export interface TruckDef {
   tech: TruckTech;
 }
 
-/** Параметри динаміки (див. re/notes/tech-params.md; значення за замовчуванням — як у HTruck.exe). */
+/** Параметри динаміки (див. re/notes/ht1/tech-params.md; значення за замовчуванням — як у HTruck.exe). */
 export interface TruckTech {
   mass: number;
   maxRotMomentum: number;

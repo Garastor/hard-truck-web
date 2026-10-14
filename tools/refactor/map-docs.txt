@@ -1,0 +1,14 @@
+Docs/01-analysis.md -> Docs/ht1/analysis.md
+Docs/04-roadmap.md -> Docs/ht1/roadmap.md
+Docs/gameplay.md -> Docs/ht1/gameplay.md
+Docs/08-ht2-plan.md -> Docs/ht2/plan.md
+Docs/formats/ht2.md -> Docs/ht2/formats.md
+re/notes/cab2d.md -> re/notes/ht1/cab2d.md
+re/notes/career.md -> re/notes/ht1/career.md
+re/notes/headlights.md -> re/notes/ht1/headlights.md
+re/notes/original-compat.md -> re/notes/ht1/original-compat.md
+re/notes/physics.md -> re/notes/ht1/physics.md
+re/notes/tech-params.md -> re/notes/ht1/tech-params.md
+re/notes/ht2-telemetry.md -> re/notes/ht2/telemetry.md
+re/notes/ht2-trees.md -> re/notes/ht2/trees.md
+re/notes/ht2-weather.md -> re/notes/ht2/weather.md

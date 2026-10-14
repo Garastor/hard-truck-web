@@ -13,7 +13,7 @@ description: Реверс HTruck.exe (Ghidra) для Hard Truck Web — з'яс�
   `0x4b6800…` у Ghidra не є функцією — лише `disassemble`).
 - `tools/re/gq.py` — CLI до того самого проєкту. **Не запускати, поки працює MCP** (проєкт блокується:
   `LockException`), і навпаки.
-- Відомі висновки: `re/notes/*.md`, `Docs/formats/b3d.md`, `Docs/07-reverse-engineering.md` — прочитай релевантне
+- Відомі висновки: `re/notes/ht1/*.md` (друга гра — `re/notes/ht2/`), `Docs/formats/b3d.md`, `Docs/07-reverse-engineering.md` — прочитай релевантне
   перед пошуком, щоб не повторювати.
 
 ## Корисні орієнтири

@@ -4,7 +4,7 @@
  * телефон (цілком, з полями), кнопки — великі цілі для пальця.
  *
  * Координати кнопок у ресурсах не записані — знайдено зіставленням масок із рамками на фонах
- * (див. re/notes/menu.md).
+ * (див. re/notes/ht1/menu.md).
  */
 import { formatMoney, type Career, type Difficulty } from '../career/career';
 import { localizeBackground, localizeButton } from './menuLocale';

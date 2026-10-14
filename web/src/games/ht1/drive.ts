@@ -539,7 +539,7 @@ export class DriveSession {
   private lights: TruckLights | null = null;
   /** Відблиски ліхтарів на дорозі — власні, у формі ліхтарів (див. WetReflections; оригінальні білборди сховані). */
   private readonly wetReflections: WetReflections[] = [];
-  /** Власне освітлення світу фарами гравця (в оригіналі немає; див. render/headlights.ts). */
+  /** Власне освітлення світу фарами гравця (в оригіналі немає; див. render/headlights.ts у теці гри). */
   private headlightsFx: Headlights | null = null;
   /**
    * Фари гравця вручну (L): null — самі вночі й на дощовій трасі (зокрема в тунелях, де не капає); на сухій денній
@@ -789,7 +789,7 @@ export class DriveSession {
     return new THREE.Vector3(p.x, p.y + 2.5, p.z);
   }
 
-  // --- Налагодження (ht.dev, див. web/src/dev/devTools.ts) ---
+  // --- Налагодження (ht.dev, див. devTools.ts) ---
 
   /** Камера: позаду / з кабіни / здалеку. */
   get cameraMode(): CamMode {
@@ -1056,7 +1056,7 @@ export class DriveSession {
   /** Зараз побудовані прилади Panel (вид від першої особи), а не кабіна (див. buildCab). */
   private panelMode = false;
 
-  /** Налаштування з групи «ще» (кабіна 2D/3D, поміняти місцями керування) — зберігає й застосовує main.ts. */
+  /** Налаштування з групи «ще» (кабіна 2D/3D, поміняти місцями керування) — зберігає й застосовує app.ts. */
   onSettingsCommand: ((cmd: 'cab' | 'swap') => void) | null = null;
   get cabStyleCurrent(): CabStyle {
     return this.cabStyleNow;
@@ -1070,14 +1070,14 @@ export class DriveSession {
   }
   private cabStyleNow: CabStyle = cabStyle();
 
-  /** Джерело масок 2D-кабіни за іменами (main.ts: файли гри, див. assets/cab2d.ts); без нього — лише 3D. */
+  /** Джерело масок 2D-кабіни за іменами (app.ts: файли гри, див. cab2d/cab2dFiles.ts); без нього — лише 3D. */
   private cab2dLoader: ((names: string[], raw?: boolean) => Promise<Map<string, Msk> | null>) | null = null;
   setCab2dLoader(load: (names: string[], raw?: boolean) => Promise<Map<string, Msk> | null>): void {
     this.cab2dLoader = load;
     if (this.cabStyleNow === '2d' && !this.panelMode) this.rebuildCab(false);
   }
 
-  /** Текстура лопатей двірників 2D-кабіни (txrlash.txr програмного набору, main.ts). */
+  /** Текстура лопатей двірників 2D-кабіни (txrlash.txr програмного набору, app.ts). */
   private wiperTextureLoader: (() => Promise<RgbaImage | null>) | null = null;
   setWiperTextureLoader(load: () => Promise<RgbaImage | null>): void {
     this.wiperTextureLoader = load;
@@ -1108,7 +1108,7 @@ export class DriveSession {
     this.streaks?.update(dt, on);
   }
 
-  /** 2D-кабіна: растр panel_mask поверх світу (прозоре — вікна) з приладами й кермом (render/cab2d.ts). */
+  /** 2D-кабіна: растр panel_mask поверх світу (прозоре — вікна) з приладами й кермом (cab2d/cab2d.ts). */
   private cab2d: Cab2d | null = null;
   /** Номер запиту маски: застарілі (кабіну вже перебудовано) відкидаємо. */
   private cab2dToken = 0;
@@ -1698,7 +1698,7 @@ export class DriveSession {
     const up = new THREE.Vector3(0, 1, 0);
     this.updateCamYaw(fwd, dt);
     const lag = new THREE.Quaternion().setFromAxisAngle(up, this.camYaw);
-    // Поле зору: з панеллю — вужче (як в оригіналі), інакше — звичайне (truck.ini, див. main.ts).
+    // Поле зору: з панеллю — вужче (як в оригіналі), інакше — звичайне (truck.ini, див. app.ts).
     this.baseFov ??= this.camera.fov;
     const fov = this.camMode === 'first' && this.panelMode ? PANEL_FOV : this.baseFov;
     if (this.camera.fov !== fov) {

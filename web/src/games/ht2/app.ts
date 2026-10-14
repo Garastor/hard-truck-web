@@ -17,7 +17,7 @@ type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files'
 
 /**
  * Дальнобойщики 2 у порті: джерело файлів (пристрій або ПК), меню з LOAD.RES гри, режими. Свій цикл кадрів і сцена —
- * рендерер спільний з першою грою (main.ts), її інтерфейс схований (body.game-ht2).
+ * рендерер — від оболонки (app/main.ts); технічна панель першої гри схована (body.game-ht2).
  */
 /** Контекст запуску від оболонки (app/main.ts). */
 export type Ht2Context = GameContext;

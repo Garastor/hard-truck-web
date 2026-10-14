@@ -2,7 +2,7 @@
 
 Чекає на гру, знаходить обʼєкт стану машини за міткою (вказівник 0x00531aa0 на зсуві +0x8c — імовірно таблиця
 методів класу) і пише CSV 10 разів на секунду. Після перезапуску гри чи завантаження — шукає обʼєкт знову.
-Зсуви й одиниці — див. re/notes/ht2-telemetry.md (кермо, оберти, передача — гіпотези).
+Зсуви й одиниці — див. re/notes/ht2/telemetry.md (кермо, оберти, передача — гіпотези).
 
     python -I tools/re/ht2/record.py [OUT_PREFIX=re/telemetry/ht2/drive] [HZ=10]
 """
@@ -12,10 +12,10 @@ import struct
 import sys
 import time
 
-# telemetry.py (першої гри) — спільний доступ до памʼяті процесу (Proc, find_pid).
+# tools/re/procmem.py — спільний доступ до памʼяті процесу (Proc, find_pid).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import telemetry as T  # noqa: E402
+import procmem as T  # noqa: E402
 
 sys.stdout.reconfigure(encoding="utf-8")
 prefix = sys.argv[1] if len(sys.argv) > 1 else "re/telemetry/ht2/drive"

@@ -3,7 +3,7 @@ import { BinReader } from './binary';
 /**
  * Архів ресурсів RMP (HT1) / RES. Послідовність секцій "<НАЗВА> <к-сть>\0".
  * Файлові секції: імʼя\0 + u32 розмір + дані. Рядкові (COLORS, MATERIALS, SOUNDS): рядки \0.
- * Див. Docs/01-analysis.md §2.1.
+ * Див. Docs/ht1/analysis.md §2.1.
  */
 export interface RmpArchive {
   palettes: Map<string, Uint8Array>;

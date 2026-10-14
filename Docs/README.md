@@ -9,37 +9,61 @@
 
 ## Документи
 
+Спільне (рушій, інструменти, процес):
+
 | # | Файл | Про що |
 |---|------|--------|
-| 1 | [01-analysis.md](01-analysis.md) | Аналіз оригінальної гри та її файлів (що ми маємо, що вже розшифровано) |
 | 2 | [02-tools.md](02-tools.md) | Каталог усіх інструментів: спільнота, рушій, конвеєр ресурсів, мобільні, тестування |
 | 3 | [03-architecture.md](03-architecture.md) | Архітектура веб-порту та ключові технічні рішення |
-| 4 | [04-roadmap.md](04-roadmap.md) | **План робіт** — фази, задачі, критерії готовності |
 | 5 | [05-claude-code-workflow.md](05-claude-code-workflow.md) | Як вести розробку з Claude Code (CLAUDE.md, сабагенти, превʼю, мобільні тести) |
 | 6 | [06-legal-and-risks.md](06-legal-and-risks.md) | Авторські права, розповсюдження, ризики проєкту |
+| 7 | [07-reverse-engineering.md](07-reverse-engineering.md) | Реверс оригіналу (Ghidra + Claude Code через MCP, Cheat Engine, Frida), щоб фізика й логіка відповідали оригіналу |
+| 9 | [09-structure-plan.md](09-structure-plan.md) | Структура коду: рушій, оболонка, теки ігор, правила спільного |
+| — | [formats/b3d.md](formats/b3d.md) | Формат сцен B3D (обидві гри) |
 | — | [play-on-phone.md](play-on-phone.md) | **Як пограти на телефоні** (через ПК або офлайн-PWA) |
-| — | [gameplay.md](gameplay.md) | Ігровий процес оригіналу (з довідки `HTruck.hlp`) |
-| — | [formats/b3d.md](formats/b3d.md) | Формат сцен B3D |
-| — | [progress.md](progress.md) | Журнал прогресу |
-| 7 | [07-reverse-engineering.md](07-reverse-engineering.md) | Реверс `HTruck.exe` (Ghidra + Claude Code через MCP, Cheat Engine, Frida), щоб фізика й логіка відповідали оригіналу |
+| — | [progress.md](progress.md) | Журнал змін рушія й структури |
+
+Дальнобойщики (перша гра, 1998) — `ht1/`:
+
+| Файл | Про що |
+|------|--------|
+| [ht1/analysis.md](ht1/analysis.md) | Аналіз оригінальної гри та її файлів (що ми маємо, що вже розшифровано) |
+| [ht1/roadmap.md](ht1/roadmap.md) | **План робіт** — фази, задачі, критерії готовності |
+| [ht1/gameplay.md](ht1/gameplay.md) | Ігровий процес оригіналу (з довідки `HTruck.hlp`) |
+| [ht1/progress.md](ht1/progress.md) | Журнал прогресу (і спільний журнал до 2026-10-15) |
+
+Дальнобойщики 2 (2001) — `ht2/`:
+
+| Файл | Про що |
+|------|--------|
+| [ht2/plan.md](ht2/plan.md) | План розширення рушія на другу гру (фази G0–G8) |
+| [ht2/formats.md](ht2/formats.md) | Формати другої гри (WAY, tech, рельєф, OVL…) |
+| [ht2/progress.md](ht2/progress.md) | Журнал прогресу |
 
 ## Структура проєкту
 
 ```
 Hard Truck/
-├── CLAUDE.md            ← інструкції для Claude Code (контекст проєкту)
-├── Docs/                ← цей план
-├── Game/Hard Truck/     ← оригінальна гра (НЕ комітити в git!)
-├── re/                  ← проєкт Ghidra (не комітити) + re/notes/*.md (висновки реверсу)
-├── tools/               ← Python/Node утиліти: дослідження та конвертація ресурсів
-│   ├── probe/           ← скрипти-зонди форматів
-│   └── re/              ← запити до Ghidra (gq.py), налаштування Watcom
-└── web/                 ← сам веб-порт (Vite + TypeScript + Three.js + Rapier)
+├── CLAUDE.md              ← інструкції для Claude Code (контекст проєкту)
+├── Docs/                  ← документи: спільні, ht1/, ht2/
+├── Game/                  ← оригінальні ігри (НЕ комітити в git!)
+├── re/                    ← проєкти Ghidra (не комітити) + re/notes/ht1|ht2/*.md (висновки реверсу)
+├── tools/                 ← Python утиліти
+│   ├── probe/             ← скрипти-зонди форматів
+│   ├── re/                ← Ghidra (gq.py), телеметрія: procmem.py (спільне), ht1/, ht2/
+│   └── refactor/          ← перенесення модулів і документів
+└── web/                   ← веб-порт (Vite + TypeScript + Three.js + Rapier)
+    ├── src/engine/        ← спільний рушій
+    ├── src/app/           ← оболонка: вибір гри, імпорт файлів, PWA
+    ├── src/games/ht1/     ← перша гра
+    ├── src/games/ht2/     ← друга гра
+    └── test/              ← engine/, ht1/, ht2/, architecture.test.ts
 ```
 
 ## Поточний статус
 
-Див. [progress.md](progress.md) (журнал) і чекбокси в [04-roadmap.md](04-roadmap.md).
+Перша гра — журнал [ht1/progress.md](ht1/progress.md) і чекбокси в [ht1/roadmap.md](ht1/roadmap.md); друга —
+[ht2/plan.md](ht2/plan.md), [ht2/progress.md](ht2/progress.md).
 
 - [x] Аналіз файлів гри, інструменти, план
 - [x] Реверс `HTruck.exe`: проєкт Ghidra з домовленістю Watcom, повна декомпіляція, формат B3D, параметри техніки

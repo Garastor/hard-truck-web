@@ -37,5 +37,5 @@ Dev-сервер: `preview_start` з назвою `web` (`.claude/launch.json`),
 ## Корисне
 - `ht.dev.info()` — траса, кімната, позиція, швидкість, камера, погода, режим відблисків.
 - `ht.drive.roadBelow(x, y, z)`, `ht.drive.glossAt(x, y, z)` — висота й блиск дороги.
-- Модулі можна імпортувати в сторінці: `await import('/src/game/collision.ts')`.
+- Модулі можна імпортувати в сторінці: `await import('/src/engine/physics/collision.ts')`.
 - Великий результат `javascript_tool` (> ~100 КБ) не повертати — зводити до коротких рядків.

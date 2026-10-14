@@ -6,10 +6,10 @@ import os
 import struct
 import sys
 
-# telemetry.py (першої гри) — спільний доступ до памʼяті процесу (Proc, find_pid).
+# tools/re/procmem.py — спільний доступ до памʼяті процесу (Proc, find_pid).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import telemetry as T  # noqa: E402
+import procmem as T  # noqa: E402
 
 _find = T.find_pid
 T.find_pid = lambda name=b"king.exe": _find(name)

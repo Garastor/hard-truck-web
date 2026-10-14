@@ -26,7 +26,7 @@ export function g2t(v: readonly number[] | THREE.Vector3): THREE.Vector3 {
 
 /**
  * Запасна «земля» з видимої геометрії — пологі трикутники (|ny| > minUp), якщо в локації немає `hit_road`.
- * Основні колізії — з даних гри (обʼєкти `hit_*`), див. game/collision.ts.
+ * Основні колізії — з даних гри (обʼєкти `hit_*`), див. collision.ts.
  */
 export function addStaticMeshes(world: RAPIER.World, root: THREE.Object3D, minUp = 0.35): number {
   root.updateMatrixWorld(true);

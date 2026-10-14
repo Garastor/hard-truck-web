@@ -1,6 +1,6 @@
 /**
- * Профіль керування Дальнобойщиків 2 (games/ht2/controls.ts) проти телеметрії king.exe (ZilR, 2026-10-13,
- * re/notes/ht2-telemetry.md): газ від часу утримання, перемикання автомата за обертами, холості.
+ * Профіль керування Дальнобойщиків 2 (games/ht2/vehicles/controls.ts) проти телеметрії king.exe (ZilR, 2026-10-13,
+ * re/notes/ht2/telemetry.md): газ від часу утримання, перемикання автомата за обертами, холості.
  */
 import { describe, expect, it } from 'vitest';
 import { Engine, GEAR_N } from '@engine/vehicle/engine';
