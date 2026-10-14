@@ -1,0 +1,6 @@
+ui/quality.ts -> engine/ui/quality.ts
+ui/pwa.ts -> engine/ui/pwa.ts
+games/registry.ts -> app/registry.ts
+games/select.ts -> app/select.ts
+games/select.css -> app/select.css
+main.ts -> games/ht1/app.ts

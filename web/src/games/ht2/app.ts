@@ -1,9 +1,8 @@
-import type * as THREE from 'three';
 import { cachedSource, idbSourceFor, missingFiles, prefetchMissing } from '@engine/assets/gameStore';
 import type { FileSource } from '@engine/assets/source';
 import { parseFon } from '@engine/formats/fon';
 import { PixelFont } from '@engine/ui/pixelFont';
-import type { GameId } from '../registry';
+import type { GameContext } from '@engine/gameContext';
 import { HT2_FILES, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2ExitScreen, ht2MainScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem, type RoundKey } from './menu';
 import { loadSettings, saveSettings, type Ht2Settings } from './settings';
@@ -20,14 +19,8 @@ type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files'
  * Дальнобойщики 2 у порті: джерело файлів (пристрій або ПК), меню з LOAD.RES гри, режими. Свій цикл кадрів і сцена —
  * рендерер спільний з першою грою (main.ts), її інтерфейс схований (body.game-ht2).
  */
-export interface Ht2Context {
-  renderer: THREE.WebGLRenderer;
-  overlay: HTMLElement;
-  setStatus(text: string | null): void;
-  showImport(again: boolean): Promise<GameId | null>;
-  /** Вихід до вибору гри (null — гра одна). */
-  exit: (() => void) | null;
-}
+/** Контекст запуску від оболонки (app/main.ts). */
+export type Ht2Context = GameContext;
 
 async function devAvailable(): Promise<boolean> {
   try {

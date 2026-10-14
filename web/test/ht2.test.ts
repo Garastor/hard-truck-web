@@ -17,7 +17,7 @@ import { parseHeightmap } from '@engine/formats/heightmap';
 import { parseOvl } from '@engine/formats/ovl';
 import { decodeCp1251 } from '@engine/formats/binary';
 import { HT2_FILES, HT2_REGIONS, HT2_REQUIRED } from '../src/games/ht2/files';
-import { detectGame } from '../src/games/registry';
+import { detectGame } from '@app/registry';
 import { findStores, orderPay, parseGoods, parseServices, parseTowns } from '../src/games/ht2/economy';
 import { HT2_MOD_REGIONS } from '../src/games/ht2/files';
 import { install, parseUpgrades, tuning } from '../src/games/ht2/upgrades';

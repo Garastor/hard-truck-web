@@ -19,8 +19,28 @@ const IDLE_RPM = 300;
 
 let shared: AudioContext | null = null;
 
-/** Налагодження: `?mute` в адресі — без звуку (тестові вкладки поруч із грою користувача). */
-export const MUTED = import.meta.env.DEV && new URLSearchParams(location.search).has('mute');
+/**
+ * Налагодження: `?mute` в адресі — без звуку до кінця сесії вкладки (тестові вкладки поруч із грою користувача;
+ * гра може переписати адресу раніше, ніж завантажиться звук — оболонка запамʼятовує, rememberMute).
+ */
+export const MUTED = import.meta.env.DEV && (new URLSearchParams(location.search).has('mute') || session('ht.mute') === '1');
+
+function session(key: string): string | null {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/** Запамʼятати `?mute` з адреси на сесію вкладки (викликає оболонка до запуску гри). */
+export function rememberMute(): void {
+  try {
+    if (import.meta.env.DEV && new URLSearchParams(location.search).has('mute')) sessionStorage.setItem('ht.mute', '1');
+  } catch {
+    /* приватний режим */
+  }
+}
 
 function sharedContext(): AudioContext {
   if (shared) return shared;

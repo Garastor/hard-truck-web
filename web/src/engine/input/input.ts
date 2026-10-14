@@ -393,3 +393,21 @@ export class Input {
     window.removeEventListener('keyup', this.onKey);
   }
 }
+
+/** Налаштування керування обох ігор: кермо праворуч, педалі ліворуч (body.swap-controls; зберігається в браузері). */
+const SWAP_KEY = 'ht.swapControls';
+export function loadSwap(): boolean {
+  try {
+    return localStorage.getItem(SWAP_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+export function setSwap(on: boolean): void {
+  document.body.classList.toggle('swap-controls', on);
+  try {
+    localStorage.setItem(SWAP_KEY, on ? '1' : '0');
+  } catch {
+    /* приватний режим — лише на цей сеанс */
+  }
+}

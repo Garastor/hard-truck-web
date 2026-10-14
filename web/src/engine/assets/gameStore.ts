@@ -1,5 +1,5 @@
 import { Unzip, UnzipInflate } from 'fflate';
-import type { FileSource } from '@engine/assets/source';
+import type { FileSource } from './source';
 /**
  * Файли гри на пристрої гравця: імпорт з архіву або теки гри → IndexedDB (набір файлів кожної гри — FileSet).
  * IndexedDB, а не OPFS: OPFS доступний лише в захищеному контексті (HTTPS/localhost),

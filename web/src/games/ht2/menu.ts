@@ -5,7 +5,7 @@ import { parsePlm } from '@engine/formats/plm';
 import type { RgbaImage } from '@engine/formats/binary';
 import type { PixelFont } from '@engine/ui/pixelFont';
 import type { Ht2Settings } from './settings';
-import '../select.css';
+import '@app/select.css';
 import './ht2.css';
 
 /**

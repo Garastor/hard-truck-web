@@ -1,19 +1,14 @@
-import { cabStyle, setCabStyle } from '@ht1/viewSettings';
+import { cabStyle, setCabStyle } from './viewSettings';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { HT1_FILES, LEVELS, devServerSource, idbSource, loadLevel, type LevelId, type LoadedLevel } from '@ht1/files';
+import { HT1_FILES, LEVELS, devServerSource, idbSource, loadLevel, type LevelId, type LoadedLevel } from './files';
 import type { FileSource } from '@engine/assets/source';
-import {
-  cachedSource, importFiles, importZip, missingFiles, prefetchMissing, storageInfo, storeFile, zipNames, type FileSet as AnyFileSet,
-} from '@engine/assets/gameStore';
-import { GAMES, GAME_IDS, detectGame, gameFromLocation, lastGame, setLastGame, type GameId } from './games/registry';
-
-type FileSet = AnyFileSet<GameId>;
-import { HT2_FILES, ht2DevSource } from './games/ht2/files';
-import { isIos, isStandalone, registerServiceWorker } from './ui/pwa';
+import { cachedSource, importZip, missingFiles, prefetchMissing, storageInfo, storeFile } from '@engine/assets/gameStore';
+import type { GameContext } from '@engine/gameContext';
+import { isStandalone } from '@engine/ui/pwa';
 import { setSoftFont, soften } from '@engine/ui/softUi';
-import { WIPER_TXR, loadCab2d, loadCab2dTexture } from '@ht1/cab2d/cab2dFiles';
-import { FpsMeter, FrameLimiter, QUALITY, loadQuality, loadShowFps, saveQuality, saveShowFps, type QualityId } from './ui/quality';
+import { WIPER_TXR, loadCab2d, loadCab2dTexture } from './cab2d/cab2dFiles';
+import { FpsMeter, FrameLimiter, QUALITY, loadQuality, loadShowFps, saveQuality, saveShowFps, type QualityId } from '@engine/ui/quality';
 import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from '@engine/ui/mobile';
 import { buildScene, type BuiltScene } from '@engine/render/sceneBuilder';
 import { parseTxr } from '@engine/formats/txr';
@@ -22,23 +17,25 @@ import { parsePlm } from '@engine/formats/plm';
 import type { RgbaImage } from '@engine/formats/binary';
 import { decodeCp1251 } from '@engine/formats/binary';
 import { buildTruckModel, parseTrucks, type TruckDef } from '@engine/vehicle/trucks';
-import type { DriveSession } from '@ht1/drive';
+import type { DriveSession } from './drive';
 import type { TruckSetup } from '@engine/vehicle/truckVehicle';
-import { currentDriver, listCareers, loadCareer, newCareer, setCurrentDriver, truckSpec, type Career } from '@ht1/career/career';
-import { CareerGame, HOME_SVG, type LevelKind } from '@ht1/career/careerUi';
+import { currentDriver, listCareers, loadCareer, newCareer, setCurrentDriver, truckSpec, type Career } from './career/career';
+import { CareerGame, HOME_SVG, type LevelKind } from './career/careerUi';
 import { modal, setHudFont } from '@engine/ui/modal';
 import {
-  MenuArt, driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
+  driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
   type ControlMode, type OptionsState, type QualityLevel,
-} from '@ht1/ui/menuScreens';
+} from './ui/menuScreens';
 import { HUD_CYAN, PixelFont, box, pixelCanvas, uiScale } from '@engine/ui/pixelFont';
+import { MenuArt } from '@engine/ui/menuArt';
 import { parseFon } from '@engine/formats/fon';
-import { installDevTools } from '@ht1/devTools';
-import { motionOnGesture, requestMotionPermission } from '@engine/input/input';
+import { installDevTools } from './devTools';
+import { loadSwap, motionOnGesture, requestMotionPermission, setSwap } from '@engine/input/input';
 
 /**
- * Переглядач ресурсів (Фази 1–2): обліт локацій, галерея текстур і масок.
- * Стан (локація/вкладка) зберігається в URL: ?level=CIRCUIT&tab=scene
+ * Дальнобойщики (перша гра): головне меню й кар'єра (LOAD.RES), їзда, а для розробки — переглядач ресурсів (обліт
+ * локацій, галерея текстур і масок, техніка) з технічною панеллю `#bar`. Стан переглядача — в адресі
+ * (?level=CIRCUIT&tab=scene). Запуск — runHt1 з оболонки (app/main.ts).
  */
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -51,8 +48,9 @@ const truckSel = $<HTMLSelectElement>('truck');
 const overlay = $('overlay');
 
 let qualityId = loadQuality();
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: QUALITY[qualityId].antialias, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY[qualityId].dpr));
+/** Рендерер оболонки (GameContext) — до runHt1 не використовується. */
+let renderer!: THREE.WebGLRenderer;
+let ctx!: GameContext;
 const limiter = new FrameLimiter(QUALITY[qualityId].fps);
 const fpsMeter = new FpsMeter();
 const fpsEl = $('fps');
@@ -87,8 +85,6 @@ truckRoot.rotation.x = -Math.PI / 2;
 scene.add(truckRoot);
 
 const params = new URLSearchParams(location.search);
-/** Гра з адреси (/ht1/, /ht2/, ?game=) — читаємо до того, як syncUrl перепише адресу. */
-const urlGame = gameFromLocation();
 for (const id of Object.keys(LEVELS)) levelSel.add(new Option(id, id));
 levelSel.value = params.get('level') ?? 'CIRCUIT';
 
@@ -102,7 +98,6 @@ function resize(): void {
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize);
-resize();
 
 function setStatus(text: string | null): void {
   status.hidden = !text;
@@ -211,7 +206,7 @@ async function startDrive(): Promise<void> {
     controls.enabled = false;
     scene.fog = new THREE.Fog(0x8fb4d8, 150, 900);
     // Rapier (WASM ~2 МБ) вантажимо лише при вході в режим їзди.
-    const { DriveSession } = await import('@ht1/drive');
+    const { DriveSession } = await import('./drive');
     // Суперники (тестовий режим): кількість з ?ai= або списку «Суперники»; інші моделі вантажівок, по колу, якщо
     // суперників більше, ніж моделей.
     const nAi = Number(params.get('ai') ?? rivalsSel.value);
@@ -344,8 +339,6 @@ for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-tab]')) {
   });
 }
 const initialTab = params.get('tab');
-// ?tab= — налагоджувальні вкладки першої гри; у другій (?game=ht2&tab=world|drive) їх обробляє games/ht2.
-if (initialTab && initialTab !== 'scene' && urlGame !== 'ht2') document.querySelector<HTMLButtonElement>(`[data-tab="${initialTab}"]`)?.click();
 
 levelSel.addEventListener('change', open);
 // У режимі їзди панель згорнута; кнопка ☰ тимчасово її показує.
@@ -421,24 +414,6 @@ rivalsSel.addEventListener('change', () => {
   if (tab === 'drive' && !careerCfg) void startDrive();
 });
 
-// Налаштування керування: кермо праворуч, педалі ліворуч (зберігається в цьому браузері).
-const SWAP_KEY = 'ht.swapControls';
-function loadSwap(): boolean {
-  try {
-    return localStorage.getItem(SWAP_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-function setSwap(on: boolean): void {
-  document.body.classList.toggle('swap-controls', on);
-  try {
-    localStorage.setItem(SWAP_KEY, on ? '1' : '0');
-  } catch {
-    /* приватний режим — лише на цей сеанс */
-  }
-}
-document.body.classList.toggle('swap-controls', loadSwap());
 $('options').addEventListener('click', () => {
   document.body.classList.remove('bar-open');
   void optionsDialog();
@@ -486,8 +461,7 @@ document.addEventListener('pointerup', (e) => {
 const clock = new THREE.Clock();
 // Пауза, коли вкладку згорнуто (економія батареї); після повернення не «надолужуємо» час.
 document.addEventListener('visibilitychange', () => {
-  // Друга гра має власний цикл кадрів (games/ht2) — його не підміняємо.
-  if (document.body.classList.contains('game-ht2')) return;
+  if (!renderer) return;
   if (document.hidden) renderer.setAnimationLoop(null);
   else {
     clock.getDelta();
@@ -512,8 +486,6 @@ function loop(now: number): void {
     drive.renderOverlay(renderer, camera);
   }
 }
-renderer.setAnimationLoop(loop);
-
 if (import.meta.env.DEV) {
   const dev = installDevTools({ drive: () => drive, level: () => levelSel.value });
   Object.assign(window, { ht: { THREE, scene, camera, controls, get built() { return built; }, get level() { return level; }, get drive() { return drive; }, importZip, missingFiles, idbSource, dev } });
@@ -531,143 +503,13 @@ async function devServerAvailable(): Promise<boolean> {
   }
 }
 
-const FILE_SETS: Record<GameId, FileSet> = { ht1: HT1_FILES, ht2: HT2_FILES };
-
-/**
- * Екран імпорту файлів гри: перший запуск (бракує файлів) або повторний імпорт з «Опцій» (again — з кнопкою
- * «Скасувати», поверх меню). На iPhone у Safari — підказка спершу встановити гру на головний екран: у застосунку
- * з головного екрана окреме сховище, файли, імпортовані в Safari, він не побачить.
- * set — яку гру чекаємо (null — будь-яку). Гру впізнаємо за вмістом архіву чи теки: файли іншої гри теж
- * зберігаються (під її префіксом). Результат — гра, файли якої тепер повні (null — скасовано).
- */
-function showImport(set: FileSet | null, again = false): Promise<GameId | null> {
-  return new Promise((resolve) => {
-    status.hidden = false;
-    status.innerHTML = '';
-    status.classList.toggle('over-menu', again);
-    const box = document.createElement('div');
-    box.className = 'import-box';
-    const iosHint =
-      isIos() && !isStandalone()
-        ? `<p class="hint">На iPhone спершу встановіть гру: «Поділитися» → «На початковий екран», відкрийте її з іконки
-      й оберіть файли вже там — у Safari й на головному екрані окремі сховища.</p>`
-        : '';
-    const what = !set
-      ? 'Для гри потрібні файли оригінальних «Дальнобійників» (≈ 66 МБ) або «Дальнобійників 2» (≈ 150 МБ). Оберіть архів чи теку встановленої гри —'
-      : set.game === 'ht2'
-        ? `Для гри потрібні файли «Дальнобійників 2» (≈ 150 МБ, файлів: ${set.required.length}). Оберіть архів або теку встановленої гри (GOG, диск) —`
-        : `Для гри потрібні файли оригінальних «Дальнобійників» (≈ 66 МБ, файлів: ${set.required.length}). Оберіть архів <b>HardTruck.zip</b> або теку встановленої гри —`;
-    box.innerHTML = `
-      <h2>Файли гри${set ? ` — ${GAMES[set.game].title}` : ''}</h2>
-      <p>${again ? 'Імпорт замінить файли гри на цьому пристрої. ' : ''}${what} файли залишаться лише на цьому пристрої;
-      далі гра працює без інтернету.</p>
-      ${iosHint}
-      <label class="btn">Обрати ZIP<input type="file" accept=".zip,application/zip" hidden></label>
-      <label class="btn">Обрати теку гри<input type="file" webkitdirectory multiple hidden></label>
-      ${again ? '<button class="btn cancel">Скасувати</button>' : ''}
-      <progress max="1" value="0" hidden></progress>
-      <p class="msg"></p>`;
-    status.append(box);
-    const close = (got: GameId | null) => {
-      status.innerHTML = '';
-      status.hidden = true;
-      status.classList.remove('over-menu');
-      resolve(got);
-    };
-    box.querySelector('.cancel')?.addEventListener('click', () => close(null));
-    const [zipIn, dirIn] = box.querySelectorAll('input');
-    const bar = box.querySelector('progress')!;
-    const msg = box.querySelector('.msg')!;
-    const progress = (m: string, f: number) => {
-      bar.hidden = false;
-      bar.value = f;
-      msg.textContent = m;
-    };
-    // Гра за вмістом: невпізнане — та, яку чекаємо (або перша).
-    const target = (names: Iterable<string>) => FILE_SETS[detectGame(names) ?? set?.game ?? 'ht1'];
-    const finish = async (got: FileSet) => {
-      const left = await missingFiles(got);
-      if (left.length) msg.textContent = `Бракує файлів: ${left.join(', ')}`;
-      else if (set && got !== set) msg.textContent = `Це файли «${GAMES[got.game].title}» — збережено. Для «${GAMES[set.game].title}» оберіть її архів чи теку.`;
-      else close(got.game);
-    };
-    zipIn.addEventListener('change', async () => {
-      const zip = zipIn.files?.[0];
-      if (!zip) return;
-      const got = target(await zipNames(zip).catch(() => []));
-      await importZip(zip, progress, got).catch((e) => (msg.textContent = String(e)));
-      await finish(got);
-    });
-    dirIn.addEventListener('change', async () => {
-      if (!dirIn.files) return;
-      const files = [...dirIn.files];
-      const got = target(files.map((f) => f.webkitRelativePath || f.name));
-      await importFiles(files, progress, got).catch((e) => (msg.textContent = String(e)));
-      await finish(got);
-    });
-  });
-}
-
-/** Чи є гра на dev-сервері ПК (файли за /game/ чи /game2/). */
-async function devHas(id: GameId): Promise<boolean> {
-  try {
-    const r = await fetch(`${GAMES[id].devPrefix}${GAMES[id].devProbe}`, { method: 'HEAD' });
-    return r.ok && !(r.headers.get('content-type') ?? '').includes('html');
-  } catch {
-    return false;
-  }
-}
-
-/** Ігри, доступні зараз: повністю імпортовані на пристрій або на dev-сервері ПК. */
-async function availableGames(): Promise<GameId[]> {
-  const ok = await Promise.all(
-    GAME_IDS.map(async (id) => (await missingFiles(FILE_SETS[id]).catch(() => [''])).length === 0 || (params.get('source') !== 'local' && (await devHas(id)))),
-  );
-  return GAME_IDS.filter((_, i) => ok[i]);
-}
-
-/** Скільки ігор доступно (від цього залежить «Вихід» у головному меню — до вибору гри). */
-let gameCount = 1;
-
-/** Вихід до вибору гри: головна адреса порту (без теки-входу /ht1/, /ht2/ і параметрів) — з перезавантаженням. */
-function exitToGameSelect(): void {
-  location.assign(location.pathname.replace(/ht[12]\/(index\.html)?$/i, ''));
-}
-
-async function chooseGame(ids: readonly GameId[], available: GameId[]): Promise<GameId> {
-  const [small, large] = await hudFonts();
-  const { gameSelectScreen } = await import('./games/select');
-  const sourceOf = (id: GameId): FileSource => (id === 'ht1' ? cachedSource(devServerSource, HT1_FILES) : cachedSource(ht2DevSource, HT2_FILES));
-  const cards = await Promise.all(
-    ids.map(async (id) => {
-      const missing = !available.includes(id);
-      const art = missing ? null : await MenuArt.load((n) => sourceOf(id).read(n)).catch(() => null);
-      return { meta: GAMES[id], art: art?.background(GAMES[id].menuBackground) ?? null, missing };
-    }),
-  );
-  return gameSelectScreen(cards, { small, large }, lastGame());
-}
-
-async function boot(): Promise<void> {
-  void navigator.storage?.persist?.();
-  // Налагоджувальні посилання ?tab=… / ?career=1 без game — перша гра (як до появи HT2).
-  const wanted = urlGame ?? (debugLink ? 'ht1' : null);
-  const games = await availableGames();
-  gameCount = games.length;
-  let game: GameId | null = wanted;
-  // Вибір гри — завжди з обома іграми; ще не імпортовану — імпорт (як для першої гри), далі файли вже на пристрої.
-  gameCount = GAME_IDS.length;
-  while (!game) {
-    const pick = await chooseGame(GAME_IDS, games);
-    if (games.includes(pick)) game = pick;
-    else if ((await showImport(FILE_SETS[pick], true)) === pick) game = pick;
-  }
-  setLastGame(game);
-  if (game === 'ht2') {
-    renderer.setAnimationLoop(null);
-    const { runHt2 } = await import('./games/ht2/app');
-    return runHt2({ renderer, overlay, setStatus, showImport: (again) => showImport(HT2_FILES, again), exit: gameCount > 1 ? exitToGameSelect : null });
-  }
+/** Запуск першої гри оболонкою: рендерер, джерело файлів (пристрій, ПК або імпорт), меню чи налагоджувальне посилання. */
+export async function runHt1(context: GameContext): Promise<void> {
+  ctx = context;
+  renderer = ctx.renderer;
+  resize();
+  renderer.setAnimationLoop(loop);
+  if (initialTab && initialTab !== 'scene') document.querySelector<HTMLButtonElement>(`[data-tab="${initialTab}"]`)?.click();
   const missing = await missingFiles(HT1_FILES).catch(() => HT1_FILES.required);
   if (!missing.length && params.get('source') !== 'pc') {
     // Усі файли вже на пристрої — читаємо локально, навіть якщо ПК доступний (без Wi-Fi — швидше).
@@ -676,10 +518,8 @@ async function boot(): Promise<void> {
     // Файли з ПК, але кожен збережений на пристрої; решту докачуємо у фоні після першої локації.
     source = cachedSource(devServerSource, HT1_FILES);
     void prefetchMissing(devServerSource, HT1_FILES);
-    await startup();
-    return;
   } else {
-    if (missing.length) await showImport(HT1_FILES);
+    if (missing.length) await ctx.showImport(false);
     source = idbSource;
   }
   await startup();
@@ -837,7 +677,7 @@ async function optionsDialog(): Promise<void> {
         },
         storage: () => storageInfo(HT1_FILES),
         async reimport() {
-          await showImport(HT1_FILES, true);
+          await ctx.showImport(true);
           // Файли тепер на пристрої — читаємо звідси (а не з ПК).
           if (!(await missingFiles(HT1_FILES)).length) source = idbSource;
         },
@@ -889,7 +729,7 @@ async function menuLoop(): Promise<void> {
   if (menuArt === undefined) menuArt = await MenuArt.load((n) => source.read(n));
   if (!menuArt) return fallbackMenu();
   const choice = await mainMenu(menuArt, {
-    viewer: import.meta.env.DEV || gameCount > 1,
+    viewer: import.meta.env.DEV || !!ctx.exit,
     get driver() {
       return currentDriver();
     },
@@ -919,9 +759,9 @@ async function menuLoop(): Promise<void> {
   if (choice === 'quick') {
     levelSel.value = 'CIRCUIT';
     selectTab('drive');
-  } else if (gameCount > 1) {
+  } else if (ctx.exit) {
     // «Вихід» — до вибору гри (переглядач на ПК лишається за налагоджувальним посиланням ?tab=scene).
-    return exitToGameSelect();
+    return ctx.exit();
   } else selectTab('scene');
   await open();
 }
@@ -953,8 +793,3 @@ async function startup(): Promise<void> {
   }
   await menuLoop();
 }
-
-// PWA: офлайн-кеш коду й оновлення (лише у збірці й у захищеному контексті — HTTPS/localhost).
-registerServiceWorker();
-
-void boot();

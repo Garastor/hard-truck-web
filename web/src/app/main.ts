@@ -1,0 +1,215 @@
+/**
+ * Оболонка порту: рендерер на canvas `#view`, вибір гри (коли їх кілька), імпорт файлів гри на пристрій і запуск
+ * гри (games/<id>/index.ts → GameModule.run). Самі ігри — у games/, спільний рушій — у engine/
+ * (Docs/09-structure-plan.md).
+ */
+import * as THREE from 'three';
+import { cachedSource, importFiles, importZip, missingFiles, zipNames, type FileSet as AnyFileSet } from '@engine/assets/gameStore';
+import type { GameModule } from '@engine/gameContext';
+import { isIos, isStandalone, registerServiceWorker } from '@engine/ui/pwa';
+import { QUALITY, loadQuality } from '@engine/ui/quality';
+import { blockPageZoom } from '@engine/ui/mobile';
+import { MenuArt } from '@engine/ui/menuArt';
+import { PixelFont, uiScale } from '@engine/ui/pixelFont';
+import { setSoftFont } from '@engine/ui/softUi';
+import { setHudFont } from '@engine/ui/modal';
+import { parseFon } from '@engine/formats/fon';
+import { loadSwap } from '@engine/input/input';
+import { rememberMute } from '@engine/audio/engineAudio';
+import { GAMES, GAME_IDS, detectGame, gameFromLocation, lastGame, setLastGame, type GameId } from './registry';
+import { ht1 } from '@ht1/index';
+import { ht2 } from '@ht2/index';
+
+type FileSet = AnyFileSet<GameId>;
+
+const GAME_MODULES: Record<GameId, GameModule> = { ht1, ht2 };
+const FILE_SETS = Object.fromEntries(GAME_IDS.map((id) => [id, GAME_MODULES[id].files])) as Record<GameId, FileSet>;
+
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const status = $('status');
+const overlay = $('overlay');
+const params = new URLSearchParams(location.search);
+
+// Рендерер — спільний для ігор; згладжування за якістю з «Опцій» (змінюється з перезавантаженням).
+const quality = QUALITY[loadQuality()];
+const renderer = new THREE.WebGLRenderer({ canvas: $<HTMLCanvasElement>('view'), antialias: quality.antialias, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.dpr));
+
+// Сенсорні кнопки й відступи на малому екрані — пропорційно менші (style.css: var(--ui)).
+function setUiScale(): void {
+  document.documentElement.style.setProperty('--ui', String(uiScale()));
+}
+window.addEventListener('resize', setUiScale);
+setUiScale();
+blockPageZoom();
+rememberMute();
+// Кермо й педалі місцями (налаштування спільне для ігор).
+document.body.classList.toggle('swap-controls', loadSwap());
+
+function setStatus(text: string | null): void {
+  status.hidden = !text;
+  status.textContent = text ?? '';
+}
+
+/**
+ * Екран імпорту файлів гри: перший запуск (бракує файлів) або повторний імпорт з «Опцій» (again — з кнопкою
+ * «Скасувати», поверх меню). На iPhone у Safari — підказка спершу встановити гру на головний екран: у застосунку
+ * з головного екрана окреме сховище, файли, імпортовані в Safari, він не побачить.
+ * set — яку гру чекаємо (null — будь-яку). Гру впізнаємо за вмістом архіву чи теки: файли іншої гри теж
+ * зберігаються (під її префіксом). Результат — гра, файли якої тепер повні (null — скасовано).
+ */
+function showImport(set: FileSet | null, again = false): Promise<GameId | null> {
+  return new Promise((resolve) => {
+    status.hidden = false;
+    status.innerHTML = '';
+    status.classList.toggle('over-menu', again);
+    const box = document.createElement('div');
+    box.className = 'import-box';
+    const iosHint =
+      isIos() && !isStandalone()
+        ? `<p class="hint">На iPhone спершу встановіть гру: «Поділитися» → «На початковий екран», відкрийте її з іконки
+      й оберіть файли вже там — у Safari й на головному екрані окремі сховища.</p>`
+        : '';
+    const what = !set
+      ? 'Для гри потрібні файли оригінальних «Дальнобійників» (≈ 66 МБ) або «Дальнобійників 2» (≈ 150 МБ). Оберіть архів чи теку встановленої гри —'
+      : set.game === 'ht2'
+        ? `Для гри потрібні файли «Дальнобійників 2» (≈ 150 МБ, файлів: ${set.required.length}). Оберіть архів або теку встановленої гри (GOG, диск) —`
+        : `Для гри потрібні файли оригінальних «Дальнобійників» (≈ 66 МБ, файлів: ${set.required.length}). Оберіть архів <b>HardTruck.zip</b> або теку встановленої гри —`;
+    box.innerHTML = `
+      <h2>Файли гри${set ? ` — ${GAMES[set.game].title}` : ''}</h2>
+      <p>${again ? 'Імпорт замінить файли гри на цьому пристрої. ' : ''}${what} файли залишаться лише на цьому пристрої;
+      далі гра працює без інтернету.</p>
+      ${iosHint}
+      <label class="btn">Обрати ZIP<input type="file" accept=".zip,application/zip" hidden></label>
+      <label class="btn">Обрати теку гри<input type="file" webkitdirectory multiple hidden></label>
+      ${again ? '<button class="btn cancel">Скасувати</button>' : ''}
+      <progress max="1" value="0" hidden></progress>
+      <p class="msg"></p>`;
+    status.append(box);
+    const close = (got: GameId | null) => {
+      status.innerHTML = '';
+      status.hidden = true;
+      status.classList.remove('over-menu');
+      resolve(got);
+    };
+    box.querySelector('.cancel')?.addEventListener('click', () => close(null));
+    const [zipIn, dirIn] = box.querySelectorAll('input');
+    const bar = box.querySelector('progress')!;
+    const msg = box.querySelector('.msg')!;
+    const progress = (m: string, f: number) => {
+      bar.hidden = false;
+      bar.value = f;
+      msg.textContent = m;
+    };
+    // Гра за вмістом: невпізнане — та, яку чекаємо (або перша).
+    const target = (names: Iterable<string>) => FILE_SETS[detectGame(names) ?? set?.game ?? 'ht1'];
+    const finish = async (got: FileSet) => {
+      const left = await missingFiles(got);
+      if (left.length) msg.textContent = `Бракує файлів: ${left.join(', ')}`;
+      else if (set && got !== set) msg.textContent = `Це файли «${GAMES[got.game].title}» — збережено. Для «${GAMES[set.game].title}» оберіть її архів чи теку.`;
+      else close(got.game);
+    };
+    zipIn.addEventListener('change', async () => {
+      const zip = zipIn.files?.[0];
+      if (!zip) return;
+      const got = target(await zipNames(zip).catch(() => []));
+      await importZip(zip, progress, got).catch((e) => (msg.textContent = String(e)));
+      await finish(got);
+    });
+    dirIn.addEventListener('change', async () => {
+      if (!dirIn.files) return;
+      const files = [...dirIn.files];
+      const got = target(files.map((f) => f.webkitRelativePath || f.name));
+      await importFiles(files, progress, got).catch((e) => (msg.textContent = String(e)));
+      await finish(got);
+    });
+  });
+}
+
+/** Чи є гра на dev-сервері ПК (файли за /game/ чи /game2/). */
+async function devHas(id: GameId): Promise<boolean> {
+  try {
+    const r = await fetch(`${GAMES[id].devPrefix}${GAMES[id].devProbe}`, { method: 'HEAD' });
+    return r.ok && !(r.headers.get('content-type') ?? '').includes('html');
+  } catch {
+    return false;
+  }
+}
+
+/** Ігри, доступні зараз: повністю імпортовані на пристрій або на dev-сервері ПК. */
+async function availableGames(): Promise<GameId[]> {
+  const ok = await Promise.all(
+    GAME_IDS.map(async (id) => (await missingFiles(FILE_SETS[id]).catch(() => [''])).length === 0 || (params.get('source') !== 'local' && (await devHas(id)))),
+  );
+  return GAME_IDS.filter((_, i) => ok[i]);
+}
+
+/** Вихід до вибору гри: головна адреса порту (без теки-входу /ht1/, /ht2/ і параметрів) — з перезавантаженням. */
+function exitToGameSelect(): void {
+  location.assign(location.pathname.replace(/ht[12]\/(index\.html)?$/i, ''));
+}
+
+/** Растрові шрифти табло (MENU.FON, large.fon) для екрана вибору — з файлів будь-якої доступної гри. */
+async function selectFonts(available: GameId[]): Promise<{ small: PixelFont | null; large: PixelFont | null }> {
+  const load = async (name: string) => {
+    for (const id of available) {
+      const m = GAME_MODULES[id];
+      const font = await cachedSource(m.devSource, m.files)
+        .read(name)
+        .then((b) => new PixelFont(parseFon(b)))
+        .catch(() => null);
+      if (font) return font;
+    }
+    return null;
+  };
+  const small = await load('MENU.FON');
+  setHudFont(small);
+  setSoftFont(small);
+  return { small, large: await load('large.fon') };
+}
+
+async function chooseGame(ids: readonly GameId[], available: GameId[]): Promise<GameId> {
+  const fonts = await selectFonts(available);
+  const { gameSelectScreen } = await import('./select');
+  const cards = await Promise.all(
+    ids.map(async (id) => {
+      const missing = !available.includes(id);
+      const m = GAME_MODULES[id];
+      const art = missing ? null : await MenuArt.load((n) => cachedSource(m.devSource, m.files).read(n)).catch(() => null);
+      return { meta: GAMES[id], art: art?.background(GAMES[id].menuBackground) ?? null, missing };
+    }),
+  );
+  return gameSelectScreen(cards, fonts, lastGame());
+}
+
+/**
+ * Відкрито з налагоджувального посилання першої гри (?tab=… або ?career=1 на dev-сервері) — без вибору гри, як до
+ * появи другої.
+ */
+const debugLink = import.meta.env.DEV && !isStandalone() && (params.has('tab') || params.has('career'));
+
+async function boot(): Promise<void> {
+  void navigator.storage?.persist?.();
+  const games = await availableGames();
+  let game: GameId | null = gameFromLocation() ?? (debugLink ? 'ht1' : null);
+  // Вибір гри — завжди з усіма іграми; ще не імпортовану — імпорт, далі файли вже на пристрої.
+  while (!game) {
+    const pick = await chooseGame(GAME_IDS, games);
+    if (games.includes(pick)) game = pick;
+    else if ((await showImport(FILE_SETS[pick], true)) === pick) game = pick;
+  }
+  setLastGame(game);
+  const id = game;
+  await GAME_MODULES[id].run({
+    renderer,
+    overlay,
+    setStatus,
+    showImport: async (again) => (await showImport(FILE_SETS[id], again)) === id,
+    exit: GAME_IDS.length > 1 ? exitToGameSelect : null,
+  });
+}
+
+// PWA: офлайн-кеш коду й оновлення (лише у збірці й у захищеному контексті — HTTPS/localhost).
+registerServiceWorker();
+
+void boot();
