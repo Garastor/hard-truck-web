@@ -54,6 +54,10 @@ const CHASE_BACK = 13.3;
 const CHASE_UP = 4.2;
 const CHASE_PITCH = Math.asin(0.3);
 const CHASE_FOV = THREE.MathUtils.radToDeg(2 * Math.atan(0.45 * (4 / 3)));
+/** Запізнення камери за машиною, с (оригінал: відстань позаду = 8,8 м + 0,58 с × швидкість, повертається за ≈ 1,5 с). */
+const CHASE_LAG = 0.6;
+/** Точка погляду — на цій відстані від місця камери в спокої під нахилом CHASE_PITCH (біля машини), м. */
+const CHASE_LOOK = 10;
 
 /** Опір кочення поза асфальтом, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
 const OFFROAD_ROLL = 5;
@@ -879,11 +883,21 @@ export class Ht2Drive {
     const height = (far ? 12 : CHASE_UP) * tow;
     const flat = fwd.clone().setY(0).normalize();
     const want = v.position.clone().addScaledVector(flat, -dist).addScaledVector(up, height);
-    this.camPos.lerp(want, 1 - Math.exp(-dt * 4));
-    // Точка погляду — від бажаної (не відсталої) позиції камери під нахилом CHASE_PITCH на 20 м: камера, що відстає
-    // в повороті, однаково дивиться на машину (від відсталої позиції машина виходила з кадру).
-    const look = far ? v.position.clone().addScaledVector(up, 2) : want.clone().addScaledVector(flat, 20 * Math.cos(CHASE_PITCH)).addScaledVector(up, -20 * Math.sin(CHASE_PITCH));
-    this.camLook.lerp(look, 1 - Math.exp(-dt * 10));
+    if (far) {
+      this.camPos.lerp(want, 1 - Math.exp(-dt * 4));
+      this.camLook.lerp(v.position.clone().addScaledVector(up, 2), 1 - Math.exp(-dt * 10));
+    } else {
+      // Як в оригіналі (запис king.exe, ZilR від бази до греблі): по горизонталі камера відстає від свого місця з
+      // запізненням CHASE_LAG (позаду 8,8 м на місці, 16 м на 46 км/год, 20 — на 70, 25,7 — на 100: 8,8 + 0,58·v; у
+      // поворотах — убік до ±5 м), висота над машиною стала. Дивиться на точку біля машини — тож нахил сам зменшується
+      // з відстанню (оригінал: 25° → 10° на 100 км/год).
+      const k = 1 - Math.exp(-dt / CHASE_LAG);
+      this.camPos.x += (want.x - this.camPos.x) * k;
+      this.camPos.z += (want.z - this.camPos.z) * k;
+      this.camPos.y += (want.y - this.camPos.y) * (1 - Math.exp(-dt * 10));
+      const target = want.clone().addScaledVector(flat, CHASE_LOOK * Math.cos(CHASE_PITCH)).addScaledVector(up, -CHASE_LOOK * Math.sin(CHASE_PITCH));
+      this.camLook.copy(target);
+    }
     this.camera.position.copy(this.camPos);
     this.camera.lookAt(this.camLook);
   }
