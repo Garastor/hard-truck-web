@@ -43,6 +43,18 @@ import { dayTime, type Ht2Career } from './career';
 import { HT2_MOD_REGIONS, readTextures } from './files';
 import { badWeather, timeScale, type Ht2Settings } from './settings';
 
+/**
+ * Камера за машиною — підібрана так, щоб кадр збігся зі знімком оригіналу в тій самій точці (ZilR біля бази «Южный»,
+ * позиція й курс — з телеметрії king.exe): 13,3 м позаду початку моделі в порту (у памʼяті гри — 8,8 м позаду точки
+ * машини, отже та на ≈ 4,5 м позаду початку моделі), 4,2 м над ним (5,3 м над землею), нахил униз ≈ 17,5°.
+ * Кут огляду — вертикальний 2·atan(0,45·4/3) ≈ 62°: ypyramid = 0,9 з TRUCK.INI, перераховане на екран 4:3
+ * (з 48,5° вантажівка займала півкадру проти третини в оригіналі). Для інших машин — гіпотеза (ті самі числа).
+ */
+const CHASE_BACK = 13.3;
+const CHASE_UP = 4.2;
+const CHASE_PITCH = Math.asin(0.3);
+const CHASE_FOV = THREE.MathUtils.radToDeg(2 * Math.atan(0.45 * (4 / 3)));
+
 /** Опір кочення поза асфальтом, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
 const OFFROAD_ROLL = 5;
 
@@ -849,21 +861,27 @@ export class Ht2Drive {
       this.camera.position.copy(this.cockpit).applyQuaternion(v.quaternion).add(v.position);
       this.camera.quaternion.copy(v.quaternion).multiply(tilt);
       this.camera.near = 0.2;
+      this.camera.fov = FOV;
       this.camera.updateProjectionMatrix();
       return;
     }
-    if (this.camera.near !== 1) {
+    const fov = this.camMode === 'far' ? FOV : CHASE_FOV;
+    if (this.camera.near !== 1 || this.camera.fov !== fov) {
       this.camera.near = 1;
+      this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
     }
     // З напівпричепом — далі й вище: причіп (13 м) інакше закриває дорогу.
     const tow = this.trailer ? 1.7 : 1;
-    const dist = (this.camMode === 'far' ? 28 : 13) * tow;
-    const height = (this.camMode === 'far' ? 12 : 5) * tow;
+    // Камера за машиною — як в оригіналі (CHASE_*); «далека» — порту.
+    const far = this.camMode === 'far';
+    const dist = (far ? 28 : CHASE_BACK) * tow;
+    const height = (far ? 12 : CHASE_UP) * tow;
     const flat = fwd.clone().setY(0).normalize();
     const want = v.position.clone().addScaledVector(flat, -dist).addScaledVector(up, height);
     this.camPos.lerp(want, 1 - Math.exp(-dt * 4));
-    this.camLook.lerp(v.position.clone().addScaledVector(up, 2), 1 - Math.exp(-dt * 10));
+    const look = far ? v.position.clone().addScaledVector(up, 2) : this.camPos.clone().addScaledVector(flat, Math.cos(CHASE_PITCH)).addScaledVector(up, -Math.sin(CHASE_PITCH));
+    this.camLook.lerp(look, 1 - Math.exp(-dt * 10));
     this.camera.position.copy(this.camPos);
     this.camera.lookAt(this.camLook);
   }
