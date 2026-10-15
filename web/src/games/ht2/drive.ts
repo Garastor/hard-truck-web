@@ -394,7 +394,9 @@ export class Ht2Drive {
     o.overlay.append(this.hud, this.bar);
     void EscArt.load(o.source).then((art) => {
       this.escArtLoading = false;
-      if (!art || this.disposed) return;
+      if (this.disposed) return;
+      // Файл необовʼязковий — без нього тихий інтерфейс порту; підказати, як отримати оригінальний.
+      if (!art) return this.say('Немає COMMON/esc16.RES — інтерфейс порту. Меню: Демо → Файли гри → Імпортувати', 12);
       this.escArt = art;
       this.tablo = new Tablo(art, o.overlay);
       this.tablo.onPage = () => this.audio?.playOnce('pager');

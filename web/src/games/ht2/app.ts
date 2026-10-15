@@ -1,10 +1,10 @@
-import { cachedSource, idbSourceFor, missingFiles, prefetchMissing } from '@shared/gameStore';
+import { cachedSource, idbSourceFor, missingFiles, prefetchMissing, removeFiles, storedFiles } from '@shared/gameStore';
 import type { FileSource } from '@shared/source';
 import { setSoftFont } from './engine/ui/softUi';
 import { parseFon } from './engine/formats/fon';
 import { PixelFont } from './engine/ui/pixelFont';
 import type { GameContext } from '@shared/gameContext';
-import { HT2_FILES, ht2DevSource } from './files';
+import { HT2_FILES, HT2_MODS, HT2_MUSIC, HT2_REQUIRED, HT2_UI, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2ExitScreen, ht2MainScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem, type RoundKey } from './ui/menu';
 import { loadSettings, saveSettings, type Ht2Settings } from './ui/settings';
 import { parseIni } from './engine/formats/ini';
@@ -46,6 +46,30 @@ async function pickSource(ctx: Ht2Context): Promise<FileSource> {
   const missing = await missingFiles(HT2_FILES).catch(() => HT2_FILES.required);
   if (missing.length) await ctx.showImport(false);
   return local;
+}
+
+/**
+ * «Файли гри»: що вже є на пристрої (зокрема необовʼязкові — графіка інтерфейсу esc16.RES, описи регіонів, музика)
+ * і повторний імпорт — поверх наявних або з нуля (спершу видалити всі файли другої гри).
+ */
+async function manageFiles(ctx: Ht2Context): Promise<void> {
+  const have = await storedFiles().catch(() => new Set<string>());
+  const count = (list: readonly string[]) => list.filter((f) => have.has(HT2_FILES.prefix + f)).length;
+  const status = [
+    `Основні файли: ${count(HT2_REQUIRED)} з ${HT2_REQUIRED.length}`,
+    `Графіка інтерфейсу (COMMON/esc16.RES): ${count(HT2_UI) ? 'є' : 'немає'}`,
+    `Описи регіонів: ${count(HT2_MODS)} з ${HT2_MODS.length}`,
+    `Музика: ${count(HT2_MUSIC)} з ${HT2_MUSIC.length}`,
+    '',
+    '«Імпортувати» додасть файли чи замінить наявні. «З нуля» спершу видалить з пристрою всі файли «Дальнобійників 2».',
+  ].join('\n');
+  const i = await modal(ctx.overlay, 'Файли гри', status, ['Імпортувати', 'З нуля', 'Назад']);
+  if (i === 0) await ctx.showImport(true);
+  if (i !== 1) return;
+  if ((await modal(ctx.overlay, 'Імпорт з нуля', 'Видалити всі файли гри з пристрою й обрати їх заново? Збережена гра лишиться.', ['Видалити й обрати', 'Скасувати'])) !== 0) return;
+  await removeFiles(HT2_FILES);
+  // Без файлів гра не працює — вікно імпорту без «Скасувати».
+  await ctx.showImport(false);
 }
 
 export async function runHt2(ctx: Ht2Context): Promise<void> {
@@ -168,7 +192,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
       continue;
     }
     if (choice === 'files') {
-      await ctx.showImport(true);
+      await manageFiles(ctx);
       continue;
     }
     if (choice === 'drive' || choice === 'career' || choice === 'new' || choice === 'race') {

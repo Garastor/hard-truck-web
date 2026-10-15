@@ -212,6 +212,17 @@ export async function clearFiles(): Promise<void> {
   await tx('readwrite', (s) => s.clear());
 }
 
+/**
+ * Видалити з пристрою всі файли однієї гри (ключі з її префіксом) — перед імпортом з нуля. Набір без префікса
+ * (перша гра) так не видаляється: його ключі не відрізнити від чужих.
+ */
+export async function removeFiles(set: FileSet): Promise<number> {
+  if (!set.prefix) throw new Error('Набір без префікса не можна видалити окремо');
+  const keys = [...(await storedFiles())].filter((k) => k.startsWith(set.prefix));
+  for (const k of keys) await tx('readwrite', (s) => s.delete(k));
+  return keys.length;
+}
+
 async function getBlob(name: string): Promise<Blob | undefined> {
   return (await tx('readonly', (s) => s.get(name))) as Blob | undefined;
 }
