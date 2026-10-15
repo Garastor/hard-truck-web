@@ -3,7 +3,7 @@
  * Значення з памʼяті гри: [0x252] — оберти (об/с), [0x257] — сила тяги (Н), [0x23d] — передача.
  */
 import { describe, expect, it } from 'vitest';
-import { Engine } from '@engine/vehicle/engine';
+import { Engine } from '@ht1/engine/vehicle/engine';
 
 // ЗіЛ з TRUCK.TCH ([TECH1]).
 const zil = () =>

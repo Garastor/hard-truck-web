@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as THREE from 'three';
-import { parseB3d } from '@engine/formats/b3d';
+import { parseB3d } from '@ht1/engine/formats/b3d';
 import { Track, isHorizontalPortal } from '@ht1/track/track';
 import { HT1_DIR } from '../gameDirs';
 

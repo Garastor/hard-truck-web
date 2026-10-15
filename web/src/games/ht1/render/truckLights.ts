@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { LightGeometry } from '@engine/vehicle/truckVehicle';
+import type { LightGeometry } from '../engine/vehicle/truckVehicle';
 
 /**
  * Світло вантажівки — лише перемикачі моделей, як в оригіналі (відблиски — білборди ReflFara* біля кожної фари й

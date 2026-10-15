@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { WayLine, WayNet } from '@engine/vehicle/autopilot';
+import type { WayLine, WayNet } from '../engine/vehicle/autopilot';
 
 /**
  * Положення в гонці вздовж маршруту: від лінії старту — ланцюжок ліній доріг (`way_*`, за напрямком руху; на

@@ -1,5 +1,5 @@
-import { parseB3d, type B3d } from '@engine/formats/b3d';
-import { parseRmp, type RmpArchive } from '@engine/formats/rmp';
+import { parseB3d, type B3d } from './engine/formats/b3d';
+import { parseRmp, type RmpArchive } from './engine/formats/rmp';
 import { httpSource, type FileSource } from '@shared/source';
 import { idbSourceFor, matchRequired, type FileSet } from '@shared/gameStore';
 import { CAB2D_DIR, CAB2D_RAIN_FILES, CAB2D_SOURCE, extractCab2d } from './cab2d/cab2dFiles';

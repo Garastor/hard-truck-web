@@ -8,7 +8,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const SRC = resolve(import.meta.dirname, '..', 'src');
-const ALIASES: Record<string, string> = { '@engine/': 'engine/', '@shared/': 'shared/', '@app/': 'app/', '@ht1/': 'games/ht1/', '@ht2/': 'games/ht2/' };
+const ALIASES: Record<string, string> = { '@shared/': 'shared/', '@app/': 'app/', '@ht1/': 'games/ht1/', '@ht2/': 'games/ht2/' };
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {
@@ -20,9 +20,9 @@ function files(dir: string): string[] {
 /** Шлях відносно src/ із прямими скісними. */
 const rel = (p: string) => relative(SRC, p).replace(/\\/g, '/');
 
-/** Частина: shared, app, games/<гра>, engine (тимчасово, до розділення) або '' (поза частинами). */
+/** Частина: shared, app, games/<гра> або '' (поза частинами). */
 function part(path: string): string {
-  const m = /^(shared|app|engine|games\/[^/]+)\//.exec(path);
+  const m = /^(shared|app|games\/[^/]+)\//.exec(path);
   return m ? m[1] : '';
 }
 
@@ -53,7 +53,7 @@ describe('Структура коду', () => {
     expect(all.filter((f) => !part(f.path)).map((f) => f.path)).toEqual([]);
   });
 
-  it('shared/ нічого не імпортує з ігор, оболонки й рушія', () => {
+  it('shared/ нічого не імпортує з ігор і оболонки', () => {
     expect(violations((p) => p === 'shared', (t) => part(t) === 'shared')).toEqual([]);
   });
 
@@ -66,7 +66,7 @@ describe('Структура коду', () => {
   });
 
   it('ігри не імпортують одна одну й оболонку (лише свою теку й shared/)', () => {
-    expect(violations((p) => p.startsWith('games/'), (t, own) => [own, 'shared', 'engine'].includes(part(t)))).toEqual([]);
+    expect(violations((p) => p.startsWith('games/'), (t, own) => [own, 'shared'].includes(part(t)))).toEqual([]);
   });
 
   it('оболонка — без рушія; гру бере лише через games/<гра>/index.ts', () => {

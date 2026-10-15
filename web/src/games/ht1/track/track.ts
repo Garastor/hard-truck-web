@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import type { B3d, Block } from '@engine/formats/b3d';
-import { g2t } from '@engine/physics/world';
+import type { B3d, Block } from '../engine/formats/b3d';
+import { g2t } from '../engine/physics/world';
 
 /**
  * Траса як граф «кімнат» (блоки 19) з порталами (30) та подіями (13).

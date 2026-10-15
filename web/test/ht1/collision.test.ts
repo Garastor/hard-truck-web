@@ -4,8 +4,8 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseB3d, walk } from '@engine/formats/b3d';
-import { floorCovers, levelCollision } from '@engine/physics/collision';
+import { parseB3d, walk } from '@ht1/engine/formats/b3d';
+import { floorCovers, levelCollision } from '@ht1/engine/physics/collision';
 import { HT1_DIR } from '../gameDirs';
 
 const GAME = HT1_DIR;

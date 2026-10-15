@@ -4,14 +4,14 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseRmp, parseMaterial } from '@engine/formats/rmp';
-import { parsePlm } from '@engine/formats/plm';
-import { parseTxr } from '@engine/formats/txr';
-import { parseMsk } from '@engine/formats/msk';
-import { parseB3d, walk } from '@engine/formats/b3d';
-import { parseIni, iniNum, iniNums } from '@engine/formats/ini';
-import { decodeCp1251 } from '@engine/formats/binary';
-import { HT1_DIR } from '../gameDirs';
+import { parseRmp, parseMaterial } from '@ht1/engine/formats/rmp';
+import { parsePlm } from '@ht1/engine/formats/plm';
+import { parseTxr } from '@ht1/engine/formats/txr';
+import { parseMsk } from '@ht1/engine/formats/msk';
+import { parseB3d, walk } from '@ht1/engine/formats/b3d';
+import { parseIni, iniNum, iniNums } from '@ht1/engine/formats/ini';
+import { decodeCp1251 } from '@ht1/engine/formats/binary';
+import { HT1_DIR } from '../../gameDirs';
 
 const GAME = HT1_DIR;
 const has = existsSync(GAME);

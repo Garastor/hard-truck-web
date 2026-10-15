@@ -1,8 +1,8 @@
-import { parseMsk, type Msk } from '@engine/formats/msk';
-import { parsePlm } from '@engine/formats/plm';
-import { parseRmp } from '@engine/formats/rmp';
-import { parseTxr } from '@engine/formats/txr';
-import type { RgbaImage } from '@engine/formats/binary';
+import { parseMsk, type Msk } from '../engine/formats/msk';
+import { parsePlm } from '../engine/formats/plm';
+import { parseRmp } from '../engine/formats/rmp';
+import { parseTxr } from '../engine/formats/txr';
+import type { RgbaImage } from '../engine/formats/binary';
 import type { FileSource } from '@shared/source';
 
 /**

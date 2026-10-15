@@ -173,7 +173,6 @@ export default defineConfig({
   // Частини коду (Docs/09-structure-plan.md): спільний рушій, оболонка, ігри.
   resolve: {
     alias: {
-      '@engine': resolve(import.meta.dirname, 'src/engine'),
       '@shared': resolve(import.meta.dirname, 'src/shared'),
       '@app': resolve(import.meta.dirname, 'src/app'),
       '@ht1': resolve(import.meta.dirname, 'src/games/ht1'),

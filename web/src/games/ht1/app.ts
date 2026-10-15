@@ -5,32 +5,32 @@ import { HT1_FILES, LEVELS, devServerSource, idbSource, loadLevel, type LevelId,
 import type { FileSource } from '@shared/source';
 import { cachedSource, importZip, missingFiles, prefetchMissing, storageInfo, storeFile } from '@shared/gameStore';
 import type { GameContext } from '@shared/gameContext';
-import { isStandalone } from '@engine/ui/pwa';
-import { setSoftFont, soften } from '@engine/ui/softUi';
+import { isStandalone } from './engine/ui/pwa';
+import { setSoftFont, soften } from './engine/ui/softUi';
 import { WIPER_TXR, loadCab2d, loadCab2dTexture } from './cab2d/cab2dFiles';
-import { FpsMeter, FrameLimiter, QUALITY, loadQuality, loadShowFps, saveQuality, saveShowFps, type QualityId } from '@engine/ui/quality';
-import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from '@engine/ui/mobile';
-import { buildScene, type BuiltScene } from '@engine/render/sceneBuilder';
-import { parseTxr } from '@engine/formats/txr';
-import { parseMsk } from '@engine/formats/msk';
-import { parsePlm } from '@engine/formats/plm';
-import type { RgbaImage } from '@engine/formats/binary';
-import { decodeCp1251 } from '@engine/formats/binary';
-import { buildTruckModel, parseTrucks, type TruckDef } from '@engine/vehicle/trucks';
+import { FpsMeter, FrameLimiter, QUALITY, loadQuality, loadShowFps, saveQuality, saveShowFps, type QualityId } from './engine/ui/quality';
+import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from './engine/ui/mobile';
+import { buildScene, type BuiltScene } from './engine/render/sceneBuilder';
+import { parseTxr } from './engine/formats/txr';
+import { parseMsk } from './engine/formats/msk';
+import { parsePlm } from './engine/formats/plm';
+import type { RgbaImage } from './engine/formats/binary';
+import { decodeCp1251 } from './engine/formats/binary';
+import { buildTruckModel, parseTrucks, type TruckDef } from './engine/vehicle/trucks';
 import type { DriveSession } from './drive';
-import type { TruckSetup } from '@engine/vehicle/truckVehicle';
+import type { TruckSetup } from './engine/vehicle/truckVehicle';
 import { currentDriver, listCareers, loadCareer, newCareer, setCurrentDriver, truckSpec, type Career } from './career/career';
 import { CareerGame, HOME_SVG, type LevelKind } from './career/careerUi';
-import { modal, setHudFont } from '@engine/ui/modal';
+import { modal, setHudFont } from './engine/ui/modal';
 import {
   driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
   type ControlMode, type OptionsState, type QualityLevel,
 } from './ui/menuScreens';
-import { HUD_CYAN, PixelFont, box, pixelCanvas, uiScale } from '@engine/ui/pixelFont';
-import { MenuArt } from '@engine/ui/menuArt';
-import { parseFon } from '@engine/formats/fon';
+import { HUD_CYAN, PixelFont, box, pixelCanvas, uiScale } from './engine/ui/pixelFont';
+import { MenuArt } from './engine/ui/menuArt';
+import { parseFon } from './engine/formats/fon';
 import { installDevTools } from './devTools';
-import { loadSwap, motionOnGesture, requestMotionPermission, setSwap } from '@engine/input/input';
+import { loadSwap, motionOnGesture, requestMotionPermission, setSwap } from './engine/input/input';
 
 /**
  * Дальнобойщики (перша гра): головне меню й кар'єра (LOAD.RES), їзда, а для розробки — переглядач ресурсів (обліт
