@@ -11,13 +11,34 @@ const SIZE = 96;
 /** Скільки метрів умістити від центру до краю карти. */
 const RANGE = 260;
 
+/**
+ * Значки карти з ресурсів гри (перша гра: ic_trucy / ic_trucw / ic_flagw / ic_flagr — HTruck.exe малює їх на своїй
+ * карті, re/notes/ht1/navmap.md). Без значка — власні фігури (стрілка, квадрат, коло).
+ */
+export interface NavIcons {
+  me?: CanvasImageSource & { width: number; height: number };
+  rival?: CanvasImageSource & { width: number; height: number };
+}
+/** Прапорець на карті: точка світу й значок (малюється прямо, не обертається з картою). */
+export interface NavFlag {
+  pos: THREE.Vector3;
+  icon: CanvasImageSource & { width: number; height: number };
+}
+
 export class NavMap {
   readonly el: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly roads = new Path2D();
   private timer = 0;
 
-  constructor(parent: HTMLElement, net: Pick<WayNet, 'lines'>) {
+  /** Прапорці (старт, фініш) — значками поверх доріг. */
+  flags: NavFlag[] = [];
+
+  constructor(
+    parent: HTMLElement,
+    net: Pick<WayNet, 'lines'>,
+    private readonly icons: NavIcons = {},
+  ) {
     this.el = document.createElement('canvas');
     this.el.className = 'pixel nav-map';
     this.el.width = this.el.height = SIZE;
@@ -53,8 +74,10 @@ export class NavMap {
     ctx.globalAlpha = 0.8;
     ctx.stroke(this.roads);
     ctx.globalAlpha = 1;
-    ctx.fillStyle = '#e00000';
-    for (const r of rivals) ctx.fillRect(r.x - 2.5 / k, r.z - 2.5 / k, 5 / k, 5 / k);
+    if (!this.icons.rival) {
+      ctx.fillStyle = '#e00000';
+      for (const r of rivals) ctx.fillRect(r.x - 2.5 / k, r.z - 2.5 / k, 5 / k, 5 / k);
+    }
     if (target) {
       const dx = target.x - me.x;
       const dz = target.z - me.z;
@@ -67,6 +90,32 @@ export class NavMap {
       ctx.fill();
     }
     ctx.restore();
+    // Значки — прямо (не обертаються з картою), цілими пікселями, центром у точці; за краєм рамки — не видно.
+    const toMap = (p: THREE.Vector3) => {
+      const dx = (p.x - me.x) * k;
+      const dz = (p.z - me.z) * k;
+      return { x: c + dx * Math.cos(yaw) + dz * Math.sin(yaw), y: c - dx * Math.sin(yaw) + dz * Math.cos(yaw) };
+    };
+    const icon = (img: NonNullable<NavIcons['me']>, x: number, y: number) => {
+      const ix = Math.round(x - img.width / 2);
+      const iy = Math.round(y - img.height / 2);
+      if (ix < 2 || iy < 2 || ix + img.width > SIZE - 2 || iy + img.height > SIZE - 2) return;
+      ctx.drawImage(img, ix, iy);
+    };
+    for (const f of this.flags) {
+      const p = toMap(f.pos);
+      icon(f.icon, p.x, p.y);
+    }
+    if (this.icons.rival) {
+      for (const r of rivals) {
+        const p = toMap(r);
+        icon(this.icons.rival, p.x, p.y);
+      }
+    }
+    if (this.icons.me) {
+      icon(this.icons.me, c, c);
+      return;
+    }
     // Гравець — стрілка вгору в центрі.
     ctx.fillStyle = '#f8e000';
     ctx.beginPath();

@@ -11,7 +11,7 @@ import { Effects } from './render/effects';
 import { TruckLights, hideLampReflections } from './render/truckLights';
 import { WetReflections } from './render/wetReflections';
 import { Headlights, litByHeadlights } from './render/headlights';
-import { NavMap } from '@engine/ui/navMap';
+import { NavMap, type NavIcons } from '@engine/ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from '@engine/vehicle/trucks';
 import { SKY_FOG, type BuiltScene } from '@engine/render/sceneBuilder';
 import { CAB2D_PARTS, Cab2d } from './cab2d/cab2d';
@@ -547,6 +547,27 @@ export class DriveSession {
   private movables: Movables | null = null;
   /** Навігаційна система (НС): мінікарта з суперниками. */
   private navMap: NavMap | null = null;
+  /** Прапорці карти: старт — точка старту, фініш — кімната з подією фінішу (у вільній їзді — без них). */
+  private mapFlags(): { pos: THREE.Vector3; icon: HTMLCanvasElement }[] {
+    const { start, finish } = this.mapIcons;
+    if (this.raceKind === 'free') return [];
+    const out: { pos: THREE.Vector3; icon: HTMLCanvasElement }[] = [];
+    if (start) out.push({ pos: this.spawn.position.clone(), icon: start });
+    const room = [...this.track.rooms.values()].find((r) => r.events.some((e) => e.type === EVENT_FINISH));
+    // Точка — рестарт кімнати, а без нього — середина її порталів (COUNT: room_999 — лише портал на в'їзді).
+    const mid = room?.portals.length
+      ? room.portals.reduce((v, p) => v.add(p.a).add(p.b), new THREE.Vector3()).multiplyScalar(1 / (2 * room.portals.length))
+      : null;
+    const at = room?.restart?.position ?? mid;
+    // Кільце: фініш у секторі старту — один прапорець.
+    if (finish && at && at.distanceTo(this.spawn.position) > 30) out.push({ pos: at.clone(), icon: finish });
+    return out;
+  }
+  /**
+   * Значки карти з архіву траси, як на карті HTruck.exe (re/notes/ht1/navmap.md): вантажівка гравця — жовта,
+   * суперники — білі, прапорці — білий і червоний (білий — старт, червоний — фініш: гіпотеза).
+   */
+  private mapIcons: NavIcons & { start?: HTMLCanvasElement; finish?: HTMLCanvasElement } = {};
   /** Навігація дозволена (тест або встановлено «НС»): Tab ховає й показує карту. */
   private mapAllowed = false;
   showMap(on: boolean): void {
@@ -554,7 +575,10 @@ export class DriveSession {
     if (on && !this.navMap) {
       this.wayNet ??= new WayNet(this.built.assembler.b3d);
       const parent = this.hud?.parentElement;
-      if (parent && this.wayNet.lines.length) this.navMap = new NavMap(parent, this.wayNet);
+      if (parent && this.wayNet.lines.length) {
+        this.navMap = new NavMap(parent, this.wayNet, this.mapIcons);
+        this.navMap.flags = this.mapFlags();
+      }
     } else if (!on && this.navMap) {
       this.navMap.dispose();
       this.navMap = null;
@@ -729,6 +753,17 @@ export class DriveSession {
       return b ? parseMsk(b, built.assembler.lib.palette ?? undefined) : null;
     };
     s.glassMasks = { drop: glassMask('txr/glass_1.msk'), runner: glassMask('txr/glass_2.msk') };
+    // Значки карти оригіналу (архів траси; m16 — 16-бітний набір, як в апаратному режимі).
+    const icon = (n: string) => {
+      const m = glassMask(`m16/${n}.msk`);
+      if (!m) return undefined;
+      const c = document.createElement('canvas');
+      c.width = m.width;
+      c.height = m.height;
+      c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(m.data), m.width, m.height), 0, 0);
+      return c;
+    };
+    s.mapIcons = { me: icon('ic_trucy'), rival: icon('ic_trucw'), start: icon('ic_flagw'), finish: icon('ic_flagr') };
     s.buildCab();
     s.camMode = 'cockpit';
 
