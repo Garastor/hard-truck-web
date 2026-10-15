@@ -4,13 +4,16 @@ import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, normalize, sep } from 'node:path';
 
+/** Тека оригінальних ігор (HT_GAME_ROOT — інша, напр. з git worktree — тека основної копії). */
+const GAME_ROOT = process.env.HT_GAME_ROOT ?? resolve(import.meta.dirname, '..', 'Game');
+
 /**
  * Каталоги оригінальних ігор (лише для локальної розробки; у релізі файли надає гравець):
  * /game/ — Дальнобойщики, /game2/ — Дальнобойщики 2 (Game/Hard Truck 2 — junction на теку встановленої гри).
  */
 const GAME_DIRS: Record<string, string> = {
-  '/game2': resolve(import.meta.dirname, '..', 'Game', 'Hard Truck 2'),
-  '/game': resolve(import.meta.dirname, '..', 'Game', 'Hard Truck'),
+  '/game2': resolve(GAME_ROOT, 'Hard Truck 2'),
+  '/game': resolve(GAME_ROOT, 'Hard Truck'),
 };
 
 /**
