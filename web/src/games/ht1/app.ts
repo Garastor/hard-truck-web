@@ -392,17 +392,32 @@ weatherSel.addEventListener('change', () => {
 });
 
 // Режим гри в тестовому режимі (як у кар'єрі): симулятор — покриття й дощ впливають на машину, аркада — ні.
-// Після завантаження — завжди аркада (на прохання користувача); вибір діє до перезавантаження сторінки.
+// За замовчуванням — аркада; вибір запам'ятовується (і після перезавантаження), доки не перейшли в кар'єру
+// (на прохання користувача) — тоді знову аркада.
+const DIFFICULTY_KEY = 'ht.testDifficulty';
 const difficultySel = $<HTMLSelectElement>('difficulty');
-difficultySel.value = 'arcade';
 try {
-  localStorage.removeItem('ht.testDifficulty'); // раніше вибір запам'ятовувався
+  difficultySel.value = localStorage.getItem(DIFFICULTY_KEY) === 'sim' ? 'sim' : 'arcade';
 } catch {
   /* приватний режим */
 }
 difficultySel.addEventListener('change', () => {
+  try {
+    localStorage.setItem(DIFFICULTY_KEY, difficultySel.value);
+  } catch {
+    /* приватний режим */
+  }
   if (tab === 'drive' && !careerCfg) void startDrive();
 });
+/** Перехід у кар'єру: режим тестового заїзду — знову аркада. */
+function resetTestDifficulty(): void {
+  difficultySel.value = 'arcade';
+  try {
+    localStorage.removeItem(DIFFICULTY_KEY);
+  } catch {
+    /* приватний режим */
+  }
+}
 
 // Кількість суперників у тестовому режимі (за замовчуванням 10; у кар'єрі — з налаштувань гри).
 const RIVALS_KEY = 'ht.testRivals';
@@ -571,6 +586,7 @@ async function hudFonts(): Promise<[PixelFont | null, PixelFont | null]> {
 
 async function startCareer(c: Career): Promise<void> {
   playModeSel.value = 'career';
+  resetTestDifficulty();
   await ensureTrucks();
   await hudFonts();
   const specs = trucks.map(truckSpec);
@@ -613,6 +629,7 @@ playModeSel.addEventListener('change', () => {
     void open();
   } else {
     stopDrive();
+    resetTestDifficulty();
     const saved = loadCareer();
     void (saved ? startCareer(saved) : menuLoop());
   }
