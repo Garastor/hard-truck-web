@@ -54,11 +54,11 @@ Hard Truck/
 │   ├── re/                ← Ghidra (gq.py), телеметрія: procmem.py (спільне), ht1/, ht2/
 │   └── refactor/          ← перенесення модулів і документів
 └── web/                   ← веб-порт (Vite + TypeScript + Three.js + Rapier)
-    ├── src/engine/        ← спільний рушій
+    ├── src/shared/        ← контракт запуску (GameModule, сховище файлів)
     ├── src/app/           ← оболонка: вибір гри, імпорт файлів, PWA
-    ├── src/games/ht1/     ← перша гра
-    ├── src/games/ht2/     ← друга гра
-    └── test/              ← engine/, ht1/, ht2/, architecture.test.ts
+    ├── src/games/ht1/     ← перша гра (свій рушій — engine/)
+    ├── src/games/ht2/     ← друга гра (свій рушій — engine/)
+    └── test/              ← ht1/, ht2/, architecture.test.ts
 ```
 
 ## Поточний статус
