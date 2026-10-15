@@ -170,6 +170,9 @@ export class Engine {
       else if (this.gear === GEAR_R && !wantReverse && gas > 0 && wheelSpeed > -2) this.startShift(2, this.shiftNeutral);
       else if (this.gear === GEAR_N && gas > 0) this.startShift(2, this.shiftNeutral);
       else if (this.gear >= 2 && brake > 0 && gas === 0 && Math.abs(wheelSpeed) < (this.profile.neutralBelow ?? 6)) this.startShift(GEAR_N, this.shiftNeutral);
+      // Зупинилися на високій передачі (різке гальмування, напр. болото) і тиснемо газ — одразу на першу: autoShift
+      // рахує силу за обертами коліс (на місці — нуль) і вниз не перемикає. Гіпотеза порту.
+      else if (this.gear > 2 && gas > 0 && stopped && !this.profile.shiftByRpm) this.startShift(2, this.shiftAuto);
       else if (this.gear >= 2 && this.profile.shiftByRpm) this.shiftByRpm(wheelSpeed, this.profile.shiftByRpm);
       else if (this.gear >= 2 && gas > 0 && this.sinceShift > CLUTCH_TIME) this.autoShift(wheelSpeed);
     }

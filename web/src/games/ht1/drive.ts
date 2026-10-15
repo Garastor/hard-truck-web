@@ -60,16 +60,17 @@ const SURFACE_DIRT = /grass|grnd|ground|dirt|mud|field|forest/i;
 const SURFACE_WATER = /water|river|stream[1-9]/i;
 /**
  * Вплив покриття (лише «симулятор»; аркада — без впливу) — налаштування порту, не дані оригіналу: зчеплення й опір
- * кочення відносно асфальту, межа кермування (частка) і найбільша швидкість, км/год (вище — машина плавно
- * пригальмовує). Від твердого до найм'якшого; помірно, щоб машина їхала скрізь.
+ * кочення відносно асфальту, межа кермування (частка), найбільша швидкість, км/год, і уповільнення понад неї,
+ * м/с². Від твердого до найм'якшого; помірно, щоб машина їхала скрізь. Болото — до 25 км/год і гальмує різко
+ * (≈ 0,6 g; обидва — на прохання користувача: з 45 км/год і 2 м/с² його пролітали на великій швидкості).
  */
-const SURFACE_FX: Record<Surface, { grip: number; roll: number; steer: number; maxKmh: number }> = {
-  asphalt: { grip: 1, roll: 1, steer: 1, maxKmh: Infinity },
-  gravel: { grip: 0.9, roll: 1.5, steer: 0.95, maxKmh: 95 },
-  dirt: { grip: 0.8, roll: 2.5, steer: 0.9, maxKmh: 75 },
-  sand: { grip: 0.7, roll: 3.5, steer: 0.85, maxKmh: 60 },
-  swamp: { grip: 0.6, roll: 4.5, steer: 0.8, maxKmh: 45 },
-  water: { grip: 0.5, roll: 4, steer: 0.8, maxKmh: 40 },
+const SURFACE_FX: Record<Surface, { grip: number; roll: number; steer: number; maxKmh: number; drag: number }> = {
+  asphalt: { grip: 1, roll: 1, steer: 1, maxKmh: Infinity, drag: 2 },
+  gravel: { grip: 0.9, roll: 1.5, steer: 0.95, maxKmh: 95, drag: 2 },
+  dirt: { grip: 0.8, roll: 2.5, steer: 0.9, maxKmh: 75, drag: 2 },
+  sand: { grip: 0.7, roll: 3.5, steer: 0.85, maxKmh: 60, drag: 2 },
+  swamp: { grip: 0.6, roll: 4.5, steer: 0.8, maxKmh: 25, drag: 6 },
+  water: { grip: 0.5, roll: 4, steer: 0.8, maxKmh: 40, drag: 2 },
 };
 /**
  * Трясіння кабіни за покриттям (частка SHAKE_*; градація — на прохання користувача): тверді (асфальт, бетон,
@@ -468,7 +469,7 @@ export class DriveSession {
     this.overWater = this.surface === 'water';
     const fx = SURFACE_FX[this.surface];
     // У повітрі (далеко над поверхнею) покриття не діє.
-    if (this.surfaceHeight < 2.5) this.truck.setSurface(fx.grip, fx.roll, fx.steer, fx.maxKmh / 3.6);
+    if (this.surfaceHeight < 2.5) this.truck.setSurface(fx.grip, fx.roll, fx.steer, fx.maxKmh / 3.6, fx.drag);
   }
   /** Покриття під машиною (за матеріалом і кольором текстури). */
   surface: Surface = 'asphalt';
@@ -1482,8 +1483,10 @@ export class DriveSession {
       this.clock += step;
       this.acc -= step;
     }
-    this.truck.syncVisual();
-    for (const o of this.opponents) o.truck.syncVisual();
+    // Модель між двома останніми кроками фізики — за залишком часу кадру.
+    const alpha = this.acc / step;
+    this.truck.syncVisual(alpha);
+    for (const o of this.opponents) o.truck.syncVisual(alpha);
     this.movables?.update();
     // Впав зі світу — на точку рестарту.
     if (this.truck.body.translation().y < this.fallY) this.truck.reset(this.restartPoint());

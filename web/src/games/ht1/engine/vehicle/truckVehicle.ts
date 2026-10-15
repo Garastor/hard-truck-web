@@ -126,8 +126,9 @@ const BRAKE_REAR = 0.35;
 /** Коефіцієнт опору кочення (накат на 4-й передачі без газу, s7). */
 const ROLLING_RESISTANCE = 0.015;
 /**
- * М'яке покриття: понад його найбільшу швидкість машина пригальмовує з цим уповільненням, м/с² (повністю — на
- * SOFT_DRAG_SPAN м/с понад межу; двигун на високій передачі його не переборює). Налаштування порту.
+ * М'яке покриття: понад його найбільшу швидкість машина пригальмовує з цим уповільненням, м/с² (типове; покриття
+ * може задати своє), повністю — на SOFT_DRAG_SPAN м/с понад межу; двигун на високій передачі його не переборює.
+ * Налаштування порту.
  */
 const SOFT_DRAG = 2;
 const SOFT_DRAG_SPAN = 3;
@@ -242,13 +243,14 @@ export class TruckVehicle {
   /** Для світлових плям фар і габаритів (локальна система машини). */
   lightGeometry: LightGeometry = { groundY: -1, frontZ: -4, backZ: 4, width: 2.5 };
   /**
-   * Покриття під колесами: множники зчеплення, опору кочення й межі керма (1 — асфальт) і найбільша швидкість,
-   * м/с. Аркада — без впливу.
+   * Покриття під колесами: множники зчеплення, опору кочення й межі керма (1 — асфальт), найбільша швидкість,
+   * м/с, і уповільнення понад неї, м/с². Аркада — без впливу.
    */
   private surfaceGrip = 1;
   private surfaceRoll = 1;
   private surfaceSteer = 1;
   private surfaceMaxSpeed = Infinity;
+  private surfaceDrag = SOFT_DRAG;
   private readonly surfaceEffects: boolean;
   private readonly rollLift: number | undefined;
   private readonly steerLimit: ((speed: number) => number) | undefined;
@@ -256,12 +258,13 @@ export class TruckVehicle {
   private readonly brakeProfile: { pedal: (t: number) => number; scale: number } | undefined;
   /** Тестовий режим: дощ (у кар'єрі він уже в setup.grip). */
   weatherGrip = 1;
-  setSurface(grip: number, roll: number, steer = 1, maxSpeed = Infinity): void {
+  setSurface(grip: number, roll: number, steer = 1, maxSpeed = Infinity, drag = SOFT_DRAG): void {
     if (!this.surfaceEffects) return;
     this.surfaceGrip = grip;
     this.surfaceRoll = roll;
     this.surfaceSteer = steer;
     this.surfaceMaxSpeed = maxSpeed;
+    this.surfaceDrag = drag;
   }
 
   /** Вплив пошкоджень (режим «симулятор»): момент, недоступні верхні передачі, сила гальм. */
@@ -421,6 +424,7 @@ export class TruckVehicle {
 
   /** Крок фізики керування (до world.step). */
   update(dt: number, input: ControlState): void {
+    this.savePrev();
     const tech = this.def.tech;
     // Швидкість уздовж напрямку «уперед» (−Z локально), м/с; + уперед.
     const lv = this.body.linvel();
@@ -469,9 +473,6 @@ export class TruckVehicle {
     // Гальма: сила колеса = педаль × B (передні 0,49·breakpower, задні 0,35·breakpower — ЗіЛ, s6);
     // опір кочення ≈ 0,015·N (накат s7). Rapier бере гальмо як імпульс за крок — множимо на dt.
     const nDriven = this.driven.filter(Boolean).length || 2;
-    // М'яке покриття: понад його межу швидкості — додатковий опір (на колесо), плавно наростає з перевищенням.
-    const over = Math.abs(v) - this.surfaceMaxSpeed;
-    const soft = over > 0 ? ((this.mass * SOFT_DRAG) / this.wheels) * Math.min(1, over / SOFT_DRAG_SPAN) : 0;
     const wheelLoad = (this.mass * 9.81) / this.wheels;
     // Rapier ігнорує гальмо колеса, на яке діє сила двигуна, тож гальмування двигуном (сила проти руху)
     // переносимо в гальмо того ж колеса.
@@ -488,7 +489,7 @@ export class TruckVehicle {
       // АПС: не більше 90 % межі зчеплення колеса (гіпотеза) — колесо не зривається в буксування.
       if (this.tractionControl && engine > 0) engine = Math.min(engine, 0.9 * grip * wheelLoad);
       const share = i < 2 ? BRAKE_FRONT : BRAKE_REAR;
-      const rolling = ROLLING_RESISTANCE * this.surfaceRoll * wheelLoad + soft;
+      const rolling = ROLLING_RESISTANCE * this.surfaceRoll * wheelLoad;
       let force = brakePedal * share * tech.brakePower * this.brakeFactor * (bp?.scale ?? 1) + rolling;
       if (input.handbrake && i >= 2) force += tech.brakePower;
       if (engineBrakes) {
@@ -501,8 +502,28 @@ export class TruckVehicle {
       this.ctrl.setWheelBrake(i, force * dt);
     }
     this.ctrl.updateVehicle(dt, undefined, undefined, this.rayFilter);
+    this.applySoftDrag(dt, v, fwd);
     this.applyBumpStops(dt);
     this.applyTireLateral(dt);
+  }
+
+  /**
+   * М'яке покриття: понад його межу швидкості — опір проти руху, плавно наростає з перевищенням. Прикладається
+   * імпульсом у точках контакту коліс, а не гальмами: гальма Rapier обмежені зчепленням (на болоті ≈ 0,5 g), і
+   * різке уповільнення не досягалося; у центрі мас разом із тягою коліс він перекидав машину. Не гальмує нижче межі.
+   */
+  private applySoftDrag(dt: number, v: number, fwd: THREE.Vector3): void {
+    const over = Math.abs(v) - this.surfaceMaxSpeed;
+    if (over <= 0) return;
+    const points: { x: number; y: number; z: number }[] = [];
+    for (let i = 0; i < this.wheels; i++) {
+      const p = this.ctrl.wheelIsInContact(i) ? this.ctrl.wheelContactPoint(i) : null;
+      if (p) points.push(p);
+    }
+    if (!points.length) return;
+    const dv = Math.min(over, this.surfaceDrag * Math.min(1, over / SOFT_DRAG_SPAN) * dt);
+    const j = (-Math.sign(v) * this.mass * dv) / points.length;
+    for (const p of points) this.body.applyImpulseAtPoint({ x: fwd.x * j, y: fwd.y * j, z: fwd.z * j }, p, true);
   }
 
   /** Відбійники підвіски (див. SUSPENSION.bump_*): сила вгору в точці кріплення колеса, коли стиснення велике. */
@@ -660,11 +681,31 @@ export class TruckVehicle {
     s.obj.matrixWorldNeedsUpdate = true;
   }
 
-  syncVisual(): void {
+  /** Стан кузова до останнього кроку фізики — для згладжування між кроками (syncVisual). */
+  private readonly prevPos = new THREE.Vector3();
+  private readonly prevQuat = new THREE.Quaternion();
+  private savePrev(): void {
+    const t = this.body.translation();
+    const r = this.body.rotation();
+    this.prevPos.set(t.x, t.y, t.z);
+    this.prevQuat.set(r.x, r.y, r.z, r.w);
+  }
+
+  /**
+   * Модель — за тілом фізики. alpha — частка кроку фізики, що лишилась у кадрі (0…1): модель між станами до й після
+   * останнього кроку. Без цього за частоти кадрів, не кратної кроку (50 к/с, 120 Гц), машина на екрані зсувалась то
+   * на 0, то на 2 кроки — від третьої особи (камера плавна) вона смикалась.
+   */
+  syncVisual(alpha = 1): void {
     const t = this.body.translation();
     const r = this.body.rotation();
     this.visual.position.set(t.x, t.y, t.z);
     this.visual.quaternion.set(r.x, r.y, r.z, r.w);
+    // Стрибок (рестарт, телепорт) — без згладжування.
+    if (alpha < 1 && this.prevPos.distanceToSquared(this.visual.position) < 25) {
+      this.visual.position.lerpVectors(this.prevPos, this.visual.position, alpha);
+      this.visual.quaternion.slerpQuaternions(this.prevQuat, this.visual.quaternion.clone(), alpha);
+    }
     if (this.shadow) this.placeShadow();
     // Колеса: підвіска (зсув по Z гри), поворот керма (навколо Z), обертання (навколо X).
     for (let i = 0; i < this.wheels; i++) {
@@ -689,14 +730,16 @@ export class TruckVehicle {
     this.body.setRotation(q, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.savePrev();
     this.reverseMode = false;
     this.brakeTime = 0;
     this.engine.reset();
   }
 
-  /** Поточний напрям «уперед» у світі. */
+  /** Поточний напрям «уперед» у світі (за тілом фізики: модель згладжена й може відставати на частку кроку). */
   forward(out = new THREE.Vector3()): THREE.Vector3 {
-    return out.set(0, 0, -1).applyQuaternion(this.visual.quaternion);
+    const r = this.body.rotation();
+    return out.set(0, 0, -1).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w));
   }
 
   dispose(): void {
