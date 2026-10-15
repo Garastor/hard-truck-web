@@ -1,5 +1,6 @@
 import { SidePanel, type ButtonState } from './panel';
 import type { EscArt } from './escArt';
+import type { Ht2Settings } from './settings';
 
 /**
  * Меню «Проблемы в пути» (Esc) king.exe (0x511170, re/notes/ht2/ui.md §5): ліва панель `m_16\BackEscMain.txr`,
@@ -16,7 +17,33 @@ export interface EscMenuOptions {
   disabled?: EscCommand[];
   command(c: EscCommand, save?: boolean): void;
   close(): void;
+  /** Налаштування звуку й керування (підменю); apply — застосувати (save — зберегти в браузері). */
+  settings?: Ht2Settings;
+  apply?(s: Ht2Settings, save: boolean): void;
 }
+
+/** Повзунок підменю: картинки `<name>l` / `<name>r`, поле налаштувань. */
+type Slider = [name: string, key: 'sfx' | 'music' | 'engine' | 'skid' | 'steerSpeed' | 'steerCenter' | 'force'];
+
+/**
+ * «Звук» (0x516ea0): повзунки від (22, 489) з кроком 70 згори — загальна гучність (sfxvol), музика (midivol), двигун
+ * (engvol), гальмування (skivol). «Керування» (0x517530): від (22, 511) — чутливість (sens), повернення керма
+ * (power), віддача (force); прапорець автомата `agear` (141, 700). Доріжка на фоні — x 41…143, на 12 нижче верху
+ * повзунка; стрілки 16×28 по краях. Кнопки `ok` (21, 762) і `canc` (77, 762).
+ */
+const SOUND: Slider[] = [
+  ['vol', 'sfx'],
+  ['mus', 'music'],
+  ['eng', 'engine'],
+  ['skid', 'skid'],
+];
+const CONTROL: Slider[] = [
+  ['sens', 'steerSpeed'],
+  ['center', 'steerCenter'],
+  ['force', 'force'],
+];
+const TRACK_X0 = 41;
+const TRACK_X1 = 143;
 
 const X = 18;
 /** Видимі рядки фону: заголовок (395) … нижня кнопка (769 + 30). */
@@ -71,6 +98,7 @@ export class EscMenu {
       p.button(`m_16\\${base}`, X, TOP + STEP * i, LABEL[cmd], () => {
         if (off) return;
         if (cmd === 'main' || cmd === 'exit') this.ask(cmd);
+        else if ((cmd === 'sound' || cmd === 'control') && this.o.settings) this.sub(cmd);
         else this.o.command(cmd);
       }, state);
     });
@@ -96,6 +124,76 @@ export class EscMenu {
     ];
     items.forEach(([base, label, action], i) => p.button(`m_16\\${base}`, X, TOP + STEP * (2 + i), label, action));
     this.panel = p;
+  }
+
+  /** Підменю «Звук» чи «Керування»: зміни діють одразу; «ОК» — зберегти, «Скасувати» — повернути як було. */
+  private sub(kind: 'sound' | 'control'): void {
+    const s = this.o.settings!;
+    const before = { ...s };
+    this.panel.close();
+    const p = new SidePanel(this.art, this.parent, kind === 'sound' ? 'm_16\\BackEscSnd.txr' : 'm_16\\BackEscCtrl.txr', 'left', VIEW);
+    const list = kind === 'sound' ? SOUND : CONTROL;
+    const top = kind === 'sound' ? 489 : 511;
+    list.forEach(([name, key], i) => this.slider(p, name, top + 70 * i, () => s[key], (v) => {
+      s[key] = v;
+      this.o.apply?.(s, false);
+    }));
+    if (kind === 'control') {
+      // Порт — лише автоматична коробка: прапорець показує стан, перемкнути не можна (гіпотеза: механіка — згодом).
+      p.button('m_16\\agear', 141, 700, 'Автоматична коробка передач', () => undefined, () => (s.automatic ? 'pp' : 'p'));
+    }
+    const back = () => {
+      p.close();
+      this.panel = this.main();
+    };
+    p.button('m_16\\ok', 21, 762, 'ОК', () => {
+      this.o.apply?.(s, true);
+      back();
+    });
+    p.button('m_16\\canc', 77, 762, 'Скасувати', () => {
+      Object.assign(s, before);
+      this.o.apply?.(s, false);
+      back();
+    });
+    this.panel = p;
+  }
+
+  /** Повзунок: стрілки ±10 %, дотик чи перетягування по доріжці; бігунок `runner` (12×22) по центру доріжки. */
+  private slider(p: SidePanel, name: string, y: number, get: () => number, set: (v: number) => void): void {
+    const track = y + 12;
+    p.image(`m_16\\${name}l_p.msk`, 22, track - 14);
+    p.image(`m_16\\${name}r_p.msk`, TRACK_X1 + 3, track - 14);
+    const runner = p.image('m_16\\runner_p.msk', 0, track - 11);
+    if (runner) runner.style.pointerEvents = 'none';
+    const show = () => runner && (runner.style.left = `${Math.round(TRACK_X0 + get() * (TRACK_X1 - TRACK_X0)) - 6}px`);
+    const put = (v: number) => {
+      set(Math.round(Math.max(0, Math.min(1, v)) * 100) / 100);
+      show();
+    };
+    const step = (x: number, d: number) => {
+      const b = p.action(x, track - 14, 16, '', () => put(get() + d));
+      b.classList.add('ht2-panel-track');
+      b.style.height = '28px';
+    };
+    step(22, -0.1);
+    step(TRACK_X1 + 3, 0.1);
+    const area = p.action(TRACK_X0 - 3, track - 14, TRACK_X1 - TRACK_X0 + 6, '', () => undefined);
+    area.classList.add('ht2-panel-track');
+    area.style.height = '28px';
+    const at = (e: PointerEvent) => {
+      const r = area.getBoundingClientRect();
+      // Доріжка — від 3 до ширина − 3 у пікселях фону (рамка дотику ширша на 3 з боків).
+      const k = r.width / (TRACK_X1 - TRACK_X0 + 6);
+      put((e.clientX - r.left - 3 * k) / (r.width - 6 * k));
+    };
+    area.addEventListener('pointerdown', (e) => {
+      area.setPointerCapture(e.pointerId);
+      at(e);
+    });
+    area.addEventListener('pointermove', (e) => {
+      if (area.hasPointerCapture(e.pointerId)) at(e);
+    });
+    show();
   }
 
   close(): void {

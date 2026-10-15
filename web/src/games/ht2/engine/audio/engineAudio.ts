@@ -59,6 +59,9 @@ function sharedContext(): AudioContext {
 export class EngineAudio {
   private readonly ctx: AudioContext;
   private readonly master: GainNode;
+  /** Гучності меню «Звук»: двигун гравця й решта ефектів (0…1). */
+  private readonly engineBus: GainNode;
+  private readonly sfxBus: GainNode;
   private readonly buffers = new Map<string, AudioBuffer>();
   private idle: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
   private full: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
@@ -71,6 +74,17 @@ export class EngineAudio {
     this.master = this.ctx.createGain();
     this.master.gain.value = MUTED ? 0 : 0.6;
     this.master.connect(this.ctx.destination);
+    this.engineBus = this.ctx.createGain();
+    this.engineBus.connect(this.master);
+    this.sfxBus = this.ctx.createGain();
+    this.sfxBus.connect(this.master);
+  }
+
+  /** Гучність двигуна гравця й ефектів (меню Esc «Звук»), 0…1. */
+  setVolumes(engine: number, sfx: number): void {
+    const t = this.ctx.currentTime;
+    this.engineBus.gain.setTargetAtTime(engine, t, 0.05);
+    this.sfxBus.gain.setTargetAtTime(sfx, t, 0.05);
   }
 
   static async create(rmp: RmpArchive): Promise<EngineAudio> {
@@ -105,7 +119,7 @@ export class EngineAudio {
     src.loop = true;
     const gain = this.ctx.createGain();
     gain.gain.value = 0;
-    src.connect(gain).connect(this.master);
+    src.connect(gain).connect(this.engineBus);
     src.start();
     this.loops.add(src);
     return { src, gain };
@@ -125,7 +139,7 @@ export class EngineAudio {
     const gain = this.ctx.createGain();
     gain.gain.value = 0;
     const pan = this.ctx.createStereoPanner();
-    src.connect(gain).connect(pan).connect(this.master);
+    src.connect(gain).connect(pan).connect(this.sfxBus);
     src.start(0, Math.random() * buf.duration);
     this.loops.add(src);
     const k = 0.1;
@@ -167,7 +181,8 @@ export class EngineAudio {
     src.playbackRate.value = rate;
     const g = this.ctx.createGain();
     g.gain.value = volume;
-    src.connect(g).connect(this.master);
+    // Запуск двигуна — гучністю двигуна, решта — ефектів.
+    src.connect(g).connect(name === 'start' ? this.engineBus : this.sfxBus);
     src.start();
     return {
       stop: () => {

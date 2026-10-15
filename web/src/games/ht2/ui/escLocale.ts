@@ -21,6 +21,8 @@ export const BUTTON_UK: Record<string, string> = {
   // СТО й заправка («ОК» — так само українською, лишається).
   servcanc: 'СКАСУВАТИ',
   gascanc: 'СКАСУВАТИ',
+  // Підменю Esc «Звук» і «Керування».
+  canc: 'СКАСУВАТИ',
 };
 
 /**
@@ -32,6 +34,7 @@ const GROUPS: { keys: string[]; width: number }[] = [
   { keys: ['savg', 'loadg', 'restart', 'control', 'sound', 'main', 'exitsys', 'exsave', 'exnsave', 'excanc'], width: 136 },
   { keys: ['servcanc'], width: 118 },
   { keys: ['gascanc'], width: 72 },
+  { keys: ['canc'], width: 72 },
 ];
 
 const groupScale = new Map<string, number>();
@@ -86,11 +89,33 @@ function title(erase: [number, number, number, number], text: string, x: number,
   return { erase, text, x, base, align: 'center', cap, maxW: erase[2] - erase[0] + 30, spacing };
 }
 
+/** Заголовок панелей Esc (той самий на `BackEscMain`, `BackEscSnd`, `BackEscCtrl`). */
+const ESC_TITLE: Label[] = [
+  { erase: [26, 394, 148, 410], text: 'ПРОБЛЕМИ', x: 87, base: 409, align: 'center', cap: 14, maxW: 150, group: 'esc', color: 'rgb(205,207,206)' },
+  { erase: [48, 417, 126, 433], text: 'В ДОРОЗІ', x: 87, base: 432, align: 'center', cap: 14, maxW: 150, group: 'esc', color: 'rgb(205,207,206)' },
+];
+
+/** Підпис повзунка підменю Esc по центру (x ≈ 91), верх літер top; рядків — скільки в тексті (\n), крок 15. */
+function escLabel(top: number, text: string): Label[] {
+  return text.split('\n').map((line, i) => ({ erase: [24, top + i * 15 - 2, 160, top + i * 15 + 12], text: line, x: 91, base: top + i * 15 + 11, align: 'center', cap: 11, maxW: 132, group: 'escsub' }) as Label);
+}
+
 /** Виміряно на фонах (re/notes/ht2/ui.md §3): клітинки, заголовки, кольори. */
 const BACKGROUND_UK: Record<string, Label[]> = {
-  'm_16/backescmain.txr': [
-    { erase: [26, 394, 148, 410], text: 'ПРОБЛЕМИ', x: 87, base: 409, align: 'center', cap: 14, maxW: 150, group: 'esc', color: 'rgb(205,207,206)' },
-    { erase: [48, 417, 126, 433], text: 'В ДОРОЗІ', x: 87, base: 432, align: 'center', cap: 14, maxW: 150, group: 'esc', color: 'rgb(205,207,206)' },
+  'm_16/backescmain.txr': ESC_TITLE,
+  'm_16/backescsnd.txr': [
+    ...ESC_TITLE,
+    ...escLabel(469, 'ЗАГАЛЬНА ГУЧНІСТЬ'),
+    ...escLabel(539, 'МУЗИКА'),
+    ...escLabel(609, 'ЗВУК ДВИГУНА'),
+    ...escLabel(679, 'ЗВУК ГАЛЬМУВАННЯ'),
+  ],
+  'm_16/backescctrl.txr': [
+    ...ESC_TITLE,
+    ...escLabel(476, 'ЧУТЛИВІСТЬ\nКЕРМА'),
+    ...escLabel(561, 'ПОВЕРНЕННЯ КЕРМА'),
+    ...escLabel(631, 'ВІДДАЧА КЕРМА'),
+    ...escLabel(696, 'АВТОМАТИЧНА\nКОРОБКА ПЕРЕДАЧ').map((l) => ({ ...l, x: 81, maxW: 112, erase: [24, l.erase[1], 138, l.erase[3]] as Label['erase'] })),
   ],
   'm_16/backservice.txr': [
     title([283, 416, 404, 437], 'СЕРВІС', 343, 434, 15, 6),

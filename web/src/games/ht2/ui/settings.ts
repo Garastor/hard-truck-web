@@ -16,13 +16,43 @@ export interface Ht2Settings {
   traffic: number;
   dayLength: number;
   weather: number;
+  /**
+   * Меню Esc «Звук» (king.exe 0x516ea0; TRUCK.INI [EFFECTS] sfxvol, midivol, engvol, skivol, 0…100): ефекти, музика,
+   * двигун, заноси — 0…1.
+   */
+  sfx: number;
+  music: number;
+  engine: number;
+  skid: number;
+  /**
+   * Меню Esc «Керування» (0x517530; [EFFECTS] sens, power, force, autgb): чутливість і центрування керма, віддача
+   * (кермо з віддачею; у порті не діє), автоматична коробка (порт — лише автомат). 0…1, середина — як телеметрія.
+   */
+  steerSpeed: number;
+  steerCenter: number;
+  force: number;
+  automatic: boolean;
 }
 
 const KEY = 'ht2.settings.v1';
 
 export function defaultSettings(ini: Ini | null): Ht2Settings {
   const pct = (key: string, def: number) => Math.min(1, Math.max(0, (ini ? iniNum(ini, 'EFFECTS', key, def) : def) / 100));
-  return { arcade: (ini ? iniNum(ini, 'EFFECTS', 'arcad', 0) : 0) !== 0, traffic: pct('trafs', 100), dayLength: pct('days', 50), weather: pct('weats', 60) };
+  return {
+    arcade: (ini ? iniNum(ini, 'EFFECTS', 'arcad', 0) : 0) !== 0,
+    traffic: pct('trafs', 100),
+    dayLength: pct('days', 50),
+    weather: pct('weats', 60),
+    sfx: pct('sfxvol', 54),
+    // Музика: TRUCK.INI midivol=20 на телефоні майже не чути — не тихіше 35 (як раніше в music.ts).
+    music: Math.max(0.35, pct('midivol', 20)),
+    engine: pct('engvol', 90),
+    skid: pct('skivol', 90),
+    steerSpeed: pct('sens', 50),
+    steerCenter: pct('power', 50),
+    force: pct('force', 50),
+    automatic: true,
+  };
 }
 
 export function loadSettings(ini: Ini | null): Ht2Settings {
@@ -41,6 +71,11 @@ export function saveSettings(s: Ht2Settings): void {
   } catch {
     /* приватний режим */
   }
+}
+
+/** Множник швидкості керма з повзунка 0…1: середина — 1 (як у телеметрії), краї — 0,5 і 1,5 (гіпотеза). */
+export function steerGain(v: number): number {
+  return 0.5 + v;
 }
 
 /** Скільки ігрових секунд за секунду реального часу (повзунок «тривалість доби»). */

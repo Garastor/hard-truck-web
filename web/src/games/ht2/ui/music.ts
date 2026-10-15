@@ -42,6 +42,11 @@ export class Music {
     }
   }
 
+  /** Гучність (меню Esc «Звук»), 0…1. */
+  setVolume(v: number): void {
+    this.audio.volume = MUTED ? 0 : Math.max(0, Math.min(1, v));
+  }
+
   toggle(): boolean {
     this.on = !this.on;
     if (this.on) {

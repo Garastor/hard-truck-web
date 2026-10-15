@@ -141,6 +141,9 @@ export class Input {
     this.tilt = Math.max(-1, Math.min(1, angle / 25));
   };
   tiltEnabled = false;
+  /** Меню «Керування»: швидкість керма й повернення до центру (множники; 1 — як у телеметрії). */
+  steerSpeed = 1;
+  steerCenter = 1;
   /** Сенсорні кнопки (кнопки керма ховаються, поки кермують нахилом). */
   private touchEl: HTMLElement | null = null;
   /** Нахил вимкнено сам (відмова в дозволі на датчик руху). */
@@ -267,13 +270,13 @@ export class Input {
   private steerProfile(dt: number, target: number, sharp: boolean, p: InputProfile): void {
     const s = this.steerSmooth;
     if (target !== 0 && s * target >= -0.02) {
-      const ramp = p.steerRamp(this.speedKmh, sharp);
+      const ramp = p.steerRamp(this.speedKmh, sharp) / this.steerSpeed;
       const x = Math.min(1, Math.max(0, s * target) ** (1 / p.steerPower) + dt / ramp);
       this.steerSmooth = target * x ** p.steerPower;
       this.steerDir = target;
     } else {
       this.steerDir = 0;
-      this.steerSmooth *= Math.exp(-p.steerReturn * dt);
+      this.steerSmooth *= Math.exp(-p.steerReturn * this.steerCenter * dt);
       if (Math.abs(this.steerSmooth) < 1e-3) this.steerSmooth = 0;
     }
   }

@@ -41,7 +41,7 @@ import { parseB3d } from './engine/formats/b3d';
 import { parseRmp } from './engine/formats/rmp';
 import type { Ht2Career } from './career/career';
 import { HT2_MOD_REGIONS, readTextures } from './files';
-import { timeScale, type Ht2Settings } from './ui/settings';
+import { saveSettings, steerGain, timeScale, type Ht2Settings } from './ui/settings';
 import { EscArt } from './ui/escArt';
 import { ukMessage } from './ui/uk';
 import { EscMenu, type EscCommand } from './ui/escMenu';
@@ -343,6 +343,7 @@ export class Ht2Drive {
     back.addEventListener('click', () => (this.escArt ? this.toggleEsc() : o.onExit()));
     this.bar.className = 'ht2-drive-bar';
     this.music = new Music(o.source);
+    if (o.settings) this.applySettings(o.settings, false);
     void this.music.next();
     const music = document.createElement('button');
     music.textContent = '♪';
@@ -697,11 +698,24 @@ export class Ht2Drive {
     this.paused = true;
     this.escMenu = new EscMenu(this.escArt, this.opts.overlay, {
       career: !!this.careerMode,
-      // Звук і керування — наступний крок (G9 Б2).
-      disabled: ['control', 'sound'],
+      settings: this.opts.settings ?? undefined,
+      apply: (s, save) => this.applySettings(s, save),
       command: (c, save) => this.escCommand(c, save),
       close: () => this.closeEsc(),
     });
+  }
+
+  /**
+   * Звук і керування з меню Esc: загальна гучність — усе, крім музики (двигун — ще й своїм повзунком), музика,
+   * чутливість і повернення керма (множники 0,5…1,5; середина — як у телеметрії, гіпотеза). Гальмування й віддача —
+   * лише зберігаються (таких звуків і керма з віддачею в порті немає).
+   */
+  private applySettings(s: Ht2Settings, save: boolean): void {
+    this.audio?.setVolumes(s.engine * s.sfx, s.sfx);
+    this.music?.setVolume(s.music);
+    this.input.steerSpeed = steerGain(s.steerSpeed);
+    this.input.steerCenter = steerGain(s.steerCenter);
+    if (save) saveSettings(s);
   }
 
   private closeEsc(): void {
