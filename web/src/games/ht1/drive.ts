@@ -71,17 +71,20 @@ const SURFACE_FX: Record<Surface, { grip: number; roll: number; steer: number; m
   swamp: { grip: 0.6, roll: 4.5, steer: 0.8, maxKmh: 45 },
   water: { grip: 0.5, roll: 4, steer: 0.8, maxKmh: 40 },
 };
-/** Трясіння кабіни на нерівному покритті (частка найбільшого; асфальт, бетон, тротуари — рівні). */
-const SURFACE_ROUGH: Record<Surface, number> = { asphalt: 0, gravel: 1, dirt: 0.7, sand: 0.5, swamp: 0.6, water: 0.4 };
+/**
+ * Трясіння кабіни за покриттям (частка SHAKE_*; градація — на прохання користувача): тверді (асфальт, бетон,
+ * тротуари) — немає, узбіччя (трава, ґрунт) — повне, гравій — половина, болото — 30 %; пісок і вода — на око.
+ */
+const SURFACE_ROUGH: Record<Surface, number> = { asphalt: 0, dirt: 1, gravel: 0.5, swamp: 0.3, sand: 0.7, water: 0.3 };
 
 /**
  * Трясіння кабіни на нерівному покритті (власне налаштування порту, на прохання користувача; камера нерухома —
  * трясеться кабіна навколо очей водія): найбільший кут, рад, підйом, м, і зсув 2D-кабіни, px кадру 640×480.
  * На повну — від SHAKE_FULL_KMH.
  */
-const SHAKE_ANGLE = THREE.MathUtils.degToRad(0.35);
-const SHAKE_LIFT = 0.007;
-const SHAKE_PX = 1.75;
+const SHAKE_ANGLE = THREE.MathUtils.degToRad(0.245);
+const SHAKE_LIFT = 0.005;
+const SHAKE_PX = 1.2;
 const SHAKE_FULL_KMH = 50;
 
 function classifySurface(name: string, texel: [number, number, number] | null): Surface {
