@@ -1,9 +1,8 @@
 # План реструктуризації: рушій + ігри
 
-**Стан:** виконано 2026-10-15; 2026-10-16 з `engine/` винесено модулі однієї гри (формати другої гри → `games/ht2/formats`,
-`mergeStatic` → `games/ht2/world`, фари першої гри `truckLights` → `games/ht1/render`).
-
-Початково — виконано 2026-10-15 (гілка `refactor/structure`, кроки 1–7; журнал — [progress.md](progress.md)). Відмінності
+**Стан:** виконано 2026-10-15 (гілка `refactor/structure`, кроки 1–7; журнал — [progress.md](progress.md)); 2026-10-16
+з `engine/` винесено модулі однієї гри (формати другої гри → `games/ht2/formats`, `mergeStatic` → `games/ht2/world`,
+фари першої гри `truckLights` → `games/ht1/render`). Відмінності
 від плану: формат B3D лишився спільним (`Docs/formats/b3d.md`), формати другої гри — `Docs/ht2/formats.md`; доступ
 до памʼяті процесу для телеметрії — `tools/re/procmem.py`; скрипти перенесення — `tools/refactor/`.
 
