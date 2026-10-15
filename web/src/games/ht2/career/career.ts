@@ -1,4 +1,5 @@
 import type { Order } from './economy';
+import type { RivalRun } from './competition';
 
 /**
  * Кар'єра Дальнобойщиків 2 (перша версія): гроші, вантажівка, стан, поточне замовлення, ігровий час. Зберігається в
@@ -13,6 +14,12 @@ export interface ActiveOrder extends Order {
   taken: number;
   /** Цілісність вантажу 0…1. */
   integrity: number;
+  /** Конкуренти з тим самим замовленням (competition.ts), довжина маршруту мережею, м, і премія першому. */
+  rivals?: RivalRun[];
+  route?: number;
+  premium?: number;
+  /** Суперник доїхав раніше — премії не буде. */
+  beaten?: boolean;
 }
 
 export interface Ht2Career {
@@ -30,6 +37,8 @@ export interface Ht2Career {
   earned: number;
   /** Перевезено, т (рейтинг F2). */
   tons?: number;
+  /** Скільки разів доставлено першим серед конкурентів (ліцензії на найм — G9 Б7). */
+  firsts?: number;
   /** Встановлені покращення (`PR_ID:варіант`, див. upgrades.ts); переходять на нову вантажівку (гіпотеза). */
   upgrades?: string[];
   /** Вмʼятини за зонами кузова (0…1, dents.ts); ремонт на СТО скидає. */

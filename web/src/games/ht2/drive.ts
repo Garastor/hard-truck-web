@@ -48,6 +48,7 @@ import { EscMenu, type EscCommand } from './ui/escMenu';
 import { FPanels, type FPanel } from './ui/fPanels';
 import { TabMap } from './ui/tabMap';
 import { Radio, type RadioAsk, type RadioContact } from './ui/radio';
+import type { RivalRun } from './career/competition';
 import { Navigator, type NavTurn } from './world/navigator';
 import { Tablo } from './ui/tablo';
 import { Cards } from './ui/cards';
@@ -768,6 +769,12 @@ export class Ht2Drive {
     this.fPanels.toggle(kind);
   }
 
+  /** Скільки лишилось дорогами до точки, м (навігатор; null — не на дорозі). */
+  routeLeft(target: THREE.Vector3): number | null {
+    this.navigator ??= new Navigator(this.roads);
+    return this.navigator.remaining(this.truck.visual.position, this.truck.forward(), target);
+  }
+
   /** Навігатор: лише з покращенням і взятим замовленням (посібник). */
   private updateNavigator(dt: number): void {
     const c = this.careerMode?.career;
@@ -793,6 +800,8 @@ export class Ht2Drive {
       const d = r.truck.visual.position.distanceTo(p);
       if (d < RADIO_R) out.push({ kind: 'nei', id: i + r.name.length, name: `ВОДІЙ ${r.name.toUpperCase()}`, d });
     });
+    // Конкуренти з тим самим замовленням, що зараз поруч на маршруті.
+    for (const r of this.careerMode?.nearRivals() ?? []) out.push({ kind: 'opp', id: r.index, name: `КОНКУРЕНТ ${r.name.toUpperCase()}`, d: 0 });
     return out.sort((a, b) => a.d - b.d);
   }
 
@@ -804,6 +813,19 @@ export class Ht2Drive {
    */
   private radioAsks(c: RadioContact): RadioAsk[] {
     const cm = this.careerMode;
+    // Дія проти конкурента, що попереду (найбільша частка шляху), — лише коли є конкуренти.
+    const rivalAct = (price: number, fn: (r: RivalRun) => void, text: string): Partial<RadioAsk> => {
+      const list = cm?.career.order?.rivals?.filter((r) => !r.out && !r.done) ?? [];
+      if (!list.length) return { off: true };
+      return {
+        price,
+        act: () => {
+          const lead = list.reduce((a, b) => (a.t / a.eta >= b.t / b.eta ? a : b));
+          fn(lead);
+          this.say(text);
+        },
+      };
+    };
     const truce = (text: string) => () => {
       this.mafia?.makeTruce(TRUCE_SECONDS);
       this.say(text);
@@ -830,7 +852,7 @@ export class Ht2Drive {
           },
         },
         { key: 'ask2', price: 800, act: truce('ЗАМОВЛЕННЯ ПІД ОХОРОНОЮ МІЛІЦІЇ') },
-        { key: 'ask3', off: true },
+        { key: 'ask3', ...rivalAct(1000, (r) => (r.eta += 120), 'КОНКУРЕНТА ЗАТРИМАНО') },
         { key: 'ask4', bye: true },
       ];
     }
@@ -841,10 +863,19 @@ export class Ht2Drive {
           price: 1500,
           act: () => (Math.random() < 0.15 ? this.say('БАНДИТИ ВЗЯЛИ ГРОШІ Й ОБДУРИЛИ') : truce('МАФІЯ ВАС НЕ ЧІПАТИМЕ')()),
         },
-        { key: 'ask2', off: true },
+        { key: 'ask2', ...rivalAct(2000, (r) => (r.out = true), 'КОНКУРЕНТ ЗІЙШОВ З ДИСТАНЦІЇ') },
         { key: 'ask3', off: true },
         { key: 'ask4', bye: true },
       ];
+    if (c.kind === 'opp') {
+      const r = cm?.career.order?.rivals?.[c.id];
+      const prem = cm?.career.order?.premium ?? 500;
+      return [
+        { key: 'ask1', price: !r || r.stubborn ? null : Math.round(prem * 0.6), act: () => r && ((r.eta *= 1.3), this.say('КОНКУРЕНТ НЕ ПОСПІШАТИМЕ')) },
+        { key: 'ask2', price: !r || r.stubborn ? null : Math.round(prem * 1.2), act: () => r && ((r.out = true), this.say('КОНКУРЕНТ СКИНУВ ВАНТАЖ')) },
+        { key: 'ask3', bye: true },
+      ];
+    }
     const dmg = cm?.career.damage ?? 0;
     return [
       {
@@ -1208,6 +1239,7 @@ export class Ht2Drive {
       fuel: c ? (c.fuel ?? this.tank) / this.tank : 1,
       condition: c ? 1 - c.damage : 1,
       nav: this.navTurn,
+      position: this.careerMode?.race ?? null,
     });
   }
 

@@ -9,6 +9,7 @@ import { USED_DAMAGE, type ForSale, type Market } from './market';
 import type { Ht2Drive } from '../drive';
 import { gasPanel, orderPanel, salePanel, servicePanel } from './stations';
 import type { SidePanel } from '../ui/panel';
+import { active, advance, makeRivals, place, PREMIUM_SHARE } from './competition';
 import { ukMessage } from '../ui/uk';
 
 /**
@@ -99,6 +100,7 @@ export class CareerMode {
     if (this.busy) return;
     c.time += dt * this.drive.timeScale;
     this.burn(dt, throttle);
+    this.updateRace(dt);
     const v = this.drive.truck.body.linvel();
     const dv = Math.hypot(v.x - this.prevVel.x, v.y - this.prevVel.y, v.z - this.prevVel.z);
     this.prevVel.set(v.x, v.y, v.z);
@@ -224,6 +226,7 @@ export class CareerMode {
         () => {
           if (c.order) return;
           c.order = { ...o, deadline: o.deadline * this.drive.timeScale, taken: c.time, integrity: 1 };
+          this.attachRivals(c.order);
           cached!.orders = cached!.orders.filter((x) => x !== o);
           this.drive.setCargo(o.goods.mass * o.units);
           this.drive.say(`${o.goods.name} → ${to?.town ?? '?'}`);
@@ -476,6 +479,61 @@ export class CareerMode {
     return !!d && Math.hypot(d[0] - gx, d[1] - gy) < (key[0] === 'f' ? FUEL_RADIUS : STO_RADIUS) * 2;
   }
 
+  /** Доставка: якщо були суперники й ніхто не доїхав раніше — премія першому. */
+  private firstBonus(o: NonNullable<Ht2Career['order']>): void {
+    if (!o.rivals?.length || o.beaten) return;
+    const c = this.career;
+    c.money += o.premium ?? 0;
+    c.firsts = (c.firsts ?? 0) + 1;
+    this.drive.say(`ВИ ПЕРШИЙ! ПРЕМІЯ $${o.premium ?? 0}`);
+  }
+
+  /** Позиція серед конкурентів (табло «ПОЗИЦІЯ N З M»), оновлюється раз на пів секунди. */
+  race: { place: number; of: number } | null = null;
+  private raceTimer = 0;
+
+  /** Нове замовлення: можливо, його беруть і суперники (маршрут — мережею доріг). */
+  private attachRivals(o: NonNullable<Ht2Career['order']>): void {
+    const to = this.stores.find((s) => s.id === o.to);
+    const route = (to && this.drive.routeLeft(toThree(...to.center))) || o.distance;
+    o.route = route;
+    o.rivals = makeRivals(route, this.drive.truckers?.allNames ?? []);
+    o.premium = o.rivals.length ? Math.round(o.pay * PREMIUM_SHARE) : 0;
+    if (o.rivals.length) this.drive.say(`ЦЕЙ ВАНТАЖ ВЕЗУТЬ ЩЕ ${o.rivals.length}. ПРЕМІЯ ПЕРШОМУ $${o.premium}`);
+  }
+
+  /** Крок конкуренції: суперники їдуть; хто доїхав раніше гравця — повідомлення; позиція гравця. */
+  private updateRace(dt: number): void {
+    const o = this.career.order;
+    if (!o?.rivals?.length) {
+      this.race = null;
+      return;
+    }
+    for (const r of advance(o.rivals, dt)) {
+      if (o.beaten) continue;
+      o.beaten = true;
+      this.drive.say(this.msg('COMPETITOR_ARRIVED', 'ВАШ КОНКУРЕНТ ЩОЙНО ПРИБУВ. ПОКВАПТЕСЯ'));
+      void r;
+    }
+    this.raceTimer -= dt;
+    if (this.raceTimer > 0) return;
+    this.raceTimer = 0.5;
+    const to = this.stores.find((s) => s.id === o.to);
+    const left = to ? this.drive.routeLeft(toThree(...to.center)) : null;
+    const mine = left === null || !o.route ? 0 : Math.max(0, 1 - left / o.route);
+    this.race = active(o.rivals).length ? place(o.rivals, mine) : null;
+  }
+
+  /** Конкуренти поруч на дорозі (рація): у грі й з близькою часткою шляху (гіпотеза: «поруч» = ±10 % маршруту). */
+  nearRivals(): { index: number; name: string }[] {
+    const o = this.career.order;
+    if (!o?.rivals || !o.route) return [];
+    const to = this.stores.find((s) => s.id === o.to);
+    const left = to ? this.drive.routeLeft(toThree(...to.center)) : null;
+    const mine = left === null ? 0 : 1 - left / o.route;
+    return o.rivals.flatMap((r, index) => (!r.out && !r.done && Math.abs(r.t / r.eta - mine) < 0.1 ? [{ index, name: r.name }] : []));
+  }
+
   /** Найближча СТО (точка вузла sto_*, координати гри) — для 911. */
   nearestSto(gx: number, gy: number): [number, number, number] | null {
     let best: [number, number, number] | null = null;
@@ -504,6 +562,7 @@ export class CareerMode {
         c.earned += s.pay;
         c.delivered++;
         c.tons = (c.tons ?? 0) + (c.order.goods.mass * c.order.units) / 1000;
+        this.firstBonus(c.order);
         c.order = null;
         this.drive.setCargo(0);
       } else if (c.order && c.order.to === store.id) {
@@ -520,6 +579,7 @@ export class CareerMode {
         c.earned += s.pay;
         c.delivered++;
         c.tons = (c.tons ?? 0) + (c.order.goods.mass * c.order.units) / 1000;
+        this.firstBonus(c.order);
         c.order = null;
         this.drive.setCargo(0);
       } else if (c.order) {
@@ -539,6 +599,7 @@ export class CareerMode {
         const o = orders[i];
         if (o) {
           c.order = { ...o, deadline: o.deadline * this.drive.timeScale, taken: c.time, integrity: 1 };
+          this.attachRivals(c.order);
           this.drive.setCargo(o.goods.mass * o.units);
         }
       }
@@ -639,6 +700,7 @@ export class CareerMode {
         km: to ? Math.hypot(to.center[0] - p.x, to.center[1] + p.z) / 1000 : 0,
         left: o.deadline - (c.time - o.taken),
         pay: o.pay,
+        premium: o.premium ?? 0,
         integrity: o.integrity,
         mass: o.goods.mass * o.units,
         volume: o.goods.volume * o.units,
@@ -699,7 +761,7 @@ export class CareerMode {
 }
 
 export interface CareerInfo {
-  order: { goods: string; units: number; town: string; arrow: string; km: number; left: number; pay: number; integrity: number; mass: number; volume: number } | null;
+  order: { goods: string; units: number; town: string; arrow: string; km: number; left: number; pay: number; premium: number; integrity: number; mass: number; volume: number } | null;
   /** Без замовлення — найближчий склад. */
   near: { town: string; arrow: string; km: number } | null;
   money: number;

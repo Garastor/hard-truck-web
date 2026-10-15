@@ -160,7 +160,8 @@ export class FPanels {
       p.write(20, 487, `${o.goods} → ${o.town}`.slice(0, 26), VALUE);
       p.write(20, 545, `${o.arrow} ${o.km.toFixed(1)} КМ`, VALUE);
       p.write(20, 556, o.left > 0 ? formatLeft(o.left).toUpperCase() : 'ТЕРМІН МИНУВ', o.left > 0 ? VALUE : LOW);
-      p.write(127, 552, `$${Math.round(o.pay)}`, VALUE);
+      // Премія першому (конкуренти, G9 Б8); без конкурентів — прочерк.
+      p.write(127, 552, o.premium ? `$${Math.round(o.premium)}` : '—', VALUE);
     } else if (info.near) {
       p.write(20, 487, `СКЛАД ${info.near.town}`.slice(0, 26), VALUE);
       p.write(20, 545, `${info.near.arrow} ${info.near.km.toFixed(1)} КМ`, VALUE);

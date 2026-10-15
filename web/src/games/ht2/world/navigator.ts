@@ -78,6 +78,17 @@ export class Navigator {
     return dist;
   }
 
+  /** Скільки лишилось дорогами до цілі, м (null — машина далеко від доріг чи шляху немає). */
+  remaining(pos: THREE.Vector3, heading: THREE.Vector3 | undefined, target: THREE.Vector3): number | null {
+    const at = this.roads.nearest(pos, heading);
+    if (!at || at.dist > 80) return null;
+    const d = this.distances(target).get(at.line);
+    if (d === undefined) return null;
+    let rest = at.line.pts[at.seg].distanceTo(at.line.pts[at.seg + 1]) * (1 - at.t);
+    for (let i = at.seg + 1; i + 1 < at.line.pts.length; i++) rest += at.line.pts[i].distanceTo(at.line.pts[i + 1]);
+    return d + rest;
+  }
+
   /** Поворот на найближчій розвилці по шляху до цілі (null — розвилки поблизу немає чи шляху не знайдено). */
   turn(pos: THREE.Vector3, heading: THREE.Vector3, target: THREE.Vector3): NavTurn | null {
     const at = this.roads.nearest(pos, heading);
