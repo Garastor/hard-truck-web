@@ -211,12 +211,12 @@ export class RaceMode {
   }
 
   /** Після кроку: візуал суперників, кола, місця, фініш. */
-  after(dt: number): void {
+  after(dt: number, alpha = 1): void {
     this.countdown -= dt;
     if (this.countdown <= 0) this.clock += dt;
     for (const r of this.racers) {
       if (r.pilot) {
-        r.truck.syncVisual();
+        r.truck.syncVisual(alpha);
         // Упав крізь світ, перекинувся (2 с) чи далеко від маршруту (4 с) — назад на маршрут, де був.
         const y = r.truck.body.translation().y;
         const up = new THREE.Vector3(0, 1, 0).applyQuaternion(r.truck.visual.quaternion).y;

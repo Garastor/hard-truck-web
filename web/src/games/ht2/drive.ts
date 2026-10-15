@@ -1202,11 +1202,13 @@ export class Ht2Drive {
       this.rapier.step();
       this.acc -= step;
     }
-    this.race?.after(dt);
+    // Частка кроку фізики, що «не дійшла» до наступного, — модель між станами кроків (без ривків при 120 Гц).
+    const alpha = this.acc / step;
+    this.race?.after(dt, alpha);
     this.detectHits();
-    this.truckers?.after(dt, this.truck.visual.position);
-    this.truck.syncVisual();
-    this.trailer?.syncVisual();
+    this.truckers?.after(dt, this.truck.visual.position, alpha);
+    this.truck.syncVisual(alpha);
+    this.trailer?.syncVisual(alpha);
     this.audio?.update(this.truck.rpm, state.throttle, this.truck.engineOn);
     this.trackSafe(dt);
     this.updateDayTime(dt);

@@ -133,10 +133,42 @@ export class Trailer {
     this.body.setRotation(rotation, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.savePrev();
+  }
+
+  /** Стан тіла до останнього кроку фізики — модель між кроками інтерполюється (syncVisual(alpha)). */
+  private readonly prevPos = new THREE.Vector3();
+  private readonly prevQuat = new THREE.Quaternion();
+  private hasPrev = false;
+
+  /** Запамʼятати стан перед кроком фізики. */
+  private savePrev(): void {
+    const t = this.body.translation();
+    const r = this.body.rotation();
+    this.prevPos.set(t.x, t.y, t.z);
+    this.prevQuat.set(r.x, r.y, r.z, r.w);
+    this.hasPrev = true;
+  }
+
+  /**
+   * Модель — між станом до й після останнього кроку (alpha = залишок накопичувача / крок): фізика йде кроками 1/60 с,
+   * і при 120 Гц чи нерівних кадрах без цього машина відносно плавної камери смикалась. Стрибок понад 5 м
+   * (телепорт, відновлення) — без згладжування.
+   */
+  private placeVisual(alpha: number): void {
+    const t = this.body.translation();
+    const r = this.body.rotation();
+    this.visual.position.set(t.x, t.y, t.z);
+    this.visual.quaternion.set(r.x, r.y, r.z, r.w);
+    if (alpha < 1 && this.hasPrev && this.prevPos.distanceTo(this.visual.position) < 5) {
+      this.visual.position.lerpVectors(this.prevPos, this.visual.position, alpha);
+      this.visual.quaternion.slerpQuaternions(this.prevQuat, this.visual.quaternion.clone(), alpha);
+    }
   }
 
   /** Крок фізики (до world.step): гальма й опір кочення. */
   update(dt: number, brake: number, brakePower: number): void {
+    this.savePrev();
     const n = this.wheels.length;
     const force = (brake * brakePower) / n + (ROLLING * this.mass * 9.81) / n;
     for (let i = 0; i < n; i++) this.ctrl.setWheelBrake(i, force * dt);
@@ -224,11 +256,8 @@ export class Trailer {
     }
   }
 
-  syncVisual(): void {
-    const t = this.body.translation();
-    const r = this.body.rotation();
-    this.visual.position.set(t.x, t.y, t.z);
-    this.visual.quaternion.set(r.x, r.y, r.z, r.w);
+  syncVisual(alpha = 1): void {
+    this.placeVisual(alpha);
     for (let i = 0; i < this.wheels.length; i++) {
       const w = this.wheels[i];
       const len = this.ctrl.wheelSuspensionLength(i) ?? SUSP_REST;

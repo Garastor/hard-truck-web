@@ -76,10 +76,10 @@ export class Truckers {
   }
 
   /** Після кроку: візуал, поява й зникнення. */
-  after(dt: number, player: THREE.Vector3): void {
+  after(dt: number, player: THREE.Vector3, alpha = 1): void {
     for (let i = this.list.length - 1; i >= 0; i--) {
       const r = this.list[i];
-      r.truck.syncVisual();
+      r.truck.syncVisual(alpha);
       const up = new THREE.Vector3(0, 1, 0).applyQuaternion(r.truck.visual.quaternion).y;
       r.bad = up < 0.5 ? r.bad + dt : 0;
       const far = r.truck.visual.position.distanceTo(player) > DESPAWN;

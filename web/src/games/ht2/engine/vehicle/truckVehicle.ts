@@ -385,8 +385,40 @@ export class TruckVehicle {
         );
   }
 
+
+  /** Стан тіла до останнього кроку фізики — модель між кроками інтерполюється (syncVisual(alpha)). */
+  private readonly prevPos = new THREE.Vector3();
+  private readonly prevQuat = new THREE.Quaternion();
+  private hasPrev = false;
+
+  /** Запамʼятати стан перед кроком фізики. */
+  private savePrev(): void {
+    const t = this.body.translation();
+    const r = this.body.rotation();
+    this.prevPos.set(t.x, t.y, t.z);
+    this.prevQuat.set(r.x, r.y, r.z, r.w);
+    this.hasPrev = true;
+  }
+
+  /**
+   * Модель — між станом до й після останнього кроку (alpha = залишок накопичувача / крок): фізика йде кроками 1/60 с,
+   * і при 120 Гц чи нерівних кадрах без цього машина відносно плавної камери смикалась. Стрибок понад 5 м
+   * (телепорт, відновлення) — без згладжування.
+   */
+  private placeVisual(alpha: number): void {
+    const t = this.body.translation();
+    const r = this.body.rotation();
+    this.visual.position.set(t.x, t.y, t.z);
+    this.visual.quaternion.set(r.x, r.y, r.z, r.w);
+    if (alpha < 1 && this.hasPrev && this.prevPos.distanceTo(this.visual.position) < 5) {
+      this.visual.position.lerpVectors(this.prevPos, this.visual.position, alpha);
+      this.visual.quaternion.slerpQuaternions(this.prevQuat, this.visual.quaternion.clone(), alpha);
+    }
+  }
+
   /** Крок фізики керування (до world.step). */
   update(dt: number, input: ControlState): void {
+    this.savePrev();
     const tech = this.def.tech;
     // Швидкість уздовж напрямку «уперед» (−Z локально), м/с; + уперед.
     const lv = this.body.linvel();
@@ -626,11 +658,8 @@ export class TruckVehicle {
     s.obj.matrixWorldNeedsUpdate = true;
   }
 
-  syncVisual(): void {
-    const t = this.body.translation();
-    const r = this.body.rotation();
-    this.visual.position.set(t.x, t.y, t.z);
-    this.visual.quaternion.set(r.x, r.y, r.z, r.w);
+  syncVisual(alpha = 1): void {
+    this.placeVisual(alpha);
     if (this.shadow) this.placeShadow();
     // Колеса: підвіска (зсув по Z гри), поворот керма (навколо Z), обертання (навколо X).
     for (let i = 0; i < this.wheels; i++) {
@@ -658,11 +687,13 @@ export class TruckVehicle {
     this.reverseMode = false;
     this.brakeTime = 0;
     this.engine.reset();
+    this.savePrev();
   }
 
-  /** Поточний напрям «уперед» у світі. */
+  /** Поточний напрям «уперед» у світі — за тілом (модель між кроками відстає на частку кроку). */
   forward(out = new THREE.Vector3()): THREE.Vector3 {
-    return out.set(0, 0, -1).applyQuaternion(this.visual.quaternion);
+    const r = this.body.rotation();
+    return out.set(0, 0, -1).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w));
   }
 
   dispose(): void {
