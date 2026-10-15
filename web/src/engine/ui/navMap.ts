@@ -10,71 +10,53 @@ import { HUD_CYAN, frame, hudScale } from './pixelFont';
 const SIZE = 96;
 /** Скільки метрів умістити від центру до краю карти. */
 const RANGE = 260;
+/** Довші відрізки ліній ділимо на шматки не довші за цей, м: колір (покриття) може змінитися посередині. */
+const COLOR_STEP = 10;
 
-/**
- * Значки карти з ресурсів гри (перша гра: ic_trucy / ic_trucw / ic_flagw / ic_flagr — HTruck.exe малює їх на своїй
- * карті, re/notes/ht1/navmap.md). Без значка — власні фігури (стрілка, квадрат, коло).
- */
-export interface NavIcons {
-  me?: CanvasImageSource & { width: number; height: number };
-  rival?: CanvasImageSource & { width: number; height: number };
-  /**
-   * Спростити лінії доріг до ламаних (Рамер — Дуглас — Пекер, допуск у метрах): прямі відрізки зі скошеними
-   * кутами, як карта HTruck.exe. Без нього — лінії як є.
-   */
-  simplify?: number;
-}
-
-/** Ламана без точок, що відхиляються від прямої менше ніж на tol (Рамер — Дуглас — Пекер, у площині XZ). */
-function simplifyLine(pts: THREE.Vector3[], tol: number): THREE.Vector3[] {
-  if (pts.length < 3) return pts;
-  const a = pts[0];
-  const b = pts[pts.length - 1];
-  const dx = b.x - a.x;
-  const dz = b.z - a.z;
-  const len = Math.hypot(dx, dz);
-  let far = 0;
-  let at = 0;
-  for (let i = 1; i < pts.length - 1; i++) {
-    const p = pts[i];
-    const d = len > 1e-6 ? Math.abs((p.x - a.x) * dz - (p.z - a.z) * dx) / len : Math.hypot(p.x - a.x, p.z - a.z);
-    if (d > far) {
-      far = d;
-      at = i;
-    }
-  }
-  if (far <= tol) return [a, b];
-  return [...simplifyLine(pts.slice(0, at + 1), tol).slice(0, -1), ...simplifyLine(pts.slice(at), tol)];
-}
-/** Прапорець на карті: точка світу й значок (малюється прямо, не обертається з картою). */
-export interface NavFlag {
-  pos: THREE.Vector3;
-  icon: CanvasImageSource & { width: number; height: number };
-}
+/** Колір відрізка дороги на карті (null — як у попереднього); без функції — усі лінії HUD_CYAN. */
+export type RoadColor = (a: THREE.Vector3, b: THREE.Vector3) => string | null;
 
 export class NavMap {
   readonly el: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
-  private readonly roads = new Path2D();
+  /** Лінії доріг за кольором. */
+  private readonly roads = new Map<string, Path2D>();
   private timer = 0;
+  private readonly colored: boolean;
 
-  /** Прапорці (старт, фініш) — значками поверх доріг. */
-  flags: NavFlag[] = [];
-
-  constructor(
-    parent: HTMLElement,
-    net: Pick<WayNet, 'lines'>,
-    private readonly icons: NavIcons = {},
-  ) {
+  constructor(parent: HTMLElement, net: Pick<WayNet, 'lines'>, colorOf?: RoadColor) {
     this.el = document.createElement('canvas');
     this.el.className = 'pixel nav-map';
     this.el.width = this.el.height = SIZE;
     const s = hudScale() * (matchMedia('(pointer: coarse)').matches ? 1.25 : 1);
     this.el.style.width = this.el.style.height = `${SIZE * s}px`;
     this.ctx = this.el.getContext('2d')!;
+    this.colored = !!colorOf;
+    const path = (color: string) => {
+      let p = this.roads.get(color);
+      if (!p) this.roads.set(color, (p = new Path2D()));
+      return p;
+    };
     for (const line of net.lines) {
-      const pts = icons.simplify ? simplifyLine(line.pts, icons.simplify) : line.pts;
-      pts.forEach((p, i) => (i ? this.roads.lineTo(p.x, p.z) : this.roads.moveTo(p.x, p.z)));
+      if (!colorOf) {
+        const p = path(HUD_CYAN);
+        line.pts.forEach((q, i) => (i ? p.lineTo(q.x, q.z) : p.moveTo(q.x, q.z)));
+        continue;
+      }
+      let color = HUD_CYAN;
+      for (let i = 0; i + 1 < line.pts.length; i++) {
+        const a = line.pts[i];
+        const b = line.pts[i + 1];
+        const n = Math.max(1, Math.ceil(a.distanceTo(b) / COLOR_STEP));
+        for (let j = 0; j < n; j++) {
+          const pa = a.clone().lerp(b, j / n);
+          const pb = a.clone().lerp(b, (j + 1) / n);
+          color = colorOf(pa, pb) ?? color;
+          const p = path(color);
+          p.moveTo(pa.x, pa.z);
+          p.lineTo(pb.x, pb.z);
+        }
+      }
     }
     parent.append(this.el);
   }
@@ -97,15 +79,17 @@ export class NavMap {
     ctx.rotate(-yaw);
     ctx.scale(k, k);
     ctx.translate(-me.x, -me.z);
-    ctx.strokeStyle = HUD_CYAN;
     ctx.lineWidth = 1.5 / k;
+    // Кольорові лінії — окремими відрізками: круглі кінці, щоб на стиках не було щілин.
+    ctx.lineCap = this.colored ? 'round' : 'butt';
     ctx.globalAlpha = 0.8;
-    ctx.stroke(this.roads);
-    ctx.globalAlpha = 1;
-    if (!this.icons.rival) {
-      ctx.fillStyle = '#e00000';
-      for (const r of rivals) ctx.fillRect(r.x - 2.5 / k, r.z - 2.5 / k, 5 / k, 5 / k);
+    for (const [color, p] of this.roads) {
+      ctx.strokeStyle = color;
+      ctx.stroke(p);
     }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#e00000';
+    for (const r of rivals) ctx.fillRect(r.x - 2.5 / k, r.z - 2.5 / k, 5 / k, 5 / k);
     if (target) {
       const dx = target.x - me.x;
       const dz = target.z - me.z;
@@ -118,32 +102,6 @@ export class NavMap {
       ctx.fill();
     }
     ctx.restore();
-    // Значки — прямо (не обертаються з картою), цілими пікселями, центром у точці; за краєм рамки — не видно.
-    const toMap = (p: THREE.Vector3) => {
-      const dx = (p.x - me.x) * k;
-      const dz = (p.z - me.z) * k;
-      return { x: c + dx * Math.cos(yaw) + dz * Math.sin(yaw), y: c - dx * Math.sin(yaw) + dz * Math.cos(yaw) };
-    };
-    const icon = (img: NonNullable<NavIcons['me']>, x: number, y: number) => {
-      const ix = Math.round(x - img.width / 2);
-      const iy = Math.round(y - img.height / 2);
-      if (ix < 2 || iy < 2 || ix + img.width > SIZE - 2 || iy + img.height > SIZE - 2) return;
-      ctx.drawImage(img, ix, iy);
-    };
-    for (const f of this.flags) {
-      const p = toMap(f.pos);
-      icon(f.icon, p.x, p.y);
-    }
-    if (this.icons.rival) {
-      for (const r of rivals) {
-        const p = toMap(r);
-        icon(this.icons.rival, p.x, p.y);
-      }
-    }
-    if (this.icons.me) {
-      icon(this.icons.me, c, c);
-      return;
-    }
     // Гравець — стрілка вгору в центрі.
     ctx.fillStyle = '#f8e000';
     ctx.beginPath();
