@@ -79,9 +79,9 @@ const SURFACE_ROUGH: Record<Surface, number> = { asphalt: 0, gravel: 1, dirt: 0.
  * трясеться кабіна навколо очей водія): найбільший кут, рад, підйом, м, і зсув 2D-кабіни, px кадру 640×480.
  * На повну — від SHAKE_FULL_KMH.
  */
-const SHAKE_ANGLE = THREE.MathUtils.degToRad(0.5);
-const SHAKE_LIFT = 0.01;
-const SHAKE_PX = 2.5;
+const SHAKE_ANGLE = THREE.MathUtils.degToRad(0.35);
+const SHAKE_LIFT = 0.007;
+const SHAKE_PX = 1.75;
 const SHAKE_FULL_KMH = 50;
 
 function classifySurface(name: string, texel: [number, number, number] | null): Surface {
