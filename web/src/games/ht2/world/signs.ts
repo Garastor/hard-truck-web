@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { isList, str, type SExpr } from '../formats/sexpr';
 import type { Way } from '../formats/way';
 import { toThree } from './world';
+import { ukSign } from '../ui/uk';
 
 /**
  * Дорожні вказівники HT2 — `nodeevent` з `ENV/mod_<регіон>.sch`:
@@ -29,7 +30,7 @@ export class Signs {
       for (const e of sch) {
         if (!isList(e) || e[0] !== 'nodeevent' || e[2] !== 'UNCONDITIONAL') continue;
         const pos = nodes.get(str(e[3]).toLowerCase());
-        const text = str(e[5]);
+        const text = ukSign(str(e[5]));
         if (pos && text) this.list.push({ pos: toThree(...pos), dir: str(e[4]), text, armed: true });
       }
   }

@@ -218,7 +218,7 @@ describe.skipIf(!has)('HT2: економіка', () => {
     const goods = parseGoods(readSch(read('merchandise.sch')));
     expect(goods.length).toBeGreaterThan(50);
     const bread = goods.find((g) => g.id === 'BREAD')!;
-    expect(bread).toMatchObject({ name: 'Хлеб', mass: 25, volume: 0.1, price: 70 });
+    expect(bread).toMatchObject({ name: 'Хліб', mass: 25, volume: 0.1, price: 70 });
     expect(goods.find((g) => g.id === 'AKM')!.illegal).toBe(true);
   });
   it('склади з вузлів WAY: 11 баз, у кожної 5 місць', () => {
@@ -226,7 +226,7 @@ describe.skipIf(!has)('HT2: економіка', () => {
     const stores = findStores(regions);
     expect(stores.map((s) => s.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]); // 10 — «Алмазный» на рельєфі aa
     expect(stores.every((s) => s.docks.length === 5)).toBe(true);
-    expect(stores.find((s) => s.id === 3)!.town).toBe('Южный');
+    expect(stores.find((s) => s.id === 3)!.town).toBe('Південний');
   });
   it('оплата росте з відстанню й терміновістю', () => {
     const g = { id: 'X', name: 'X', mass: 10, volume: 0.1, price: 100, ratio: 0.8, illegal: false, forMafia: false, trucks: true, fuel: false };
@@ -256,8 +256,8 @@ describe.skipIf(!has)('HT2: описи регіонів (ENV/mod_*.sch)', () => 
   const mods = (has ? HT2_MOD_REGIONS : []).map((region) => ({ region, sch: readSch(read(`ENV/mod_${region}.sch`)) }));
   it('міста: назви й товари складів', () => {
     const towns = parseTowns(mods);
-    expect(towns.get(0)?.name).toBe('Приозерск');
-    expect(towns.get(4)?.name).toBe('Ключи');
+    expect(towns.get(0)?.name).toBe('Приозерськ');
+    expect(towns.get(4)?.name).toBe('Ключі');
     expect(towns.get(10)?.region).toBe('aa');
     expect(towns.get(0)?.goods).toContain('BREAD');
     // АЗС (вузли node_car_fuel*) — не склади.
@@ -279,7 +279,7 @@ describe.skipIf(!has)('HT2: описи регіонів (ENV/mod_*.sch)', () => 
     expect(markets.length).toBe(15);
     const aj = markets.find((m) => m.id === 1)!;
     expect(aj.name).toBe('Барахолка');
-    expect(aj.town).toBe('Приозерск');
+    expect(aj.town).toBe('Приозерськ');
     expect(aj.spots.length).toBe(5);
     expect(markets.some((m) => m.name === '??')).toBe(false);
   });

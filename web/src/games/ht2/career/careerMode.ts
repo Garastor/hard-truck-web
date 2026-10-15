@@ -9,6 +9,7 @@ import { USED_DAMAGE, type ForSale, type Market } from './market';
 import type { Ht2Drive } from '../drive';
 import { gasPanel, orderPanel, salePanel, servicePanel } from './stations';
 import type { SidePanel } from '../ui/panel';
+import { ukMessage } from '../ui/uk';
 
 /**
  * Кар'єра в режимі їзди HT2: склади (замовлення й здача вантажу), СТО (ремонт), удари (пошкодження машини й
@@ -52,7 +53,7 @@ export class CareerMode {
     towns: Map<number, Town> = new Map(),
     private readonly services: Map<string, Set<string>> = new Map(),
   ) {
-    for (const m of messages) if (isList(m) && typeof m[0] === 'string') this.messages.set(m[0], str(m[m.length - 1]));
+    for (const m of messages) if (isList(m) && typeof m[0] === 'string') this.messages.set(m[0], ukMessage(m[0], str(m[m.length - 1])));
     this.goods = parseGoods(merchandise);
     this.stores = findStores(drive.world.regions.values(), towns);
     for (const r of drive.world.regions.values())
@@ -163,7 +164,7 @@ export class CareerMode {
     c.order = null;
     this.drive.setCargo(0);
     this.drive.cards?.show(7, { amount: forfeit });
-    this.drive.say(`${this.msg('ORDER_LOST', 'ТОВАР ПОЛНОСТЬЮ РАЗБИТ')}. ${this.msg('FORFEIT', 'НЕУСТОЙКА $%g', forfeit)}`);
+    this.drive.say(`${this.msg('ORDER_LOST', 'ТОВАР ПОВНІСТЮ РОЗБИТО')}. ${this.msg('FORFEIT', 'НЕУСТОЙКА $%g', forfeit)}`);
     this.persist();
   }
 
@@ -200,7 +201,7 @@ export class CareerMode {
       return;
     }
     const to = this.stores.find((s) => s.id === o.to);
-    this.drive.say('Для загрузки/выгрузки используйте плюс/минус');
+    this.drive.say('Щоб завантажити чи розвантажити — плюс/мінус');
     this.openPanel(
       orderPanel(
         art,
@@ -243,7 +244,7 @@ export class CareerMode {
       salePanel(this.drive.escArt!, this.drive.overlay, { model: near.rec.carNode, price: near.price, power: near.rec.horsePower, load: near.rec.cargoLoad, used: near.used }, () => {
         const cost = near.price - tradeIn;
         if (c.order) return this.drive.say('Спершу доставте вантаж');
-        if (c.money < cost) return this.drive.say(this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'));
+        if (c.money < cost) return this.drive.say(this.msg('NOT_ENOUGH_MONEY', 'НЕ ВИСТАЧАЄ ГРОШЕЙ'));
         c.money -= cost;
         c.truck = near.rec.carNode;
         c.damage = near.used ? USED_DAMAGE : 0;
@@ -251,7 +252,7 @@ export class CareerMode {
         c.fuel = null;
         markets.sell(m, day, near);
         this.drive.changeTruck(near.rec.carNode);
-        this.drive.say(`${this.msg('MONEY_PAID', 'ОПЛАЧЕНО : ')}$${cost}`);
+        this.drive.say(`${this.msg('MONEY_PAID', 'СПЛАЧЕНО: ')}$${cost}`);
         this.persist();
         this.closePanel();
       }),
@@ -279,7 +280,7 @@ export class CareerMode {
             const total = repair + buy.reduce((sum, u) => sum + u.price, 0);
             if (total <= 0) return true;
             if (c.money < total) {
-              this.drive.say(this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'));
+              this.drive.say(this.msg('NOT_ENOUGH_MONEY', 'НЕ ВИСТАЧАЄ ГРОШЕЙ'));
               return false;
             }
             c.money -= total;
@@ -291,7 +292,7 @@ export class CareerMode {
             for (const u of buy) c.upgrades = install(c.upgrades ?? [], u);
             if (buy.length) this.drive.applyTuning();
             if (c.fuel !== null && this.tank !== tank) c.fuel = Math.min(c.fuel, this.tank);
-            this.drive.say(this.msg('MONEY_PAID', 'ОПЛАЧЕНО : ') + `$${total}`);
+            this.drive.say(this.msg('MONEY_PAID', 'СПЛАЧЕНО: ') + `$${total}`);
             this.persist();
             return true;
           },
@@ -309,13 +310,13 @@ export class CareerMode {
         pay: (litres) => {
           const can = Math.min(litres, Math.floor(c.money / FUEL_PRICE));
           if (litres > 0 && can <= 0) {
-            this.drive.say(this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'));
+            this.drive.say(this.msg('NOT_ENOUGH_MONEY', 'НЕ ВИСТАЧАЄ ГРОШЕЙ'));
             return false;
           }
           c.money -= Math.round(can * FUEL_PRICE);
           c.fuel = Math.min(this.tank, (c.fuel ?? 0) + can);
           if (can > 0 && !this.drive.truck.engineOn) this.drive.truck.engineOn = true;
-          if (can > 0) this.drive.say(`ПЛАТА ЗА ЗАПРАВКУ $${Math.round(can * FUEL_PRICE)}`);
+          if (can > 0) this.drive.say(`ОПЛАТА ЗАПРАВКИ $${Math.round(can * FUEL_PRICE)}`);
           this.persist();
           return true;
         },
@@ -339,7 +340,7 @@ export class CareerMode {
     if (this.drive.cards) {
       const amount = over * 20;
       this.drive.cards.show(16, { limit, speed: limit + over, amount });
-      this.drive.say(this.msg('FINE_SPEEDING', 'ШТРАФ ЗА ПРЕВЫШЕНИЕ СКОРОСТИ $%g', amount));
+      this.drive.say(this.msg('FINE_SPEEDING', 'ШТРАФ ЗА ПЕРЕВИЩЕННЯ ШВИДКОСТІ $%g', amount));
       c.money = Math.max(0, c.money - amount);
       this.persist();
       return;
@@ -348,7 +349,7 @@ export class CareerMode {
     this.drive.paused = true;
     try {
       const amount = over * 20;
-      await modal(this.drive.overlay, 'Поліція', this.msg('FINE_SPEEDING', 'ШТРАФ ЗА ПРЕВЫШЕНИЕ СКОРОСТИ $%g', amount), ['Сплатити']);
+      await modal(this.drive.overlay, 'Поліція', this.msg('FINE_SPEEDING', 'ШТРАФ ЗА ПЕРЕВИЩЕННЯ ШВИДКОСТІ $%g', amount), ['Сплатити']);
       c.money = Math.max(0, c.money - amount);
       this.persist();
     } finally {
@@ -367,7 +368,7 @@ export class CareerMode {
     if (this.drive.cards) {
       const forfeit = Math.round(c.order.value * 0.5);
       this.drive.cards.show(21);
-      this.drive.say(`${this.msg('ATTACKED_BY_MAFIA', 'ВЫ ОГРАБЛЕНЫ МАФИЕЙ')}. ${this.msg('FORFEIT', 'НЕУСТОЙКА $%g', forfeit)}`);
+      this.drive.say(`${this.msg('ATTACKED_BY_MAFIA', 'ВАС ПОГРАБУВАЛА МАФІЯ')}. ${this.msg('FORFEIT', 'НЕУСТОЙКА $%g', forfeit)}`);
       c.money = Math.max(0, c.money - forfeit);
       c.order = null;
       this.drive.setCargo(0);
@@ -378,7 +379,7 @@ export class CareerMode {
     this.drive.paused = true;
     try {
       const forfeit = Math.round(c.order.value * 0.5);
-      const text = `${this.msg('ATTACKED_BY_MAFIA', 'ВЫ ОГРАБЛЕНЫ МАФИЕЙ')}\n${c.order.goods.name} × ${c.order.units}\n${this.msg('FORFEIT', 'НЕУСТОЙКА $%g', forfeit)}`;
+      const text = `${this.msg('ATTACKED_BY_MAFIA', 'ВАС ПОГРАБУВАЛА МАФІЯ')}\n${c.order.goods.name} × ${c.order.units}\n${this.msg('FORFEIT', 'НЕУСТОЙКА $%g', forfeit)}`;
       await modal(this.drive.overlay, 'Мафія', text, ['Гаразд']);
       c.money = Math.max(0, c.money - forfeit);
       c.order = null;
@@ -413,7 +414,7 @@ export class CareerMode {
       if (!s) return;
       const cost = s.price - tradeIn;
       if (c.money < cost) {
-        await modal(this.drive.overlay, title, this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'), ['Гаразд']);
+        await modal(this.drive.overlay, title, this.msg('NOT_ENOUGH_MONEY', 'НЕ ВИСТАЧАЄ ГРОШЕЙ'), ['Гаразд']);
         return;
       }
       if (c.order) {
@@ -445,7 +446,7 @@ export class CareerMode {
       const i = await modal(this.drive.overlay, 'Заправка', `У баку ${Math.round(c.fuel ?? 0)} л з ${Math.round(this.tank)}. Залити ${need} л: ${formatMoney(cost)}.`, ['Заправити', 'Не треба']);
       if (i === 0) {
         const can = Math.min(need, Math.floor(c.money / FUEL_PRICE));
-        if (can <= 0) await modal(this.drive.overlay, 'Заправка', 'НЕ ХВАТАЕТ ДЕНЕГ', ['Гаразд']);
+        if (can <= 0) await modal(this.drive.overlay, 'Заправка', 'НЕ ВИСТАЧАЄ ГРОШЕЙ', ['Гаразд']);
         else {
           c.money -= Math.round(can * FUEL_PRICE);
           c.fuel = Math.min(this.tank, (c.fuel ?? 0) + can);
@@ -482,7 +483,7 @@ export class CareerMode {
       if (c.order && c.order.to === store.id && this.drive.cards) {
         const s = settle(c.order, c.time);
         this.drive.cards.show(4, { integrity: c.order.integrity * 100, forfeit: s.damagePenalty + s.latePenalty, fee: c.order.pay });
-        this.drive.say(this.msg('YOU_MADE', 'ВЫ ЗАРАБОТАЛИ : %g', s.pay));
+        this.drive.say(this.msg('YOU_MADE', 'ВИ ЗАРОБИЛИ: %g', s.pay));
         c.money += s.pay;
         c.earned += s.pay;
         c.delivered++;
@@ -543,7 +544,7 @@ export class CareerMode {
         const options = [...(damaged ? ['Ремонт'] : []), 'Покращення', 'Поїхали'];
         const pick = options[await modal(this.drive.overlay, 'СТО', `${text} Гроші: ${formatMoney(c.money)}.`, options)];
         if (pick === 'Ремонт') {
-          if (c.money < cost) await modal(this.drive.overlay, 'СТО', this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'), ['Гаразд']);
+          if (c.money < cost) await modal(this.drive.overlay, 'СТО', this.msg('NOT_ENOUGH_MONEY', 'НЕ ВИСТАЧАЄ ГРОШЕЙ'), ['Гаразд']);
           else {
             c.money -= cost;
             c.damage = 0;
@@ -577,7 +578,7 @@ export class CareerMode {
     const u = list[i];
     if (!u || owned.includes(u.key)) return;
     if (c.money < u.price) {
-      await modal(this.drive.overlay, 'Покращення', this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'), ['Гаразд']);
+      await modal(this.drive.overlay, 'Покращення', this.msg('NOT_ENOUGH_MONEY', 'НЕ ВИСТАЧАЄ ГРОШЕЙ'), ['Гаразд']);
       return;
     }
     c.money -= u.price;

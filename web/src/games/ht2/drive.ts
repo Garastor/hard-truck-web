@@ -43,6 +43,7 @@ import type { Ht2Career } from './career/career';
 import { HT2_MOD_REGIONS, readTextures } from './files';
 import { timeScale, type Ht2Settings } from './ui/settings';
 import { EscArt } from './ui/escArt';
+import { ukMessage } from './ui/uk';
 import { Tablo } from './ui/tablo';
 import { Cards } from './ui/cards';
 
@@ -289,7 +290,7 @@ export class Ht2Drive {
     }
     if (o.race) {
       const ms = await o.source.read('Ms.sch').then(readSch).catch(() => []);
-      for (const m of ms) if (Array.isArray(m) && typeof m[0] === 'string') this.raceMessages.set(m[0], str(m[m.length - 1]));
+      for (const m of ms) if (Array.isArray(m) && typeof m[0] === 'string') this.raceMessages.set(m[0], ukMessage(m[0], str(m[m.length - 1])));
       this.race = new RaceMode(this, this.roads, (k, fb) => this.raceMessages.get(k) ?? fb);
       this.race.onFinish = () => o.onExit();
     }

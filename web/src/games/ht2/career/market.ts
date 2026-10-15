@@ -7,6 +7,7 @@ import type { Way } from '../formats/way';
 import type { TechRecord } from '../formats/tech';
 import { drivable, truckDef, type Ht2Trucks } from '../vehicles/trucks';
 import { toThree } from '../world/world';
+import { ukName } from '../ui/uk';
 
 /**
  * Ринки вантажівок HT2 — `parking` з `ENV/mod_<регіон>.sch`:
@@ -61,11 +62,11 @@ export function parseMarkets(mods: Iterable<{ sch: SExpr[] }>, ways: Iterable<{ 
       if (!isList(e) || e[0] !== 'parking' || num(e[3], -1) < 0 || !isList(e[5])) continue;
       // Частина назв у даних — «??» (не заповнені): показуємо «Ринок».
       const name = str(e[2]);
-      const m: Market = { id: num(e[3]), name: /^\?*$/.test(name) ? 'Ринок' : name, town: '', spots: [] };
+      const m: Market = { id: num(e[3]), name: /^\?*$/.test(name) ? 'Ринок' : ukName(name), town: '', spots: [] };
       for (const n of e[5]) {
         if (!isList(n)) continue;
         const node = nodes.get(str(n[1]).toLowerCase());
-        if (n.length > 3) m.town = str(n[3]);
+        if (n.length > 3) m.town = ukName(str(n[3]));
         if (node) m.spots.push({ pos: toThree(...node.pos), heading: node.dir });
       }
       if (m.spots.length) out.push(m);

@@ -165,29 +165,29 @@ export class Tablo {
     const icon = (x: number, y: number, t: string) => ic.draw(ctx, t, x, y - ic.height, INK);
     const right = (font: typeof m, x: number, y: number, t: string) => font.draw(ctx, t, x - font.measure(t), y - font.height, INK);
     if (s.position) {
-      label(o + 26, 23, 'ПОЗИЦИЯ');
+      label(o + 26, 23, 'ПОЗИЦІЯ');
       icon(o + 26, 43, small(String(s.position.place)));
-      label(o + 50 - Math.floor(m.measure('ИЗ') / 2), 38, 'ИЗ');
+      label(o + 50 - Math.floor(m.measure('З') / 2), 38, 'З');
       icon(o + 63, 43, small(String(s.position.of)));
     }
     if (s.timeLeft != null) {
       const t = Math.max(0, Math.floor(s.timeLeft / 60));
-      label(o + 85, 23, 'ОСТ.ВРЕМЯ');
+      label(o + 85, 23, 'ЗАЛИШОК');
       icon(o + 85, 43, small(`${two(t / 60)}:${two(t % 60)}`));
     }
     if (s.licences && s.licences.count > 0) {
       const t = Math.max(0, Math.floor(s.licences.left / 60));
-      label(o + 154, 23, 'ЛИЦЕНЗИЙ');
+      label(o + 154, 23, 'ЛІЦЕНЗІЙ');
       label(o + 210, 23, String(s.licences.count));
       icon(o + 158, 43, small(`${two(t / 60)}:${two(t % 60)}`));
     }
     right(ic, o + 287, 38, String(Math.round(s.mph ? s.speed / 1.609 : s.speed)));
-    label(o + 291, 40, s.mph ? 'MPH' : 'КМ/Ч');
+    label(o + 291, 40, s.mph ? 'MPH' : 'КМ/ГОД');
     if (s.handbrake && this.blink) icon(o + 315, 40, '[\\');
     const gear = s.gear < 0 ? 'R' : s.gear === 0 ? 'N' : String(s.gear);
     label(o + 361 + (s.automatic ? 15 : 0), 23, `${s.automatic ? 'АКПП' : 'КПП'}  ${gear}`);
     right(ic, o + 386, 43, small(String(Math.max(0, Math.round(s.rpm / 100)))));
-    label(o + 386, 40, 'X100 ОБ/М');
+    label(o + 386, 40, 'X100 ОБ/ХВ');
     const coupled = s.trailer === 'on' || (s.trailer === 'coupling' && this.blink);
     icon(o + 458, 40, coupled ? 'MN' : 'KL');
     const level = (v: number) => String.fromCharCode(0x50 + Math.max(0, Math.min(10, Math.round(v * 10))));

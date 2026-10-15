@@ -1,5 +1,6 @@
 import { isList, num, str, type SExpr } from '../formats/sexpr';
 import type { Way } from '../formats/way';
+import { ukName } from '../ui/uk';
 
 /**
  * Економіка Дальнобойщиків 2 (G6, перша версія).
@@ -62,17 +63,17 @@ export const NO_GROUND = new Set<string>();
 
 /** Міста за дорожніми знаками `town_<код>.txr` (регіон → назва). */
 export const TOWNS: Record<string, string> = {
-  aa: 'Алмазный',
-  ad: 'Боровое',
-  aj: 'Приозерск',
-  am: 'Шахты',
-  ap: 'Южный',
-  ar: 'Залеск',
-  au: 'Ельнино',
+  aa: 'Алмазний',
+  ad: 'Борове',
+  aj: 'Приозерськ',
+  am: 'Шахти',
+  ap: 'Південний',
+  ar: 'Залісськ',
+  au: 'Єльніно',
   bd: 'Бухта',
-  cb: 'Нижнегорск',
-  dc: 'Горный',
-  dr: 'Кольцо',
+  cb: 'Нижньогірськ',
+  dc: 'Гірський',
+  dr: 'Кільце',
 };
 
 export function parseGoods(sch: SExpr[]): Goods[] {
@@ -82,7 +83,7 @@ export function parseGoods(sch: SExpr[]): Goods[] {
     const inner = e[4];
     const classes = inner.find((x): x is SExpr[] => isList(x)) ?? [];
     // Деякі товари без назви (ANALEPSIN…) — показуємо ID.
-    const name = str(e[e.length - 1]) || e[0];
+    const name = ukName(str(e[e.length - 1]) || e[0]);
     out.push({
       id: e[0],
       name,
@@ -120,7 +121,7 @@ export function parseTowns(mods: Iterable<{ region: string; sch: SExpr[] }>): Ma
       const nodes = e[5].filter(isList).map((n) => str(n[1]));
       if (!nodes.some((n) => /^node_store_\d{4}$/i.test(n))) continue;
       const goods = isList(e[7]) ? e[7].filter(isList).map((g) => str(g[0]).toUpperCase()) : [];
-      out.set(num(e[3]), { store: num(e[3]), name: str(e[2]), region, goods });
+      out.set(num(e[3]), { store: num(e[3]), name: ukName(str(e[2])), region, goods });
     }
   return out;
 }

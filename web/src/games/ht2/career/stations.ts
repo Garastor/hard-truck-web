@@ -37,7 +37,7 @@ export function orderPanel(art: EscArt, parent: HTMLElement, o: OrderView, take:
     `${Math.round(o.fragility)}%`,
   ];
   rows.forEach((t, i) => p.write(125, 572 + i * 20, t.slice(0, 16), VALUE));
-  p.write(25, 732, `СКЛАД ЗАГРУЗКИ ${o.dock}`, VALUE);
+  p.write(25, 732, `СКЛАД ЗАВАНТАЖЕННЯ ${o.dock}`, VALUE);
   p.action(20, 745, 185, 'Взяти (+)', take);
   return p;
 }
@@ -53,9 +53,9 @@ export interface SaleView {
 /** Ринок: машина, біля якої стоїмо (king.exe: x = 103, рядки 600…660). */
 export function salePanel(art: EscArt, parent: HTMLElement, s: SaleView, buy: () => void): SidePanel {
   const p = new SidePanel(art, parent, 'm_16\\BackSale.txr');
-  p.write(103, 600, s.model + (s.used ? ' Б/У' : ''), VALUE);
+  p.write(103, 600, s.model + (s.used ? ' ВЖИВ.' : ''), VALUE);
   p.write(103, 620, `$${Math.round(s.price)}`, VALUE);
-  p.write(103, 640, `${Math.round(s.power)} Л.С.`, VALUE);
+  p.write(103, 640, `${Math.round(s.power)} К.С.`, VALUE);
   p.write(103, 660, `${(s.load / 1000).toFixed(2)}Т`, VALUE);
   p.action(20, 690, 185, 'Купити (+)', buy);
   return p;
