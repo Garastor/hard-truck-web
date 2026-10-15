@@ -46,6 +46,7 @@ import { EscArt } from './ui/escArt';
 import { ukMessage } from './ui/uk';
 import { EscMenu, type EscCommand } from './ui/escMenu';
 import { FPanels, type FPanel } from './ui/fPanels';
+import { TabMap } from './ui/tabMap';
 import { Tablo } from './ui/tablo';
 import { Cards } from './ui/cards';
 
@@ -173,6 +174,9 @@ export class Ht2Drive {
   private escMenu: EscMenu | null = null;
   /** Ліві панелі F1–F4 (клавіші, рейтинг, інфо, компанія). */
   private fPanels: FPanels | null = null;
+  /** Карта на Tab з графікою оригіналу (огляд → збільшено → сховано). */
+  private tabMap: TabMap | null = null;
+  private mapPoints: MapPoint[] = [];
   /** Виклик 911: відлік до відновлення (машина на гальмах), куди перенести, ціна. */
   private rescue: { left: number; done?: boolean; ready: Promise<{ position: THREE.Vector3; forward: THREE.Vector3 } | null>; cost: number } | null = null;
   /** Вихід без збереження («не зберігати», «завантажити гру»). */
@@ -287,6 +291,7 @@ export class Ht2Drive {
           if (/^node_car_fuel/i.test(n.name)) points.push({ pos: toThree(...n.pos), kind: 'fuel' });
         }
     for (const m of parseMarkets(regionMods, this.world.regions.values())) points.push({ pos: m.spots[0].pos, kind: 'market', label: m.name });
+    this.mapPoints = points;
     this.worldMap = new WorldMap(document.body, this.roads.lines.filter((l) => !l.name.endsWith('r')), points);
     this.worldMap.onClose = () => {
       this.paused = false;
@@ -326,7 +331,9 @@ export class Ht2Drive {
         // З напівпричепом — повільніше в поворотах (кермо на швидкості обмежене).
         if (this.autopilot && this.trailer) Object.assign(this.autopilot, { cruise: 45, bendGain: 5, bendFloor: 0.25 });
       }
-      if (cmd === 'map' && this.map) this.map.el.hidden = !this.map.el.hidden;
+      // Tab: з графікою оригіналу — карта king.exe (три стани), інакше — мінікарта порту.
+      if (cmd === 'map' && this.tabMap) this.tabMap.cycle();
+      else if (cmd === 'map' && this.map) this.map.el.hidden = !this.map.el.hidden;
       if (cmd === 'lights') this.lightsManual = !this.lamps[0]?.visible;
       if (cmd === 'reset') this.recover();
       if (cmd === 'menu') this.toggleEsc();
@@ -356,7 +363,7 @@ export class Ht2Drive {
     const map = document.createElement('button');
     map.textContent = 'Карта';
     map.setAttribute('aria-label', 'Карта світу');
-    map.addEventListener('click', () => this.openMap());
+    map.addEventListener('click', () => (this.tabMap ? this.tabMap.cycle() : this.openMap()));
     // «Інфо» — панелі F1–F4 оригіналу (на телефоні немає F-клавіш); показується, коли є графіка esc16.RES.
     const info = document.createElement('button');
     info.textContent = 'Інфо';
@@ -374,6 +381,7 @@ export class Ht2Drive {
       this.tablo.onPage = () => this.audio?.playOnce('pager');
       this.cards = new Cards(art, o.overlay);
       this.fPanels = new FPanels(art, o.overlay, () => this.fData());
+      this.tabMap = new TabMap(art, o.overlay, this.roads.lines.filter((l) => !l.name.endsWith('r')), this.mapPoints);
       document.body.classList.add('ht2-orig-ui');
       this.resize();
     });
@@ -1033,6 +1041,7 @@ export class Ht2Drive {
     if (sign) this.say(sign, 6);
     const chaser = this.mafia?.chaser;
     this.fPanels?.update(dt);
+    this.tabMap?.draw(dt, this.truck.visual.position, this.truckers?.positions ?? [], this.careerMode?.target() ?? null);
     this.map?.update(dt, this.truck.visual.position, this.truck.forward(), [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? []), ...(chaser ? [chaser] : [])], this.careerMode?.target() ?? null);
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
     // Поруч далекобійник — його імʼя й машина (names.sch, vehicle.tech).
@@ -1178,6 +1187,7 @@ export class Ht2Drive {
     this.careerMode?.dispose();
     this.escMenu?.close();
     this.fPanels?.close();
+    this.tabMap?.dispose();
     this.rainSound?.stop();
     this.windSound?.stop();
     this.opts.renderer.setAnimationLoop(null);

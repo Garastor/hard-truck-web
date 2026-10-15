@@ -311,6 +311,21 @@ body.ht2-orig-ui .nav-map {
   display: none;
 }
 
+/* Карта на Tab (ui/tabMap.ts): поверх їзди, під табло й панелями; дотики проходять крізь неї. */
+.ht2-tabmap {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+
+.ht2-tabmap[hidden] {
+  display: none;
+}
+
 /* Меню Esc (ui/escMenu.ts): дотик поза панеллю закриває меню; кнопки порту під ним сховані. */
 .ht2-esc-catcher {
   position: fixed;
