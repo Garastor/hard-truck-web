@@ -107,7 +107,9 @@ interface Label {
    * Як прибрати старий напис: типово — заповнення по стовпчиках; `ink` — лише пікселі жовтого тексту й контуру
    * навколо (картки відповідей рації на фото), заповнення від сусідів.
    */
-  mode?: 'ink';
+  mode?: 'ink' | 'green';
+  /** Без тіні (темний текст на світлому). */
+  noShadow?: boolean;
 }
 
 /**
@@ -183,9 +185,34 @@ const RADIO_UK: Record<string, Label[]> = {
   'm_16/f5o_ans_probl.txr': answer(['– ПРОБЛЕМИ?'], 27, [0, 22, 128, 50]),
 };
 
+/**
+ * Екран «Гра» головного меню (`s/backsing.txr` у LOAD.RES): темні підписи на білих смугах ліворуч (великі літери
+ * 5 рядків, вирівняні праворуч; у частини рядків далі стрілка «›», вона лишається) і «ПУСТО» на картинці слота збереження. ПОГОДА, МАШИНА —
+ * так само українською.
+ */
+function bar(top: number, x0: number, x1: number, text: string): Label {
+  return { erase: [x0 - 1, top - 1, x1, top + 5], text, x: x1, base: top + 5, align: 'right', cap: 5, maxW: x1 - x0 + 4, group: 'sing', color: 'rgb(18,18,18)', noShadow: true };
+}
+const MENU_UK: Record<string, Label[]> = {
+  's/backsing.txr': [
+    bar(184, 236, 290, 'РІВЕНЬ'),
+    bar(194, 228, 294, 'СКЛАДНОСТІ'),
+    bar(217, 213, 294, 'НАСИЧЕНІСТЬ'),
+    bar(227, 255, 290, 'ТРАС'),
+    bar(247, 211, 294, 'ТРИВАЛІСТЬ'),
+    bar(257, 258, 291, 'ДОБИ'),
+    bar(414, 213, 294, 'ЗБЕРЕЖЕНІ'),
+    bar(425, 261, 290, 'ІГРИ'),
+    { erase: [489, 423, 553, 441], text: 'ПОРОЖНЬО', x: 522, base: 439, align: 'center', cap: 14, maxW: 62, color: 'rgb(255,255,0)', mode: 'ink' },
+  ],
+  // Підтвердження виходу: зелений заголовок з розрідженими літерами на темній плашці.
+  'e/backexit.txr': [{ erase: [312, 244, 486, 254], text: 'ВИЙТИ З ГРИ', x: 399, base: 253, align: 'center', cap: 7, maxW: 170, spacing: 6, mode: 'green' }],
+};
+
 /** Виміряно на фонах (re/notes/ht2/ui.md §3): клітинки, заголовки, кольори. */
 const BACKGROUND_UK: Record<string, Label[]> = {
   ...RADIO_UK,
+  ...MENU_UK,
   'm_16/backjob.txr': [
     title([54, 415, 209, 437], 'ШУКАЮ РОБОТУ', 131, 434, 14, 3),
     ...column(51, 96, 568, 20, ['ІМʼЯ', 'ТАРИФ', 'МАШИНА', 'ЦІНА'], 'left', 'job'),
@@ -373,6 +400,7 @@ function drawText(
   underline = false,
   fixed?: number,
   spacing = 0,
+  shadow = true,
 ): void {
   ctx.font = `bold ${Math.round(cap / 0.72)}px ${FONT}`;
   ctx.textBaseline = 'alphabetic';
@@ -381,10 +409,12 @@ function drawText(
   ctx.save();
   ctx.translate(align === 'center' ? x - (tw * k) / 2 : align === 'right' ? x - tw * k : x, y);
   ctx.scale(k, 1);
-  ctx.shadowColor = 'rgba(0,0,0,0.85)';
-  ctx.shadowOffsetX = 2;
-  ctx.shadowOffsetY = 2;
-  ctx.shadowBlur = 2;
+  if (shadow) {
+    ctx.shadowColor = 'rgba(0,0,0,0.85)';
+    ctx.shadowOffsetX = 2;
+    ctx.shadowOffsetY = 2;
+    ctx.shadowBlur = 2;
+  }
   ctx.fillStyle = color;
   if (spacing) {
     let cx = 0;
@@ -458,16 +488,19 @@ export function localizeButton(base: string, states: Record<string, ImageData>, 
 }
 
 /**
- * Стирає жовтий текст з темним контуром у прямокутнику: маска — жовті пікселі, розширена на 2 (контур і тінь),
- * заповнюється середнім уже відомих сусідів шарами від краю (фото під написом лишається довкола).
+ * Стирає жовтий (green — зелений: заголовок виходу з гри) текст з темним контуром у прямокутнику: маска — пікселі
+ * тексту, розширена на 2 (контур і тінь), заповнюється середнім уже відомих сусідів шарами від краю (фото під
+ * написом лишається довкола).
  */
-function eraseInk(img: ImageData, x0: number, y0: number, x1: number, y1: number): void {
+function eraseInk(img: ImageData, x0: number, y0: number, x1: number, y1: number, green = false): void {
   const { width: w, height: h, data } = img;
   const todo = new Uint8Array(w * h);
   for (let y = Math.max(0, y0); y <= Math.min(h - 1, y1); y++)
     for (let x = Math.max(0, x0); x <= Math.min(w - 1, x1); x++) {
       const i = (y * w + x) * 4;
-      if (data[i] > 170 && data[i + 1] > 170 && data[i + 2] < 120)
+      const r = data[i];
+      const g = data[i + 1];
+      if (green ? g > 80 && g > r + 20 : r > 170 && g > 170 && data[i + 2] < 120)
         for (let dy = -2; dy <= 3; dy++)
           for (let dx = -2; dx <= 3; dx++) {
             const xx = x + dx;
@@ -530,7 +563,10 @@ export function localizeBackground(name: string, canvas: HTMLCanvasElement): voi
   const ctx = canvas.getContext('2d')!;
   const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const colors = items.map((it) => it.color ?? brightest(img, it.erase));
-  for (const it of items) (it.mode === 'ink' ? eraseInk : fillColumns)(img, ...it.erase);
+  for (const it of items) {
+    if (it.mode) eraseInk(img, ...it.erase, it.mode === 'green');
+    else fillColumns(img, ...it.erase);
+  }
   ctx.putImageData(img, 0, 0);
   // Одна група — один стиск (за найдовшим підписом відносно його місця).
   const scale = new Map<string, number>();
@@ -540,5 +576,5 @@ export function localizeBackground(name: string, canvas: HTMLCanvasElement): voi
     const g = it.group ?? `#${i}`;
     scale.set(g, Math.min(scale.get(g) ?? 1, k));
   });
-  items.forEach((it, i) => drawText(ctx, it.text, it.x, it.base, it.cap, it.maxW, colors[i], it.align, false, scale.get(it.group ?? `#${i}`), it.spacing));
+  items.forEach((it, i) => drawText(ctx, it.text, it.x, it.base, it.cap, it.maxW, colors[i], it.align, false, scale.get(it.group ?? `#${i}`), it.spacing, !it.noShadow));
 }

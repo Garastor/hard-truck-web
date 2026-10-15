@@ -5,7 +5,8 @@ import { parsePlm } from '../engine/formats/plm';
 import type { RgbaImage } from '../engine/formats/binary';
 import type { PixelFont } from '../engine/ui/pixelFont';
 import type { Ht2Settings } from './settings';
-import { localizeRound } from './menuLocale';
+import { localizePill, localizeRound } from './menuLocale';
+import { localizeBackground } from './escLocale';
 import './ht2.css';
 
 /**
@@ -31,7 +32,15 @@ export class Ht2MenuArt {
     }
   }
 
+  /** Фон чи кнопка LOAD.RES; російські підписи фонів замінено українськими (escLocale.ts). */
   background(name: string): HTMLCanvasElement | null {
+    const c = this.raw(name);
+    if (c) localizeBackground(name, c);
+    return c;
+  }
+
+  /** Картинка LOAD.RES як є. */
+  private raw(name: string): HTMLCanvasElement | null {
     const b = this.res.textures.get(name);
     return b ? toCanvas(parseTxr(b)) : null;
   }
@@ -49,8 +58,9 @@ export class Ht2MenuArt {
   image(name: string): string | null {
     if (!this.cache.has(name)) {
       const c = name.endsWith('.msk') ? this.mask(name) : this.background(name);
-      // Круглі кнопки головного меню — з українськими написами (menuLocale.ts).
+      // Круглі кнопки головного меню й пігулки екранів «Гра» / «Вихід» — з українськими написами (menuLocale.ts).
       if (c && name.startsWith('m/')) localizeRound(name, c, (n) => this.mask(n));
+      if (c && /^[se]\//.test(name)) localizePill(name, c, (n) => this.raw(n));
       this.cache.set(name, c ? c.toDataURL() : null);
     }
     return this.cache.get(name)!;

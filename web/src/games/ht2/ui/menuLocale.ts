@@ -422,3 +422,105 @@ export function localizeRound(name: string, canvas: HTMLCanvasElement, mask: (na
   });
   return true;
 }
+
+/**
+ * Кнопки-«пігулки» екранів «Гра» й «Вихід з гри» (`s/<імʼя>_<стан>.txr`, `e/canc_*.txr`): одноколірний напис на
+ * однорідній (по горизонталі) заливці; у звичайному стані — світлий на темному. Ці літери більші за літери круглих
+ * кнопок, і для «СКАСУВАТИ» / «ЗАВАНТАЖИТИ» потрібних (С, К, Ж) у написах немає, тож новий напис — вузьким
+ * жирним шрифтом, як підписи вікон esc16.RES; у групі (одне вікно) — однаковий стиск літер.
+ */
+const PILL_UK: Record<string, { text: string; group: string; spacing?: number }> = {
+  's/new': { text: 'НОВА ГРА', group: 'big' },
+  's/load': { text: 'ЗАВАНТАЖИТИ', group: 'big' },
+  's/canc': { text: 'СКАСУВАТИ', group: 'big', spacing: 2 },
+  's/arcad': { text: 'АРКАДНИЙ', group: 'small' },
+  's/mecar': { text: 'ЛЕГКОВА', group: 'small' },
+  's/metruck': { text: 'ВАНТАЖНА', group: 'small' },
+  'e/canc': { text: 'СКАСУВАТИ', group: 'exit', spacing: 2 },
+};
+const PILL_FONT = '"Arial Narrow", "Roboto Condensed", "Helvetica Neue", Arial, sans-serif';
+
+/** Рамка напису звичайного стану: світлі пікселі всередині темної пігулки (без обідка). */
+function pillBox(img: Img): [number, number, number, number] | null {
+  const { width: w, height: h, data: d } = img;
+  let b: [number, number, number, number] | null = null;
+  for (let y = Math.round(h * 0.22); y < h * 0.78; y++)
+    for (let x = Math.round(w * 0.1); x < w * 0.9; x++) {
+      if (d[(y * w + x) * 4 + 1] < 100) continue;
+      b = b ? [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)] : [x, y, x, y];
+    }
+  return b;
+}
+
+const pillScale = new Map<string, number>();
+function pillFit(ctx: CanvasRenderingContext2D, group: string, cap: number, width: number): number {
+  const key = `${group}:${cap}:${width}`;
+  if (!pillScale.has(key)) {
+    ctx.font = `bold ${Math.round(cap / 0.72)}px ${PILL_FONT}`;
+    const widest = Math.max(...Object.values(PILL_UK).filter((p) => p.group === group).map((p) => ctx.measureText(p.text).width + (p.spacing ?? 0) * (p.text.length - 1)));
+    pillScale.set(key, Math.min(1, width / widest));
+  }
+  return pillScale.get(key)!;
+}
+
+/** Українізувати стан кнопки-пігулки на місці (base_p — картинка звичайного стану для рамки напису). */
+export function localizePill(name: string, canvas: HTMLCanvasElement, background: (name: string) => HTMLCanvasElement | null): boolean {
+  const m = /^([se]\/[a-z]+)_(p|a|ap|pp|ph|f)\.txr$/.exec(name);
+  const uk = m && PILL_UK[m[1]];
+  if (!m || !uk) return false;
+  const base = background(`${m[1]}_p.txr`);
+  if (!base) return false;
+  const w = canvas.width;
+  const h = canvas.height;
+  const box = pillBox(base.getContext('2d')!.getImageData(0, 0, w, h));
+  if (!box) return false;
+  const g = canvas.getContext('2d')!;
+  const img = g.getImageData(0, 0, w, h);
+  const d = img.data;
+  const [x0, y0, x1, y1] = [box[0] - 2, box[1] - 2, box[2] + 2, box[3] + 2];
+  // Колір напису стану — найдальші від заливки рядка пікселі рамки; заливка рядка — з країв рамки.
+  const edge = (x: number, y: number) => [0, 1, 2].map((ch) => (d[(y * w + x) * 4 + ch] + d[(y * w + x - 1) * 4 + ch]) / 2);
+  const fills: number[][][] = [];
+  const ink: [number, number[]][] = [];
+  for (let y = y0; y <= y1; y++) {
+    const a = edge(x0 - 1, y);
+    const b = edge(x1 + 2, y);
+    fills.push([a, b]);
+    for (let x = x0; x <= x1; x++) {
+      const i = (y * w + x) * 4;
+      const t = (x - x0 + 1) / (x1 - x0 + 2);
+      const bg = [0, 1, 2].map((ch) => a[ch] + (b[ch] - a[ch]) * t);
+      ink.push([Math.abs(d[i + 1] - bg[1]), [d[i], d[i + 1], d[i + 2]]]);
+    }
+  }
+  ink.sort((p, q) => q[0] - p[0]);
+  const top = ink.slice(0, Math.max(1, Math.round(ink.length * 0.12)));
+  const color = [0, 1, 2].map((ch) => Math.round(top.reduce((s, p) => s + p[1][ch], 0) / top.length));
+  // Стерти: кожен рядок — лінійно між заливкою ліворуч і праворуч від напису.
+  for (let y = y0; y <= y1; y++) {
+    const [a, b] = fills[y - y0];
+    for (let x = x0; x <= x1; x++) {
+      const i = (y * w + x) * 4;
+      const t = (x - x0 + 1) / (x1 - x0 + 2);
+      for (let ch = 0; ch < 3; ch++) d[i + ch] = a[ch] + (b[ch] - a[ch]) * t;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const cap = box[3] - box[1] + 1;
+  const k = pillFit(g, uk.group, cap, box[2] - box[0] + 1);
+  const spacing = uk.spacing ?? 0;
+  g.save();
+  g.font = `bold ${Math.round(cap / 0.72)}px ${PILL_FONT}`;
+  g.textBaseline = 'alphabetic';
+  const tw = g.measureText(uk.text).width + spacing * (uk.text.length - 1);
+  g.translate((box[0] + box[2] + 1) / 2 - (tw * k) / 2, box[3] + 1);
+  g.scale(k, 1);
+  g.fillStyle = `rgb(${color.join(',')})`;
+  let cx = 0;
+  for (const ch of uk.text) {
+    g.fillText(ch, cx, 0);
+    cx += g.measureText(ch).width + spacing;
+  }
+  g.restore();
+  return true;
+}
