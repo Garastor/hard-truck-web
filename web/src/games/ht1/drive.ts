@@ -86,6 +86,8 @@ const SHAKE_ANGLE = THREE.MathUtils.degToRad(0.245);
 const SHAKE_LIFT = 0.005;
 const SHAKE_PX = 1.2;
 const SHAKE_FULL_KMH = 50;
+/** Допуск спрощення ліній доріг на мінікарті, м (ламані як на карті HTruck.exe; на око). */
+const MAP_SIMPLIFY = 20;
 
 function classifySurface(name: string, texel: [number, number, number] | null): Surface {
   if (SURFACE_WATER.test(name)) return 'water';
@@ -764,7 +766,8 @@ export class DriveSession {
       return c;
     };
     // Вантажівки — власні фігури порту (значки ic_trucy/ic_trucw на прохання користувача прибрано), прапорці — оригінальні.
-    s.mapIcons = { start: icon('ic_flagw'), finish: icon('ic_flagr') };
+    // Дороги — ламаними з прямих відрізків, як на карті оригіналу (допуск — на око).
+    s.mapIcons = { start: icon('ic_flagw'), finish: icon('ic_flagr'), simplify: MAP_SIMPLIFY };
     s.buildCab();
     s.camMode = 'cockpit';
 

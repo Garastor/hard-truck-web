@@ -18,6 +18,33 @@ const RANGE = 260;
 export interface NavIcons {
   me?: CanvasImageSource & { width: number; height: number };
   rival?: CanvasImageSource & { width: number; height: number };
+  /**
+   * Спростити лінії доріг до ламаних (Рамер — Дуглас — Пекер, допуск у метрах): прямі відрізки зі скошеними
+   * кутами, як карта HTruck.exe. Без нього — лінії як є.
+   */
+  simplify?: number;
+}
+
+/** Ламана без точок, що відхиляються від прямої менше ніж на tol (Рамер — Дуглас — Пекер, у площині XZ). */
+function simplifyLine(pts: THREE.Vector3[], tol: number): THREE.Vector3[] {
+  if (pts.length < 3) return pts;
+  const a = pts[0];
+  const b = pts[pts.length - 1];
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const len = Math.hypot(dx, dz);
+  let far = 0;
+  let at = 0;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p = pts[i];
+    const d = len > 1e-6 ? Math.abs((p.x - a.x) * dz - (p.z - a.z) * dx) / len : Math.hypot(p.x - a.x, p.z - a.z);
+    if (d > far) {
+      far = d;
+      at = i;
+    }
+  }
+  if (far <= tol) return [a, b];
+  return [...simplifyLine(pts.slice(0, at + 1), tol).slice(0, -1), ...simplifyLine(pts.slice(at), tol)];
 }
 /** Прапорець на карті: точка світу й значок (малюється прямо, не обертається з картою). */
 export interface NavFlag {
@@ -46,7 +73,8 @@ export class NavMap {
     this.el.style.width = this.el.style.height = `${SIZE * s}px`;
     this.ctx = this.el.getContext('2d')!;
     for (const line of net.lines) {
-      line.pts.forEach((p, i) => (i ? this.roads.lineTo(p.x, p.z) : this.roads.moveTo(p.x, p.z)));
+      const pts = icons.simplify ? simplifyLine(line.pts, icons.simplify) : line.pts;
+      pts.forEach((p, i) => (i ? this.roads.lineTo(p.x, p.z) : this.roads.moveTo(p.x, p.z)));
     }
     parent.append(this.el);
   }
