@@ -169,8 +169,11 @@ export class EngineAudio {
     this.play(name, volume);
   }
 
-  /** Одноразовий звук; повертає зупинку (обірвати раніше кінця запису). */
-  play(name: string, volume = 1, rate = 1): { stop(): void } | null {
+  /**
+   * Одноразовий звук; повертає зупинку (обірвати раніше кінця запису). muffle — звук «за стінкою кабіни»: верхні
+   * частоти від muffle.from Гц тихіші на muffle.db дБ (полиця — сам звук лишається впізнаваним).
+   */
+  play(name: string, volume = 1, rate = 1, muffle?: { from: number; db: number }): { stop(): void } | null {
     const buf = this.buffers.get(name);
     if (!buf || this.ctx.state !== 'running') return null;
     const src = this.ctx.createBufferSource();
@@ -178,7 +181,13 @@ export class EngineAudio {
     src.playbackRate.value = rate;
     const g = this.ctx.createGain();
     g.gain.value = volume;
-    src.connect(g).connect(this.master);
+    if (muffle) {
+      const shelf = this.ctx.createBiquadFilter();
+      shelf.type = 'highshelf';
+      shelf.frequency.value = muffle.from;
+      shelf.gain.value = muffle.db;
+      src.connect(shelf).connect(g).connect(this.master);
+    } else src.connect(g).connect(this.master);
     src.start();
     return {
       stop: () => {
