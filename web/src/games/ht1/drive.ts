@@ -564,8 +564,8 @@ export class DriveSession {
     return out;
   }
   /**
-   * Значки карти з архіву траси, як на карті HTruck.exe (re/notes/ht1/navmap.md): вантажівка гравця — жовта,
-   * суперники — білі, прапорці — білий і червоний (білий — старт, червоний — фініш: гіпотеза).
+   * Значки карти з архіву траси, як на карті HTruck.exe (re/notes/ht1/navmap.md): прапорці — білий і червоний
+   * (білий — старт, червоний — фініш: гіпотеза).
    */
   private mapIcons: NavIcons & { start?: HTMLCanvasElement; finish?: HTMLCanvasElement } = {};
   /** Навігація дозволена (тест або встановлено «НС»): Tab ховає й показує карту. */
@@ -763,7 +763,8 @@ export class DriveSession {
       c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(m.data), m.width, m.height), 0, 0);
       return c;
     };
-    s.mapIcons = { me: icon('ic_trucy'), rival: icon('ic_trucw'), start: icon('ic_flagw'), finish: icon('ic_flagr') };
+    // Вантажівки — власні фігури порту (значки ic_trucy/ic_trucw на прохання користувача прибрано), прапорці — оригінальні.
+    s.mapIcons = { start: icon('ic_flagw'), finish: icon('ic_flagr') };
     s.buildCab();
     s.camMode = 'cockpit';
 
