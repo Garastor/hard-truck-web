@@ -379,11 +379,14 @@ export class CareerMode {
     return store ? toThree(...store.center) : null;
   }
 
-  /** Табло: гроші, стан, вантаж і куди, залишок часу, годинник. */
-  hud(): string {
+  /**
+   * Табло: гроші, стан, вантаж і куди, залишок часу, годинник. short — поруч табло оригіналу (стан і пальне вже на
+   * ньому).
+   */
+  hud(short = false): string {
     const c = this.career;
     const fuel = c.fuel ?? this.tank;
-    const parts = [formatMoney(c.money), `стан ${Math.round((1 - c.damage) * 100)}%`, `пальне ${Math.round(fuel)} л${fuel < this.tank * 0.15 ? '!' : ''}`, formatClock(c.time)];
+    const parts = short ? [formatMoney(c.money), formatClock(c.time)] : [formatMoney(c.money), `стан ${Math.round((1 - c.damage) * 100)}%`, `пальне ${Math.round(fuel)} л${fuel < this.tank * 0.15 ? '!' : ''}`, formatClock(c.time)];
     if (c.order) {
       const o = c.order;
       const to = this.stores.find((s) => s.id === o.to);

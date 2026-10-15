@@ -55,6 +55,12 @@ export const HT2_MOD_REGIONS = [
 ];
 export const HT2_MODS = HT2_MOD_REGIONS.map((r) => `ENV/mod_${r}.sch`);
 
+/**
+ * Графіка інтерфейсу в дорозі (табло, пейджер, картки подій, бічні панелі, рація — re/notes/ht2/ui.md).
+ * Необовʼязкова: без неї — власний інтерфейс порту (імпорт, зроблений раніше, лишається робочим).
+ */
+export const HT2_UI = ['COMMON/esc16.RES'];
+
 /** Повний набір текстур → половинний (запасний, імпортований раніше). */
 export function halfTextures(path: string): string {
   if (/^COMMON\/COMMON\.RES$/i.test(path)) return 'COMMON/common1.res';
@@ -79,7 +85,7 @@ export const HT2_FILES: FileSet<'ht2'> = {
   game: 'ht2',
   required: HT2_REQUIRED,
   prefix: 'ht2/',
-  canonical: (path) => matchRequired(HT2_REQUIRED, path) ?? matchRequired(HT2_MUSIC, path) ?? matchRequired(HT2_MODS, path) ?? matchRequired(HT2_HALF_TEX, path),
+  canonical: (path) => matchRequired(HT2_REQUIRED, path) ?? matchRequired(HT2_MUSIC, path) ?? matchRequired(HT2_MODS, path) ?? matchRequired(HT2_UI, path) ?? matchRequired(HT2_HALF_TEX, path),
 };
 
 /** Dev-сервер ПК: файли HT2 за `/game2/` (vite.config.ts). */

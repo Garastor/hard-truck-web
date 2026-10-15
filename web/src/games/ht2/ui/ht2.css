@@ -249,3 +249,35 @@ body.game-ht2 .drive-hud {
   border-radius: 50%;
   vertical-align: -1px;
 }
+
+/*
+ * Табло оригіналу (esc16.RES, ui/tablo.ts): угорі на всю ширину; кнопки «Меню», ♪, «Карта», рядок кар'єри, сенсорні
+ * кнопки й мінікарта — під ним (--ht2-tablo-h — висота табло, --ht2-pager-h — пейджер під ним на вузьких екранах).
+ */
+.ht2-tablo {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  image-rendering: pixelated;
+}
+
+body.ht2-orig-ui .ht2-hud {
+  top: calc(env(safe-area-inset-top, 0px) + var(--ht2-tablo-h, 0px) + 6px);
+}
+
+body.ht2-orig-ui .ht2-drive-bar {
+  top: calc(env(safe-area-inset-top, 0px) + var(--ht2-tablo-h, 0px) + var(--ht2-pager-h, 0px) + 40px);
+  left: max(8px, env(safe-area-inset-left)) !important;
+}
+
+body.ht2-orig-ui .touch-btn.cam,
+body.ht2-orig-ui .touch-btn.reset,
+body.ht2-orig-ui .touch-btn.horn,
+body.ht2-orig-ui .touch-btn.more {
+  top: calc(env(safe-area-inset-top, 0px) + max(64px, var(--ht2-tablo-h, 0px) + 8px));
+}
+
+body.ht2-orig-ui .nav-map {
+  top: calc(max(8px, env(safe-area-inset-top)) + max(60px, var(--ht2-tablo-h, 0px) + 60px));
+}

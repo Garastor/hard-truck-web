@@ -1,11 +1,14 @@
 /**
- * Растрові шрифти оригіналу (MENU.FON — 6×9, large.fon — 12×17).
+ * Растрові шрифти оригіналу (MENU.FON — 6×9, large.fon — 12×17; HT2: matrix.fon — 7×12, icon.fon — 25×30).
  *
  * Формат — TGA з палітрою: заголовок (u16 при 0xC — ширина зображення, 0xE — висота; байт 0x11 — дескриптор),
  * пікселі — останні W·H байт файлу, по байту на піксель (0 — порожньо). Рядки знизу вгору (MENU.FON), а з бітом
  * 0x20 дескриптора — згори вниз (large.fon). Зображення — сітка 16×16 клітинок, символ з кодом c (cp1251) — у клітинці
  * (рядок c div 16, стовпчик c mod 16). Верхній рядок клітинки — смужка, довжина якої = ширина символу;
  * решта рядків — сам символ.
+ * 16-бітні шрифти HT2 (байт 0x10 = 16: matrix.fon, icon.fon — табло) — TGA тип 2: пікселі по 2 байти одразу після
+ * заголовка й поля ID, далі PFRM/ENDR; зафарбовано — будь-яке ненульове значення (у icon.fon символи 0x30–0x6F
+ * намальовано майже чорним, 0xB0–0xEF — червоним; форма та сама).
  */
 import { BinReader } from './binary';
 
@@ -28,13 +31,18 @@ export function parseFon(bytes: Uint8Array): BitmapFont {
   r.pos = 0xc;
   const w = r.u16();
   const h = r.u16();
-  if (w % 16 || h % 16 || w * h > bytes.length) throw new Error(`FON: розмір ${w}×${h}`);
+  const wide = bytes[0x10] === 16;
+  const size = w * h * (wide ? 2 : 1);
+  if (w % 16 || h % 16 || size > bytes.length) throw new Error(`FON: розмір ${w}×${h}`);
   const cellW = w / 16;
   const cellH = h / 16;
-  const off = bytes.length - w * h;
+  const off = wide ? 18 + bytes[0] : bytes.length - size;
   const topDown = (bytes[0x11] & 0x20) !== 0;
   // Рядок y зображення (згори) лежить у файлі як рядок y (згори вниз) або (h − 1 − y) (знизу вгору).
-  const px = (x: number, y: number) => bytes[off + (topDown ? y : h - 1 - y) * w + x];
+  const row = (y: number) => (topDown ? y : h - 1 - y) * w;
+  const px = wide
+    ? (x: number, y: number) => bytes[off + (row(y) + x) * 2] | bytes[off + (row(y) + x) * 2 + 1]
+    : (x: number, y: number) => bytes[off + row(y) + x];
   const glyphs: (Glyph | null)[] = [];
   for (let code = 0; code < 256; code++) {
     const cx = (code % 16) * cellW;

@@ -42,6 +42,8 @@ import { parseRmp } from '@engine/formats/rmp';
 import type { Ht2Career } from './career/career';
 import { HT2_MOD_REGIONS, readTextures } from './files';
 import { timeScale, type Ht2Settings } from './ui/settings';
+import { EscArt } from './ui/escArt';
+import { Tablo } from './ui/tablo';
 
 /**
  * Камера за машиною — підібрана так, щоб кадр збігся зі знімком оригіналу в тій самій точці (ZilR біля бази «Южный»,
@@ -126,6 +128,10 @@ export class Ht2Drive {
   private worldMap: WorldMap | null = null;
   /** Коротке повідомлення на табло (текст і скільки ще показувати, с). */
   private notice: { text: string; time: number } | null = null;
+  /** Графіка інтерфейсу оригіналу (COMMON/esc16.RES) і верхнє табло з пейджером; без файлу — табло порту. */
+  escArt: EscArt | null = null;
+  tablo: Tablo | null = null;
+  private disposed = false;
   race: RaceMode | null = null;
   truckers: Truckers | null = null;
   private raceMessages = new Map<string, string>();
@@ -331,6 +337,14 @@ export class Ht2Drive {
     this.hud.append(back, music, map);
     // У шарі overlay — під вікнами складу й СТО (вони теж там, вище).
     o.overlay.append(this.hud, this.bar);
+    void EscArt.load(o.source).then((art) => {
+      if (!art || this.disposed) return;
+      this.escArt = art;
+      this.tablo = new Tablo(art, o.overlay);
+      this.tablo.onPage = () => this.audio?.playOnce('pager');
+      document.body.classList.add('ht2-orig-ui');
+      this.resize();
+    });
     window.addEventListener('resize', this.onResize);
     this.resize();
     this.last = performance.now();
@@ -553,7 +567,7 @@ export class Ht2Drive {
     if (c.rain !== this.raining) {
       this.raining = c.rain;
       this.truck.weatherGrip = this.raining ? 0.8 : 1;
-      this.notice = { text: this.raining ? 'Дощ: дорога слизька' : 'Дощ скінчився', time: 4 };
+      this.say(this.raining ? 'Дощ: дорога слизька' : 'Дощ скінчився', 4);
     }
     this.updateThunder(dt);
     this.tick++;
@@ -663,6 +677,7 @@ export class Ht2Drive {
   }
 
   private resize(): void {
+    this.tablo?.resize();
     const w = window.innerWidth;
     const h = window.innerHeight;
     this.opts.renderer.setSize(w, h, false);
@@ -842,10 +857,10 @@ export class Ht2Drive {
     // Мафія полює лише на вантажі класу formafia (merchandise.sch: горілка, алмази, Pentium III…).
     const mafia = this.careerMode && !this.paused ? this.mafia?.update(dt, this.truck.visual.position, !!this.careerMode.career.order?.goods.forMafia) : null;
     if (mafia === 'robbed') void this.careerMode!.robbed();
-    if (mafia === 'escaped') this.notice = { text: 'Мафія відстала', time: 4 };
+    if (mafia === 'escaped') this.say('Мафія відстала', 4);
     if (this.markets && this.careerMode) this.markets.update(this.truck.visual.position, Math.floor(this.careerMode.career.time / 86400));
     const sign = this.signs?.update(this.truck.visual.position, this.truck.forward());
-    if (sign) this.notice = { text: sign, time: 6 };
+    if (sign) this.say(sign, 6);
     const chaser = this.mafia?.chaser;
     this.map?.update(dt, this.truck.visual.position, this.truck.forward(), [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? []), ...(chaser ? [chaser] : [])], this.careerMode?.target() ?? null);
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
@@ -855,7 +870,33 @@ export class Ht2Drive {
     const chase = this.mafia?.chase;
     if (chase) who += `\nМАФІЯ позаду: ${Math.round(chase.pos.distanceTo(this.truck.visual.position))} м`;
     if (this.notice && (this.notice.time -= dt) > 0) who += `\n${this.notice.text}`;
-    this.bar.textContent = (this.careerMode ? `${drive}\n${this.careerMode.hud()}` : this.race ? `${drive}\n${this.race.hud()}` : drive) + who;
+    if (this.tablo) {
+      // Табло оригіналу: швидкість, передача, пальне, стан і час замовлення — на ньому; у рядку — решта.
+      this.drawTablo(dt, state.handbrake);
+      this.bar.textContent = (this.careerMode ? this.careerMode.hud(true) : this.race ? this.race.hud() : '') + who;
+    } else this.bar.textContent = (this.careerMode ? `${drive}\n${this.careerMode.hud()}` : this.race ? `${drive}\n${this.race.hud()}` : drive) + who;
+  }
+
+  /** Повідомлення гравцю: на пейджер (з оригінальним інтерфейсом) чи в рядок табло на time с. */
+  say(text: string, time = 5): void {
+    if (this.tablo) this.tablo.message(text);
+    else this.notice = { text, time };
+  }
+
+  private drawTablo(dt: number, handbrake: boolean): void {
+    const c = this.careerMode?.career;
+    const o = c?.order;
+    this.tablo!.draw(dt, {
+      timeLeft: o ? (o.deadline - (c!.time - o.taken)) / this.timeScale : null,
+      speed: this.truck.speedKmh,
+      handbrake: handbrake || (!this.truck.engineOn && this.truck.speedKmh < 1),
+      automatic: true,
+      gear: this.truck.gear,
+      rpm: this.truck.rpm,
+      trailer: this.trailer ? 'on' : 'none',
+      fuel: c ? (c.fuel ?? this.tank) / this.tank : 1,
+      condition: c ? 1 - c.damage : 1,
+    });
   }
 
   /**
@@ -972,6 +1013,9 @@ export class Ht2Drive {
     this.map?.dispose();
     this.hud.remove();
     this.bar.remove();
+    this.disposed = true;
+    this.tablo?.dispose();
+    document.body.classList.remove('ht2-orig-ui');
     this.audio?.dispose();
     this.glassRain?.dispose();
     this.cabAsm?.dispose();
