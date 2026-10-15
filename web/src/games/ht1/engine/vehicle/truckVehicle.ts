@@ -85,12 +85,34 @@ export const SUSPENSION = {
 };
 
 /**
- * Поправка roll_lift для окремих вантажівок (за prefix з TRUCK.TCH): у ЗіЛа центр мас (CenterMassInB3D) майже на
- * метр вищий, ніж у Volvo, і він перекидався помітно частіше — на прохання користувача крен трохи менший
- * (кермо до упору: 40 км/год — 10° замість 17°, 45 — 28° замість 54°).
- * Налаштування, не дані оригіналу.
+ * Найменше бічне прискорення (частка g), за якого вантажівка без вантажу може перекинутися. Поріг ≈ половина колії /
+ * (висота центру мас × (1 − roll_lift)); у високих машин (за CenterMassInB3D центр мас ЗіЛа — 1,6 м над дорогою,
+ * Iveco — 2,1, КамАЗа — 2,3 при колії 1,7–2,2 м) з типовим roll_lift це 0,47…0,67 g — менше за бічне тертя шин
+ * (1,15): вони перекидались у звичайних поворотах на 25–50 км/год, а суперники — по кілька разів за коло. Для таких
+ * машин roll_lift піднімаємо до цього порогу (0,85 g лишав перекидання Iveco в шиканах: крен розгойдується
+ * на перекладанні керма; 1,0 g — без перекидань на CIRCUIT з 15 суперниками за 60 с); у решти (1,07…1,58 g) — без
+ * змін, Mack і Reno (0,96…0,99 g) — ледь помітно. Вантаж, як і раніше, піднімає центр
+ * мас і знижує поріг. Налаштування порту на прохання користувача (раніше — лише ЗіЛ 0,12), не дані оригіналу.
  */
-const ROLL_LIFT_BY_TRUCK: Record<string, number> = { zil: 0.12 };
+const ROLL_MIN_TIP = 1.0;
+
+/**
+ * Пружини й амортизатори коліс — пропорційно статичному навантаженню колеса (як у справжніх вантажівок: ресори
+ * під вагу осі). Rapier задає жорсткість «на одиницю маси кузова», однакову для всіх коліс, тож у машин із центром
+ * мас далеко від середини бази (Iveco, КамАЗ: CenterMassInB3D на 1,2 м позаду — задня вісь ≈ 70 % ваги) зад осідав
+ * до відбійника, а передні колеса на місці відривались від дороги — машина стояла на одній осі й лягала на бік від
+ * повороту керма. Множник колеса: частка ваги його осі (за плечима до центру мас) × кількість коліс / коліс на осі
+ * (1 — середнє). Передня вісь — перші два колеса, решта — задні. Частка обмежена 0,2…0,8.
+ */
+function axleLoads(wheelZ: number[], comZ: number): number[] {
+  const n = wheelZ.length;
+  if (n < 3) return wheelZ.map(() => 1);
+  const front = (wheelZ[0] + wheelZ[1]) / 2;
+  const rear = wheelZ.slice(2).reduce((a, z) => a + z, 0) / (n - 2);
+  if (Math.abs(rear - front) < 0.5) return wheelZ.map(() => 1);
+  const share = THREE.MathUtils.clamp((rear - comZ) / (rear - front), 0.2, 0.8);
+  return wheelZ.map((_, i) => (i < 2 ? (share * n) / 2 : ((1 - share) * n) / (n - 2)));
+}
 
 /** Частки breakpower на колесо: передні / задні (телеметрія ЗіЛ, s6) — гіпотеза для інших вантажівок. */
 const BRAKE_FRONT = 0.49;
@@ -165,8 +187,8 @@ export class TruckVehicle {
   readonly tire = TIRE;
   /** Параметри підвіски (спільні) — для підбору в консолі. */
   readonly suspension = SUSPENSION;
-  /** Поправки roll_lift за вантажівкою — для підбору в консолі. */
-  readonly rollLiftByTruck = ROLL_LIFT_BY_TRUCK;
+  /** roll_lift цієї машини (не нижче TIRE.roll_lift; див. ROLL_MIN_TIP). */
+  private autoRollLift: number = TIRE.roll_lift;
   /** Тягне напівпричіп (Дальнобойщики 2): бічні сили коліс обмежуються навантаженням, а не масою тягача. */
   towing = false;
   /**
@@ -330,11 +352,11 @@ export class TruckVehicle {
     // Вантаж: центр — над дном вантажу (center_of_cargo_bottom) на половині висоти шару.
     const [bx, by, bz] = tech.cargoBottom;
     const cargoAt = new THREE.Vector3(bx, bz + (setup.cargoHeight ?? 0) / 2, -by);
-    const com = new THREE.Vector3(cx, cy, -cz)
+    const comModel = new THREE.Vector3(cx, cy, -cz)
       .multiplyScalar(mass - cargo)
       .addScaledVector(cargoAt, cargo)
-      .divideScalar(mass)
-      .sub(colliderAt);
+      .divideScalar(mass);
+    const com = comModel.clone().sub(colliderAt);
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2 * 0.8, size.z / 2)
         .setTranslation(colliderAt.x, colliderAt.y, colliderAt.z)
@@ -349,13 +371,14 @@ export class TruckVehicle {
     );
 
     this.ctrl = world.createVehicleController(this.body);
+    const wheelAt = model.wheelBase.map((m) => g2t(new THREE.Vector3().setFromMatrixPosition(m)));
+    const load = axleLoads(wheelAt.map((c) => c.z), comModel.z);
     for (let i = 0; i < this.wheels; i++) {
-      const p = new THREE.Vector3().setFromMatrixPosition(model.wheelBase[i]);
-      const c = g2t(p);
+      const c = wheelAt[i];
       this.ctrl.addWheel({ x: c.x, y: c.y + this.suspAnchor, z: c.z }, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, this.suspRest, this.wheelRadius);
-      this.ctrl.setWheelSuspensionStiffness(i, SUSPENSION.stiffness);
-      this.ctrl.setWheelSuspensionCompression(i, SUSPENSION.compression);
-      this.ctrl.setWheelSuspensionRelaxation(i, SUSPENSION.relaxation);
+      this.ctrl.setWheelSuspensionStiffness(i, SUSPENSION.stiffness * load[i]);
+      this.ctrl.setWheelSuspensionCompression(i, SUSPENSION.compression * load[i]);
+      this.ctrl.setWheelSuspensionRelaxation(i, SUSPENSION.relaxation * load[i]);
       this.ctrl.setWheelMaxSuspensionTravel(i, SUSPENSION.travel);
       this.ctrl.setWheelMaxSuspensionForce(i, mass * 40);
       this.ctrl.setWheelFrictionSlip(i, TIRE_GRIP * this.grip);
@@ -368,6 +391,10 @@ export class TruckVehicle {
     // до BUMPER_CLEARANCE над дорогою (дорога — низ коліс у спокої).
     const wy = g2t(new THREE.Vector3().setFromMatrixPosition(model.wheelBase[0])).y;
     const ground = wy - this.suspAnchor - this.wheelRadius;
+    // Поріг перекидання без вантажу: половина колії (вужча вісь) / висота центру мас над дорогою.
+    const halfTrack = Math.min(...wheelAt.map((c) => Math.abs(c.x)));
+    const comHeight = cy - ground;
+    if (comHeight > 0.1) this.autoRollLift = Math.min(0.8, Math.max(TIRE.roll_lift, 1 - halfTrack / (comHeight * ROLL_MIN_TIP)));
     this.lightGeometry = { groundY: ground, frontZ: box.min.z, backZ: box.max.z, width: size.x };
     const bottom = ground + BUMPER_CLEARANCE;
     const top = colliderAt.y - size.y * 0.4 + 0.2;
@@ -538,7 +565,7 @@ export class TruckVehicle {
       // менший за фізичний (як rollInfluence у Bullet) — бічне тертя 1,15 інакше перекидало б у кожному повороті.
       const com = this.body.worldCom();
       const h = (com.x - p.x) * up.x + (com.y - p.y) * up.y + (com.z - p.z) * up.z;
-      const lift = this.rollLift ?? ROLL_LIFT_BY_TRUCK[this.def.prefix.toLowerCase()] ?? TIRE.roll_lift;
+      const lift = this.rollLift ?? this.autoRollLift;
       const at = { x: p.x + up.x * h * lift, y: p.y + up.y * h * lift, z: p.z + up.z * h * lift };
       this.body.applyImpulseAtPoint(impulse, at, true);
     }
