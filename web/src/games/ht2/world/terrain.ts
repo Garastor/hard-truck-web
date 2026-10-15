@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { Heightmap } from '../formats/heightmap';
-import { GROUP_WORLD, groups } from '@engine/physics/world';
+import { GROUP_WORLD, groups } from '../engine/physics/world';
 
 /**
  * Процедурний рельєф HT2 (`$$GeneratorOfTerrain` у кімнаті `room_aa_000`): сітка 771 × 771 вузлів — плитки 3 × 3 по

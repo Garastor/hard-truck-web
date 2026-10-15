@@ -1,4 +1,4 @@
-import { BinReader } from '@engine/formats/binary';
+import { BinReader } from '../engine/formats/binary';
 
 /**
  * Дорожня мережа Дальнобойщиків 2 (`ENV/*.way`): чанки `тег[4] + u32 розмір + дані`, вирівняні до 4 байтів.

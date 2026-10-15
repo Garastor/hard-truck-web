@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { walk, type B3d } from '@engine/formats/b3d';
-import type { RmpArchive } from '@engine/formats/rmp';
-import { parseTxr } from '@engine/formats/txr';
+import { walk, type B3d } from '../engine/formats/b3d';
+import type { RmpArchive } from '../engine/formats/rmp';
+import { parseTxr } from '../engine/formats/txr';
 
 /**
  * Дерева Дальнобойщиків 2 — генератор `$$TreeGenerator1` (блок 40): центр і радіус обмежувальної сфери, `i1`.

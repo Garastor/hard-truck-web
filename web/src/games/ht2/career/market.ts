@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { buildTruckModel, visibleBox } from '@engine/vehicle/trucks';
-import { GROUP_WORLD, groups } from '@engine/physics/world';
+import { buildTruckModel, visibleBox } from '../engine/vehicle/trucks';
+import { GROUP_WORLD, groups } from '../engine/physics/world';
 import { isList, num, str, type SExpr } from '../formats/sexpr';
 import type { Way } from '../formats/way';
 import type { TechRecord } from '../formats/tech';

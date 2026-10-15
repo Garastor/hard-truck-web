@@ -1,18 +1,18 @@
 import { cachedSource, idbSourceFor, missingFiles, prefetchMissing } from '@shared/gameStore';
 import type { FileSource } from '@shared/source';
-import { setSoftFont } from '@engine/ui/softUi';
-import { parseFon } from '@engine/formats/fon';
-import { PixelFont } from '@engine/ui/pixelFont';
+import { setSoftFont } from './engine/ui/softUi';
+import { parseFon } from './engine/formats/fon';
+import { PixelFont } from './engine/ui/pixelFont';
 import type { GameContext } from '@shared/gameContext';
 import { HT2_FILES, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2ExitScreen, ht2MainScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem, type RoundKey } from './ui/menu';
 import { loadSettings, saveSettings, type Ht2Settings } from './ui/settings';
-import { parseIni } from '@engine/formats/ini';
-import { decodeCp1251 } from '@engine/formats/binary';
+import { parseIni } from './engine/formats/ini';
+import { decodeCp1251 } from './engine/formats/binary';
 import { WorldViewer } from './ui/viewer';
 import { Ht2Drive } from './drive';
 import { formatMoney, loadCareer, newCareer, type Ht2Career } from './career/career';
-import { modal, setHudFont } from '@engine/ui/modal';
+import { modal, setHudFont } from './engine/ui/modal';
 
 type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files' | 'exit';
 

@@ -1,10 +1,10 @@
 import type { FileSource } from '@shared/source';
-import { parseB3d, type Block } from '@engine/formats/b3d';
-import { parseRmp } from '@engine/formats/rmp';
+import { parseB3d, type Block } from '../engine/formats/b3d';
+import { parseRmp } from '../engine/formats/rmp';
 import { parseTech, type TechRecord } from '../formats/tech';
-import { SceneAssembler } from '@engine/render/sceneBuilder';
+import { SceneAssembler } from '../engine/render/sceneBuilder';
 import { readTextures } from '../files';
-import type { TruckDef } from '@engine/vehicle/trucks';
+import type { TruckDef } from '../engine/vehicle/trucks';
 
 /**
  * Вантажівки Дальнобойщиків 2: параметри — `vehicle.tech` (formats/tech.ts), моделі — `COMMON/TRUCKS.B3D`

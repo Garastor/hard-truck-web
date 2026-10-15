@@ -1,4 +1,4 @@
-import { iniNum, type Ini } from '@engine/formats/ini';
+import { iniNum, type Ini } from '../engine/formats/ini';
 import { gameTimeScale } from '../world/climate';
 
 /**

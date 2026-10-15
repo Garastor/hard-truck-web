@@ -1,5 +1,5 @@
-import type { EngineProfile } from '@engine/vehicle/engine';
-import type { InputProfile } from '@engine/input/input';
+import type { EngineProfile } from '../engine/vehicle/engine';
+import type { InputProfile } from '../engine/input/input';
 
 /**
  * Керування Дальнобойщиків 2 з клавіатури — виміряне телеметрією king.exe (ZilR, 2026-10-13,

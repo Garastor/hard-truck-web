@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { visibleBox } from '@engine/vehicle/trucks';
-import { GROUP_WORLD, groups } from '@engine/physics/world';
+import { visibleBox } from '../engine/vehicle/trucks';
+import { GROUP_WORLD, groups } from '../engine/physics/world';
 import type { Way } from '../formats/way';
 import type { Ht2Trucks } from '../vehicles/trucks';
 import { toThree } from '../world/world';

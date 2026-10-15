@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { HT2_ENGINE, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER, HT2_BRAKE } from './vehicles/controls';
-import { AutoPilot, type WayLine } from '@engine/vehicle/autopilot';
-import { TruckVehicle } from '@engine/vehicle/truckVehicle';
-import { buildTruckModel } from '@engine/vehicle/trucks';
-import { modal } from '@engine/ui/modal';
+import { AutoPilot, type WayLine } from './engine/vehicle/autopilot';
+import { TruckVehicle } from './engine/vehicle/truckVehicle';
+import { buildTruckModel } from './engine/vehicle/trucks';
+import { modal } from './engine/ui/modal';
 import type { Ht2Roads } from './world/roads';
 import { drivable, truckDef } from './vehicles/trucks';
 import { toThree } from './world/world';

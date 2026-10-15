@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { WayLine } from '@engine/vehicle/autopilot';
+import type { WayLine } from '../engine/vehicle/autopilot';
 import type { Way } from '../formats/way';
 import { toThree } from './world';
 

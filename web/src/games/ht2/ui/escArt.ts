@@ -1,9 +1,9 @@
-import { parseRmp, normName, type RmpArchive } from '@engine/formats/rmp';
-import { parseTxr } from '@engine/formats/txr';
-import { parseMsk } from '@engine/formats/msk';
-import { parseFon } from '@engine/formats/fon';
-import { PixelFont } from '@engine/ui/pixelFont';
-import type { RgbaImage } from '@engine/formats/binary';
+import { parseRmp, normName, type RmpArchive } from '../engine/formats/rmp';
+import { parseTxr } from '../engine/formats/txr';
+import { parseMsk } from '../engine/formats/msk';
+import { parseFon } from '../engine/formats/fon';
+import { PixelFont } from '../engine/ui/pixelFont';
+import type { RgbaImage } from '../engine/formats/binary';
 import type { FileSource } from '@shared/source';
 
 /**

@@ -3,7 +3,7 @@
  * re/notes/ht2/telemetry.md): газ від часу утримання, перемикання автомата за обертами, холості.
  */
 import { describe, expect, it } from 'vitest';
-import { Engine, GEAR_N } from '@engine/vehicle/engine';
+import { Engine, GEAR_N } from '@ht2/engine/vehicle/engine';
 import { HT2_ENGINE } from '@ht2/vehicles/controls';
 import { Climate, gameTimeScale, illumOn, sunDirection, sunHeight } from '@ht2/world/climate';
 

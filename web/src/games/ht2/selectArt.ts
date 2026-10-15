@@ -1,8 +1,8 @@
 import { cachedSource } from '@shared/gameStore';
 import type { SelectArt } from '@shared/gameContext';
-import { MenuArt } from '@engine/ui/menuArt';
-import { PixelFont } from '@engine/ui/pixelFont';
-import { parseFon } from '@engine/formats/fon';
+import { MenuArt } from './engine/ui/menuArt';
+import { PixelFont } from './engine/ui/pixelFont';
+import { parseFon } from './engine/formats/fon';
 import { HT2_FILES, ht2DevSource } from './files';
 
 /** Графіка «Дальнобойщики 2» для екрана вибору гри: фон головного меню з LOAD.RES і шрифти MENU.FON / large.fon. */

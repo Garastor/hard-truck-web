@@ -1,4 +1,4 @@
-import { uiScale } from '@engine/ui/pixelFont';
+import { uiScale } from '../engine/ui/pixelFont';
 import type { EscArt } from './escArt';
 
 /**
