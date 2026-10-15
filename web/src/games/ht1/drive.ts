@@ -48,19 +48,47 @@ const FALL_DEATH_TIME = 3;
 /**
  * Покриття під колесами — за матеріалом поверхні (розібрано за текстурами трас; у файлах гри типу покриття
  * немає, тож це класифікація порту): гравій COUNT (road_20/28/29, cobble — щебінь), MOUNT (roadsd0, stones0,
- * stream0 — камʼянисте русло); ґрунт — трава, пісок, ґрунт полігону; вода. Змішані текстури (асфальт із травою
- * по краях) — за кольором текселя під колесами: зелений — трава.
+ * stream0 — камʼянисте русло); ґрунт — трава, ліс, ґрунт полігону; пісок — пляжі COUNT; болото — темно-зелена
+ * трава COUNT (grass7, лише там); вода. Змішані текстури (асфальт із травою по краях) — за кольором текселя під
+ * колесами: зелений — трава.
  */
-type Surface = 'asphalt' | 'gravel' | 'dirt' | 'water';
+type Surface = 'asphalt' | 'gravel' | 'dirt' | 'sand' | 'swamp' | 'water';
 const SURFACE_GRAVEL = /^(road_2[089]|cobble|roadsd\d*|stones\d*|stream0)$/i;
-const SURFACE_DIRT = /grass|beach|sand|grnd|ground|dirt|mud|field|forest/i;
+const SURFACE_SWAMP = /^grass7$/i;
+const SURFACE_SAND = /beach|sand/i;
+const SURFACE_DIRT = /grass|grnd|ground|dirt|mud|field|forest/i;
 const SURFACE_WATER = /water|river|stream[1-9]/i;
-/** [зчеплення, опір кочення] відносно асфальту — гіпотеза (симулятор; аркада — без впливу). */
-const SURFACE_FX: Record<Surface, [number, number]> = { asphalt: [1, 1], gravel: [0.8, 2], dirt: [0.6, 3.5], water: [0.5, 4] };
+/**
+ * Вплив покриття (лише «симулятор»; аркада — без впливу) — налаштування порту, не дані оригіналу: зчеплення й опір
+ * кочення відносно асфальту, межа кермування (частка) і найбільша швидкість, км/год (вище — машина плавно
+ * пригальмовує). Від твердого до найм'якшого; помірно, щоб машина їхала скрізь.
+ */
+const SURFACE_FX: Record<Surface, { grip: number; roll: number; steer: number; maxKmh: number }> = {
+  asphalt: { grip: 1, roll: 1, steer: 1, maxKmh: Infinity },
+  gravel: { grip: 0.9, roll: 1.5, steer: 0.95, maxKmh: 95 },
+  dirt: { grip: 0.8, roll: 2.5, steer: 0.9, maxKmh: 75 },
+  sand: { grip: 0.7, roll: 3.5, steer: 0.85, maxKmh: 60 },
+  swamp: { grip: 0.6, roll: 4.5, steer: 0.8, maxKmh: 45 },
+  water: { grip: 0.5, roll: 4, steer: 0.8, maxKmh: 40 },
+};
+/** Трясіння кабіни на нерівному покритті (частка найбільшого; асфальт, бетон, тротуари — рівні). */
+const SURFACE_ROUGH: Record<Surface, number> = { asphalt: 0, gravel: 1, dirt: 0.7, sand: 0.5, swamp: 0.6, water: 0.4 };
+
+/**
+ * Трясіння кабіни на нерівному покритті (власне налаштування порту, на прохання користувача; камера нерухома —
+ * трясеться кабіна навколо очей водія): найбільший кут, рад, підйом, м, і зсув 2D-кабіни, px кадру 640×480.
+ * На повну — від SHAKE_FULL_KMH.
+ */
+const SHAKE_ANGLE = THREE.MathUtils.degToRad(0.5);
+const SHAKE_LIFT = 0.01;
+const SHAKE_PX = 2.5;
+const SHAKE_FULL_KMH = 50;
 
 function classifySurface(name: string, texel: [number, number, number] | null): Surface {
   if (SURFACE_WATER.test(name)) return 'water';
   if (SURFACE_GRAVEL.test(name)) return 'gravel';
+  if (SURFACE_SWAMP.test(name)) return 'swamp';
+  if (SURFACE_SAND.test(name)) return 'sand';
   if (SURFACE_DIRT.test(name)) return 'dirt';
   if (texel) {
     const [r, g, b] = texel;
@@ -315,11 +343,13 @@ export class DriveSession {
       this.wipersManual = null;
     }
   }
-  /** Тестовий режим: погода — дощ і слизька дорога (×0,8 до зчеплення, як у кар'єрі). */
+  /** Тестовий режим: погода — дощ і слизька дорога (×0,8 до зчеплення, як у кар'єрі; в аркаді — без впливу). */
   setWeather(rain: boolean): void {
     this.setRain(rain);
-    this.truck.weatherGrip = rain ? 0.8 : 1;
+    this.truck.weatherGrip = rain && !this.arcade ? 0.8 : 1;
   }
+  /** Режим «аркада»: покриття й погода не впливають на машину. */
+  private arcade = false;
   /** Оригінальні маски води на склі 3D-кабіни: краплі txr/glass_1.msk і сліди glass_2.msk (архів траси). */
   private glassMasks: { drop: RgbaImage | null; runner: RgbaImage | null } = { drop: null, runner: null };
   /** Туман і фон сцени до заїзду (повертаються в dispose). */
@@ -408,11 +438,11 @@ export class DriveSession {
     const mesh = hit.object as THREE.Mesh;
     const mat = (Array.isArray(mesh.material) ? mesh.material[hit.face?.materialIndex ?? 0] : mesh.material) as THREE.MeshBasicMaterial;
     this.surface = classifySurface(mat?.name ?? '', texelAt(mat?.map, hit.uv));
-    this.offRoad = this.surface === 'gravel' || this.surface === 'dirt';
+    this.offRoad = this.surface !== 'asphalt' && this.surface !== 'water';
     this.overWater = this.surface === 'water';
-    const [grip, roll] = SURFACE_FX[this.surface];
+    const fx = SURFACE_FX[this.surface];
     // У повітрі (далеко над поверхнею) покриття не діє.
-    if (this.surfaceHeight < 2.5) this.truck.setSurface(grip, roll);
+    if (this.surfaceHeight < 2.5) this.truck.setSurface(fx.grip, fx.roll, fx.steer, fx.maxKmh / 3.6);
   }
   /** Покриття під машиною (за матеріалом і кольором текстури). */
   surface: Surface = 'asphalt';
@@ -630,6 +660,7 @@ export class DriveSession {
     await initRapier();
     const s = new DriveSession(scene, camera, built, def);
     s.raceKind = raceKind;
+    s.arcade = setup.surfaceEffects === false;
     s.lapsToFinish = raceKind === 'laps' ? 3 : raceKind === 'route' ? 1 : 0;
     if (raceKind === 'free') s.countdown = 0;
     s.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
@@ -1167,6 +1198,24 @@ export class DriveSession {
     if (this.hudFonts) this.setHudFonts(...this.hudFonts);
   }
 
+  /** Трясіння кабіни (−1…1 × сила): тангаж, крен, підйом — див. SHAKE_*. */
+  private readonly cabShake = { pitch: 0, roll: 0, lift: 0 };
+  private shakeAmp = 0;
+  private shakeTime = 0;
+  private updateShake(dt: number): void {
+    // На колесах (не в повітрі) — за нерівністю покриття й швидкістю; зміна сили — плавно.
+    const grounded = this.surfaceHeight < 2.5;
+    const want = grounded ? SURFACE_ROUGH[this.surface] * Math.min(1, Math.abs(this.truck.speedKmh) / SHAKE_FULL_KMH) : 0;
+    this.shakeAmp += (want - this.shakeAmp) * (1 - Math.exp(-dt * 4));
+    this.shakeTime += dt;
+    const t = this.shakeTime * Math.PI * 2;
+    const a = this.shakeAmp;
+    // Суми синусоїд некратних частот (4…9 Гц — без биття з частотою кадрів 30) — нерегулярне тремтіння.
+    this.cabShake.pitch = a * (0.6 * Math.sin(t * 6.3) + 0.4 * Math.sin(t * 8.7 + 1.3));
+    this.cabShake.roll = a * (0.6 * Math.sin(t * 4.1 + 0.7) + 0.4 * Math.sin(t * 7.9 + 2.1));
+    this.cabShake.lift = a * (0.5 * Math.sin(t * 5.3 + 0.4) + 0.5 * Math.sin(t * 8.3 + 2.6));
+  }
+
   private updateCab(state: { steer: number }): void {
     // З кабіни зовнішній корпус власної вантажівки не малюємо (як в оригіналі).
     const inside = this.camMode === 'cockpit' || this.camMode === 'first';
@@ -1177,6 +1226,11 @@ export class DriveSession {
     this.cab.position.copy(this.camera.position);
     // Кабіна — разом із машиною (погляд з інерцією повертається в ній), панель — нерухомо в кадрі.
     this.cab.quaternion.copy(this.panelMode ? this.camera.quaternion : this.cabQuat);
+    const sh = this.cabShake;
+    if (this.shakeAmp > 1e-3) {
+      this.cab.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(sh.pitch * SHAKE_ANGLE, 0, sh.roll * SHAKE_ANGLE)));
+      this.cab.position.add(new THREE.Vector3(0, sh.lift * SHAKE_LIFT, 0).applyQuaternion(this.cab.quaternion));
+    }
     const rot = (o: THREE.Object3D | undefined, axis: THREE.Vector3, angle: number, scale = 1) => {
       if (!o) return;
       o.matrix.copy(o.userData.baseMatrix as THREE.Matrix4).multiply(new THREE.Matrix4().makeRotationAxis(axis, angle));
@@ -1381,6 +1435,7 @@ export class DriveSession {
     this.roomVis?.update(this.camera, this.room);
     this.handbrakeOn = state.handbrake;
     this.odometer += (this.truck.speedKmh / 3.6) * dt;
+    this.updateShake(dt);
     this.updateCab(state);
     if (this.cab2d) {
       const v = this.truck.body.linvel();
@@ -1396,6 +1451,7 @@ export class DriveSession {
         handbrake: this.handbrakeOn,
         steer: state.steer,
         local: new THREE.Vector3(vel.dot(right), vel.dot(up), vel.dot(fwd)),
+        shake: { x: this.cabShake.roll * SHAKE_PX, y: this.cabShake.pitch * SHAKE_PX },
       });
     }
     this.updateLights(state);

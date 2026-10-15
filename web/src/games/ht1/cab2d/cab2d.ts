@@ -81,6 +81,8 @@ export interface Cab2dState {
   steer: number;
   /** Швидкість машини в її системі: x — праворуч, y — угору, z — уперед, м/с (для розгойдування). */
   local: THREE.Vector3;
+  /** Трясіння на нерівному покритті, px кадру 640×480. */
+  shake?: { x: number; y: number };
 }
 
 export class Cab2d {
@@ -207,8 +209,8 @@ export class Cab2d {
     const size = renderer.getSize(new THREE.Vector2());
     this.layout(size.x, size.y);
     this.used = 0;
-    const X = this.sx - 80;
-    const Y = this.sy - 30;
+    const X = this.sx - 80 + (st.shake?.x ?? 0);
+    const Y = this.sy - 30 + (st.shake?.y ?? 0);
     this.quad('panel', X, Y);
     // Прилади (0x48f770): P = (X + 172, Y + 356).
     const px = X + 172;

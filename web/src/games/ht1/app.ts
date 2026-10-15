@@ -215,7 +215,7 @@ async function startDrive(): Promise<void> {
     const kind = cfg?.kind ?? (id === 'CIRCUIT' ? 'laps' : id === 'MENU3D' ? 'free' : 'route');
     const others = trucks.filter((t) => t !== def);
     const rivals = cfg?.rivals ?? (id === 'TRIAL' || id === 'MENU3D' || !others.length ? [] : Array.from({ length: nAi }, (_, i) => others[i % others.length]));
-    drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup);
+    drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup ?? { surfaceEffects: difficultySel.value !== 'arcade' });
     drive.onSettingsCommand = (cmd) => {
       if (cmd === 'swap') return setSwap(!loadSwap());
       const style = drive?.cabStyleCurrent === '2d' ? '3d' : '2d';
@@ -389,6 +389,23 @@ weatherSel.addEventListener('change', () => {
     /* приватний режим */
   }
   if (drive && !careerCfg) drive.setWeather(weatherSel.value === 'rain');
+});
+
+// Режим гри в тестовому режимі (як у кар'єрі; за замовчуванням — аркада): симулятор — покриття й дощ впливають на зчеплення, аркада — ні.
+const DIFFICULTY_KEY = 'ht.testDifficulty';
+const difficultySel = $<HTMLSelectElement>('difficulty');
+try {
+  difficultySel.value = localStorage.getItem(DIFFICULTY_KEY) === 'sim' ? 'sim' : 'arcade';
+} catch {
+  /* приватний режим */
+}
+difficultySel.addEventListener('change', () => {
+  try {
+    localStorage.setItem(DIFFICULTY_KEY, difficultySel.value);
+  } catch {
+    /* приватний режим */
+  }
+  if (tab === 'drive' && !careerCfg) void startDrive();
 });
 
 // Кількість суперників у тестовому режимі (за замовчуванням 10; у кар'єрі — з налаштувань гри).

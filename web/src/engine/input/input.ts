@@ -113,6 +113,8 @@ export function motionOnGesture(): Promise<'granted' | 'denied'> {
 /** Час повороту керма з клавіатури від центру до краю, с, і швидкість повернення, 1/с (оригінал, s6). */
 const STEER_RAMP = 1.1;
 const STEER_RETURN = 4.3;
+/** Найбільша швидкість керма на S-кривій (посередині, де кермо = 0,5), 1/с. */
+const STEER_RATE = 1.5 / STEER_RAMP;
 
 /** Обернена до smoothstep x²(3 − 2x) на [0, 1]. */
 function inverseSmoothstep(y: number): number {
@@ -129,6 +131,8 @@ export class Input {
   private steerSmooth = 0;
   private steerHold = 0;
   private steerDir = 0;
+  /** Кермо перекладається з протилежного боку (див. update). */
+  private steerCross = false;
   /** Кермування нахилом телефона (DeviceOrientation), −1..1 або null, якщо вимкнено. */
   private tilt: number | null = null;
   private readonly onOrient = (e: DeviceOrientationEvent) => {
@@ -215,13 +219,33 @@ export class Input {
     // S-крива від 0 до повного за 1,1 с; відпустив — експоненційно до нуля (≈ 4,3 1/с).
     else if (target !== 0) {
       if (Math.sign(target) !== this.steerDir) {
-        // Нова сторона: продовжуємо з поточного положення керма по тій самій кривій.
         this.steerDir = Math.sign(target);
-        this.steerHold = inverseSmoothstep(Math.max(0, this.steerSmooth * this.steerDir)) * STEER_RAMP;
+        // Кермо вже в інший бік (різко переклали): переходить без стрибка — див. нижче.
+        this.steerCross = this.steerSmooth * this.steerDir < 0;
+        // Нова сторона: продовжуємо з поточного положення керма по тій самій кривій.
+        if (!this.steerCross) this.steerHold = inverseSmoothstep(Math.max(0, this.steerSmooth * this.steerDir)) * STEER_RAMP;
       }
-      this.steerHold = Math.min(STEER_RAMP, this.steerHold + dt);
-      const x = this.steerHold / STEER_RAMP;
-      this.steerSmooth = this.steerDir * x * x * (3 - 2 * x);
+      const s = this.steerSmooth * this.steerDir;
+      if (this.steerCross && s < 0.5) {
+        // Перекладання з одного боку на інший (порт; як в оригіналі — не розібрано): до центру — не повільніше,
+        // ніж кермо повертається саме, далі до половини — з найбільшою швидкістю S-кривої, звідки крива
+        // продовжується без зламу. Інакше S-крива з нуля стартує з нульовою швидкістю — кермо «зависало» в центрі.
+        const rate = s < 0 ? Math.max(STEER_RATE, STEER_RETURN * -s) : STEER_RATE;
+        const next = s + rate * dt;
+        if (next < 0.5) this.steerSmooth = this.steerDir * next;
+        else {
+          // Дійшли до половини: решту кроку — уже по S-кривій.
+          this.steerCross = false;
+          this.steerHold = Math.min(STEER_RAMP, 0.5 * STEER_RAMP + (next - 0.5) / STEER_RATE);
+          const x = this.steerHold / STEER_RAMP;
+          this.steerSmooth = this.steerDir * x * x * (3 - 2 * x);
+        }
+      } else {
+        this.steerCross = false;
+        this.steerHold = Math.min(STEER_RAMP, this.steerHold + dt);
+        const x = this.steerHold / STEER_RAMP;
+        this.steerSmooth = this.steerDir * x * x * (3 - 2 * x);
+      }
     } else {
       this.steerDir = 0;
       this.steerSmooth *= Math.exp(-STEER_RETURN * dt);

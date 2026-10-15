@@ -98,6 +98,12 @@ const BRAKE_FRONT = 0.49;
 const BRAKE_REAR = 0.35;
 /** Коефіцієнт опору кочення (накат на 4-й передачі без газу, s7). */
 const ROLLING_RESISTANCE = 0.015;
+/**
+ * М'яке покриття: понад його найбільшу швидкість машина пригальмовує з цим уповільненням, м/с² (повністю — на
+ * SOFT_DRAG_SPAN м/с понад межу; двигун на високій передачі його не переборює). Налаштування порту.
+ */
+const SOFT_DRAG = 2;
+const SOFT_DRAG_SPAN = 3;
 /** Бампери: висота низу над дорогою й товщина, м (гіпотеза). */
 const BUMPER_CLEARANCE = 0.35;
 const BUMPER_DEPTH = 0.5;
@@ -200,9 +206,14 @@ export class TruckVehicle {
   private readonly tractionControl: boolean;
   /** Для світлових плям фар і габаритів (локальна система машини). */
   lightGeometry: LightGeometry = { groundY: -1, frontZ: -4, backZ: 4, width: 2.5 };
-  /** Покриття під колесами: множники зчеплення й опору кочення (1 — асфальт). Аркада — без впливу. */
+  /**
+   * Покриття під колесами: множники зчеплення, опору кочення й межі керма (1 — асфальт) і найбільша швидкість,
+   * м/с. Аркада — без впливу.
+   */
   private surfaceGrip = 1;
   private surfaceRoll = 1;
+  private surfaceSteer = 1;
+  private surfaceMaxSpeed = Infinity;
   private readonly surfaceEffects: boolean;
   private readonly rollLift: number | undefined;
   private readonly steerLimit: ((speed: number) => number) | undefined;
@@ -210,10 +221,12 @@ export class TruckVehicle {
   private readonly brakeProfile: { pedal: (t: number) => number; scale: number } | undefined;
   /** Тестовий режим: дощ (у кар'єрі він уже в setup.grip). */
   weatherGrip = 1;
-  setSurface(grip: number, roll: number): void {
+  setSurface(grip: number, roll: number, steer = 1, maxSpeed = Infinity): void {
     if (!this.surfaceEffects) return;
     this.surfaceGrip = grip;
     this.surfaceRoll = roll;
+    this.surfaceSteer = steer;
+    this.surfaceMaxSpeed = maxSpeed;
   }
 
   /** Вплив пошкоджень (режим «симулятор»): момент, недоступні верхні передачі, сила гальм. */
@@ -380,7 +393,7 @@ export class TruckVehicle {
     // З напівпричепом кермо на швидкості ще менше (гіпотеза порту): інакше повне кермо на 25 км/год дає радіус,
     // менший за базу причепа, і зчіпка складається.
     const tow = this.towing ? 1 / (1 + TOW_STEER_B * Math.abs(v)) : 1;
-    const limit = (this.steerLimit ? this.steerLimit(Math.abs(v)) : Math.min(STEER_MAX, STEER_A / (1 + STEER_B * Math.abs(v)))) * tow;
+    const limit = (this.steerLimit ? this.steerLimit(Math.abs(v)) : Math.min(STEER_MAX, STEER_A / (1 + STEER_B * Math.abs(v)))) * tow * this.surfaceSteer;
     const steer = this.steerPower === 1 ? input.steer : Math.sign(input.steer) * Math.abs(input.steer) ** this.steerPower;
     this.steerAngle = -steer * limit * STEER_TO_WHEEL;
     const inner = Math.abs(this.steerAngle);
@@ -415,6 +428,9 @@ export class TruckVehicle {
     // Гальма: сила колеса = педаль × B (передні 0,49·breakpower, задні 0,35·breakpower — ЗіЛ, s6);
     // опір кочення ≈ 0,015·N (накат s7). Rapier бере гальмо як імпульс за крок — множимо на dt.
     const nDriven = this.driven.filter(Boolean).length || 2;
+    // М'яке покриття: понад його межу швидкості — додатковий опір (на колесо), плавно наростає з перевищенням.
+    const over = Math.abs(v) - this.surfaceMaxSpeed;
+    const soft = over > 0 ? ((this.mass * SOFT_DRAG) / this.wheels) * Math.min(1, over / SOFT_DRAG_SPAN) : 0;
     const wheelLoad = (this.mass * 9.81) / this.wheels;
     // Rapier ігнорує гальмо колеса, на яке діє сила двигуна, тож гальмування двигуном (сила проти руху)
     // переносимо в гальмо того ж колеса.
@@ -431,7 +447,7 @@ export class TruckVehicle {
       // АПС: не більше 90 % межі зчеплення колеса (гіпотеза) — колесо не зривається в буксування.
       if (this.tractionControl && engine > 0) engine = Math.min(engine, 0.9 * grip * wheelLoad);
       const share = i < 2 ? BRAKE_FRONT : BRAKE_REAR;
-      const rolling = ROLLING_RESISTANCE * this.surfaceRoll * wheelLoad;
+      const rolling = ROLLING_RESISTANCE * this.surfaceRoll * wheelLoad + soft;
       let force = brakePedal * share * tech.brakePower * this.brakeFactor * (bp?.scale ?? 1) + rolling;
       if (input.handbrake && i >= 2) force += tech.brakePower;
       if (engineBrakes) {
