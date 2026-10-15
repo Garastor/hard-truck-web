@@ -260,6 +260,15 @@ body.game-ht2 .drive-hud {
   left: 0;
   z-index: 4;
   image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.ht2-tablo-hit {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 4;
 }
 
 body.ht2-orig-ui .ht2-hud {
@@ -292,4 +301,82 @@ body.ht2-orig-ui .nav-map {
 
 .ht2-card[hidden] {
   display: none;
+}
+
+/* Бічні панелі king.exe (ui/panel.ts): фон 1200 заввишки, видно середину; кнопки й тексти — у пікселях фону. */
+.ht2-panel {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.ht2-panel.right {
+  right: env(safe-area-inset-right, 0px);
+}
+
+.ht2-panel.left {
+  left: env(safe-area-inset-left, 0px);
+}
+
+.ht2-panel-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  image-rendering: pixelated;
+}
+
+.ht2-panel-stage > img:first-child {
+  display: block;
+}
+
+.ht2-panel-text {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.ht2-panel-btn,
+.ht2-panel-img,
+.ht2-panel-act {
+  position: absolute;
+  pointer-events: auto;
+}
+
+.ht2-panel-btn {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  min-height: 0;
+  line-height: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ht2-panel-btn img {
+  display: block;
+}
+
+/* Дії, що в оригіналі — клавішами (Num+ / Num−): кнопки порту в стилі табло. */
+.ht2-panel-act {
+  min-height: 0;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid rgb(150, 160, 120);
+  border-radius: 4px;
+  background: rgba(20, 30, 20, 0.85);
+  color: rgb(240, 232, 150);
+  font: 700 13px/1 Arial, sans-serif;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.ht2-panel-act.ht2-panel-track {
+  height: 30px;
+  border: 0;
+  background: transparent;
 }

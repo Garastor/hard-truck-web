@@ -1,12 +1,14 @@
 import * as THREE from 'three';
 import { modal } from '@engine/ui/modal';
 import { isList, str, type SExpr } from '@engine/formats/sexpr';
-import { findStores, makeOrders, parseGoods, type Goods, type Store, type Town } from './economy';
+import { findStores, makeOrders, parseGoods, type Goods, type Order, type Store, type Town } from './economy';
 import { FUEL_PRICE, REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
 import { toThree } from '../world/world';
 import { install, type Upgrade } from './upgrades';
 import { USED_DAMAGE, type ForSale, type Market } from './market';
 import type { Ht2Drive } from '../drive';
+import { gasPanel, orderPanel, salePanel, servicePanel } from './stations';
+import type { SidePanel } from '../ui/panel';
 
 /**
  * Кар'єра в режимі їзди HT2: склади (замовлення й здача вантажу), СТО (ремонт), удари (пошкодження машини й
@@ -32,6 +34,11 @@ export class CareerMode {
   private shownAt: string | null = null;
   private saveTimer = 0;
   private readonly prevVel = new THREE.Vector3();
+
+  /** Відкрите вікно оригіналу біля обʼєкта (склад, ринок, СТО, заправка) — закривається, коли від'їхали. */
+  private panel: SidePanel | null = null;
+  /** Замовлення складів (по одному на місце завантаження), поки їх не розібрали чи не минула година гри. */
+  private readonly storeOrders = new Map<number, { orders: Order[]; time: number }>();
 
   /** Повідомлення гри (Ms.sch): ключ → текст з %g / %d. */
   private readonly messages = new Map<string, string>();
@@ -108,6 +115,7 @@ export class CareerMode {
       this.persist();
     }
     if (this.drive.truck.speedKmh > 3) {
+      this.closePanel();
       // Відʼїхали — вікно цього місця можна показати знову.
       if (this.shownAt && !this.near(gx, gy, this.shownAt)) this.shownAt = null;
       return;
@@ -115,25 +123,32 @@ export class CareerMode {
     const store = this.stores.find((s) => s.docks.some((d) => Math.hypot(d[0] - gx, d[1] - gy) < DOCK_RADIUS));
     if (store && this.shownAt !== `s${store.id}`) {
       this.shownAt = `s${store.id}`;
-      void this.atStore(store);
+      if (this.drive.escArt && !c.order) this.storePanel(store, gx, gy);
+      else if (this.drive.escArt && c.order && c.order.to !== store.id) {
+        const to = this.stores.find((s) => s.id === c.order!.to);
+        this.drive.say(`У кузові — ${c.order.goods.name}, доставити в «${to?.town ?? '?'}»`);
+      } else void this.atStore(store);
       return;
     }
     const sto = this.sto.findIndex((d) => Math.hypot(d[0] - gx, d[1] - gy) < STO_RADIUS);
     if (sto >= 0 && this.shownAt !== `r${sto}`) {
       this.shownAt = `r${sto}`;
-      void this.atSto(this.stoNames[sto]);
+      if (this.drive.escArt) this.servicePanel(this.stoNames[sto]);
+      else void this.atSto(this.stoNames[sto]);
       return;
     }
     const market = this.drive.markets?.at(p);
     if (market && this.shownAt !== `m${market.id}`) {
       this.shownAt = `m${market.id}`;
-      void this.atMarket(market);
+      if (this.drive.escArt) this.salePanel(market);
+      else void this.atMarket(market);
       return;
     }
     const fuel = this.fuelSpots.findIndex((d) => Math.hypot(d[0] - gx, d[1] - gy) < FUEL_RADIUS);
     if (fuel >= 0 && this.shownAt !== `f${fuel}` && (c.fuel ?? this.tank) < this.tank - 1) {
       this.shownAt = `f${fuel}`;
-      void this.atFuel();
+      if (this.drive.escArt) this.gasPanel();
+      else void this.atFuel();
     }
   }
 
@@ -148,6 +163,163 @@ export class CareerMode {
     this.drive.cards?.show(7, { amount: forfeit });
     this.drive.say(`${this.msg('ORDER_LOST', 'ТОВАР ПОЛНОСТЬЮ РАЗБИТ')}. ${this.msg('FORFEIT', 'НЕУСТОЙКА $%g', forfeit)}`);
     this.persist();
+  }
+
+  private closePanel(): void {
+    this.panel?.close();
+    this.panel = null;
+  }
+
+  private openPanel(p: SidePanel): void {
+    this.closePanel();
+    this.panel = p;
+  }
+
+  /**
+   * Склад (вікно «ЗАКАЗ»): у кожного місця завантаження — своє замовлення, як в оригіналі («СКЛАД ЗАГРУЗКИ N»); їх
+   * набір оновлюється раз на годину гри. Взяти — кнопкою (Num+ в оригіналі).
+   */
+  private storePanel(store: Store, gx: number, gy: number): void {
+    const c = this.career;
+    const art = this.drive.escArt!;
+    let dock = 0;
+    store.docks.forEach((d, i) => {
+      if (Math.hypot(d[0] - gx, d[1] - gy) < Math.hypot(store.docks[dock][0] - gx, store.docks[dock][1] - gy)) dock = i;
+    });
+    let cached = this.storeOrders.get(store.id);
+    if (!cached || c.time - cached.time > 3600) {
+      const n = Math.max(1, store.docks.length);
+      cached = { orders: makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, n, this.drive.trailer?.rec.trailerType === 3), time: c.time };
+      this.storeOrders.set(store.id, cached);
+    }
+    const o = cached.orders[dock % cached.orders.length];
+    if (!o) {
+      this.drive.say(`Склад «${store.town}»: замовлень немає`);
+      return;
+    }
+    const to = this.stores.find((s) => s.id === o.to);
+    this.drive.say('Для загрузки/выгрузки используйте плюс/минус');
+    this.openPanel(
+      orderPanel(
+        art,
+        this.drive.overlay,
+        {
+          goods: o.goods.name,
+          town: to?.town ?? '?',
+          pay: o.pay,
+          hours: (o.deadline * this.drive.timeScale) / 3600,
+          mass: o.goods.mass * o.units,
+          volume: o.goods.volume * o.units,
+          fragility: o.goods.ratio * 100,
+          dock: dock + 1,
+        },
+        () => {
+          if (c.order) return;
+          c.order = { ...o, deadline: o.deadline * this.drive.timeScale, taken: c.time, integrity: 1 };
+          cached!.orders = cached!.orders.filter((x) => x !== o);
+          this.drive.setCargo(o.goods.mass * o.units);
+          this.drive.say(`${o.goods.name} → ${to?.town ?? '?'}`);
+          this.persist();
+          this.closePanel();
+        },
+      ),
+    );
+  }
+
+  /** Ринок (вікно «ПРОДАЁТСЯ»): машина на найближчому місці ринку; доплата — різниця зі старою (у залік — половина). */
+  private salePanel(m: Market): void {
+    const c = this.career;
+    const markets = this.drive.markets!;
+    const day = Math.floor(c.time / 86400);
+    const p = this.drive.truck.visual.position;
+    const list = markets.stock(m, day).filter((s) => s.rec.carNode !== c.truck);
+    const near = list.reduce<ForSale | null>((best, s) => (!best || m.spots[s.spot].pos.distanceTo(p) < m.spots[best.spot].pos.distanceTo(p) ? s : best), null);
+    if (!near) return;
+    const current = this.drive.drivableTrucks().find((r) => r.carNode === c.truck);
+    const tradeIn = Math.round((current?.price ?? 0) * 0.5);
+    this.openPanel(
+      salePanel(this.drive.escArt!, this.drive.overlay, { model: near.rec.carNode, price: near.price, power: near.rec.horsePower, load: near.rec.cargoLoad, used: near.used }, () => {
+        const cost = near.price - tradeIn;
+        if (c.order) return this.drive.say('Спершу доставте вантаж');
+        if (c.money < cost) return this.drive.say(this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'));
+        c.money -= cost;
+        c.truck = near.rec.carNode;
+        c.damage = near.used ? USED_DAMAGE : 0;
+        c.dents = near.used ? { FC: 0.25, BC: 0.25 } : {};
+        c.fuel = null;
+        markets.sell(m, day, near);
+        this.drive.changeTruck(near.rec.carNode);
+        this.drive.say(`${this.msg('MONEY_PAID', 'ОПЛАЧЕНО : ')}$${cost}`);
+        this.persist();
+        this.closePanel();
+      }),
+    );
+  }
+
+  /** СТО (вікно «СЕРВИС»): ремонт систем і модернізації; на цій СТО — її перелік (mod_*.sch). */
+  private servicePanel(node: string): void {
+    const c = this.career;
+    this.openPanel(
+      servicePanel(
+        this.drive.escArt!,
+        this.drive.overlay,
+        {
+          damage: c.damage,
+          repairCost: Math.round(c.damage * 100 * REPAIR_PER_PERCENT),
+          money: () => c.money,
+          upgrades: this.upgrades,
+          owned: c.upgrades ?? [],
+          available: this.services.get(node) ?? null,
+        },
+        {
+          pay: (share, buy) => {
+            const repair = Math.round(c.damage * 100 * REPAIR_PER_PERCENT * share);
+            const total = repair + buy.reduce((sum, u) => sum + u.price, 0);
+            if (total <= 0) return true;
+            if (c.money < total) {
+              this.drive.say(this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'));
+              return false;
+            }
+            c.money -= total;
+            if (share > 0) {
+              c.damage = Math.max(0, c.damage * (1 - share));
+              if (share >= 1) this.drive.dents?.repair();
+            }
+            const tank = this.tank;
+            for (const u of buy) c.upgrades = install(c.upgrades ?? [], u);
+            if (buy.length) this.drive.applyTuning();
+            if (c.fuel !== null && this.tank !== tank) c.fuel = Math.min(c.fuel, this.tank);
+            this.drive.say(this.msg('MONEY_PAID', 'ОПЛАЧЕНО : ') + `$${total}`);
+            this.persist();
+            return true;
+          },
+          close: () => this.closePanel(),
+        },
+      ),
+    );
+  }
+
+  /** Заправка (вікно «ЗАПРАВКА»): скільки літрів (повзунок чи «полный»), оплата. */
+  private gasPanel(): void {
+    const c = this.career;
+    this.openPanel(
+      gasPanel(this.drive.escArt!, this.drive.overlay, { fuel: c.fuel ?? this.tank, tank: this.tank, price: FUEL_PRICE, money: () => c.money }, {
+        pay: (litres) => {
+          const can = Math.min(litres, Math.floor(c.money / FUEL_PRICE));
+          if (litres > 0 && can <= 0) {
+            this.drive.say(this.msg('NOT_ENOUGH_MONEY', 'НЕ ХВАТАЕТ ДЕНЕГ'));
+            return false;
+          }
+          c.money -= Math.round(can * FUEL_PRICE);
+          c.fuel = Math.min(this.tank, (c.fuel ?? 0) + can);
+          if (can > 0 && !this.drive.truck.engineOn) this.drive.truck.engineOn = true;
+          if (can > 0) this.drive.say(`ПЛАТА ЗА ЗАПРАВКУ $${Math.round(can * FUEL_PRICE)}`);
+          this.persist();
+          return true;
+        },
+        close: () => this.closePanel(),
+      }),
+    );
   }
 
   /** Текст повідомлення гри з підставленим значенням (Ms.sch; без нього — запасний текст). */
@@ -391,7 +563,9 @@ export class CareerMode {
     const owned = c.upgrades ?? [];
     // На цій СТО — лише покращення з її переліку (mod_*.sch); без даних — усі.
     const here = this.services.get(node);
-    const list = here ? this.upgrades.filter((u) => here.has(u.key)) : this.upgrades;
+    // Вікно порту — лише покращення з дією в порту (effect); вікно оригіналу (stations.ts) — усі.
+    const known = this.upgrades.filter((u) => u.effect);
+    const list = here ? known.filter((u) => here.has(u.key)) : known;
     if (!list.length) {
       await modal(this.drive.overlay, 'Покращення', 'На цій СТО покращень, які діють у порту, немає.', ['Гаразд']);
       return;

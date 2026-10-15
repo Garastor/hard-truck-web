@@ -23,14 +23,16 @@ export class EscArt {
     readonly matrix: PixelFont | null,
     /** Цифри й значки табло (25×30): великі цифри 0x30, дрібні 0x40, значки 0x3B–0x6F. */
     readonly icon: PixelFont | null,
+    /** Тексти на панелях (MENU.FON — шрифт king.exe для вікон складу, ринку, СТО). */
+    readonly menu: PixelFont | null,
   ) {}
 
   static async load(source: FileSource): Promise<EscArt | null> {
     try {
       const res = parseRmp(await source.read('COMMON/esc16.RES'));
       const font = (n: string) => source.read(n).then((b) => new PixelFont(parseFon(b))).catch(() => null);
-      const [matrix, icon] = await Promise.all([font('matrix.fon'), font('icon.fon')]);
-      return new EscArt(res, matrix, icon);
+      const [matrix, icon, menu] = await Promise.all([font('matrix.fon'), font('icon.fon'), font('MENU.FON')]);
+      return new EscArt(res, matrix, icon, menu);
     } catch (e) {
       console.warn('COMMON/esc16.RES недоступний — інтерфейс порту замість оригінального', e);
       return null;

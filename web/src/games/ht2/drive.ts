@@ -281,7 +281,7 @@ export class Ht2Drive {
         o.source.read('Ms.sch').then(readSch).catch(() => []),
         o.source.read('restable.sch').then(readSch).catch(() => []),
       ]);
-      this.careerMode = new CareerMode(this, o.career, merch, messages, parseUpgrades(restable), parseTowns(regionMods), parseServices(regionMods));
+      this.careerMode = new CareerMode(this, o.career, merch, messages, parseUpgrades(restable, true), parseTowns(regionMods), parseServices(regionMods));
       this.police = new Police(this.world.scene, this.rapier, this.trucks, this.world.regions.values());
       this.mafia = new Mafia(this.world.scene, this.rapier, this.trucks, this.world.regions.values(), (p) => this.groundAtPublic(p).y - 2.5);
     }

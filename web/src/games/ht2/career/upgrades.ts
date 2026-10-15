@@ -32,7 +32,11 @@ const KNOWN: Record<string, { name: string; effect: string }> = {
   'PR_ANTI_RADAR:1': { name: 'Антирадар', effect: 'поліція не штрафує за швидкість' },
 };
 
-export function parseUpgrades(sch: SExpr[]): Upgrade[] {
+/**
+ * all — усі покращення (вікно СТО оригіналу показує повний перелік; дія в порту — лише в KNOWN, решта поки лише
+ * записується в збереження), інакше — лише з дією в порту.
+ */
+export function parseUpgrades(sch: SExpr[], all = false): Upgrade[] {
   const out: Upgrade[] = [];
   for (const e of sch) {
     if (!isList(e) || typeof e[0] !== 'string') continue;
@@ -42,9 +46,9 @@ export function parseUpgrades(sch: SExpr[]): Upgrade[] {
       const key = `${id}:${i}`;
       const known = KNOWN[key];
       const price = num(opt[opt.length - 1]);
-      if (!known || price <= 0) return;
+      if ((!known && !all) || price <= 0 || id === 'PR_FUEL') return;
       const original = opt.slice(0, -1).map(String).join(' ');
-      out.push({ key, id, option: i, original, name: known.name, effect: known.effect, price });
+      out.push({ key, id, option: i, original, name: known?.name ?? original, effect: known?.effect ?? '', price });
     });
   }
   return out;

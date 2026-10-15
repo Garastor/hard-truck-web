@@ -52,6 +52,11 @@ const PAGER_END = PAGER[0] + 300;
 const INK = 'rgb(0, 0, 16)';
 /** Скільки символів пейджера зʼявляється за секунду (в оригіналі — по символу за кадр). */
 const TYPE_RATE = 40;
+/**
+ * Пейджер видно лише з повідомленням: поки текст друкується і ще стільки секунд (тривалість в оригіналі не виміряна —
+ * гіпотеза).
+ */
+const PAGER_HOLD = 6;
 
 /** Мала цифра icon.fon: код цифри + 0x10. */
 const small = (s: string) => [...s].map((c) => String.fromCharCode(c.charCodeAt(0) + 0x10)).join('');
@@ -59,9 +64,9 @@ const two = (n: number) => String(Math.max(0, Math.floor(n))).padStart(2, '0');
 
 export class Tablo {
   readonly el: HTMLCanvasElement;
+  private readonly hit: HTMLDivElement;
   private readonly ctx: CanvasRenderingContext2D;
   private layout: Layout = { w: 1600, h: 50, tabloX: 0, origin: ORIGIN, pager: PAGER };
-  private scale = 1;
   private blink = false;
   private blinkTime = 0;
   /** Черга пейджера (4 останні, як в оригіналі) і що показується. */
@@ -69,6 +74,8 @@ export class Tablo {
   private page = -1;
   private typed = 0;
   private fresh = 0;
+  /** Скільки ще показувати пейджер, с (після надрукованого тексту). */
+  private hold = 0;
   /** Звук повідомлення пейджера (pagerSound). */
   onPage: (() => void) | null = null;
 
@@ -79,23 +86,18 @@ export class Tablo {
     this.el = document.createElement('canvas');
     this.el.className = 'pixel ht2-tablo';
     this.ctx = this.el.getContext('2d')!;
-    // Тап по пейджеру — попереднє повідомлення (клавіша P в оригіналі).
-    this.el.addEventListener('pointerdown', (e) => {
-      const r = this.el.getBoundingClientRect();
-      const k = 1 / this.scale;
-      const [px, py] = this.layout.pager;
-      const x = (e.clientX - r.left) * k;
-      const y = (e.clientY - r.top) * k;
-      if (x >= px && x < px + 300 && y >= py && y < py + 30) this.previous();
-    });
-    parent.append(this.el);
+    // Дотик до табло — пейджер з попереднім повідомленням (клавіша P в оригіналі). Полотно (разом з місцем
+    // пейджера під табло) дотиків не ловить — лише смуга самого табло.
+    this.hit = document.createElement('div');
+    this.hit.className = 'ht2-tablo-hit';
+    this.hit.addEventListener('pointerdown', () => this.previous());
+    parent.append(this.el, this.hit);
     this.resize();
   }
 
   /** Розкладка за шириною вікна; висота табло в CSS px — для розміщення кнопок під ним (--ht2-tablo-h). */
   resize(): void {
     const s = Math.max(uiScale(), window.innerHeight / 800);
-    this.scale = s;
     const w = Math.ceil(window.innerWidth / s);
     const tabloX = Math.round((w - 1600) / 2);
     const inSlot = tabloX + PAGER_END <= w;
@@ -111,6 +113,7 @@ export class Tablo {
     this.el.height = this.layout.h;
     this.el.style.width = `${window.innerWidth}px`;
     this.el.style.height = `${this.layout.h * s}px`;
+    this.hit.style.height = `${50 * s}px`;
     document.body.style.setProperty('--ht2-tablo-h', `${Math.ceil(50 * s)}px`);
     document.body.style.setProperty('--ht2-pager-h', `${Math.ceil((this.layout.h - 50) * s)}px`);
   }
@@ -124,14 +127,18 @@ export class Tablo {
     this.page = this.pages.length - 1;
     this.typed = 0;
     this.fresh = 3;
+    this.hold = PAGER_HOLD;
     this.onPage?.();
   }
 
   /** Попереднє повідомлення (по колу). */
   previous(): void {
     if (!this.pages.length) return;
-    this.page = (this.page - 1 + this.pages.length) % this.pages.length;
+    // Перший дотик лише показує пейджер з останнім повідомленням, далі — гортає назад.
+    if (this.hold <= 0) this.page = this.pages.length - 1;
+    else this.page = (this.page - 1 + this.pages.length) % this.pages.length;
     this.typed = 1000;
+    this.hold = PAGER_HOLD;
   }
 
   draw(dt: number, s: TabloState): void {
@@ -191,6 +198,8 @@ export class Tablo {
   }
 
   private drawPager(dt: number): void {
+    const text0 = this.pages[this.page];
+    if (!text0 || (this.typed >= text0.length && (this.hold -= dt) <= 0)) return;
     const { ctx, art } = this;
     const [px, py] = this.layout.pager;
     const strip = art.canvas('m16\\pager_p.msk');
@@ -212,6 +221,7 @@ export class Tablo {
 
   dispose(): void {
     this.el.remove();
+    this.hit.remove();
     document.body.style.removeProperty('--ht2-tablo-h');
     document.body.style.removeProperty('--ht2-pager-h');
   }
