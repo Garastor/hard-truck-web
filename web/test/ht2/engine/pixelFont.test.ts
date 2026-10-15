@@ -1,5 +1,5 @@
 /** Шрифт вікон HT2 (MENU.FON): символи поза cp1251 не стають «?». */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseFon } from '@ht2/engine/formats/fon';
@@ -7,8 +7,12 @@ import { PixelFont } from '@ht2/engine/ui/pixelFont';
 import { HT2_DIR } from '../../gameDirs';
 
 describe.skipIf(!existsSync(join(HT2_DIR, 'MENU.FON')))('PixelFont HT2', () => {
-  const font = new PixelFont(parseFon(new Uint8Array(readFileSync(join(HT2_DIR, 'MENU.FON')))));
-  const question = font.glyph('?');
+  let font: PixelFont;
+  let question: ReturnType<PixelFont['glyph']>;
+  beforeAll(() => {
+    font = new PixelFont(parseFon(new Uint8Array(readFileSync(join(HT2_DIR, 'MENU.FON')))));
+    question = font.glyph('?');
+  });
 
   it('стрілки й × — власні гліфи в межах клітинки', () => {
     for (const ch of '↑↗→↘↓↙←↖×') {
