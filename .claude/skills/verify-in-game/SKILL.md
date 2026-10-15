@@ -5,7 +5,10 @@ description: Перевірити зміну в грі в браузері Claud
 
 # Перевірка в грі
 
-Dev-сервер: `preview_start` з назвою `web` (`.claude/launch.json`), адреса `http://localhost:5173`.
+Dev-сервер: `preview_start` з назвою `web` (`.claude/launch.json`), адреса `http://localhost:5173`. Якщо порт 5173
+зайнятий сервером іншої сесії тієї самої теки — не зупиняти його: `preview_start({ url: 'http://localhost:5173/' })`
+(той самий код). Окремий сервер — `web-alt` (5174; інше походження — окреме localStorage й IndexedDB: збереження
+користувача не зачіпаються, але файли гри йдуть з dev-сервера).
 
 ## Правила
 - **Вкладку користувача не чіпати** (не перезавантажувати, не навігувати): він там грає. Перевіряти в **новій**
@@ -33,6 +36,22 @@ Dev-сервер: `preview_start` з назвою `web` (`.claude/launch.json`),
    перевіряти властивостями обʼєктів (`ht.drive`, `ht.built`, `ht.scene`).
 4. Інтерфейс — у мобільному вʼюпорті: `resize_window` 812×375 (ландшафт iPhone), після — `preset: 'desktop'`.
 5. Прибрати: `tabs_close` своєї вкладки, `tabs_select` вкладки користувача.
+
+## Друга гра
+- Адреса: `/ht2/?tab=career&mute` (кар'єра), `/ht2/?tab=drive&truck=ZilR&mute` (вільна їзда); `?mute` — завжди в
+  тестових вкладках.
+- `window.ht2.drive`: `smoke(с)` (автопрохід), `say(текст)` (пейджер), `careerMode` (вікна: `servicePanel(node)`,
+  `gasPanel()`, `storePanel(…)`, `fine(over, limit)`), `cards.show(N, …)`, `tablo`, `escArt`.
+- `COMMON/esc16.RES` (57 МБ) на першому запуску ще читається — перед перевіркою інтерфейсу оригіналу дочекатися
+  `!!window.ht2.drive.escArt`.
+- Скріншот вузького вʼюпорта в панелі буває обрізаний праворуч — розміри й положення перевіряти
+  `getBoundingClientRect()`, а вигляд — на ширшому вʼюпорті.
+
+## Гілка в git worktree
+Тести й dev-сервер worktree читають ігри з `HT_GAME_ROOT` (теки `Game` основної копії): `npm ci` у `web/` worktree,
+далі `HT_GAME_ROOT="D:/Claude/Games/Hard Truck/Game" npx vitest run`. Для превʼю — тимчасова конфігурація в
+`.claude/launch.json` основної копії (`cmd /c "set HT_GAME_ROOT=…&& C:\PROGRA~1\nodejs\npm.cmd run dev --prefix
+.worktrees/<гілка>/web -- --port 5176 --strictPort"`), після перевірки — `git checkout -- .claude/launch.json`.
 
 ## Корисне
 - `ht.dev.info()` — траса, кімната, позиція, швидкість, камера, погода, режим відблисків.

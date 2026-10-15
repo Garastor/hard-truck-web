@@ -1,4 +1,4 @@
-# tools/re/ht2 — телеметрія king.exe (Дальнобойщики 2)
+# tools/re/ht2 — реверс і телеметрія king.exe (Дальнобойщики 2)
 
 Лише **читання** памʼяті запущеної гри (`D:\Games\Hard Truck 2\king.exe`), нічого не пише в процес.
 Спільний доступ до памʼяті (`Proc`, `find_pid`, команди `dump`/`record`/`analyze`) — `tools/re/procmem.py`; решта — тут.
@@ -20,3 +20,16 @@
 ```bash
 .venv/Scripts/python -I tools/re/ht2/record.py re/telemetry/ht2/drive 10
 ```
+
+## Статичний реверс і дані гри (скіл `.claude/skills/ht2-reverse`)
+Лише читають файли гри; результати — у scratchpad чи `exports/` (поза git).
+
+| Файл | Призначення |
+|------|-------------|
+| `setup_ghidra_king.py` | Проєкт Ghidra `re/king`; повна декомпіляція — `GQ_GAME=ht2 … gq.py exportall re/decomp_king` |
+| `strings.py` | Рядки king.exe з VA (`зсув + 0x400000`) і пошук регуляркою — імена картинок, звуків, класів |
+| `uimap.py` | Карта графіки інтерфейсу: функція → картинки/кнопки й координати (з `re/decomp_king`) |
+| `mess.py` | Рядок `mess.txt` за індексом (FUN_005d2e50(N) у king.exe) |
+| `sch.py` | Розшифровка SDTE `*.sch`, `GAME.CNF` у текст |
+| `manual.py` | Офіційний посібник `king.chm` → текст з розділами й знімками |
+| `web/test/ht2/tools/exportRes.test.ts` | Графіка RES/RMP → PNG (`EXPORT_RES`, `EXPORT_OUT`; парсери порту) |

@@ -47,3 +47,12 @@
   розвивається окремо (власна фізика з king.exe).
 - Тест архітектури: гра бачить лише свою теку й `shared/`, ігри не бачать одна одну.
 - Тести й dev-сервер читають ігри з `HT_GAME_ROOT` (для git worktree).
+
+## 2026-10-16 — інструменти реверсу HT2, скіли, хук
+- `tools/re/ht2/`: `strings.py` (рядки king.exe з адресами), `uimap.py` (графіка інтерфейсу → функція й координати),
+  `mess.py` (рядок `mess.txt` за індексом), `sch.py` (розшифровка SDTE), `manual.py` (посібник `king.chm` → текст);
+  вивантаження графіки RES у PNG — `web/test/ht2/tools/exportRes.test.ts` (`EXPORT_RES`, `EXPORT_OUT`).
+- Скіл `ht2-reverse` (робочий процес і домовленості king.exe); агент `re-analyst` — і для king.exe; `step-done` —
+  коміт лише своїх файлів; `verify-in-game` — друга гра, чужий dev-сервер на 5173, git worktree.
+- Хук `git-guard` (`.claude/settings.json`): блокує широке `git add`, `git commit -a` і голий `git stash` — у теці
+  працюють кілька сесій, і широкий `git add` уже раз захопив чужі незакомічені файли.
