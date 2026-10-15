@@ -1,4 +1,4 @@
-import { BinReader } from './binary';
+import { BinReader } from '@engine/formats/binary';
 
 /**
  * Параметри техніки Дальнобойщиків 2 (`vehicle.tech`) — бінарний відповідник `TRUCK.TCH` першої гри:

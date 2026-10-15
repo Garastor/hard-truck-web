@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { LightGeometry } from '@engine/vehicle/truckVehicle';
 
 /**
  * Світло вантажівки — лише перемикачі моделей, як в оригіналі (відблиски — білборди ReflFara* біля кожної фари й
@@ -6,12 +7,6 @@ import * as THREE from 'three';
  * (яскраве червоне скло з відблиском ReflFaraKey); у групі габариту — відблиск ReflFaraKeyBG. `BackFaraKey` —
  * задній хід, `GlowF*Key` — ореол фар. Вночі й у дощ горять габарити й фари з відблисками; удень — лише скло.
  */
-export interface LightGeometry {
-  groundY: number;
-  frontZ: number;
-  backZ: number;
-  width: number;
-}
 
 export class TruckLights {
   private key = '';

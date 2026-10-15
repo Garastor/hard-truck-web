@@ -9,7 +9,7 @@
 
 | | Рушій (спільне) | Дальнобойщики (HT1, 1998) | Дальнобойщики 2 (HT2, 2001) |
 |---|---|---|---|
-| Код | `web/src/engine/` | `web/src/games/ht1/` | `web/src/games/ht2/` (world, vehicles, traffic, career, ui) |
+| Код | `web/src/engine/` | `web/src/games/ht1/` | `web/src/games/ht2/` (formats, world, vehicles, traffic, career, ui) |
 | Тести | `web/test/engine/`, `architecture.test.ts` | `web/test/ht1/` | `web/test/ht2/` |
 | Оригінал (лише читати) | — | `Game/Hard Truck/` (`HTruck.exe`) | `Game/Hard Truck 2` = `D:\Games\Hard Truck 2` (junction; `king.exe`) |
 | Dev-файли / вхід | — | `/game/…`, `/ht1/` | `/game2/…`, `/ht2/` |
@@ -44,12 +44,14 @@
 
 ## Розташування
 - `Game/` — оригінальні ігри. **Лише читати. Ніколи не змінювати, не комітити, не публікувати.**
-- `web/src/engine/` — `formats` (парсери), `render` (SceneAssembler і перемикачі B3D, злиття сіток, дощ на склі),
+- `web/src/engine/` — `formats` (парсери спільних форматів: B3D, RES/RMP, TXR, MSK, PLM, FON, INI), `render`
+  (SceneAssembler і перемикачі B3D, дощ на склі),
   `physics` (Rapier, колізії рівня), `vehicle` (вантажівка, двигун і коробка, модель, автопілот), `input`, `audio`,
   `assets` (джерела файлів, сховище IndexedDB), `ui` (піксельний шрифт, діалоги, мінікарта, меню LOAD.RES, якість)
 - `web/src/games/ht1/` — `app.ts` (меню, кар'єра, переглядач, технічна панель), `drive.ts` (їзда/гонка, погода,
   звуки, загибель), `career/`, `track/`, `ui/` (меню, табло), `cab2d/`, `render/` (фари, відблиски, вибухи)
-- `web/src/games/ht2/` — `app.ts`, `drive.ts`, `race.ts`, `world/`, `vehicles/`, `traffic/`, `career/`, `ui/`
+- `web/src/games/ht2/` — `app.ts`, `drive.ts`, `race.ts`, `formats/` (формати лише другої гри: WAY, tech, S-вирази й
+  шифр SDTE, карти висот, OVL), `world/`, `vehicles/`, `traffic/`, `career/`, `ui/`
 - `tools/probe/` — Python-зонди форматів; `tools/re/` — Ghidra: `gq.py` (CLI-запити, `GQ_GAME=ht2` — king.exe),
   Watcom cspec, setup; `tools/refactor/` — скрипти перенесення модулів і документів
 - `re/` — проєкти Ghidra і декомпіляція (не комітити, крім `re/notes/`)

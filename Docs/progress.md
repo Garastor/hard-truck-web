@@ -16,3 +16,19 @@
   ігор, ігри не імпортують одна одну, оболонка — лише через `index.ts`).
 - Нотатки реверсу — `re/notes/ht1`, `re/notes/ht2`; документи — `Docs/ht1`, `Docs/ht2`; телеметрія —
   `tools/re/procmem.py` (спільне), `tools/re/ht1`, `tools/re/ht2`.
+
+## 2026-10-16 — рушій: лише спільне
+
+Модулі, якими користується одна гра, винесено з `engine/` (правило — Docs/09-structure-plan.md):
+- формати лише другої гри (`tech`, `way`, `sexpr` + `sdte`, `heightmap`, `ovl`) → `games/ht2/formats/`;
+- `mergeStatic` → `games/ht2/world/`;
+- фари першої гри `TruckLights` → `games/ht1/render/`; тип `LightGeometry` лишився в `engine/vehicle/truckVehicle.ts`.
+
+У рушії лишилися:
+- `ini` — бере спільний `vehicle/trucks.ts`;
+- `waterBuffer` — частина спільних крапель на склі;
+- `vehicle/engine` — частина спільної фізики;
+- віджети `ui/*` — бере оболонка.
+
+Далі: реверс фізики вантажівки `king.exe`, щоб зʼясувати, чи справді в HT2 та сама модель, що в HT1 (зараз —
+гіпотеза).

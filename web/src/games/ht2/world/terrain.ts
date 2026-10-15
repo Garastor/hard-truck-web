@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import type { Heightmap } from '@engine/formats/heightmap';
+import type { Heightmap } from '../formats/heightmap';
 import { GROUP_WORLD, groups } from '@engine/physics/world';
 
 /**

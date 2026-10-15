@@ -1,4 +1,4 @@
-import { isList, num, type SExpr } from '@engine/formats/sexpr';
+import { isList, num, type SExpr } from '../formats/sexpr';
 
 /**
  * Покращення вантажівки HT2 (`restable.sch`): `(PR_ID (Назва-без 0) (Назва варіанта ціна) …)` — перший варіант —

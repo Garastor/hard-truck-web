@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { modal } from '@engine/ui/modal';
-import { isList, str, type SExpr } from '@engine/formats/sexpr';
+import { isList, str, type SExpr } from '../formats/sexpr';
 import { findStores, makeOrders, parseGoods, type Goods, type Order, type Store, type Town } from './economy';
 import { FUEL_PRICE, REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
 import { toThree } from '../world/world';

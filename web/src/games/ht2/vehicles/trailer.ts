@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { buildTruckModel, visibleBox, type TruckDef } from '@engine/vehicle/trucks';
 import { TIRE } from '@engine/vehicle/truckVehicle';
 import { g2t } from '@engine/physics/world';
-import type { TechRecord } from '@engine/formats/tech';
+import type { TechRecord } from '../formats/tech';
 import type { SceneAssembler } from '@engine/render/sceneBuilder';
 
 /**

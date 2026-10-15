@@ -8,7 +8,7 @@ import { TruckVehicle } from '@engine/vehicle/truckVehicle';
 import { buildTruckModel, type TruckDef } from '@engine/vehicle/trucks';
 import { Input } from '@engine/input/input';
 import { GROUP_WORLD, addCollisionPolys, g2t, groups, initRapier } from '@engine/physics/world';
-import { assoc, num, readSch, str, type SExpr } from '@engine/formats/sexpr';
+import { assoc, num, readSch, str, type SExpr } from './formats/sexpr';
 import { drivable, loadTrucks, truckDef, type Ht2Trucks } from './vehicles/trucks';
 import { FOV } from './ui/viewer';
 import { Ht2World, toThree, type LoadedRegion } from './world/world';

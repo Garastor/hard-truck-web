@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { isList, str, type SExpr } from '@engine/formats/sexpr';
-import type { Way } from '@engine/formats/way';
+import { isList, str, type SExpr } from '../formats/sexpr';
+import type { Way } from '../formats/way';
 import { toThree } from './world';
 
 /**

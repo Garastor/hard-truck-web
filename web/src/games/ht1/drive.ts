@@ -8,7 +8,7 @@ import { GlassRain } from '@engine/render/glassRain';
 import { parseMsk, type Msk } from '@engine/formats/msk';
 import { Movables } from './track/movables';
 import { Effects } from './render/effects';
-import { TruckLights, hideLampReflections } from '@engine/render/truckLights';
+import { TruckLights, hideLampReflections } from './render/truckLights';
 import { WetReflections } from './render/wetReflections';
 import { Headlights, litByHeadlights } from './render/headlights';
 import { NavMap } from '@engine/ui/navMap';

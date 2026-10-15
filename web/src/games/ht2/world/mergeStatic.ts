@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { DistanceSwitch, SideSwitch } from './sceneBuilder';
+import { DistanceSwitch, SideSwitch } from '@engine/render/sceneBuilder';
 
 /**
  * Злиття нерухомої геометрії за матеріалом: одна сітка на матеріал у клітинці CELL × CELL (система root) замість

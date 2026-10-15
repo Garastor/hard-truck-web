@@ -1,6 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import type { LightGeometry } from '../render/truckLights';
 import { GROUP_BUMPER, GROUP_MOVABLE, g2t, groups } from '../physics/world';
 import type { ControlState } from '../input/input';
 import { visibleBox, type TruckDef, type TruckModel } from './trucks';
@@ -141,6 +140,14 @@ export interface TruckSetup {
 const SHADOW_LIFT = 0.04;
 /** Як далеко вниз шукати землю для тіні, коли колеса не торкаються дороги, м. */
 const SHADOW_RAY = 30;
+
+/** Габарити машини для світла фар (земля під машиною, передня й задня межі, ширина) — у системі моделі. */
+export interface LightGeometry {
+  groundY: number;
+  frontZ: number;
+  backZ: number;
+  width: number;
+}
 
 export class TruckVehicle {
   readonly body: RAPIER.RigidBody;

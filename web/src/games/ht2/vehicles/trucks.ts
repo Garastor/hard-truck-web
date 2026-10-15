@@ -1,7 +1,7 @@
 import type { FileSource } from '@engine/assets/source';
 import { parseB3d, type Block } from '@engine/formats/b3d';
 import { parseRmp } from '@engine/formats/rmp';
-import { parseTech, type TechRecord } from '@engine/formats/tech';
+import { parseTech, type TechRecord } from '../formats/tech';
 import { SceneAssembler } from '@engine/render/sceneBuilder';
 import { readTextures } from '../files';
 import type { TruckDef } from '@engine/vehicle/trucks';

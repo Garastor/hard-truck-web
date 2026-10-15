@@ -1,4 +1,4 @@
-import { decodeCp1251 } from './binary';
+import { decodeCp1251 } from '@engine/formats/binary';
 import { decodeSdte } from './sdte';
 
 /**
