@@ -1514,9 +1514,10 @@ export class DriveSession {
     this.updateLights(state);
     const wet = this.raining && (this.glassRain?.raining ?? true);
     this.syncToggles();
-    // Відблиски на дорозі — лише на дощових трасах; фари світять і на сухих (якщо ввімкнені), у тунелях — на повну.
+    // Відблиски на дорозі — лише на дощових трасах; фари світять і на сухих (якщо ввімкнені). Сила фар у тунелі та
+    // сама, що й поза ним (на прохання користувача: раніше в тунелі — на повну, світло різко яскравішало на в'їзді).
     this.wetReflections.forEach((r, i) => r.update(this.camera, this.raining && (i === 0 ? this.headlights : this.night || wet), wet));
-    this.headlightsFx?.update(this.headlights ? (this.night || this.sheltered ? 1 : DAY_HEADLIGHTS) : 0, this.truck.forward());
+    this.headlightsFx?.update(this.headlights ? (this.night ? 1 : DAY_HEADLIGHTS) : 0, this.truck.forward());
     this.updateSurface(dt);
     this.checkDeath(dt);
     this.effects?.update(dt);
@@ -1907,7 +1908,7 @@ let rainHintShown = false;
 /** Наскільки далі від тунелів бази ставити машину, м (на око: з кабіни в ландшафті телефона видно всі вказівники). */
 const BASE_SPAWN_BACK = 21;
 
-/** Сила власного світла фар удень (дощ чи суша) відносно ночі й тунелю (на око: помітне на асфальті, не засвічує). */
+/** Сила власного світла фар удень (дощ чи суша, і в тунелях) відносно ночі (на око: помітне на асфальті, не засвічує). */
 const DAY_HEADLIGHTS = 0.45;
 
 function fmtTime(t: number): string {
