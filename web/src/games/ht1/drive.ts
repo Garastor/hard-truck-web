@@ -11,7 +11,7 @@ import { Effects } from './render/effects';
 import { TruckLights, hideLampReflections } from './render/truckLights';
 import { WetReflections } from './render/wetReflections';
 import { Headlights, litByHeadlights } from './render/headlights';
-import { NavMap, type NavIcons } from './engine/ui/navMap';
+import { NavMap } from './engine/ui/navMap';
 import { NEEDLE_SCALE, buildTruckModel, type TruckDef } from './engine/vehicle/trucks';
 import { SKY_FOG, type BuiltScene } from './engine/render/sceneBuilder';
 import { CAB2D_PARTS, Cab2d } from './cab2d/cab2d';
@@ -23,7 +23,7 @@ import type { RmpArchive } from './engine/formats/rmp';
 import { EngineAudio, type LoopSound } from './engine/audio/engineAudio';
 import { DriveHud, odometerDigits } from './ui/driveHud';
 import { RouteProgress } from './track/raceProgress';
-import type { PixelFont } from './engine/ui/pixelFont';
+import { HUD_CYAN, type PixelFont } from './engine/ui/pixelFont';
 import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, EVENT_RAIN, Track, isHorizontalPortal, type Room } from './track/track';
 import { AutoPilot, WayNet } from './engine/vehicle/autopilot';
 import { RoomVisibility } from './track/roomVisibility';
@@ -86,6 +86,19 @@ const SHAKE_ANGLE = THREE.MathUtils.degToRad(0.245);
 const SHAKE_LIFT = 0.005;
 const SHAKE_PX = 1.2;
 const SHAKE_FULL_KMH = 50;
+
+/**
+ * Кольори доріг на карті за покриттям (як на карті оригіналу: індекси палітри HUD 4 / 3 / 2 — точні кольори не
+ * розібрано, підібрано під табло порту): асфальт — блакитний, гравій — жовтий, ґрунт, пісок, болото й брід — червоний.
+ */
+const MAP_ROAD_COLOR: Record<Surface, string> = {
+  asphalt: HUD_CYAN,
+  gravel: '#f0d000',
+  dirt: '#e04040',
+  sand: '#e04040',
+  swamp: '#e04040',
+  water: '#e04040',
+};
 
 function classifySurface(name: string, texel: [number, number, number] | null): Surface {
   if (SURFACE_WATER.test(name)) return 'water';
@@ -547,27 +560,34 @@ export class DriveSession {
   private movables: Movables | null = null;
   /** Навігаційна система (НС): мінікарта з суперниками. */
   private navMap: NavMap | null = null;
-  /** Прапорці карти: старт — точка старту, фініш — кімната з подією фінішу (у вільній їзді — без них). */
-  private mapFlags(): { pos: THREE.Vector3; icon: HTMLCanvasElement }[] {
-    const { start, finish } = this.mapIcons;
-    if (this.raceKind === 'free') return [];
-    const out: { pos: THREE.Vector3; icon: HTMLCanvasElement }[] = [];
-    if (start) out.push({ pos: this.spawn.position.clone(), icon: start });
-    const room = [...this.track.rooms.values()].find((r) => r.events.some((e) => e.type === EVENT_FINISH));
-    // Точка — рестарт кімнати, а без нього — середина її порталів (COUNT: room_999 — лише портал на в'їзді).
-    const mid = room?.portals.length
-      ? room.portals.reduce((v, p) => v.add(p.a).add(p.b), new THREE.Vector3()).multiplyScalar(1 / (2 * room.portals.length))
-      : null;
-    const at = room?.restart?.position ?? mid;
-    // Кільце: фініш у секторі старту — один прапорець.
-    if (finish && at && at.distanceTo(this.spawn.position) > 30) out.push({ pos: at.clone(), icon: finish });
-    return out;
-  }
   /**
-   * Значки карти з архіву траси, як на карті HTruck.exe (re/notes/ht1/navmap.md): вантажівка гравця — жовта,
-   * суперники — білі, прапорці — білий і червоний (білий — старт, червоний — фініш: гіпотеза).
+   * Колір дороги на карті — за покриттям, як на карті HTruck.exe (re/notes/ht1/navmap.md; на COUNT кольори оригіналу
+   * збігаються з покриттям: асфальт road_30 — блакитний, гравій road_20 — жовтий, ґрунт — червоний). Покриття —
+   * променем униз від лінії дороги у видиму геометрію кімнат, що накривають точку.
    */
-  private mapIcons: NavIcons & { start?: HTMLCanvasElement; finish?: HTMLCanvasElement } = {};
+  private mapRoadColor(): (a: THREE.Vector3, b: THREE.Vector3) => string | null {
+    const boxes = this.built.rooms.map((r) => ({ room: r, box: new THREE.Box3().setFromObject(r) }));
+    const ray = new THREE.Raycaster();
+    ray.camera = this.camera; // білборди (тип 28) без камери кидають виняток
+    const down = new THREE.Vector3(0, -1, 0);
+    return (a, b) => {
+      const p = a.clone().add(b).multiplyScalar(0.5);
+      ray.set(new THREE.Vector3(p.x, p.y + 3, p.z), down);
+      ray.far = 8;
+      let best: THREE.Intersection | null = null;
+      for (const { room, box } of boxes) {
+        if (p.x < box.min.x || p.x > box.max.x || p.z < box.min.z || p.z > box.max.z) continue;
+        for (const h of ray.intersectObject(room, true)) {
+          if ((h.object as THREE.Mesh).isMesh && (!best || h.distance < best.distance)) best = h;
+        }
+      }
+      if (!best) return null;
+      const mesh = best.object as THREE.Mesh;
+      const mat = (Array.isArray(mesh.material) ? mesh.material[best.face?.materialIndex ?? 0] : mesh.material) as THREE.MeshBasicMaterial;
+      const surface = classifySurface(mat?.name ?? '', texelAt(mat?.map, best.uv));
+      return MAP_ROAD_COLOR[surface];
+    };
+  }
   /** Навігація дозволена (тест або встановлено «НС»): Tab ховає й показує карту. */
   private mapAllowed = false;
   showMap(on: boolean): void {
@@ -575,10 +595,7 @@ export class DriveSession {
     if (on && !this.navMap) {
       this.wayNet ??= new WayNet(this.built.assembler.b3d);
       const parent = this.hud?.parentElement;
-      if (parent && this.wayNet.lines.length) {
-        this.navMap = new NavMap(parent, this.wayNet, this.mapIcons);
-        this.navMap.flags = this.mapFlags();
-      }
+      if (parent && this.wayNet.lines.length) this.navMap = new NavMap(parent, this.wayNet, this.mapRoadColor());
     } else if (!on && this.navMap) {
       this.navMap.dispose();
       this.navMap = null;
@@ -753,17 +770,6 @@ export class DriveSession {
       return b ? parseMsk(b, built.assembler.lib.palette ?? undefined) : null;
     };
     s.glassMasks = { drop: glassMask('txr/glass_1.msk'), runner: glassMask('txr/glass_2.msk') };
-    // Значки карти оригіналу (архів траси; m16 — 16-бітний набір, як в апаратному режимі).
-    const icon = (n: string) => {
-      const m = glassMask(`m16/${n}.msk`);
-      if (!m) return undefined;
-      const c = document.createElement('canvas');
-      c.width = m.width;
-      c.height = m.height;
-      c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(m.data), m.width, m.height), 0, 0);
-      return c;
-    };
-    s.mapIcons = { me: icon('ic_trucy'), rival: icon('ic_trucw'), start: icon('ic_flagw'), finish: icon('ic_flagr') };
     s.buildCab();
     s.camMode = 'cockpit';
 
