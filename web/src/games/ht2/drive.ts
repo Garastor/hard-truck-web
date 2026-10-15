@@ -131,6 +131,8 @@ export class Ht2Drive {
   private notice: { text: string; time: number } | null = null;
   /** Графіка інтерфейсу оригіналу (COMMON/esc16.RES) і верхнє табло з пейджером; без файлу — табло порту. */
   escArt: EscArt | null = null;
+  /** Графіка інтерфейсу ще читається (esc16.RES, 57 МБ) — вікна біля обʼєктів чекають на неї. */
+  escArtLoading = true;
   tablo: Tablo | null = null;
   /** Картки подій (штрафи, неустойки, «Заказ выполнен», мафія) праворуч під табло. */
   cards: Cards | null = null;
@@ -341,6 +343,7 @@ export class Ht2Drive {
     // У шарі overlay — під вікнами складу й СТО (вони теж там, вище).
     o.overlay.append(this.hud, this.bar);
     void EscArt.load(o.source).then((art) => {
+      this.escArtLoading = false;
       if (!art || this.disposed) return;
       this.escArt = art;
       this.tablo = new Tablo(art, o.overlay);

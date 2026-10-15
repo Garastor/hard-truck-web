@@ -1,7 +1,8 @@
 /**
  * Текст растровим шрифтом оригіналу (MENU.FON / large.fon) на canvas — табло бази й траси.
  * Шрифти російські (cp1251): українські Є, Ї, Ґ складаємо з наявних символів
- * (Є — дзеркальна Э, Ї — I з двома крапками, Ґ — Г), І/і — латинські.
+ * (Є — дзеркальна Э, Ї — I з двома крапками, Ґ — Г), І/і — латинські. Символів поза cp1251 (стрілки, ×) у шрифті
+ * немає — вони малюються з пікселів, а «−», «…», лапки й тире без гліфа замінюються наявними символами (інакше «?»).
  */
 import type { BitmapFont, Glyph } from '../formats/fon';
 
@@ -12,8 +13,34 @@ const CP1251 = (() => {
   return map;
 })();
 
+/** Стрілки за годинниковою стрілкою від «вгору»; напрям — крок по x, y. */
+const ARROWS: [string, number, number][] = [
+  ['↑', 0, -1],
+  ['↗', 1, -1],
+  ['→', 1, 0],
+  ['↘', 1, 1],
+  ['↓', 0, 1],
+  ['↙', -1, 1],
+  ['←', -1, 0],
+  ['↖', -1, -1],
+];
+
+/** Заміна символу, якого немає у шрифті, наявними (перевіряється по черзі). */
+const ALIASES: [string, string[]][] = [
+  ['−', ['-']],
+  ['–', ['-']],
+  ['—', ['-']],
+  ['…', ['...']],
+  ['«', ['"']],
+  ['»', ['"']],
+  ['·', ['.']],
+  ['⚠', ['!']],
+  ['№', ['N']],
+];
+
 export class PixelFont {
   private readonly extra = new Map<string, Glyph>();
+  private readonly alias = new Map<string, string>();
 
   constructor(readonly font: BitmapFont) {
     const g = (ch: string) => font.glyphs[CP1251.get(ch) ?? -1] ?? null;
@@ -44,6 +71,48 @@ export class PixelFont {
     set('ґ', g('г'));
     set('ʼ', g("'"));
     set('’', g("'"));
+    const has = (ch: string) => !!g(ch)?.bits.some((b) => b === 1);
+    for (const [ch, subs] of ALIASES) {
+      if (has(ch)) continue;
+      const sub = subs.find((t) => [...t].every(has));
+      if (sub) this.alias.set(ch, sub);
+    }
+    // Стрілки й × — квадрат s×s посередині висоти літер (непарний, щоб був центр).
+    const s = Math.min(font.cellW, font.height, 9) - ((Math.min(font.cellW, font.height, 9) + 1) % 2);
+    if (s >= 5) {
+      const c = (s - 1) / 2;
+      const top = Math.max(0, Math.round((font.height - s) / 2));
+      const pixels = (pts: [number, number][]) => {
+        const bits = new Uint8Array(font.cellW * font.height);
+        for (const [x, y] of pts) if (x >= 0 && x < s && y >= 0 && y < s) bits[(top + y) * font.cellW + x] = 1;
+        return { width: s, bits };
+      };
+      ARROWS.forEach(([ch, dx, dy], i) => {
+        if (has(ch)) return;
+        const pts: [number, number][] = [];
+        for (let t = -c; t <= c; t++) pts.push([c + dx * t, c + dy * t]);
+        // Вістря: два відрізки від кінця під 135° до напрямку.
+        const tip: [number, number] = [c + dx * c, c + dy * c];
+        for (const k of [3, 5]) {
+          const [, ax, ay] = ARROWS[(i + k) % 8];
+          for (let t = 1; t <= Math.ceil(c / 1.5); t++) pts.push([tip[0] + ax * t, tip[1] + ay * t]);
+        }
+        set(ch, pixels(pts));
+      });
+      if (!has('×')) {
+        const pts: [number, number][] = [];
+        for (let t = 1; t < s - 1; t++) pts.push([t, t], [s - 1 - t, t]);
+        set('×', pixels(pts));
+      }
+    }
+  }
+
+  /** Текст із замінами відсутніх символів. */
+  private text(text: string): string {
+    if (!this.alias.size) return text;
+    let out = '';
+    for (const ch of text) out += this.alias.get(ch) ?? ch;
+    return out;
   }
 
   private flip(src: Glyph): Uint8Array {
@@ -65,7 +134,7 @@ export class PixelFont {
   /** Ширина тексту (символ + 1 піксель проміжку). */
   measure(text: string): number {
     let w = 0;
-    for (const ch of text) w += (this.glyph(ch)?.width ?? 3) + 1;
+    for (const ch of this.text(text)) w += (this.glyph(ch)?.width ?? 3) + 1;
     return Math.max(0, w - 1);
   }
 
@@ -73,7 +142,7 @@ export class PixelFont {
   draw(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color: string): number {
     ctx.fillStyle = color;
     const w = this.font.cellW;
-    for (const ch of text) {
+    for (const ch of this.text(text)) {
       const g = this.glyph(ch);
       if (g) {
         for (let gy = 0; gy < this.font.height; gy++)

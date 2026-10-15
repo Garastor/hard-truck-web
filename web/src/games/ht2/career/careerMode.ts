@@ -120,6 +120,8 @@ export class CareerMode {
       if (this.shownAt && !this.near(gx, gy, this.shownAt)) this.shownAt = null;
       return;
     }
+    // Графіка вікон оригіналу ще читається — не показувати замість них діалоги порту.
+    if (this.drive.escArtLoading) return;
     const store = this.stores.find((s) => s.docks.some((d) => Math.hypot(d[0] - gx, d[1] - gy) < DOCK_RADIUS));
     if (store && this.shownAt !== `s${store.id}`) {
       this.shownAt = `s${store.id}`;
