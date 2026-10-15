@@ -87,7 +87,7 @@ const SHAKE_LIFT = 0.005;
 const SHAKE_PX = 1.2;
 const SHAKE_FULL_KMH = 50;
 /** Допуск спрощення ліній доріг на мінікарті, м (ламані як на карті HTruck.exe; на око). */
-const MAP_SIMPLIFY = 20;
+const MAP_SIMPLIFY = 10;
 
 function classifySurface(name: string, texel: [number, number, number] | null): Surface {
   if (SURFACE_WATER.test(name)) return 'water';
