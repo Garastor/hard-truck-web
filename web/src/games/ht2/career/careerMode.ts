@@ -97,6 +97,7 @@ export class CareerMode {
     if (dv > HIT_MIN) {
       c.damage = Math.min(1, c.damage + dv * 0.004 * this.drive.tuning.damage * (this.drive.arcade ? 0.5 : 1));
       if (c.order) c.order.integrity = Math.max(0, c.order.integrity - dv * 0.01);
+      if (c.order && c.order.integrity <= 0) this.orderLost();
     }
     const p = this.drive.truck.visual.position;
     const gx = p.x;
@@ -136,15 +137,39 @@ export class CareerMode {
     }
   }
 
+  /** Вантаж розбито вщент (Ms.sch ORDER_LOST): замовлення анульовано, неустойка — половина цінності (гіпотеза). */
+  private orderLost(): void {
+    const c = this.career;
+    if (!c.order) return;
+    const forfeit = Math.round(c.order.value * 0.5);
+    c.money = Math.max(0, c.money - forfeit);
+    c.order = null;
+    this.drive.setCargo(0);
+    this.drive.cards?.show(7, { amount: forfeit });
+    this.drive.say(`${this.msg('ORDER_LOST', 'ТОВАР ПОЛНОСТЬЮ РАЗБИТ')}. ${this.msg('FORFEIT', 'НЕУСТОЙКА $%g', forfeit)}`);
+    this.persist();
+  }
+
   /** Текст повідомлення гри з підставленим значенням (Ms.sch; без нього — запасний текст). */
   msg(key: string, fallback: string, value?: number): string {
     const t = this.messages.get(key) ?? fallback;
     return t.replace(/%[gd]/, value === undefined ? '' : String(Math.round(value))).replace(/%%/g, '%');
   }
 
-  /** Штраф поліції за перевищення швидкості: $20 за км/год понад ліміт (гіпотеза). */
-  async fine(over: number): Promise<void> {
+  /**
+   * Штраф поліції за перевищення швидкості: $20 за км/год понад ліміт (гіпотеза). З графікою оригіналу — картка
+   * радара (mess16: обмеження, ваша швидкість, штраф) без зупинки гри.
+   */
+  async fine(over: number, limit = 60): Promise<void> {
     const c = this.career;
+    if (this.drive.cards) {
+      const amount = over * 20;
+      this.drive.cards.show(16, { limit, speed: limit + over, amount });
+      this.drive.say(this.msg('FINE_SPEEDING', 'ШТРАФ ЗА ПРЕВЫШЕНИЕ СКОРОСТИ $%g', amount));
+      c.money = Math.max(0, c.money - amount);
+      this.persist();
+      return;
+    }
     this.busy = true;
     this.drive.paused = true;
     try {
@@ -165,6 +190,16 @@ export class CareerMode {
   async robbed(): Promise<void> {
     const c = this.career;
     if (!c.order) return;
+    if (this.drive.cards) {
+      const forfeit = Math.round(c.order.value * 0.5);
+      this.drive.cards.show(21);
+      this.drive.say(`${this.msg('ATTACKED_BY_MAFIA', 'ВЫ ОГРАБЛЕНЫ МАФИЕЙ')}. ${this.msg('FORFEIT', 'НЕУСТОЙКА $%g', forfeit)}`);
+      c.money = Math.max(0, c.money - forfeit);
+      c.order = null;
+      this.drive.setCargo(0);
+      this.persist();
+      return;
+    }
     this.busy = true;
     this.drive.paused = true;
     try {
@@ -270,7 +305,16 @@ export class CareerMode {
     this.busy = true;
     this.drive.paused = true;
     try {
-      if (c.order && c.order.to === store.id) {
+      if (c.order && c.order.to === store.id && this.drive.cards) {
+        const s = settle(c.order, c.time);
+        this.drive.cards.show(4, { integrity: c.order.integrity * 100, forfeit: s.damagePenalty + s.latePenalty, fee: c.order.pay });
+        this.drive.say(this.msg('YOU_MADE', 'ВЫ ЗАРАБОТАЛИ : %g', s.pay));
+        c.money += s.pay;
+        c.earned += s.pay;
+        c.delivered++;
+        c.order = null;
+        this.drive.setCargo(0);
+      } else if (c.order && c.order.to === store.id) {
         const s = settle(c.order, c.time);
         const lines = [
           `${c.order.goods.name} × ${c.order.units}`,

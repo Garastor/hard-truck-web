@@ -16,7 +16,7 @@ import { AutoPilot } from '@engine/vehicle/autopilot';
 import { Ht2Roads } from './world/roads';
 import { Traffic, trafficKinds } from './traffic/traffic';
 import { CareerMode } from './career/careerMode';
-import { Police } from './traffic/police';
+import { Police, SPEED_LIMIT } from './traffic/police';
 import { Mafia } from './traffic/mafia';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
@@ -44,6 +44,7 @@ import { HT2_MOD_REGIONS, readTextures } from './files';
 import { timeScale, type Ht2Settings } from './ui/settings';
 import { EscArt } from './ui/escArt';
 import { Tablo } from './ui/tablo';
+import { Cards } from './ui/cards';
 
 /**
  * Камера за машиною — підібрана так, щоб кадр збігся зі знімком оригіналу в тій самій точці (ZilR біля бази «Южный»,
@@ -131,6 +132,8 @@ export class Ht2Drive {
   /** Графіка інтерфейсу оригіналу (COMMON/esc16.RES) і верхнє табло з пейджером; без файлу — табло порту. */
   escArt: EscArt | null = null;
   tablo: Tablo | null = null;
+  /** Картки подій (штрафи, неустойки, «Заказ выполнен», мафія) праворуч під табло. */
+  cards: Cards | null = null;
   private disposed = false;
   race: RaceMode | null = null;
   truckers: Truckers | null = null;
@@ -342,6 +345,7 @@ export class Ht2Drive {
       this.escArt = art;
       this.tablo = new Tablo(art, o.overlay);
       this.tablo.onPage = () => this.audio?.playOnce('pager');
+      this.cards = new Cards(art, o.overlay);
       document.body.classList.add('ht2-orig-ui');
       this.resize();
     });
@@ -853,7 +857,7 @@ export class Ht2Drive {
     this.world.update(this.camera, this.truck.visual.position);
     this.careerMode?.update(dt, state.throttle);
     const fine = this.police?.update(dt, this.truck.visual.position, this.truck.speedKmh);
-    if (fine && this.careerMode && !this.tuning.antiRadar) void this.careerMode.fine(fine.over);
+    if (fine && this.careerMode && !this.tuning.antiRadar) void this.careerMode.fine(fine.over, SPEED_LIMIT);
     // Мафія полює лише на вантажі класу formafia (merchandise.sch: горілка, алмази, Pentium III…).
     const mafia = this.careerMode && !this.paused ? this.mafia?.update(dt, this.truck.visual.position, !!this.careerMode.career.order?.goods.forMafia) : null;
     if (mafia === 'robbed') void this.careerMode!.robbed();
@@ -873,6 +877,7 @@ export class Ht2Drive {
     if (this.tablo) {
       // Табло оригіналу: швидкість, передача, пальне, стан і час замовлення — на ньому; у рядку — решта.
       this.drawTablo(dt, state.handbrake);
+      this.cards?.update(dt);
       this.bar.textContent = (this.careerMode ? this.careerMode.hud(true) : this.race ? this.race.hud() : '') + who;
     } else this.bar.textContent = (this.careerMode ? `${drive}\n${this.careerMode.hud()}` : this.race ? `${drive}\n${this.race.hud()}` : drive) + who;
   }
@@ -1015,6 +1020,7 @@ export class Ht2Drive {
     this.bar.remove();
     this.disposed = true;
     this.tablo?.dispose();
+    this.cards?.dispose();
     document.body.classList.remove('ht2-orig-ui');
     this.audio?.dispose();
     this.glassRain?.dispose();
