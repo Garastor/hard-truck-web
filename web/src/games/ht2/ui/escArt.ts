@@ -4,7 +4,7 @@ import { parseMsk } from '@engine/formats/msk';
 import { parseFon } from '@engine/formats/fon';
 import { PixelFont } from '@engine/ui/pixelFont';
 import type { RgbaImage } from '@engine/formats/binary';
-import type { FileSource } from '@engine/assets/source';
+import type { FileSource } from '@shared/source';
 
 /**
  * Графіка інтерфейсу в дорозі з `COMMON/esc16.RES` (16-бітний набір king.exe; `esc15.RES` — те саме для 15-бітного

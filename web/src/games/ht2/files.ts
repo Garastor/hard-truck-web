@@ -1,5 +1,5 @@
-import { matchRequired, type FileSet } from '@engine/assets/gameStore';
-import { httpSource, type FileSource } from '@engine/assets/source';
+import { matchRequired, type FileSet } from '@shared/gameStore';
+import { httpSource, type FileSource } from '@shared/source';
 
 /**
  * Файли Дальнобойщиків 2 на пристрої. Текстури — повні набори (`<код>.res`, `COMMON.RES`, `TRUCKS.RES`…; на

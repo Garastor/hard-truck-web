@@ -1,4 +1,4 @@
-import type { FileSource } from '@engine/assets/source';
+import type { FileSource } from '@shared/source';
 import { HT2_MUSIC } from '../files';
 import { MUTED } from '@engine/audio/engineAudio';
 

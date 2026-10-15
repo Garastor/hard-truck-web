@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { HT2_ENGINE, HT2_INPUT, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER, HT2_BRAKE } from './vehicles/controls';
 import * as THREE from 'three';
-import type { FileSource } from '@engine/assets/source';
+import type { FileSource } from '@shared/source';
 import { EngineAudio } from '@engine/audio/engineAudio';
 import { levelCollision } from '@engine/physics/collision';
 import { TruckVehicle } from '@engine/vehicle/truckVehicle';

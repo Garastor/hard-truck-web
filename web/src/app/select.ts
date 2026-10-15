@@ -1,4 +1,4 @@
-import type { PixelFont } from '@engine/ui/pixelFont';
+import type { TextFont } from '@shared/gameContext';
 import type { GameId, GameMeta } from './registry';
 import './select.css';
 
@@ -23,7 +23,7 @@ const CARD_Y = 66;
 const GOLD = 'rgb(240,220,138)';
 const DIM = 'rgb(160,150,120)';
 
-export function gameSelectScreen(cards: GameCard[], fonts: { small: PixelFont | null; large: PixelFont | null }, last: GameId | null): Promise<GameId> {
+export function gameSelectScreen(cards: GameCard[], fonts: { small: TextFont | null; large: TextFont | null }, last: GameId | null): Promise<GameId> {
   return new Promise((resolve) => {
     const root = document.createElement('div');
     root.className = 'menu-screen game-select';

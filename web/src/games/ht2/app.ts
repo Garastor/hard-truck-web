@@ -1,8 +1,9 @@
-import { cachedSource, idbSourceFor, missingFiles, prefetchMissing } from '@engine/assets/gameStore';
-import type { FileSource } from '@engine/assets/source';
+import { cachedSource, idbSourceFor, missingFiles, prefetchMissing } from '@shared/gameStore';
+import type { FileSource } from '@shared/source';
+import { setSoftFont } from '@engine/ui/softUi';
 import { parseFon } from '@engine/formats/fon';
 import { PixelFont } from '@engine/ui/pixelFont';
-import type { GameContext } from '@engine/gameContext';
+import type { GameContext } from '@shared/gameContext';
 import { HT2_FILES, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2ExitScreen, ht2MainScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem, type RoundKey } from './ui/menu';
 import { loadSettings, saveSettings, type Ht2Settings } from './ui/settings';
@@ -11,7 +12,7 @@ import { decodeCp1251 } from '@engine/formats/binary';
 import { WorldViewer } from './ui/viewer';
 import { Ht2Drive } from './drive';
 import { formatMoney, loadCareer, newCareer, type Ht2Career } from './career/career';
-import { modal } from '@engine/ui/modal';
+import { modal, setHudFont } from '@engine/ui/modal';
 
 type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files' | 'exit';
 
@@ -53,7 +54,10 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   ctx.setStatus('Завантаження «Дальнобійників 2»…');
   const source = await pickSource(ctx);
   const font = (name: string) => source.read(name).then((b) => new PixelFont(parseFon(b))).catch(() => null);
-  const [large] = await Promise.all([font('LARGE.FON')]);
+  const [large, small] = await Promise.all([font('LARGE.FON'), font('MENU.FON')]);
+  // Шрифт вікон і написів сенсорних кнопок (MENU.FON) — свій у кожної гри.
+  setHudFont(small);
+  setSoftFont(small);
   const art = await Ht2MenuArt.load((n) => source.read(n));
   // Налаштування одиночної гри: збережені в браузері, інакше — з TRUCK.INI гри.
   const ini = await source.read('TRUCK.INI').then((b) => parseIni(decodeCp1251(b))).catch(() => null);

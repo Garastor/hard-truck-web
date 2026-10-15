@@ -4,18 +4,13 @@
  * (Docs/09-structure-plan.md).
  */
 import * as THREE from 'three';
-import { cachedSource, importFiles, importZip, missingFiles, zipNames, type FileSet as AnyFileSet } from '@engine/assets/gameStore';
-import type { GameModule } from '@engine/gameContext';
-import { isIos, isStandalone, registerServiceWorker } from '@engine/ui/pwa';
-import { QUALITY, loadQuality } from '@engine/ui/quality';
-import { blockPageZoom } from '@engine/ui/mobile';
-import { MenuArt } from '@engine/ui/menuArt';
-import { PixelFont, uiScale } from '@engine/ui/pixelFont';
-import { setSoftFont } from '@engine/ui/softUi';
-import { setHudFont } from '@engine/ui/modal';
-import { parseFon } from '@engine/formats/fon';
-import { loadSwap } from '@engine/input/input';
-import { rememberMute } from '@engine/audio/engineAudio';
+import { importFiles, importZip, missingFiles, zipNames, type FileSet as AnyFileSet } from '@shared/gameStore';
+import type { GameModule, SelectArt, TextFont } from '@shared/gameContext';
+import { isIos, isStandalone, registerServiceWorker } from './platform/pwa';
+import { QUALITY, loadQuality } from './platform/quality';
+import { blockPageZoom } from './platform/mobile';
+import { uiScale } from './platform/scale';
+import { setSoftFont } from './platform/softUi';
 import { GAMES, GAME_IDS, detectGame, gameFromLocation, lastGame, setLastGame, type GameId } from './registry';
 import { ht1 } from '@ht1/index';
 import { ht2 } from '@ht2/index';
@@ -43,8 +38,25 @@ window.addEventListener('resize', setUiScale);
 setUiScale();
 blockPageZoom();
 rememberMute();
-// Кермо й педалі місцями (налаштування спільне для ігор).
+// Кермо й педалі місцями (налаштування спільне для ігор; ключ — той самий, що в керуванні ігор).
 document.body.classList.toggle('swap-controls', loadSwap());
+
+/** Тестова вкладка без звуку (?mute) — на всю сесію вкладки (ігри читають ht.mute зі sessionStorage). */
+function rememberMute(): void {
+  try {
+    if (import.meta.env.DEV && new URLSearchParams(location.search).has('mute')) sessionStorage.setItem('ht.mute', '1');
+  } catch {
+    /* приватний режим */
+  }
+}
+
+function loadSwap(): boolean {
+  try {
+    return localStorage.getItem('ht.swapControls') === '1';
+  } catch {
+    return false;
+  }
+}
 
 function setStatus(text: string | null): void {
   status.hidden = !text;
@@ -149,36 +161,16 @@ function exitToGameSelect(): void {
   location.assign(location.pathname.replace(/ht[12]\/(index\.html)?$/i, ''));
 }
 
-/** Растрові шрифти табло (MENU.FON, large.fon) для екрана вибору — з файлів будь-якої доступної гри. */
-async function selectFonts(available: GameId[]): Promise<{ small: PixelFont | null; large: PixelFont | null }> {
-  const load = async (name: string) => {
-    for (const id of available) {
-      const m = GAME_MODULES[id];
-      const font = await cachedSource(m.devSource, m.files)
-        .read(name)
-        .then((b) => new PixelFont(parseFon(b)))
-        .catch(() => null);
-      if (font) return font;
-    }
-    return null;
-  };
-  const small = await load('MENU.FON');
-  setHudFont(small);
-  setSoftFont(small);
-  return { small, large: await load('large.fon') };
-}
-
+/** Графіка ігор для екрана вибору (фон меню й шрифти — з файлів самої гри, GameModule.selectArt). */
 async function chooseGame(ids: readonly GameId[], available: GameId[]): Promise<GameId> {
-  const fonts = await selectFonts(available);
+  const arts = new Map<GameId, SelectArt>();
+  await Promise.all(available.map(async (id) => arts.set(id, await GAME_MODULES[id].selectArt().catch(() => ({ background: null, small: null, large: null })))));
+  // Шрифти — першої гри, що їх має.
+  const pick = (k: 'small' | 'large'): TextFont | null => available.map((id) => arts.get(id)?.[k] ?? null).find((f) => f) ?? null;
+  const fonts = { small: pick('small'), large: pick('large') };
+  setSoftFont(fonts.small);
   const { gameSelectScreen } = await import('./select');
-  const cards = await Promise.all(
-    ids.map(async (id) => {
-      const missing = !available.includes(id);
-      const m = GAME_MODULES[id];
-      const art = missing ? null : await MenuArt.load((n) => cachedSource(m.devSource, m.files).read(n)).catch(() => null);
-      return { meta: GAMES[id], art: art?.background(GAMES[id].menuBackground) ?? null, missing };
-    }),
-  );
+  const cards = ids.map((id) => ({ meta: GAMES[id], art: arts.get(id)?.background ?? null, missing: !available.includes(id) }));
   return gameSelectScreen(cards, fonts, lastGame());
 }
 

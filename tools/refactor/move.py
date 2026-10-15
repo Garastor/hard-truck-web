@@ -16,7 +16,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 WEB = os.path.join(ROOT, "web")
 SRC = os.path.join(WEB, "src")
 TEST = os.path.join(WEB, "test")
-ALIASES = [("@engine/", "engine/"), ("@app/", "app/"), ("@ht1/", "games/ht1/"), ("@ht2/", "games/ht2/")]
+ALIASES = [("@engine/", "engine/"), ("@shared/", "shared/"), ("@app/", "app/"), ("@ht1/", "games/ht1/"), ("@ht2/", "games/ht2/")]
 SPEC = re.compile(r"""((?:from|import)\s*\(?\s*)(['"])([^'"]+)\2""")
 EXTS = ["", ".ts", "/index.ts"]
 

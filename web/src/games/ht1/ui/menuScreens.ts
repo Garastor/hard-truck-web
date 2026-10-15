@@ -9,7 +9,7 @@
 import { formatMoney, type Career, type Difficulty } from '../career/career';
 import { localizeBackground, localizeButton } from './menuLocale';
 import type { MenuArt } from '@engine/ui/menuArt';
-import type { StorageInfo } from '@engine/assets/gameStore';
+import type { StorageInfo } from '@shared/gameStore';
 
 /** Екран 640×480, вписаний у вікно. */
 class Screen {

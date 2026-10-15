@@ -15,6 +15,7 @@
     "noEmit": true,
     "paths": {
       "@engine/*": ["./src/engine/*"],
+      "@shared/*": ["./src/shared/*"],
       "@app/*": ["./src/app/*"],
       "@ht1/*": ["./src/games/ht1/*"],
       "@ht2/*": ["./src/games/ht2/*"]

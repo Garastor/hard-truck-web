@@ -171,6 +171,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@engine': resolve(import.meta.dirname, 'src/engine'),
+      '@shared': resolve(import.meta.dirname, 'src/shared'),
       '@app': resolve(import.meta.dirname, 'src/app'),
       '@ht1': resolve(import.meta.dirname, 'src/games/ht1'),
       '@ht2': resolve(import.meta.dirname, 'src/games/ht2'),

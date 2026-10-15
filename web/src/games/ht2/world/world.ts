@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { FileSource } from '@engine/assets/source';
+import type { FileSource } from '@shared/source';
 import { parseB3d } from '@engine/formats/b3d';
 import { parseRmp, type RmpArchive } from '@engine/formats/rmp';
 import { decodeCp1251 } from '@engine/formats/binary';

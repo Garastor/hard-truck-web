@@ -1,7 +1,7 @@
 import { parseB3d, type B3d } from '@engine/formats/b3d';
 import { parseRmp, type RmpArchive } from '@engine/formats/rmp';
-import { httpSource, type FileSource } from '@engine/assets/source';
-import { idbSourceFor, matchRequired, type FileSet } from '@engine/assets/gameStore';
+import { httpSource, type FileSource } from '@shared/source';
+import { idbSourceFor, matchRequired, type FileSet } from '@shared/gameStore';
 import { CAB2D_DIR, CAB2D_RAIN_FILES, CAB2D_SOURCE, extractCab2d } from './cab2d/cab2dFiles';
 
 /** Локації гри: тека, сцена/ресурси для апаратного рендеру (*2.B3D + *3.RMP) і програмного (*.B3D + *.RMP). */

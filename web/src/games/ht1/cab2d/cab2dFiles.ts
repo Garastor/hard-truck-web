@@ -3,7 +3,7 @@ import { parsePlm } from '@engine/formats/plm';
 import { parseRmp } from '@engine/formats/rmp';
 import { parseTxr } from '@engine/formats/txr';
 import type { RgbaImage } from '@engine/formats/binary';
-import type { FileSource } from '@engine/assets/source';
+import type { FileSource } from '@shared/source';
 
 /**
  * 2D-кабіна (панель `panel_mask` з TRUCK.TCH, напр. msk\kam_pan.msk) — растр із програмного набору ресурсів

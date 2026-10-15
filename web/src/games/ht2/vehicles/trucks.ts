@@ -1,4 +1,4 @@
-import type { FileSource } from '@engine/assets/source';
+import type { FileSource } from '@shared/source';
 import { parseB3d, type Block } from '@engine/formats/b3d';
 import { parseRmp } from '@engine/formats/rmp';
 import { parseTech, type TechRecord } from '../formats/tech';
