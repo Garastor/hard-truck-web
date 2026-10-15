@@ -391,20 +391,16 @@ weatherSel.addEventListener('change', () => {
   if (drive && !careerCfg) drive.setWeather(weatherSel.value === 'rain');
 });
 
-// Режим гри в тестовому режимі (як у кар'єрі; за замовчуванням — аркада): симулятор — покриття й дощ впливають на зчеплення, аркада — ні.
-const DIFFICULTY_KEY = 'ht.testDifficulty';
+// Режим гри в тестовому режимі (як у кар'єрі): симулятор — покриття й дощ впливають на машину, аркада — ні.
+// Після завантаження — завжди аркада (на прохання користувача); вибір діє до перезавантаження сторінки.
 const difficultySel = $<HTMLSelectElement>('difficulty');
+difficultySel.value = 'arcade';
 try {
-  difficultySel.value = localStorage.getItem(DIFFICULTY_KEY) === 'sim' ? 'sim' : 'arcade';
+  localStorage.removeItem('ht.testDifficulty'); // раніше вибір запам'ятовувався
 } catch {
   /* приватний режим */
 }
 difficultySel.addEventListener('change', () => {
-  try {
-    localStorage.setItem(DIFFICULTY_KEY, difficultySel.value);
-  } catch {
-    /* приватний режим */
-  }
   if (tab === 'drive' && !careerCfg) void startDrive();
 });
 
