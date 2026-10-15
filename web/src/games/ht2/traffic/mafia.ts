@@ -93,7 +93,24 @@ export class Mafia {
    * Крок: засідки (показати/сховати), погоня. `loaded` — у гравця вантаж. Повертає 'robbed', коли наздогнали,
    * 'escaped' — коли відірвався.
    */
+  /** Відкуп по рації («мені не потрібні неприємності»): до кінця перемирʼя, с, — без погонь. */
+  private truce = 0;
+
+  /** Засідки й переслідувач ближче за r (рація): номер — для портрета бандита. */
+  nearby(player: THREE.Vector3, r: number): { id: number; pos: THREE.Vector3 }[] {
+    const out = this.posts.flatMap((p, id) => (p.root && p.root.position.distanceTo(player) < r ? [{ id, pos: p.root.position }] : []));
+    return out;
+  }
+
+  /** Перемирʼя на seconds с: погоня, якщо є, закінчується, нових не буде. */
+  makeTruce(seconds: number): void {
+    this.truce = Math.max(this.truce, seconds);
+    if (this.chase) this.end(true);
+  }
+
   update(dt: number, player: THREE.Vector3, loaded: boolean): 'robbed' | 'escaped' | null {
+    this.truce = Math.max(0, this.truce - dt);
+    if (this.truce > 0) loaded = false;
     for (const p of this.posts) {
       p.cooldown = Math.max(0, p.cooldown - dt);
       const d = p.home.distanceTo(player);

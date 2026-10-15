@@ -63,7 +63,7 @@ const ICONS = {
   brake: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M4 7l8 11 8-11z"/></svg>',
 };
 
-type Command = 'f1' | 'f2' | 'f3' | 'f4' | 'menu' | 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror' | 'cab' | 'swap';
+type Command = 'f1' | 'f2' | 'f3' | 'f4' | 'f5' | 'menu' | 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror' | 'cab' | 'swap';
 
 /**
  * Дозвіл на датчик руху (iOS 13+: DeviceOrientationEvent.requestPermission). Питати можна лише в жесті користувача;
@@ -176,6 +176,7 @@ export class Input {
     F2: 'f2',
     F3: 'f3',
     F4: 'f4',
+    F5: 'f5',
     KeyC: 'camera',
     KeyR: 'reset',
     Digit0: 'reset',

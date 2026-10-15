@@ -340,8 +340,12 @@ export class CareerMode {
    * Штраф поліції за перевищення швидкості: $20 за км/год понад ліміт (гіпотеза). З графікою оригіналу — картка
    * радара (mess16: обмеження, ваша швидкість, штраф) без зупинки гри.
    */
+  /** Останній штраф (рація: «навіщо штраф, командире?» — домовитися з інспектором поруч), с реального часу. */
+  lastFine: { amount: number; at: number } | null = null;
+
   async fine(over: number, limit = 60): Promise<void> {
     const c = this.career;
+    this.lastFine = { amount: over * 20, at: performance.now() / 1000 };
     if (this.drive.cards) {
       const amount = over * 20;
       this.drive.cards.show(16, { limit, speed: limit + over, amount });

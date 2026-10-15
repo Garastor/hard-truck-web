@@ -28,7 +28,7 @@ export class SidePanel {
     readonly art: EscArt,
     parent: HTMLElement,
     background: string,
-    readonly side: 'left' | 'right' = 'right',
+    readonly side: 'left' | 'right' | 'center' = 'right',
     /**
      * Які рядки фону показати [згори, знизу]: вписуються між табло й низом екрана (зменшуються, якщо не влазять).
      * Без — як в оригіналі: рядок 650 посередині екрана.

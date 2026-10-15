@@ -78,11 +78,9 @@ export class EscArt {
       }
       let bg: ImageData | null = null;
       const first = Object.values(states)[0];
-      const back = under && first ? this.res.textures.get(normName(under.background)) : undefined;
-      if (back && first) {
-        const c = toCanvas(parseTxr(back));
-        bg = c.getContext('2d')!.getImageData(under!.x, under!.y, first.width, first.height);
-      }
+      // Фон панелі (txr чи маска, як у рації) — уже з українськими підписами, але під кнопками їх немає.
+      const back = under && first ? this.canvas(under.background) : null;
+      if (back && first) bg = back.getContext('2d')!.getImageData(under!.x, under!.y, first.width, first.height);
       const out = localizeButton(key, states, bg);
       this.buttons.set(id, out && Object.fromEntries(Object.entries(out).map(([s, c]) => [s, c.toDataURL()])));
     }

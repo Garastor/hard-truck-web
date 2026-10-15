@@ -23,7 +23,33 @@ export const BUTTON_UK: Record<string, string> = {
   gascanc: 'СКАСУВАТИ',
   // Підменю Esc «Звук» і «Керування».
   canc: 'СКАСУВАТИ',
+  // Рація (F5): фрази гравця — по центру кнопки 258×44, довгі — у два рядки.
+  f5p_ask1: '– НАВІЩО ШТРАФ, КОМАНДИРЕ,\nМОЖЕ, ДОМОВИМОСЯ?',
+  f5p_ask2: '– ПРИКРИЙТЕ ЗАМОВЛЕННЯ ВІД БАНДИТІВ.',
+  f5p_ask3: '– ЗАТРИМАЙТЕ КОНКУРЕНТА.',
+  f5p_ask4: '– ДО ПОБАЧЕННЯ.',
+  f5m_ask1: '– МЕНІ НЕ ПОТРІБНІ НЕПРИЄМНОСТІ.',
+  f5m_ask2: '– ПОТРУСІТЬ МОГО КОНКУРЕНТА.',
+  f5m_ask3: '– ХОЧУ ЗАМОВИТИ МАШИНУ.',
+  f5m_ask4: '– ДО ПОБАЧЕННЯ.',
+  f5o_ask1: '– НЕ ЖЕНИ.',
+  f5o_ask2: '– СКИНЬ ВАНТАЖ.',
+  f5o_ask3: '– ДО ПОБАЧЕННЯ.',
+  f5n_ask1: '– ДОПОМОЖИ З РЕМОНТОМ МАШИНИ.',
+  f5n_ask2: '– ХОЧУ ЗАМОВИТИ МАШИНУ.',
+  f5n_ask3: '– ДО ПОБАЧЕННЯ.',
+  f5p_ok: '– ДОМОВИЛИСЯ.',
+  f5m_ok: '– ДОМОВИЛИСЯ.',
+  f5o_ok: '– ДОМОВИЛИСЯ.',
+  f5n_ok: '– ДОМОВИЛИСЯ.',
+  f5p_canc: '– ЗАБУДЬ ПРО ЦЕ.',
+  f5m_canc: '– ЗАБУДЬ ПРО ЦЕ.',
+  f5o_canc: '– ЗАБУДЬ ПРО ЦЕ.',
+  f5n_canc: '– ЗАБУДЬ ПРО ЦЕ.',
 };
+
+/** Кнопки з написом по центру (фрази рації): решта — ліворуч, як у меню. */
+const CENTERED = (base: string) => base.startsWith('f5') && !base.startsWith('f5tr');
 
 /**
  * Групи кнопок (одне вікно): у групі літери однакової ширини — стиск за найдовшим написом групи, а не кожен напис
@@ -35,6 +61,11 @@ const GROUPS: { keys: string[]; width: number }[] = [
   { keys: ['servcanc'], width: 118 },
   { keys: ['gascanc'], width: 72 },
   { keys: ['canc'], width: 72 },
+  // Фрази рації — усі однією шириною літер (кнопки 258 px, поля по 10).
+  {
+    keys: ['p', 'm', 'o', 'n'].flatMap((who) => ['ask1', 'ask2', 'ask3', 'ask4', 'ok', 'canc'].map((k) => `f5${who}_${k}`)),
+    width: 238,
+  },
 ];
 
 const groupScale = new Map<string, number>();
@@ -45,8 +76,8 @@ function scaleFor(base: string): number {
   const id = group.keys.join(',');
   if (!groupScale.has(id)) {
     const ctx = document.createElement('canvas').getContext('2d')!;
-    ctx.font = `bold ${Math.round(CAP / 0.72)}px ${FONT}`;
-    const widest = Math.max(...group.keys.map((b) => ctx.measureText(BUTTON_UK[b] ?? '').width));
+    ctx.font = `bold ${Math.round(CAP_FOR(group.keys[0]) / 0.72)}px ${FONT}`;
+    const widest = Math.max(...group.keys.flatMap((b) => (BUTTON_UK[b] ?? '').split('\n')).map((t) => ctx.measureText(t).width));
     groupScale.set(id, Math.min(1, group.width / Math.max(1, widest)));
   }
   return groupScale.get(id)!;
@@ -68,6 +99,11 @@ interface Label {
   group?: string;
   color?: string;
   spacing?: number;
+  /**
+   * Як прибрати старий напис: типово — заповнення по стовпчиках; `ink` — лише пікселі жовтого тексту й контуру
+   * навколо (картки відповідей рації на фото), заповнення від сусідів.
+   */
+  mode?: 'ink';
 }
 
 /**
@@ -110,8 +146,42 @@ function at(x0: number, top: number, x1: number, text: string, align: 'left' | '
   return { erase: [x0 - 3, top - 2, x1 + 4, top + cap + 3], text, x, base: top + cap, align, cap, maxW, group };
 }
 
+/** Картка відповіді рації 129×69: жовтий текст по лівому краю (x 8), рядки через 17; стирання — «чорнилом». */
+function answer(lines: string[], top: number, erase: [number, number, number, number]): Label[] {
+  return lines.map((t, i) => ({ erase, text: t, x: 6, base: top + 14 + i * 18, align: 'left', cap: 14, maxW: 118, group: 'f5ans', color: 'rgb(255,255,0)', mode: 'ink' }) as Label);
+}
+
+/** Пігулки «ПОШУК» (99×36) і кругла «ПРИЙОМ» (84×84) — темний текст на світлому, у кожному стані. */
+const RADIO_BUTTONS: Record<string, Label[]> = Object.fromEntries(
+  ['p', 'a', 'ap'].flatMap((st) => [
+    [`m_16/f5search_${st}.txr`, [{ erase: [14, 9, 84, 27], text: 'ПОШУК', x: 49, base: 25, align: 'center', cap: 13, maxW: 70, group: 'f5btn', color: 'rgb(20,24,28)', spacing: 2 } as Label]],
+    [`m_16/f5talk_${st}.txr`, [{ erase: [12, 30, 72, 54], text: 'ПРИЙОМ', x: 42, base: 51, align: 'center', cap: 16, maxW: 62, group: 'f5btn2', color: 'rgb(20,24,28)' } as Label]],
+  ]),
+);
+
+/** Рація: корпус «РАЦІЯ» / «В ЕФІРІ», кнопки, картки відповідей (виміряно на картинках esc16.RES). */
+const RADIO_UK: Record<string, Label[]> = {
+  ...RADIO_BUTTONS,
+  'm16/backf5cbradio.msk': [],
+  'm_16/backf5cbradio.msk': [
+    { erase: [56, 28, 196, 60], text: 'РАЦІЯ', x: 125, base: 56, align: 'center', cap: 24, maxW: 140, color: 'rgb(20,40,60)' },
+    { erase: [36, 84, 92, 95], text: 'В ЕФІРІ', x: 38, base: 93, align: 'left', cap: 9, maxW: 60, color: 'rgb(30,40,28)' },
+  ],
+  'm_16/f5m_ans_cost.txr': answer(['– ЦЕ КОШТУВАТИМЕ'], 19, [0, 15, 128, 42]),
+  'm_16/f5n_ans_cost.txr': answer(['– ЦЕ КОШТУВАТИМЕ'], 19, [0, 15, 128, 42]),
+  'm_16/f5o_ans_cost.txr': answer(['– ЦЕ КОШТУВАТИМЕ'], 19, [0, 15, 128, 42]),
+  'm_16/f5p_ans_cost.txr': answer(['– ДОВЕДЕТЬСЯ', 'ЗАПЛАТИТИ'], 2, [0, 0, 128, 46]),
+  'm_16/f5n_ans_need.txr': answer(['– ПОТРІБНА', 'ДОПОМОГА?'], 15, [0, 11, 128, 60]),
+  'm_16/f5n_ans_nochan.txr': answer(['– БЕЗ ШАНСІВ.'], 27, [0, 22, 128, 47]),
+  'm_16/f5o_ans_noway.txr': answer(['– БЕЗ ШАНСІВ.'], 27, [0, 22, 128, 47]),
+  'm_16/f5p_ans_whats.txr': answer(['– ЩО', 'СТАЛОСЯ?'], 8, [0, 4, 128, 66]),
+  'm_16/f5m_ans_hell.txr': answer(['– ЩО ТРЕБА?'], 23, [0, 18, 128, 46]),
+  'm_16/f5o_ans_probl.txr': answer(['– ПРОБЛЕМИ?'], 27, [0, 22, 128, 50]),
+};
+
 /** Виміряно на фонах (re/notes/ht2/ui.md §3): клітинки, заголовки, кольори. */
 const BACKGROUND_UK: Record<string, Label[]> = {
+  ...RADIO_UK,
   'm_16/backf1.txr': [title([116, 417, 274, 437], 'КЛАВІАТУРА', 195, 433, 13, 3)],
   'm_16/backf2.txr': [
     title([131, 414, 259, 437], 'РЕЙТИНГ', 195, 433, 14, 6),
@@ -205,8 +275,9 @@ const BACKGROUND_UK: Record<string, Label[]> = {
 const FONT = '"Arial Narrow", "Roboto Condensed", "Helvetica Neue", Arial, sans-serif';
 /** Запас навколо старого напису: тінь зміщена вниз-праворуч. */
 const SHADOW = 4;
-/** Висота великих літер напису кнопки, px. */
+/** Висота великих літер напису кнопки, px (фрази рації — 11, виміряно рядки 14…24). */
 const CAP = 15;
+const CAP_FOR = (base: string) => (CENTERED(base) ? 11 : CAP);
 
 /** Пікселі напису: ті, що відрізняються між станами. */
 function textMask(states: ImageData[]): Uint8Array {
@@ -340,15 +411,18 @@ export function localizeButton(base: string, states: Record<string, ImageData>, 
   if (!box) return null;
   // Усі кнопки m_16 — одним кеглем, як в оригіналі (великі літери в рядках 1…16 кнопки 150×30, виміряно); базова
   // лінія — під ними.
-  const cap = CAP;
+  const cap = CAP_FOR(base);
   const top = Math.max(1, box[1]);
   const k = scaleFor(base);
+  const centered = CENTERED(base);
+  const lines = text.split('\n');
   const out: Record<string, HTMLCanvasElement> = {};
   keys.forEach((key, i) => {
     const img = new ImageData(new Uint8ClampedArray(src[i].data), w, h);
     const color = inkColor(src[i], mask);
     const [x0, y0, x1, y1] = [box[0] - 1, box[1] - 1, Math.min(w - 1, box[2] + SHADOW), Math.min(h - 1, box[3] + SHADOW)];
-    if (under && under.width === w && under.height === h) {
+    // Фрази рації мають власну темну смугу під текстом (не фон панелі) — заповнення по стовпчиках її зберігає.
+    if (under && under.width === w && under.height === h && !centered) {
       for (let y = Math.max(0, y0); y <= y1; y++)
         for (let x = Math.max(0, x0); x <= x1; x++) {
           const j = (y * w + x) * 4;
@@ -361,10 +435,69 @@ export function localizeButton(base: string, states: Record<string, ImageData>, 
     const c = toCanvas(img);
     // Натиснута / вибрана — зсув на піксель і підкреслення, як в оригіналі.
     const pressed = key === 'ap' || key === 'pp';
-    drawText(c.getContext('2d')!, text, box[0] + (pressed ? 1 : 0), top + cap + (pressed ? 1 : 0), cap, w - box[0] - 4, color, 'left', pressed, k);
+    const dx = pressed ? 1 : 0;
+    if (centered)
+      // Посередині кнопки: рядки через 15 px, середина тексту — на середині висоти.
+      lines.forEach((line, li) => {
+        const base = Math.round(h / 2 + cap / 2 + (li - (lines.length - 1) / 2) * 15) + dx;
+        drawText(c.getContext('2d')!, line, w / 2 + dx, base, cap, w - 20, color, 'center', pressed && li === lines.length - 1, k);
+      });
+    else drawText(c.getContext('2d')!, text, box[0] + dx, top + cap + dx, cap, w - box[0] - 4, color, 'left', pressed, k);
     out[key] = c;
   });
   return out;
+}
+
+/**
+ * Стирає жовтий текст з темним контуром у прямокутнику: маска — жовті пікселі, розширена на 2 (контур і тінь),
+ * заповнюється середнім уже відомих сусідів шарами від краю (фото під написом лишається довкола).
+ */
+function eraseInk(img: ImageData, x0: number, y0: number, x1: number, y1: number): void {
+  const { width: w, height: h, data } = img;
+  const todo = new Uint8Array(w * h);
+  for (let y = Math.max(0, y0); y <= Math.min(h - 1, y1); y++)
+    for (let x = Math.max(0, x0); x <= Math.min(w - 1, x1); x++) {
+      const i = (y * w + x) * 4;
+      if (data[i] > 170 && data[i + 1] > 170 && data[i + 2] < 120)
+        for (let dy = -2; dy <= 3; dy++)
+          for (let dx = -2; dx <= 3; dx++) {
+            const xx = x + dx;
+            const yy = y + dy;
+            if (xx >= 0 && yy >= 0 && xx < w && yy < h) todo[yy * w + xx] = 1;
+          }
+    }
+  for (let pass = 0; pass < 40; pass++) {
+    const fill: [number, number, number, number][] = [];
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (!todo[i]) continue;
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        let n = 0;
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx;
+            const yy = y + dy;
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h || todo[yy * w + xx]) continue;
+            const k = (yy * w + xx) * 4;
+            r += data[k];
+            g += data[k + 1];
+            b += data[k + 2];
+            n++;
+          }
+        if (n) fill.push([i, r / n, g / n, b / n]);
+      }
+    if (!fill.length) break;
+    for (const [i, r, g, b] of fill) {
+      data[i * 4] = r;
+      data[i * 4 + 1] = g;
+      data[i * 4 + 2] = b;
+      data[i * 4 + 3] = 255;
+      todo[i] = 0;
+    }
+  }
 }
 
 /** Колір старого напису: середнє найсвітлішої шостини пікселів прямокутника. */
@@ -388,7 +521,7 @@ export function localizeBackground(name: string, canvas: HTMLCanvasElement): voi
   const ctx = canvas.getContext('2d')!;
   const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const colors = items.map((it) => it.color ?? brightest(img, it.erase));
-  for (const { erase } of items) fillColumns(img, ...erase);
+  for (const it of items) (it.mode === 'ink' ? eraseInk : fillColumns)(img, ...it.erase);
   ctx.putImageData(img, 0, 0);
   // Одна група — один стиск (за найдовшим підписом відносно його місця).
   const scale = new Map<string, number>();

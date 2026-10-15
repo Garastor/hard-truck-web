@@ -39,7 +39,7 @@ import { Music } from './ui/music';
 import { SceneAssembler } from './engine/render/sceneBuilder';
 import { parseB3d } from './engine/formats/b3d';
 import { parseRmp } from './engine/formats/rmp';
-import type { Ht2Career } from './career/career';
+import { REPAIR_PER_PERCENT, type Ht2Career } from './career/career';
 import { HT2_MOD_REGIONS, readTextures } from './files';
 import { saveSettings, steerGain, timeScale, type Ht2Settings } from './ui/settings';
 import { EscArt } from './ui/escArt';
@@ -47,6 +47,7 @@ import { ukMessage } from './ui/uk';
 import { EscMenu, type EscCommand } from './ui/escMenu';
 import { FPanels, type FPanel } from './ui/fPanels';
 import { TabMap } from './ui/tabMap';
+import { Radio, type RadioAsk, type RadioContact } from './ui/radio';
 import { Navigator, type NavTurn } from './world/navigator';
 import { Tablo } from './ui/tablo';
 import { Cards } from './ui/cards';
@@ -72,6 +73,10 @@ const OFFROAD_ROLL = 5;
 /** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
 const RESCUE_SECONDS = 5;
 const RESCUE_COST = 1000;
+/** Рація: радіус зв'язку, м; скільки після штрафу можна домовитися, с; перемирʼя з мафією, с (гіпотези). */
+const RADIO_R = 500;
+const BRIBE_WINDOW = 120;
+const TRUCE_SECONDS = 600;
 
 /**
  * Їзда у світі Дальнобойщиків 2 (G4): вантажівка з vehicle.tech і TRUCKS.B3D на тій самій фізиці, що й у першій
@@ -178,6 +183,8 @@ export class Ht2Drive {
   /** Карта на Tab з графікою оригіналу (огляд → збільшено → сховано). */
   private tabMap: TabMap | null = null;
   private mapPoints: MapPoint[] = [];
+  /** Рація F5. */
+  private radio: Radio | null = null;
   /** Навігатор (покращення PR_NAVIGATOR): поворот на найближчій розвилці до цілі, раз на 0,25 с. */
   private navigator: Navigator | null = null;
   private navTurn: NavTurn | null = null;
@@ -343,6 +350,7 @@ export class Ht2Drive {
       if (cmd === 'reset') this.recover();
       if (cmd === 'menu') this.toggleEsc();
       if (cmd === 'f1' || cmd === 'f2' || cmd === 'f3' || cmd === 'f4') this.toggleF(Number(cmd[1]) as FPanel);
+      if (cmd === 'f5') this.radio?.toggle();
       if (cmd === 'horn') this.audio?.playOnce('horn');
       if (cmd === 'engine') {
         this.truck.engineOn = !this.truck.engineOn;
@@ -375,7 +383,12 @@ export class Ht2Drive {
     info.className = 'ht2-orig-only';
     info.setAttribute('aria-label', 'Панелі інформації (F1–F4)');
     info.addEventListener('click', () => this.toggleF(this.fPanels?.open ?? 3));
-    this.hud.append(back, music, map, info);
+    const cb = document.createElement('button');
+    cb.textContent = 'Рація';
+    cb.className = 'ht2-orig-only';
+    cb.setAttribute('aria-label', 'Рація (F5)');
+    cb.addEventListener('click', () => this.radio?.toggle());
+    this.hud.append(back, music, map, info, cb);
     // У шарі overlay — під вікнами складу й СТО (вони теж там, вище).
     o.overlay.append(this.hud, this.bar);
     void EscArt.load(o.source).then((art) => {
@@ -386,6 +399,23 @@ export class Ht2Drive {
       this.tablo.onPage = () => this.audio?.playOnce('pager');
       this.cards = new Cards(art, o.overlay);
       this.fPanels = new FPanels(art, o.overlay, () => this.fData());
+      this.radio = new Radio(art, o.overlay, {
+        contacts: () => this.radioContacts(),
+        asks: (c) => this.radioAsks(c),
+        money: () => this.careerMode?.career.money ?? Infinity,
+        pay: (amount) => {
+          const c = this.careerMode?.career;
+          if (!c) return true;
+          if (c.money < amount) {
+            this.say(this.careerMode!.msg('NOT_ENOUGH_MONEY', 'НЕ ВИСТАЧАЄ ГРОШЕЙ'));
+            return false;
+          }
+          c.money -= amount;
+          this.careerMode!.persist();
+          return true;
+        },
+        say: (t) => this.say(t),
+      });
       this.tabMap = new TabMap(art, o.overlay, this.roads.lines.filter((l) => !l.name.endsWith('r')), this.mapPoints);
       document.body.classList.add('ht2-orig-ui');
       this.resize();
@@ -751,6 +781,85 @@ export class Ht2Drive {
     this.navigator ??= new Navigator(this.roads);
     const target = this.careerMode!.target();
     this.navTurn = target ? this.navigator.turn(this.truck.visual.position, this.truck.forward(), target) : null;
+  }
+
+  /** Абоненти рації поруч (RADIO_R): міліція на постах, мафія в засідці чи в погоні, далекобійники; ближчі — першими. */
+  private radioContacts(): RadioContact[] {
+    const p = this.truck.visual.position;
+    const out: (RadioContact & { d: number })[] = [];
+    for (const s of this.police?.nearby(p, RADIO_R) ?? []) out.push({ kind: 'pol', id: s.id, name: 'МІЛІЦІЯ', d: s.pos.distanceTo(p) });
+    for (const s of this.mafia?.nearby(p, RADIO_R) ?? []) out.push({ kind: 'maf', id: s.id, name: 'МАФІЯ', d: s.pos.distanceTo(p) });
+    this.truckers?.list.forEach((r, i) => {
+      const d = r.truck.visual.position.distanceTo(p);
+      if (d < RADIO_R) out.push({ kind: 'nei', id: i + r.name.length, name: `ВОДІЙ ${r.name.toUpperCase()}`, d });
+    });
+    return out.sort((a, b) => a.d - b.d);
+  }
+
+  /**
+   * Фрази рації й що вони роблять (ціни, ймовірності, тривалість — гіпотези порту): міліція — замість штрафу хабар
+   * 60 % суми (25 % — «штраф за спробу підкупу»), «прикрийте від бандитів» — $800, мафія не чіпає 10 хв; мафія —
+   * відкуп $1500 на 10 хв (15 % — гроші взяли й обдурили, посібник: «бандити можуть обдурити»); водій — допомога з
+   * ремонтом: 40 % пошкоджень за півтори ціни СТО. Конкуренти (Б8) і замовлення машини — пізніше (кнопки неактивні).
+   */
+  private radioAsks(c: RadioContact): RadioAsk[] {
+    const cm = this.careerMode;
+    const truce = (text: string) => () => {
+      this.mafia?.makeTruce(TRUCE_SECONDS);
+      this.say(text);
+    };
+    if (c.kind === 'pol') {
+      const f = cm?.lastFine && performance.now() / 1000 - cm.lastFine.at < BRIBE_WINDOW ? cm.lastFine : null;
+      return [
+        {
+          key: 'ask1',
+          price: f ? Math.max(10, Math.round(f.amount * 0.6)) : null,
+          act: () => {
+            if (!cm || !f) return;
+            cm.lastFine = null;
+            if (Math.random() < 0.25) {
+              const extra = Math.round(f.amount * 0.6);
+              cm.career.money = Math.max(0, cm.career.money - extra);
+              this.cards?.show(11, { amount: extra });
+              this.say(cm.msg('FINE_BRIBERY', 'ШТРАФ ЗА СПРОБУ ПІДКУПУ $%g', extra));
+            } else {
+              cm.career.money += f.amount;
+              this.say(`ШТРАФ СКАСОВАНО: +$${f.amount}`);
+            }
+            cm.persist();
+          },
+        },
+        { key: 'ask2', price: 800, act: truce('ЗАМОВЛЕННЯ ПІД ОХОРОНОЮ МІЛІЦІЇ') },
+        { key: 'ask3', off: true },
+        { key: 'ask4', bye: true },
+      ];
+    }
+    if (c.kind === 'maf')
+      return [
+        {
+          key: 'ask1',
+          price: 1500,
+          act: () => (Math.random() < 0.15 ? this.say('БАНДИТИ ВЗЯЛИ ГРОШІ Й ОБДУРИЛИ') : truce('МАФІЯ ВАС НЕ ЧІПАТИМЕ')()),
+        },
+        { key: 'ask2', off: true },
+        { key: 'ask3', off: true },
+        { key: 'ask4', bye: true },
+      ];
+    const dmg = cm?.career.damage ?? 0;
+    return [
+      {
+        key: 'ask1',
+        price: dmg < 0.05 ? null : Math.round(dmg * 100 * 0.4 * REPAIR_PER_PERCENT * 1.5),
+        act: () => {
+          if (!cm) return;
+          cm.career.damage *= 0.6;
+          this.say('ВОДІЙ ДОПОМІГ З РЕМОНТОМ');
+          cm.persist();
+        },
+      },
+      { key: 'ask2', off: true },
+      { key: 'ask3', bye: true },
+    ];
   }
 
   /** Дані панелей F1–F4. */
@@ -1210,6 +1319,7 @@ export class Ht2Drive {
     this.escMenu?.close();
     this.fPanels?.close();
     this.tabMap?.dispose();
+    this.radio?.close();
     this.rainSound?.stop();
     this.windSound?.stop();
     this.opts.renderer.setAnimationLoop(null);

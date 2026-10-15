@@ -66,6 +66,11 @@ export class Police {
   }
 
   /** Крок: показати/сховати машини постів; повертає штраф (км/год понад ліміт), якщо радар спрацював. */
+  /** Пости ближче за r (рація): номер поста — для портрета інспектора. */
+  nearby(player: THREE.Vector3, r: number): { id: number; pos: THREE.Vector3 }[] {
+    return this.posts.flatMap((p, id) => (p.pos.distanceTo(player) < r ? [{ id, pos: p.pos }] : []));
+  }
+
   update(dt: number, player: THREE.Vector3, speedKmh: number): { over: number } | null {
     let fine: { over: number } | null = null;
     for (const p of this.posts) {
