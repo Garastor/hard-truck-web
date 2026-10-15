@@ -61,6 +61,33 @@ export function salePanel(art: EscArt, parent: HTMLElement, s: SaleView, buy: ()
   return p;
 }
 
+export interface JobView {
+  name: string;
+  tariff: number;
+  photo: number;
+  model: string;
+  price: number;
+  power: number;
+  load: number;
+}
+
+/**
+ * Водій шукає роботу (`BackJob`, king.exe тип 0x18): фото в рамці (97, 453), рядки клітинок з 564 через 20 —
+ * імʼя, тариф за 10 км, машина, ціна; потужність і вантажність — у ширших клітинках (значення з x 145).
+ */
+export function jobPanel(art: EscArt, parent: HTMLElement, j: JobView, hire: () => void): SidePanel {
+  const p = new SidePanel(art, parent, 'm_16\\BackJob.txr');
+  p.image(`m16\\escphoto${String(j.photo).padStart(2, '0')}.txr`, 98, 454);
+  p.write(101, 580, j.name, VALUE);
+  p.write(101, 600, `$${j.tariff} / 10 КМ`, VALUE);
+  p.write(101, 620, j.model, VALUE);
+  p.write(101, 640, `$${Math.round(j.price)}`, VALUE);
+  p.write(145, 660, `${Math.round(j.power)} К.С.`, VALUE);
+  p.write(145, 680, `${(j.load / 1000).toFixed(2)}Т`, VALUE);
+  p.action(20, 700, 185, 'Найняти (+)', hire);
+  return p;
+}
+
 /** Системи ремонту за клітинками вікна (king.exe: група (412, 481), стовпчики x = 0 і 181, рядки через 19). */
 const REPAIRS = [
   ['engine', 0, 0],

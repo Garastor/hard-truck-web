@@ -1,5 +1,6 @@
 import type { Order } from './economy';
 import type { RivalRun } from './competition';
+import type { HiredDriver } from './company';
 
 /**
  * Кар'єра Дальнобойщиків 2 (перша версія): гроші, вантажівка, стан, поточне замовлення, ігровий час. Зберігається в
@@ -39,6 +40,10 @@ export interface Ht2Career {
   tons?: number;
   /** Скільки разів доставлено першим серед конкурентів (ліцензії на найм — G9 Б7). */
   firsts?: number;
+  /** Ліцензії на найм: ігровий час закінчення кожної. */
+  licences?: number[];
+  /** Наймані водії (company.ts). */
+  company?: HiredDriver[];
   /** Встановлені покращення (`PR_ID:варіант`, див. upgrades.ts); переходять на нову вантажівку (гіпотеза). */
   upgrades?: string[];
   /** Вмʼятини за зонами кузова (0…1, dents.ts); ремонт на СТО скидає. */

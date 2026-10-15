@@ -7,9 +7,10 @@ import { toThree } from '../world/world';
 import { install, type Upgrade } from './upgrades';
 import { USED_DAMAGE, type ForSale, type Market } from './market';
 import type { Ht2Drive } from '../drive';
-import { gasPanel, orderPanel, salePanel, servicePanel } from './stations';
+import { gasPanel, jobPanel, orderPanel, salePanel, servicePanel } from './stations';
 import type { SidePanel } from '../ui/panel';
 import { active, advance, makeRivals, place, PREMIUM_SHARE } from './competition';
+import { hireOffer, LICENCE_TIME, newDriver, tickCompany } from './company';
 import { ukMessage } from '../ui/uk';
 
 /**
@@ -101,6 +102,7 @@ export class CareerMode {
     c.time += dt * this.drive.timeScale;
     this.burn(dt, throttle);
     this.updateRace(dt);
+    this.updateCompany(dt);
     const v = this.drive.truck.body.linvel();
     const dv = Math.hypot(v.x - this.prevVel.x, v.y - this.prevVel.y, v.z - this.prevVel.z);
     this.prevVel.set(v.x, v.y, v.z);
@@ -248,6 +250,12 @@ export class CareerMode {
     if (!near) return;
     const current = this.drive.drivableTrucks().find((r) => r.carNode === c.truck);
     const tradeIn = Math.round((current?.price ?? 0) * 0.5);
+    // На одному місці ринку — водій, що шукає роботу (зі своєю машиною).
+    const offer = hireOffer(m.id, day, m.spots.length, this.drive.truckers?.allNames ?? []);
+    if (offer && offer.spot === near.spot) {
+      const job = { ...offer, model: near.rec.carNode, price: near.price, power: near.rec.horsePower, load: near.rec.cargoLoad };
+      return this.openPanel(jobPanel(this.drive.escArt!, this.drive.overlay, job, () => this.hire(m, day, near, offer)));
+    }
     this.openPanel(
       salePanel(this.drive.escArt!, this.drive.overlay, { model: near.rec.carNode, price: near.price, power: near.rec.horsePower, load: near.rec.cargoLoad, used: near.used }, () => {
         const cost = near.price - tradeIn;
@@ -479,6 +487,41 @@ export class CareerMode {
     return !!d && Math.hypot(d[0] - gx, d[1] - gy) < (key[0] === 'f' ? FUEL_RADIUS : STO_RADIUS) * 2;
   }
 
+  /** Ліцензії (табло «ЛІЦЕНЗІЙ N» і час найближчої до закінчення), с ігрового часу. */
+  licenceInfo(): { count: number; left: number } | null {
+    const l = this.career.licences ?? [];
+    return l.length ? { count: l.length, left: Math.min(...l) - this.career.time } : null;
+  }
+
+  /** Закінчення ліцензій і робота найманих водіїв. */
+  private updateCompany(dt: number): void {
+    const c = this.career;
+    if (c.licences?.length) {
+      const live = c.licences.filter((t) => t > c.time);
+      if (live.length < c.licences.length) this.drive.say(this.msg('LICENCES_EXPIRED', 'ЛІЦЕНЗІЙ НА НАЙМ, ЩО ЗАКІНЧИЛИСЯ: %d', c.licences.length - live.length));
+      c.licences = live;
+    }
+    if (!c.company?.length) return;
+    for (const e of tickCompany(c.company, dt, c)) {
+      if (e.kind === 'quit') this.drive.say(this.msg('NO_MONEY_FOR_ADVANCE', 'ВАШ НАЙМАНИЙ ВОДІЙ ЗВІЛЬНИВСЯ - У ВАС НЕ БУЛО ГРОШЕЙ, ЩОБ ЗАПЛАТИТИ'));
+      else this.drive.say(`${e.driver.name.toUpperCase()} ДОСТАВИВ ВАНТАЖ: +$${e.income}`);
+    }
+  }
+
+  /** Найм водія з його машиною: потрібні ліцензія й гроші на викуп машини. */
+  private hire(m: Market, day: number, near: ForSale, offer: { name: string; tariff: number; photo: number }): void {
+    const c = this.career;
+    if (!c.licences?.length) return this.drive.say(this.msg('NO_LICENCES', 'У ВАС НЕМАЄ ЛІЦЕНЗІЙ НА НАЙМ!'));
+    if (c.money < near.price) return this.drive.say(this.msg('NO_MONEY_TO_HIRE', 'У ВАС НЕ ВИСТАЧАЄ ГРОШЕЙ НА НАЙМ'));
+    c.money -= near.price;
+    c.licences = [...c.licences].sort((a, b) => a - b).slice(1);
+    c.company = [...(c.company ?? []), newDriver(offer, near.rec.carNode)];
+    this.drive.markets!.sell(m, day, near);
+    this.drive.say(`${offer.name.toUpperCase()} ПРАЦЮЄ НА ВАС`);
+    this.persist();
+    this.closePanel();
+  }
+
   /** Доставка: якщо були суперники й ніхто не доїхав раніше — премія першому. */
   private firstBonus(o: NonNullable<Ht2Career['order']>): void {
     if (!o.rivals?.length || o.beaten) return;
@@ -486,6 +529,9 @@ export class CareerMode {
     c.money += o.premium ?? 0;
     c.firsts = (c.firsts ?? 0) + 1;
     this.drive.say(`ВИ ПЕРШИЙ! ПРЕМІЯ $${o.premium ?? 0}`);
+    // Ліцензія на найм (посібник: за доставку першим); перша — картка 1 «можеш відкрити свою компанію», далі — 2.
+    c.licences = [...(c.licences ?? []), c.time + LICENCE_TIME];
+    this.drive.cards?.show(c.firsts === 1 ? 1 : 2, { drivers: c.licences.length, name: c.driver, minutes: Math.round(LICENCE_TIME / 60) });
   }
 
   /** Позиція серед конкурентів (табло «ПОЗИЦІЯ N З M»), оновлюється раз на пів секунди. */

@@ -23,6 +23,9 @@ export const BUTTON_UK: Record<string, string> = {
   gascanc: 'СКАСУВАТИ',
   // Підменю Esc «Звук» і «Керування».
   canc: 'СКАСУВАТИ',
+  // F4 «Моя компанія».
+  chan: 'ПОМІНЯТИСЯ МІСЦЯМИ',
+  fire: 'ЗВІЛЬНИТИ',
   // Рація (F5): фрази гравця — по центру кнопки 258×44, довгі — у два рядки.
   f5p_ask1: '– НАВІЩО ШТРАФ, КОМАНДИРЕ,\nМОЖЕ, ДОМОВИМОСЯ?',
   f5p_ask2: '– ПРИКРИЙТЕ ЗАМОВЛЕННЯ ВІД БАНДИТІВ.',
@@ -61,6 +64,7 @@ const GROUPS: { keys: string[]; width: number }[] = [
   { keys: ['servcanc'], width: 118 },
   { keys: ['gascanc'], width: 72 },
   { keys: ['canc'], width: 72 },
+  { keys: ['chan', 'fire'], width: 86 },
   // Фрази рації — усі однією шириною літер (кнопки 258 px, поля по 10).
   {
     keys: ['p', 'm', 'o', 'n'].flatMap((who) => ['ask1', 'ask2', 'ask3', 'ask4', 'ok', 'canc'].map((k) => `f5${who}_${k}`)),
@@ -182,6 +186,11 @@ const RADIO_UK: Record<string, Label[]> = {
 /** Виміряно на фонах (re/notes/ht2/ui.md §3): клітинки, заголовки, кольори. */
 const BACKGROUND_UK: Record<string, Label[]> = {
   ...RADIO_UK,
+  'm_16/backjob.txr': [
+    title([54, 415, 209, 437], 'ШУКАЮ РОБОТУ', 131, 434, 14, 3),
+    ...column(51, 96, 568, 20, ['ІМʼЯ', 'ТАРИФ', 'МАШИНА', 'ЦІНА'], 'left', 'job'),
+    ...column(51, 140, 648, 20, ['ПОТУЖНІСТЬ', 'ВАНТАЖНІСТЬ'], 'left', 'job'),
+  ],
   'm_16/backf1.txr': [title([116, 417, 274, 437], 'КЛАВІАТУРА', 195, 433, 13, 3)],
   'm_16/backf2.txr': [
     title([131, 414, 259, 437], 'РЕЙТИНГ', 195, 433, 14, 6),

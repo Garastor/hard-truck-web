@@ -893,10 +893,34 @@ export class Ht2Drive {
     ];
   }
 
+  /**
+   * «Помінятися місцями» (F4): гравець сідає в машину водія, водій — у машину гравця (посібник: миттєво). Пошкодження
+   * й пальне — як були в гравця (гіпотеза: стан чужої машини порт не веде).
+   */
+  private swapWithDriver(i: number): void {
+    const c = this.careerMode?.career;
+    const d = c?.company?.[i];
+    if (!c || !d || c.order) return void (c?.order && this.say('СПЕРШУ ДОСТАВТЕ ВАНТАЖ'));
+    [c.truck, d.truck] = [d.truck, c.truck];
+    this.changeTruck(c.truck);
+    this.say(`ВИ ЗА КЕРМОМ ${c.truck}`);
+    this.careerMode!.persist();
+  }
+
   /** Дані панелей F1–F4. */
   private fData(): import('./ui/fPanels').FPanelData {
     return {
       info: this.careerMode?.info() ?? null,
+      company: this.careerMode?.career.company ?? [],
+      licences: this.careerMode?.career.licences?.length ?? 0,
+      swap: (i) => this.swapWithDriver(i),
+      fire: (i) => {
+        const c = this.careerMode?.career;
+        if (!c?.company?.[i]) return;
+        this.say(`${c.company[i].name.toUpperCase()} ЗВІЛЬНЕНО`);
+        c.company = c.company.filter((_, k) => k !== i);
+        this.careerMode!.persist();
+      },
       rivals: [...(this.truckers?.allNames ?? [])],
       keys: [
         ['ГАЗ', '↑'],
@@ -1240,6 +1264,7 @@ export class Ht2Drive {
       condition: c ? 1 - c.damage : 1,
       nav: this.navTurn,
       position: this.careerMode?.race ?? null,
+      licences: this.careerMode?.licenceInfo() ?? null,
     });
   }
 

@@ -2,6 +2,7 @@ import { SidePanel } from './panel';
 import type { EscArt } from './escArt';
 import type { CareerInfo } from '../career/careerMode';
 import { formatLeft } from '../career/careerMode';
+import type { HiredDriver } from '../career/company';
 
 /**
  * Ліві панелі F1–F4 king.exe (0x5756f0, 0x526470; re/notes/ht2/ui.md §3): F1 «Клавіатура», F2 «Рейтинг», F3 «Інфо»,
@@ -17,6 +18,11 @@ export interface FPanelData {
   rivals: string[];
   /** Клавіші порту: назва дії, клавіша. */
   keys: [string, string][];
+  /** Наймані водії й ліцензії; дії F4. */
+  company: readonly HiredDriver[];
+  licences: number;
+  swap(i: number): void;
+  fire(i: number): void;
 }
 
 const VALUE = 'rgb(240, 232, 150)';
@@ -94,6 +100,7 @@ export class FPanels {
     next.setAttribute('aria-label', 'Наступна панель');
     this.panel = p;
     this.timer = 0;
+    if (kind === 4) this.companyControls(p);
     this.draw();
   }
 
@@ -116,11 +123,11 @@ export class FPanels {
     const p = this.panel!;
     const d = this.data();
     p.clear();
-    for (const img of p.el.querySelectorAll('.ht2-panel-img')) img.remove();
+    for (const img of p.el.querySelectorAll('img.ht2-panel-img')) img.remove();
     if (this.kind === 1) this.keys(p, d.keys);
     else if (this.kind === 2) this.rating(p, d);
     else if (this.kind === 3) this.infoPanel(p, d.info);
-    else this.company(p, d.info);
+    else this.company(p, d);
   }
 
   /** F1: таблиця клавіш у два стовпчики по 18 рядків. */
@@ -137,7 +144,7 @@ export class FPanels {
   private rating(p: SidePanel, d: FPanelData): void {
     const me = d.info;
     const rows: [string, number, number, number][] = [];
-    if (me) rows.push([me.driver, me.delivered > 0 ? 100 : 0, 0, me.tons]);
+    if (me) rows.push([me.driver, me.delivered > 0 ? 100 : 0, d.company.length, me.tons]);
     // Доставки суперників порт ще не рахує (G9 Б8) — нулі.
     for (const n of d.rivals) rows.push([n, 0, 0, 0]);
     rows.slice(0, 10).forEach(([name, share, hired, tons], i) => {
@@ -187,12 +194,52 @@ export class FPanels {
     }
   }
 
-  /** F4: гроші, машини, найняті водії (наймання — G9 Б7). */
-  private company(p: SidePanel, info: CareerInfo | null): void {
+  /** Вибраний рядок водія F4 (дотик по рядку). */
+  private selected = 0;
+
+  /**
+   * F4: гроші, машини (своя й водіїв), прибуток водіїв усього, скільки можу найняти (ліцензії); таблиця водіїв —
+   * імʼя, аванс, прибуток, машина (рядки з 544 через 20); фото вибраного (32, 760); «помінятися місцями» (186, 774) і
+   * «звільнити» (85, 774) — king.exe 0x526470. Значення стовпчиків «ВСЬОГО» і «МОЖУ НАЙНЯТИ» — гіпотези.
+   */
+  private company(p: SidePanel, d: FPanelData): void {
+    const info = d.info;
     if (!info) return;
+    const list = d.company;
+    this.selected = Math.min(this.selected, Math.max(0, list.length - 1));
     p.write(36, 493, `$${Math.round(info.money)}`, VALUE);
-    p.write(200, 493, '1', VALUE, undefined, 'right');
-    p.write(246, 493, '1', VALUE, undefined, 'center');
-    p.write(323, 493, '0', VALUE, undefined, 'center');
+    p.write(200, 493, String(1 + list.length), VALUE, undefined, 'right');
+    p.write(246, 493, `$${Math.round(list.reduce((s, x) => s + x.profit, 0))}`, VALUE, undefined, 'center');
+    p.write(323, 493, String(d.licences), VALUE, undefined, 'center');
+    list.slice(0, 10).forEach((x, i) => {
+      const y = 559 + i * 20;
+      const color = i === this.selected ? 'rgb(255, 255, 255)' : VALUE;
+      p.write(36, y, x.name.slice(0, 9), color);
+      p.write(130, y, `$${Math.round(x.advance)}`, color, undefined, 'center');
+      p.write(195, y, `$${Math.round(x.profit)}`, color, undefined, 'center');
+      p.write(280, y, x.truck.slice(0, 12), color, undefined, 'center');
+    });
+    const sel = list[this.selected];
+    if (sel) p.image(`m16\\escphoto${String(sel.photo).padStart(2, '0')}.txr`, 33, 761);
+  }
+
+  /** Кнопки й вибір рядка F4 — один раз при відкритті (вміст перемальовується окремо). */
+  private companyControls(p: SidePanel): void {
+    for (let i = 0; i < 10; i++) {
+      const row = p.action(32, 544 + i * 20, 300, '', () => {
+        this.selected = i;
+        this.draw();
+      });
+      row.classList.add('ht2-panel-track');
+      row.style.height = '20px';
+    }
+    p.button('m_16\\chan', 186, 774, 'Помінятися місцями', () => {
+      this.data().swap(this.selected);
+      this.draw();
+    }, () => (this.data().company.length ? null : 'f'));
+    p.button('m_16\\fire', 85, 774, 'Звільнити', () => {
+      this.data().fire(this.selected);
+      this.draw();
+    });
   }
 }
