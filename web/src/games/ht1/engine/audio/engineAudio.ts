@@ -1,4 +1,5 @@
 import type { RmpArchive } from '../formats/rmp';
+import { airRelease, airValve } from './airBrake';
 
 /**
  * Звук вантажівки на Web Audio з оригінальних WAV (секції SOUNDFILES/SOUNDS архіву RMP).
@@ -91,10 +92,20 @@ export class EngineAudio {
         }
       }),
     );
+    // Пневмогальма — власні звуки порту, згенеровані (airBrake.ts): клапан і скидання повітря.
+    a.synth('airvalve', airValve(a.ctx.sampleRate));
+    a.synth('airrelease', airRelease(a.ctx.sampleRate));
     a.idle = a.loop('idle');
     a.full = a.loop('full');
     a.play('start', 0.8);
     return a;
+  }
+
+  /** Звук із готових відліків (моно, частота контексту). */
+  private synth(name: string, samples: Float32Array<ArrayBuffer>): void {
+    const buf = this.ctx.createBuffer(1, samples.length, this.ctx.sampleRate);
+    buf.copyToChannel(samples, 0);
+    this.buffers.set(name, buf);
   }
 
   private loop(name: string) {

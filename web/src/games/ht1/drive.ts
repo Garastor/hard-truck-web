@@ -86,6 +86,9 @@ const SHAKE_ANGLE = THREE.MathUtils.degToRad(0.245);
 const SHAKE_LIFT = 0.005;
 const SHAKE_PX = 1.2;
 const SHAKE_FULL_KMH = 50;
+/** Гучність звуків пневмогальм (клапан — 0,6 від повітря, як у затвердженому варіанті). */
+const AIR_RELEASE_VOLUME = 0.7;
+const AIR_VALVE_VOLUME = 0.42;
 
 /**
  * Кольори доріг на карті за покриттям (як на карті оригіналу: індекси палітри HUD 4 / 3 / 2 — точні кольори не
@@ -261,6 +264,8 @@ export class DriveSession {
   private odometer = 0;
   private audio: EngineAudio | null = null;
   private brakeSqueal = 0;
+  /** Педаль гальма була натиснута в попередньому кадрі (пневмогальма: клапан на натисканні, «пшш» на відпусканні). */
+  private brakeWasOn = false;
   private track!: Track;
   private room: string | null = null;
   private readonly prevPos = new THREE.Vector3();
@@ -1555,6 +1560,11 @@ export class DriveSession {
     const t = this.truck;
     if (this.audio) {
       this.audio.update(t.rpm, t.engineOn ? state.throttle : 0, t.engineOn);
+      // Пневмогальма (власний звук порту, на прохання користувача): клапан — раз на натисканні гальма, скидання
+      // повітря — раз на відпусканні. Гальмо — педаль, що гальмує (на задньому ходу — «газ»), з працюючим двигуном.
+      const braking = t.engineOn && t.brakePedal(state) > 0;
+      if (braking !== this.brakeWasOn) this.audio.play(braking ? 'airvalve' : 'airrelease', braking ? AIR_VALVE_VOLUME : AIR_RELEASE_VOLUME);
+      this.brakeWasOn = braking;
       this.brakeSqueal -= dt;
       if (state.brake > 0 && t.gear > 0 && t.speedKmh > 25 && this.brakeSqueal <= 0) {
         this.audio.play('break', 0.5);
