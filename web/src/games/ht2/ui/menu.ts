@@ -5,6 +5,7 @@ import { parsePlm } from '../engine/formats/plm';
 import type { RgbaImage } from '../engine/formats/binary';
 import type { PixelFont } from '../engine/ui/pixelFont';
 import type { Ht2Settings } from './settings';
+import { localizeRound } from './menuLocale';
 import './ht2.css';
 
 /**
@@ -48,6 +49,8 @@ export class Ht2MenuArt {
   image(name: string): string | null {
     if (!this.cache.has(name)) {
       const c = name.endsWith('.msk') ? this.mask(name) : this.background(name);
+      // Круглі кнопки головного меню — з українськими написами (menuLocale.ts).
+      if (c && name.startsWith('m/')) localizeRound(name, c, (n) => this.mask(n));
       this.cache.set(name, c ? c.toDataURL() : null);
     }
     return this.cache.get(name)!;
