@@ -44,6 +44,7 @@ import { HT2_MOD_REGIONS, readTextures } from './files';
 import { timeScale, type Ht2Settings } from './ui/settings';
 import { EscArt } from './ui/escArt';
 import { ukMessage } from './ui/uk';
+import { EscMenu, type EscCommand } from './ui/escMenu';
 import { Tablo } from './ui/tablo';
 import { Cards } from './ui/cards';
 
@@ -65,6 +66,9 @@ const CHASE_LOOK = 10;
 
 /** Опір кочення поза асфальтом, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
 const OFFROAD_ROLL = 5;
+/** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
+const RESCUE_SECONDS = 5;
+const RESCUE_COST = 1000;
 
 /**
  * Їзда у світі Дальнобойщиків 2 (G4): вантажівка з vehicle.tech і TRUCKS.B3D на тій самій фізиці, що й у першій
@@ -77,7 +81,8 @@ export interface Ht2DriveOptions {
   source: FileSource;
   overlay: HTMLElement;
   setStatus(text: string | null): void;
-  onExit(): void;
+  /** Вихід з їзди; next — куди далі (меню Esc: завантажити збережену гру, почати спочатку, вийти з гри). */
+  onExit(next?: 'career' | 'new' | 'exit'): void;
   /** car_node вантажівки (Zil, ZilR, Kamaz…); без — з GAME.CNF. */
   truck?: string | null;
   /** Напівпричіп для тягача (car_node запису `trailers`); типово — STrailerM. */
@@ -163,6 +168,12 @@ export class Ht2Drive {
   private cabLight: THREE.AmbientLight | null = null;
   /** Пауза (вікно складу чи СТО): фізика й час стоять. */
   paused = false;
+  /** Меню Esc «Проблемы в пути» (з графікою esc16.RES). */
+  private escMenu: EscMenu | null = null;
+  /** Виклик 911: відлік до відновлення (машина на гальмах), куди перенести, ціна. */
+  private rescue: { left: number; done?: boolean; ready: Promise<{ position: THREE.Vector3; forward: THREE.Vector3 } | null>; cost: number } | null = null;
+  /** Вихід без збереження («не зберігати», «завантажити гру»). */
+  private noSave = false;
   /** Ігровий час вільної їзди, с від півночі (кар'єра — свій); старт — 10:00 (TRUCK.INI timestart=10). */
   private freeTime = 10 * 3600;
   /** Доба й погода як у king.exe (climate.ts): показник погоди, дощ, грім, вітер; дощ — слизька дорога. */
@@ -315,6 +326,7 @@ export class Ht2Drive {
       if (cmd === 'map' && this.map) this.map.el.hidden = !this.map.el.hidden;
       if (cmd === 'lights') this.lightsManual = !this.lamps[0]?.visible;
       if (cmd === 'reset') this.recover();
+      if (cmd === 'menu') this.toggleEsc();
       if (cmd === 'horn') this.audio?.playOnce('horn');
       if (cmd === 'engine') {
         this.truck.engineOn = !this.truck.engineOn;
@@ -328,7 +340,7 @@ export class Ht2Drive {
     this.hud.className = 'ht2-hud';
     const back = document.createElement('button');
     back.textContent = '← Меню';
-    back.addEventListener('click', () => o.onExit());
+    back.addEventListener('click', () => (this.escArt ? this.toggleEsc() : o.onExit()));
     this.bar.className = 'ht2-drive-bar';
     this.music = new Music(o.source);
     void this.music.next();
@@ -677,6 +689,85 @@ export class Ht2Drive {
     this.setCargo(this.cargoMass);
   }
 
+  /** Меню Esc: відкрити (пауза) чи закрити. Без графіки оригіналу — вихід, як раніше. */
+  toggleEsc(): void {
+    if (this.escMenu) return this.closeEsc();
+    if (!this.escArt || this.rescue) return;
+    if (this.worldMap && !this.worldMap.el.hidden) return;
+    this.paused = true;
+    this.escMenu = new EscMenu(this.escArt, this.opts.overlay, {
+      career: !!this.careerMode,
+      // Звук і керування — наступний крок (G9 Б2).
+      disabled: ['control', 'sound'],
+      command: (c, save) => this.escCommand(c, save),
+      close: () => this.closeEsc(),
+    });
+  }
+
+  private closeEsc(): void {
+    this.escMenu?.close();
+    this.escMenu = null;
+    this.paused = false;
+  }
+
+  private escCommand(c: EscCommand, save?: boolean): void {
+    if (c === 'save') {
+      this.careerMode?.persist();
+      this.closeEsc();
+      return this.say('ГРУ ЗБЕРЕЖЕНО');
+    }
+    if (c === '911') {
+      this.closeEsc();
+      return this.call911();
+    }
+    if (c === 'control' || c === 'sound') return;
+    // Завантажити — збережене до останнього «зберегти» (поточний стан не записувати).
+    if (c === 'load' || save === false) this.noSave = true;
+    this.closeEsc();
+    this.opts.onExit(c === 'load' ? 'career' : c === 'restart' ? 'new' : c === 'exit' ? 'exit' : undefined);
+  }
+
+  /**
+   * 911 (посібник: «дуже дорога операція»): машина стоїть RESCUE_SECONDS с («Восстановление через %d сек.», mess.txt
+   * 125), потім — біля найближчої СТО (у вільній їзді — на останню надійну точку дороги), плата «ПЛАТА ЗА ВЫЗОВ $%d»
+   * (mess.txt 9). Відлік, місце й ціна — гіпотези: обробник кнопки в king.exe не знайдено.
+   */
+  call911(): void {
+    if (this.rescue) return;
+    const p = this.truck.visual.position;
+    const sto = this.careerMode?.nearestSto(p.x, -p.z) ?? null;
+    const ready = sto
+      ? this.world.ready(sto[0], sto[1]).then(() => {
+          this.rapier.step();
+          return this.spawnAt(sto);
+        })
+      : Promise.resolve(null);
+    this.rescue = { left: RESCUE_SECONDS, ready, cost: this.careerMode ? RESCUE_COST : 0 };
+    this.say(`ВИКЛИК 911. ВІДНОВЛЕННЯ ЧЕРЕЗ ${RESCUE_SECONDS} С.`);
+  }
+
+  private async finishRescue(): Promise<void> {
+    const r = this.rescue;
+    if (!r) return;
+    const spawn = await r.ready;
+    if (this.disposed) return;
+    if (spawn) {
+      this.truck.reset({ position: spawn.position.clone(), forward: spawn.forward.clone() });
+      this.trailer?.reset();
+      this.safe = spawn;
+      this.skipHits = 3;
+    } else this.recover();
+    const c = this.careerMode?.career;
+    if (c && r.cost) {
+      // Грошей бракує — забирають що є (гіпотеза): лишити гравця без допомоги не можна.
+      const paid = Math.min(c.money, r.cost);
+      c.money -= paid;
+      this.say(`ОПЛАТА ВИКЛИКУ $${paid}`);
+      this.careerMode!.persist();
+    }
+    this.rescue = null;
+  }
+
   /** Відновитися: на останню надійну точку дороги. */
   recover(): void {
     if (this.safe) this.truck.reset({ position: this.safe.position.clone(), forward: this.safe.forward.clone() });
@@ -835,6 +926,14 @@ export class Ht2Drive {
     const rivals = this.truckers?.positions ?? [];
     let state = this.autopilot ? this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt, [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...rivals]) : manual;
     if (this.race?.holding) state = { ...state, throttle: 0, brake: 1 };
+    if (this.rescue) {
+      state = { ...state, throttle: 0, brake: 1 };
+      this.rescue.left -= dt;
+      if (this.rescue.left <= 0 && !this.rescue.done) {
+        this.rescue.done = true;
+        void this.finishRescue();
+      }
+    }
     this.traffic?.update(dt, this.truck.visual.position, [...(this.trailer?.points() ?? []), ...rivals]);
     const obstacles = [this.truck.visual.position, ...(this.trailer?.points() ?? []), ...(this.traffic?.cars.map((c) => c.pos) ?? [])];
     this.updateSurface();
@@ -1011,7 +1110,9 @@ export class Ht2Drive {
   }
 
   dispose(): void {
-    this.careerMode?.persist();
+    if (!this.noSave) this.careerMode?.persist();
+    this.careerMode?.dispose();
+    this.escMenu?.close();
     this.rainSound?.stop();
     this.windSound?.stop();
     this.opts.renderer.setAnimationLoop(null);

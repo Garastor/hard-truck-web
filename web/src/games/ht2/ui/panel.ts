@@ -22,17 +22,24 @@ export class SidePanel {
   private readonly text: CanvasRenderingContext2D;
   private readonly onResize = () => this.fit();
   readonly width: number;
+  private readonly background: string;
 
   constructor(
     readonly art: EscArt,
     parent: HTMLElement,
     background: string,
     readonly side: 'left' | 'right' = 'right',
+    /**
+     * Які рядки фону показати [згори, знизу]: вписуються між табло й низом екрана (зменшуються, якщо не влазять).
+     * Без — як в оригіналі: рядок 650 посередині екрана.
+     */
+    private readonly view?: [number, number],
   ) {
     this.el = document.createElement('div');
     this.el.className = `ht2-panel ${side}`;
     this.stage = document.createElement('div');
     this.stage.className = 'ht2-panel-stage';
+    this.background = background;
     const bg = art.canvas(background);
     this.width = bg?.width ?? 225;
     const img = document.createElement('img');
@@ -56,10 +63,18 @@ export class SidePanel {
   }
 
   private fit(): void {
-    const s = this.scale;
+    const H = window.innerHeight;
+    let s = this.scale;
+    let y = H / 2 - PANEL_CENTER * s;
+    if (this.view) {
+      const top = parseFloat(getComputedStyle(document.body).getPropertyValue('--ht2-tablo-h')) || 0;
+      const [a, b] = this.view;
+      s = Math.min(s, (H - top) / (b - a));
+      y = top + (H - top - (b - a) * s) / 2 - a * s;
+    }
     this.el.style.width = `${this.width * s}px`;
     this.stage.style.width = `${this.width}px`;
-    this.stage.style.transform = `translateY(${window.innerHeight / 2 - PANEL_CENTER * s}px) scale(${s})`;
+    this.stage.style.transform = `translateY(${y}px) scale(${s})`;
   }
 
   /** Стерти тексти. */
@@ -92,7 +107,8 @@ export class SidePanel {
     const paint = () => {
       const fixed = state?.();
       const st = fixed === 'n' || fixed === 'ok' || fixed === 'f' ? fixed : fixed === 'pp' ? (hover ? 'ap' : 'pp') : down ? 'ap' : hover ? 'a' : 'p';
-      img.src = this.art.url(`${base}_${st}.txr`) ?? this.art.url(`${base}_p.txr`) ?? '';
+      const under = { background: this.background, x, y };
+      img.src = this.art.buttonUrl(base, st, under) ?? this.art.buttonUrl(base, 'p', under) ?? '';
       b.disabled = fixed === 'n' || fixed === 'f';
     };
     b.addEventListener('pointerenter', () => ((hover = true), paint()));

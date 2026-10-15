@@ -5,6 +5,7 @@ import { parseFon } from '../engine/formats/fon';
 import { PixelFont } from '../engine/ui/pixelFont';
 import type { RgbaImage } from '../engine/formats/binary';
 import type { FileSource } from '@shared/source';
+import { BUTTON_UK, localizeBackground, localizeButton } from './escLocale';
 
 /**
  * Графіка інтерфейсу в дорозі з `COMMON/esc16.RES` (16-бітний набір king.exe; `esc15.RES` — те саме для 15-бітного
@@ -16,6 +17,8 @@ import type { FileSource } from '@shared/source';
 export class EscArt {
   private readonly canvases = new Map<string, HTMLCanvasElement | null>();
   private readonly urls = new Map<string, string | null>();
+  /** Українські кнопки: `<база>@<фон>:<x>,<y>` → стан → data URL. */
+  private readonly buttons = new Map<string, Record<string, string> | null>();
 
   private constructor(
     private readonly res: RmpArchive,
@@ -51,9 +54,39 @@ export class EscArt {
     if (!this.canvases.has(n)) {
       const tex = this.res.textures.get(n);
       const msk = this.res.masks.get(n);
-      this.canvases.set(n, tex ? toCanvas(parseTxr(tex)) : msk ? toCanvas(parseMsk(msk)) : null);
+      const c = tex ? toCanvas(parseTxr(tex)) : msk ? toCanvas(parseMsk(msk)) : null;
+      if (c) localizeBackground(n, c);
+      this.canvases.set(n, c);
     }
     return this.canvases.get(n)!;
+  }
+
+  /**
+   * Кнопка `<base>_<state>.txr` з українським написом (escLocale), якщо є переклад; under — фон панелі й точка кнопки
+   * на ньому (звідти береться чисте тло під старим написом). Інакше — оригінал.
+   */
+  buttonUrl(base: string, state: string, under?: { background: string; x: number; y: number }): string | null {
+    const b = normName(base);
+    const key = b.split('/').pop()!;
+    if (!BUTTON_UK[key]) return this.url(`${base}_${state}.txr`);
+    const id = `${b}@${under ? `${normName(under.background)}:${under.x},${under.y}` : ''}`;
+    if (!this.buttons.has(id)) {
+      const states: Record<string, ImageData> = {};
+      for (const s of ['p', 'a', 'ap', 'pp', 'f', 'n', 'ok']) {
+        const tex = this.res.textures.get(`${b}_${s}.txr`);
+        if (tex) states[s] = toImageData(parseTxr(tex));
+      }
+      let bg: ImageData | null = null;
+      const first = Object.values(states)[0];
+      const back = under && first ? this.res.textures.get(normName(under.background)) : undefined;
+      if (back && first) {
+        const c = toCanvas(parseTxr(back));
+        bg = c.getContext('2d')!.getImageData(under!.x, under!.y, first.width, first.height);
+      }
+      const out = localizeButton(key, states, bg);
+      this.buttons.set(id, out && Object.fromEntries(Object.entries(out).map(([s, c]) => [s, c.toDataURL()])));
+    }
+    return this.buttons.get(id)?.[state] ?? this.url(`${base}_${state}.txr`);
   }
 
   /** Картинка як data URL для `<img>` (кешується). */
@@ -62,6 +95,10 @@ export class EscArt {
     if (!this.urls.has(n)) this.urls.set(n, this.canvas(n)?.toDataURL() ?? null);
     return this.urls.get(n)!;
   }
+}
+
+function toImageData(img: RgbaImage): ImageData {
+  return new ImageData(new Uint8ClampedArray(img.data), img.width, img.height);
 }
 
 function toCanvas(img: RgbaImage): HTMLCanvasElement {

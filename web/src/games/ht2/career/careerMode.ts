@@ -168,6 +168,11 @@ export class CareerMode {
     this.persist();
   }
 
+  /** Вихід з їзди: прибрати відкрите вікно. */
+  dispose(): void {
+    this.closePanel();
+  }
+
   private closePanel(): void {
     this.panel?.close();
     this.panel = null;
@@ -465,6 +470,13 @@ export class CareerMode {
     if (key[0] === 's') return this.stores.find((s) => s.id === id)!.docks.some((d) => Math.hypot(d[0] - gx, d[1] - gy) < DOCK_RADIUS * 2);
     const d = key[0] === 'f' ? this.fuelSpots[id] : this.sto[id];
     return !!d && Math.hypot(d[0] - gx, d[1] - gy) < (key[0] === 'f' ? FUEL_RADIUS : STO_RADIUS) * 2;
+  }
+
+  /** Найближча СТО (точка вузла sto_*, координати гри) — для 911. */
+  nearestSto(gx: number, gy: number): [number, number, number] | null {
+    let best: [number, number, number] | null = null;
+    for (const d of this.sto) if (!best || Math.hypot(d[0] - gx, d[1] - gy) < Math.hypot(best[0] - gx, best[1] - gy)) best = d;
+    return best;
   }
 
   persist(): void {

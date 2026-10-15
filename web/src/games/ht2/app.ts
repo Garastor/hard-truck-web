@@ -179,9 +179,11 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
       } else if (choice === 'career') career = saved ?? newCareer('Водій', '');
       await new Promise<void>((resolve) => {
         let drive: Ht2Drive | null = null;
-        const exit = () => {
+        // next — з меню Esc: завантажити збережену гру, почати спочатку, вийти з гри (без ctx.exit — у головне меню).
+        const exit = (next?: 'career' | 'new' | 'exit') => {
           drive?.dispose();
           ctx.setStatus(null);
+          direct = next === 'exit' ? (ctx.exit ? 'exit' : null) : (next ?? null);
           resolve();
         };
         Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck'), trailer: params.get('trailer'), weather: params.get('weather'), career, race: choice === 'race', settings })

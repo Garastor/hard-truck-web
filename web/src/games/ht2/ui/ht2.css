@@ -303,6 +303,19 @@ body.ht2-orig-ui .nav-map {
   display: none;
 }
 
+/* Меню Esc (ui/escMenu.ts): дотик поза панеллю закриває меню; кнопки порту під ним сховані. */
+.ht2-esc-catcher {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+body.ht2-esc-open .ht2-hud,
+body.ht2-esc-open .ht2-drive-bar {
+  visibility: hidden;
+}
+
 /* Бічні панелі king.exe (ui/panel.ts): фон 1200 заввишки, видно середину; кнопки й тексти — у пікселях фону. */
 .ht2-panel {
   position: fixed;
