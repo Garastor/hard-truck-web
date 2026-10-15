@@ -18,44 +18,109 @@ export const BUTTON_UK: Record<string, string> = {
   exsave: 'ЗБЕРЕГТИ',
   exnsave: 'НЕ ЗБЕРІГАТИ',
   excanc: 'СКАСУВАТИ',
+  // СТО й заправка («ОК» — так само українською, лишається).
+  servcanc: 'СКАСУВАТИ',
+  gascanc: 'СКАСУВАТИ',
 };
 
 /**
  * Групи кнопок (одне вікно): у групі літери однакової ширини — стиск за найдовшим написом групи, а не кожен напис
  * окремо (на прохання користувача).
  */
-const GROUPS: string[][] = [['savg', 'loadg', 'restart', 'control', 'sound', 'main', 'exitsys', 'exsave', 'exnsave', 'excanc']];
-/** Найбільша ширина напису на кнопці 150 px (відступ зліва до 10 і справа 4). */
-const BUTTON_TEXT_W = 136;
+const GROUPS: { keys: string[]; width: number }[] = [
+  // Меню Esc: кнопки 150 px, відступ зліва до 10 і справа 4.
+  { keys: ['savg', 'loadg', 'restart', 'control', 'sound', 'main', 'exitsys', 'exsave', 'exnsave', 'excanc'], width: 136 },
+  { keys: ['servcanc'], width: 118 },
+  { keys: ['gascanc'], width: 72 },
+];
 
 const groupScale = new Map<string, number>();
 
 /** Стиск по горизонталі для групи кнопки: щоб найдовший напис групи вмістився. */
 function scaleFor(base: string): number {
-  const group = GROUPS.find((g) => g.includes(base)) ?? [base];
-  const id = group.join(',');
+  const group = GROUPS.find((g) => g.keys.includes(base)) ?? { keys: [base], width: 136 };
+  const id = group.keys.join(',');
   if (!groupScale.has(id)) {
     const ctx = document.createElement('canvas').getContext('2d')!;
     ctx.font = `bold ${Math.round(CAP / 0.72)}px ${FONT}`;
-    const widest = Math.max(...group.map((b) => ctx.measureText(BUTTON_UK[b] ?? '').width));
-    groupScale.set(id, Math.min(1, BUTTON_TEXT_W / Math.max(1, widest)));
+    const widest = Math.max(...group.keys.map((b) => ctx.measureText(BUTTON_UK[b] ?? '').width));
+    groupScale.set(id, Math.min(1, group.width / Math.max(1, widest)));
   }
   return groupScale.get(id)!;
 }
 
-/** Підпис на фоні: рамка старого напису [x0, y0, x1, y1] (без тіні), новий текст, центр рядка по x. */
+/**
+ * Підпис на фоні вікна: що замалювати (старий напис з тінню), новий текст, прив'язка (x і базова лінія), висота
+ * великих літер. Колір без явного — виміряний на старому написі (найсвітліші пікселі). group — підписи з однаковою
+ * шириною літер (стиск за найдовшим у групі); spacing — розрідження літер заголовків («С Е Р В И С»).
+ */
 interface Label {
-  box: [number, number, number, number];
+  erase: [number, number, number, number];
   text: string;
-  center: number;
-  color: string;
+  x: number;
+  base: number;
+  align: 'left' | 'right' | 'center';
+  cap: number;
+  maxW: number;
+  group?: string;
+  color?: string;
+  spacing?: number;
 }
 
-/** Виміряно на `BackEscMain`: заголовок двома рядками, світло-сірий, центр — x ≈ 87. */
+/**
+ * Підпис у клітинці таблиці (СТО, склад, ринок, заправка): верх літер top, висота 11, тінь — до top + 12; нижня лінія
+ * клітинки СТО — top + 14, тож опора заповнення — рядок top + 13 (з лінією були світлі смуги). Виміряно: текст (165, 205, 174) з темною тінню.
+ */
+function cell(x0: number, x1: number, top: number, text: string, align: 'left' | 'right' | 'center', group: string): Label {
+  const x = align === 'right' ? x1 - 3 : align === 'left' ? x0 + 4 : (x0 + x1) / 2;
+  return { erase: [x0, top - 2, x1, top + 12], text, x, base: top + 11, align, cap: 11, maxW: x1 - x0 - 6, group };
+}
+
+/** Стовпчик клітинок з кроком step. */
+function column(x0: number, x1: number, top: number, step: number, texts: string[], align: 'left' | 'right', group: string): Label[] {
+  return texts.map((t, i) => cell(x0, x1, top + step * i, t, align, group));
+}
+
+/** Заголовок вікна по центру. */
+function title(erase: [number, number, number, number], text: string, x: number, base: number, cap: number, spacing = 0): Label {
+  return { erase, text, x, base, align: 'center', cap, maxW: erase[2] - erase[0] + 30, spacing };
+}
+
+/** Виміряно на фонах (re/notes/ht2/ui.md §3): клітинки, заголовки, кольори. */
 const BACKGROUND_UK: Record<string, Label[]> = {
   'm_16/backescmain.txr': [
-    { box: [28, 395, 145, 408], text: 'ПРОБЛЕМИ', center: 87, color: 'rgb(205,207,206)' },
-    { box: [50, 418, 123, 431], text: 'В ДОРОЗІ', center: 87, color: 'rgb(205,207,206)' },
+    { erase: [26, 394, 148, 410], text: 'ПРОБЛЕМИ', x: 87, base: 409, align: 'center', cap: 14, maxW: 150, group: 'esc', color: 'rgb(205,207,206)' },
+    { erase: [48, 417, 126, 433], text: 'В ДОРОЗІ', x: 87, base: 432, align: 'center', cap: 14, maxW: 150, group: 'esc', color: 'rgb(205,207,206)' },
+  ],
+  'm_16/backservice.txr': [
+    title([283, 416, 404, 437], 'СЕРВІС', 343, 434, 15, 6),
+    title([296, 459, 402, 478], 'ПОШКОДЖЕННЯ', 349, 475, 14),
+    title([292, 570, 398, 590], 'МОДЕРНІЗАЦІЇ', 345, 587, 14),
+    ...column(257, 362, 485, 19, ['ДВИГУН', 'КОРОБКА ПЕРЕДАЧ', 'ТРАНСМІСІЯ', 'ГАЛЬМА'], 'right', 'svc'),
+    ...column(438, 543, 485, 19, ['ФАРИ', 'КУЗОВ', 'ШИНИ', 'ПОВНИЙ РЕМОНТ'], 'right', 'svc'),
+    ...column(257, 362, 598, 19, ['ФОРСОВАНИЙ ДВИГУН', 'ПРИСАДКА В ДВИГУН', 'ПОВІТРОЗАБІРНИК', 'ШИНИ HIGH-WAY', 'ШИНИ ВСЮДИХІД', 'ДОДАТКОВИЙ БАК', 'АБС'], 'right', 'svc'),
+    ...column(438, 543, 598, 19, ['РАДАР-ДЕТЕКТОР', 'РАДАР-ГЛУШНИК', 'СКАНЕР ВАНТАЖУ', 'ПОЖЕЖНА СИСТЕМА', 'НАВІГАТОР', 'СИГНАЛ', 'ВСТАНОВИТИ ВСЕ'], 'right', 'svc'),
+    ...column(49, 181, 617, 19, ['ПНЕВМОПІДВІСКА', 'ВЕНТИЛЬОВАНІ ГАЛЬМА', 'ГАЛЬМУВАННЯ ДВИГУНОМ', 'ПОСИЛЕНА РАМА', 'БРОНЬОВАНЕ СКЛО', 'ЗАХИСТ ФАР'], 'right', 'svc'),
+    { ...cell(164, 269, 748, 'МІЙ БАЛАНС', 'right', 'svcsum'), erase: [164, 747, 269, 764], cap: 12, base: 760 },
+    { ...cell(345, 450, 748, 'РАЗОМ', 'right', 'svcsum'), erase: [345, 747, 450, 764], cap: 12, base: 760 },
+  ],
+  'm_16/backorder.txr': [
+    title([69, 415, 182, 437], 'ЗАМОВЛЕННЯ', 125, 433, 15, 2),
+    ...column(38, 118, 558, 20, ['ВАНТАЖ', 'КУДИ', 'МАКС. ПРЕМІЯ', 'МАКС. ЧАС', 'ВАГА', 'ОБʼЄМ', 'КРИХКІСТЬ'], 'left', 'ord'),
+  ],
+  'm_16/backsale.txr': [
+    title([58, 415, 192, 437], 'ПРОДАЄТЬСЯ', 125, 434, 15, 1),
+    ...column(52, 95, 588, 20, ['КОД', 'ЦІНА'], 'left', 'sale'),
+    ...column(52, 135, 628, 20, ['ПОТУЖНІСТЬ', 'ВАНТАЖНІСТЬ'], 'left', 'sale'),
+  ],
+  'm_16/backgas.txr': [
+    // Підписи над табличками цифр — помаранчеві, без клітинок.
+    { erase: [64, 446, 135, 463], text: 'СУМА, $', x: 69, base: 460, align: 'left', cap: 10, maxW: 70, group: 'gasplate' },
+    { erase: [64, 495, 135, 512], text: 'ЛІТРИ', x: 67, base: 509, align: 'left', cap: 10, maxW: 70, group: 'gasplate' },
+    { erase: [64, 545, 135, 562], text: 'ЗА ЛІТР', x: 67, base: 559, align: 'left', cap: 10, maxW: 70, group: 'gasplate' },
+    cell(41, 159, 629, 'РІВЕНЬ', 'center', 'gas'),
+    cell(162, 207, 628, 'ПОВНИЙ', 'center', 'gas'),
+    cell(43, 126, 689, 'ЛІТРИ', 'center', 'gas'),
   ],
 };
 
@@ -133,20 +198,43 @@ function fillColumns(img: ImageData, x0: number, y0: number, x1: number, y1: num
 }
 
 /** Рядок тексту з тінню: висота великих літер cap, базова лінія y; стискається до maxW. */
-function drawText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, cap: number, maxW: number, color: string, align: 'left' | 'center', underline = false, fixed?: number): void {
+/** Ширина тексту поточним шрифтом з розрідженням spacing між літерами. */
+function textWidth(ctx: CanvasRenderingContext2D, text: string, spacing = 0): number {
+  return ctx.measureText(text).width + spacing * Math.max(0, [...text].length - 1);
+}
+
+function drawText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  cap: number,
+  maxW: number,
+  color: string,
+  align: 'left' | 'right' | 'center',
+  underline = false,
+  fixed?: number,
+  spacing = 0,
+): void {
   ctx.font = `bold ${Math.round(cap / 0.72)}px ${FONT}`;
   ctx.textBaseline = 'alphabetic';
-  const tw = ctx.measureText(text).width;
+  const tw = textWidth(ctx, text, spacing);
   const k = fixed ?? Math.min(1, maxW / Math.max(1, tw));
   ctx.save();
-  ctx.translate(align === 'center' ? x - (tw * k) / 2 : x, y);
+  ctx.translate(align === 'center' ? x - (tw * k) / 2 : align === 'right' ? x - tw * k : x, y);
   ctx.scale(k, 1);
   ctx.shadowColor = 'rgba(0,0,0,0.85)';
   ctx.shadowOffsetX = 2;
   ctx.shadowOffsetY = 2;
   ctx.shadowBlur = 2;
   ctx.fillStyle = color;
-  ctx.fillText(text, 0, 0);
+  if (spacing) {
+    let cx = 0;
+    for (const ch of text) {
+      ctx.fillText(ch, cx, 0);
+      cx += ctx.measureText(ch).width + spacing;
+    }
+  } else ctx.fillText(text, 0, 0);
   if (underline) ctx.fillRect(0, 3, tw, 2);
   ctx.restore();
 }
@@ -201,16 +289,36 @@ export function localizeButton(base: string, states: Record<string, ImageData>, 
   return out;
 }
 
-/** Замінює російські підписи фону панелі українськими (на місці). */
+/** Колір старого напису: середнє найсвітлішої шостини пікселів прямокутника. */
+function brightest(img: ImageData, [x0, y0, x1, y1]: [number, number, number, number]): string {
+  const px: [number, number, number][] = [];
+  for (let y = Math.max(0, y0); y <= Math.min(img.height - 1, y1); y++)
+    for (let x = Math.max(0, x0); x <= Math.min(img.width - 1, x1); x++) {
+      const i = (y * img.width + x) * 4;
+      px.push([img.data[i], img.data[i + 1], img.data[i + 2]]);
+    }
+  px.sort((a, b) => a[0] + a[1] + a[2] - (b[0] + b[1] + b[2]));
+  const top = px.slice(Math.floor((px.length * 5) / 6));
+  const avg = [0, 1, 2].map((k) => Math.round(top.reduce((s, p) => s + p[k], 0) / Math.max(1, top.length)));
+  return `rgb(${avg.join(',')})`;
+}
+
+/** Замінює російські підписи фону вікна українськими (на місці). */
 export function localizeBackground(name: string, canvas: HTMLCanvasElement): void {
   const items = BACKGROUND_UK[name];
   if (!items) return;
   const ctx = canvas.getContext('2d')!;
   const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  for (const { box } of items) fillColumns(img, box[0] - 2, box[1] - 1, box[2] + 3, box[3] + 2);
+  const colors = items.map((it) => it.color ?? brightest(img, it.erase));
+  for (const { erase } of items) fillColumns(img, ...erase);
   ctx.putImageData(img, 0, 0);
-  // Рядки одного підпису — одним стиском (за найширшим).
-  ctx.font = `bold ${Math.round((items[0].box[3] - items[0].box[1] + 1) / 0.72)}px ${FONT}`;
-  const k = Math.min(1, ...items.map((it) => (canvas.width - 50) / Math.max(1, ctx.measureText(it.text).width)));
-  for (const { box, text, center, color } of items) drawText(ctx, text, center, box[3] + 1, box[3] - box[1] + 1, canvas.width - 50, color, 'center', false, k);
+  // Одна група — один стиск (за найдовшим підписом відносно його місця).
+  const scale = new Map<string, number>();
+  items.forEach((it, i) => {
+    ctx.font = `bold ${Math.round(it.cap / 0.72)}px ${FONT}`;
+    const k = Math.min(1, it.maxW / Math.max(1, textWidth(ctx, it.text, it.spacing)));
+    const g = it.group ?? `#${i}`;
+    scale.set(g, Math.min(scale.get(g) ?? 1, k));
+  });
+  items.forEach((it, i) => drawText(ctx, it.text, it.x, it.base, it.cap, it.maxW, colors[i], it.align, false, scale.get(it.group ?? `#${i}`), it.spacing));
 }
