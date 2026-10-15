@@ -47,6 +47,7 @@ import { ukMessage } from './ui/uk';
 import { EscMenu, type EscCommand } from './ui/escMenu';
 import { FPanels, type FPanel } from './ui/fPanels';
 import { TabMap } from './ui/tabMap';
+import { Navigator, type NavTurn } from './world/navigator';
 import { Tablo } from './ui/tablo';
 import { Cards } from './ui/cards';
 
@@ -177,6 +178,10 @@ export class Ht2Drive {
   /** Карта на Tab з графікою оригіналу (огляд → збільшено → сховано). */
   private tabMap: TabMap | null = null;
   private mapPoints: MapPoint[] = [];
+  /** Навігатор (покращення PR_NAVIGATOR): поворот на найближчій розвилці до цілі, раз на 0,25 с. */
+  private navigator: Navigator | null = null;
+  private navTurn: NavTurn | null = null;
+  private navTimer = 0;
   /** Виклик 911: відлік до відновлення (машина на гальмах), куди перенести, ціна. */
   private rescue: { left: number; done?: boolean; ready: Promise<{ position: THREE.Vector3; forward: THREE.Vector3 } | null>; cost: number } | null = null;
   /** Вихід без збереження («не зберігати», «завантажити гру»). */
@@ -733,6 +738,21 @@ export class Ht2Drive {
     this.fPanels.toggle(kind);
   }
 
+  /** Навігатор: лише з покращенням і взятим замовленням (посібник). */
+  private updateNavigator(dt: number): void {
+    const c = this.careerMode?.career;
+    if (!c?.order || !(c.upgrades ?? []).some((u) => u.startsWith('PR_NAVIGATOR'))) {
+      this.navTurn = null;
+      return;
+    }
+    this.navTimer -= dt;
+    if (this.navTimer > 0) return;
+    this.navTimer = 0.25;
+    this.navigator ??= new Navigator(this.roads);
+    const target = this.careerMode!.target();
+    this.navTurn = target ? this.navigator.turn(this.truck.visual.position, this.truck.forward(), target) : null;
+  }
+
   /** Дані панелей F1–F4. */
   private fData(): import('./ui/fPanels').FPanelData {
     return {
@@ -1041,6 +1061,7 @@ export class Ht2Drive {
     if (sign) this.say(sign, 6);
     const chaser = this.mafia?.chaser;
     this.fPanels?.update(dt);
+    this.updateNavigator(dt);
     this.tabMap?.draw(dt, this.truck.visual.position, this.truckers?.positions ?? [], this.careerMode?.target() ?? null);
     this.map?.update(dt, this.truck.visual.position, this.truck.forward(), [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? []), ...(chaser ? [chaser] : [])], this.careerMode?.target() ?? null);
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
@@ -1077,6 +1098,7 @@ export class Ht2Drive {
       trailer: this.trailer ? 'on' : 'none',
       fuel: c ? (c.fuel ?? this.tank) / this.tank : 1,
       condition: c ? 1 - c.damage : 1,
+      nav: this.navTurn,
     });
   }
 

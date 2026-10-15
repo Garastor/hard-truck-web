@@ -193,7 +193,8 @@ export class Tablo {
     const level = (v: number) => String.fromCharCode(0x50 + Math.max(0, Math.min(10, Math.round(v * 10))));
     if (s.fuel > 0.3 || this.blink) icon(o + 512, 40, `?${level(s.fuel)}`);
     if (s.condition > 0.3 || this.blink) icon(o + 553, 40, `O${level(s.condition)}`);
-    if (s.nav) icon(o + 608, 40, s.nav === 'left' ? ';' : s.nav === 'right' ? '=' : '<');
+    // Стрілка навігатора блимає (king.exe: спільний прапорець блимання).
+    if (s.nav && this.blink) icon(o + 608, 40, s.nav === 'left' ? ';' : s.nav === 'right' ? '=' : '<');
     this.drawPager(dt);
   }
 
