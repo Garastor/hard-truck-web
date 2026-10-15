@@ -26,9 +26,13 @@ export function registerServiceWorker(): void {
         if (w.state === 'installed') offer(w);
       });
     });
-    // Застосунок на головному екрані може не перезапускатись днями — перевіряємо оновлення при поверненні.
+    // Застосунок на головному екрані може не перезапускатись днями — перевіряємо оновлення при поверненні. Версія,
+    // що вже чекає (табличку пропустили чи натиснули «Пізніше»), — пропонуємо знову: інакше вона чекала б до
+    // повного закриття застосунку.
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') void reg.update().catch(() => {});
+      if (document.visibilityState !== 'visible') return;
+      offer(reg.waiting);
+      void reg.update().catch(() => {});
     });
   });
 }
