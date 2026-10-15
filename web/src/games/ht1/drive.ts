@@ -1254,10 +1254,11 @@ export class DriveSession {
     this.shakeTime += dt;
     const t = this.shakeTime * Math.PI * 2;
     const a = this.shakeAmp;
-    // Суми синусоїд некратних частот (4…9 Гц — без биття з частотою кадрів 30) — нерегулярне тремтіння.
-    this.cabShake.pitch = a * (0.6 * Math.sin(t * 6.3) + 0.4 * Math.sin(t * 8.7 + 1.3));
-    this.cabShake.roll = a * (0.6 * Math.sin(t * 4.1 + 0.7) + 0.4 * Math.sin(t * 7.9 + 2.1));
-    this.cabShake.lift = a * (0.5 * Math.sin(t * 5.3 + 0.4) + 0.5 * Math.sin(t * 8.3 + 2.6));
+    // Суми синусоїд некратних частот — нерегулярне погойдування. 2…4,5 Гц (на прохання користувача — плавніше,
+    // ніж перші 4…9 Гц, амплітуда та сама).
+    this.cabShake.pitch = a * (0.6 * Math.sin(t * 3.1) + 0.4 * Math.sin(t * 4.4 + 1.3));
+    this.cabShake.roll = a * (0.6 * Math.sin(t * 2.1 + 0.7) + 0.4 * Math.sin(t * 3.9 + 2.1));
+    this.cabShake.lift = a * (0.5 * Math.sin(t * 2.7 + 0.4) + 0.5 * Math.sin(t * 4.2 + 2.6));
   }
 
   private updateCab(state: { steer: number }): void {
