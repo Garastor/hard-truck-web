@@ -95,6 +95,12 @@ export const SUSPENSION = {
  * мас і знижує поріг. Налаштування порту на прохання користувача (раніше — лише ЗіЛ 0,12), не дані оригіналу.
  */
 const ROLL_MIN_TIP = 1.0;
+/**
+ * Поріг для окремих вантажівок (за prefix з TRUCK.TCH), частка g. Iveco — найвужча колія (0,87 м від осі) при
+ * центрі мас 2,1 м: і з 1,0 g у слаломі й різкому повороті на 40–50 км/год кренилась до 28–43° («як матрац» —
+ * відгук користувача); з 1,25 g (roll_lift 0,66) — 9–10°, як Volvo. Налаштування порту.
+ */
+const ROLL_MIN_TIP_BY_TRUCK: Record<string, number> = { iveco: 1.25 };
 
 /**
  * Пружини й амортизатори коліс — пропорційно статичному навантаженню колеса (як у справжніх вантажівок: ресори
@@ -394,7 +400,8 @@ export class TruckVehicle {
     // Поріг перекидання без вантажу: половина колії (вужча вісь) / висота центру мас над дорогою.
     const halfTrack = Math.min(...wheelAt.map((c) => Math.abs(c.x)));
     const comHeight = cy - ground;
-    if (comHeight > 0.1) this.autoRollLift = Math.min(0.8, Math.max(TIRE.roll_lift, 1 - halfTrack / (comHeight * ROLL_MIN_TIP)));
+    const minTip = ROLL_MIN_TIP_BY_TRUCK[def.prefix.toLowerCase()] ?? ROLL_MIN_TIP;
+    if (comHeight > 0.1) this.autoRollLift = Math.min(0.8, Math.max(TIRE.roll_lift, 1 - halfTrack / (comHeight * minTip)));
     this.lightGeometry = { groundY: ground, frontZ: box.min.z, backZ: box.max.z, width: size.x };
     const bottom = ground + BUMPER_CLEARANCE;
     const top = colliderAt.y - size.y * 0.4 + 0.2;
