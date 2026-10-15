@@ -275,9 +275,17 @@ body.ht2-orig-ui .ht2-hud {
   top: calc(env(safe-area-inset-top, 0px) + var(--ht2-tablo-h, 0px) + 6px);
 }
 
+/* З графікою оригіналу рядок кар'єри не потрібен: замовлення, гроші й ціль — на панелі F3 «Інфо». */
 body.ht2-orig-ui .ht2-drive-bar {
-  top: calc(env(safe-area-inset-top, 0px) + var(--ht2-tablo-h, 0px) + var(--ht2-pager-h, 0px) + 40px);
-  left: max(8px, env(safe-area-inset-left)) !important;
+  display: none;
+}
+
+.ht2-hud .ht2-orig-only {
+  display: none;
+}
+
+body.ht2-orig-ui .ht2-hud .ht2-orig-only {
+  display: inline-block;
 }
 
 body.ht2-orig-ui .touch-btn.cam,

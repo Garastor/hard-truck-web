@@ -57,6 +57,11 @@ export class Truckers {
     private readonly max = MAX,
   ) {}
 
+  /** Імена всіх далекобійників (names.sch) — рейтинг F2. */
+  get allNames(): readonly string[] {
+    return this.names;
+  }
+
   get positions(): THREE.Vector3[] {
     return this.list.map((r) => r.truck.visual.position);
   }

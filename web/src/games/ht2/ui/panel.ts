@@ -34,6 +34,8 @@ export class SidePanel {
      * Без — як в оригіналі: рядок 650 посередині екрана.
      */
     private readonly view?: [number, number],
+    /** Додатковий відступ згори під табло, CSS px (рядок кнопок порту). */
+    private readonly below = 0,
   ) {
     this.el = document.createElement('div');
     this.el.className = `ht2-panel ${side}`;
@@ -67,7 +69,7 @@ export class SidePanel {
     let s = this.scale;
     let y = H / 2 - PANEL_CENTER * s;
     if (this.view) {
-      const top = parseFloat(getComputedStyle(document.body).getPropertyValue('--ht2-tablo-h')) || 0;
+      const top = (parseFloat(getComputedStyle(document.body).getPropertyValue('--ht2-tablo-h')) || 0) + this.below;
       const [a, b] = this.view;
       s = Math.min(s, (H - top) / (b - a));
       y = top + (H - top - (b - a) * s) / 2 - a * s;
@@ -89,6 +91,12 @@ export class SidePanel {
     const w = font.measure(t);
     const x0 = align === 'center' ? x - Math.floor(w / 2) : align === 'right' ? x - w : x;
     font.draw(this.text, t, x0, y - font.height, color);
+  }
+
+  /** Смуга-показник (рівень вантажу, стан систем) у пікселях фону. */
+  bar(x: number, y: number, w: number, h: number, color: string): void {
+    this.text.fillStyle = color;
+    this.text.fillRect(x, y, w, h);
   }
 
   /** Кнопка `<base>_<стан>.txr` у точці фону; state — стан для малювання (типово — за дотиком). */

@@ -499,6 +499,7 @@ export class CareerMode {
         c.money += s.pay;
         c.earned += s.pay;
         c.delivered++;
+        c.tons = (c.tons ?? 0) + (c.order.goods.mass * c.order.units) / 1000;
         c.order = null;
         this.drive.setCargo(0);
       } else if (c.order && c.order.to === store.id) {
@@ -514,6 +515,7 @@ export class CareerMode {
         c.money += s.pay;
         c.earned += s.pay;
         c.delivered++;
+        c.tons = (c.tons ?? 0) + (c.order.goods.mass * c.order.units) / 1000;
         c.order = null;
         this.drive.setCargo(0);
       } else if (c.order) {
@@ -616,6 +618,52 @@ export class CareerMode {
    * Табло: гроші, стан, вантаж і куди, залишок часу, годинник. short — поруч табло оригіналу (стан і пальне вже на
    * ньому).
    */
+  /** Дані для панелей F2–F4: замовлення (куди, стрілка, відстань, залишок часу), вантаж, стан, покращення. */
+  info(): CareerInfo {
+    const c = this.career;
+    const p = this.drive.truck.visual.position;
+    const fwd = this.drive.truck.forward();
+    let order: CareerInfo['order'] = null;
+    if (c.order) {
+      const o = c.order;
+      const to = this.stores.find((s) => s.id === o.to);
+      order = {
+        goods: o.goods.name,
+        units: o.units,
+        town: to?.town ?? '?',
+        arrow: to ? arrowTo(fwd, toThree(...to.center).sub(p)) : '',
+        km: to ? Math.hypot(to.center[0] - p.x, to.center[1] + p.z) / 1000 : 0,
+        left: o.deadline - (c.time - o.taken),
+        pay: o.pay,
+        integrity: o.integrity,
+        mass: o.goods.mass * o.units,
+        volume: o.goods.volume * o.units,
+      };
+    }
+    let near: CareerInfo['near'] = null;
+    if (!c.order) {
+      let bd = Infinity;
+      for (const s of this.stores) {
+        const d = Math.hypot(s.center[0] - p.x, s.center[1] + p.z);
+        if (d < bd) (bd = d), (near = { town: s.town, arrow: arrowTo(fwd, toThree(...s.center).sub(p)), km: d / 1000 });
+      }
+    }
+    return {
+      order,
+      near,
+      money: c.money,
+      truck: c.truck,
+      damage: c.damage,
+      fuel: (c.fuel ?? this.tank) / this.tank,
+      capacity: this.capacity(),
+      upgrades: c.upgrades ?? [],
+      delivered: c.delivered,
+      tons: c.tons ?? 0,
+      driver: c.driver,
+      time: c.time,
+    };
+  }
+
   hud(short = false): string {
     const c = this.career;
     const fuel = c.fuel ?? this.tank;
@@ -646,7 +694,23 @@ export class CareerMode {
   }
 }
 
-function formatLeft(s: number): string {
+export interface CareerInfo {
+  order: { goods: string; units: number; town: string; arrow: string; km: number; left: number; pay: number; integrity: number; mass: number; volume: number } | null;
+  /** Без замовлення — найближчий склад. */
+  near: { town: string; arrow: string; km: number } | null;
+  money: number;
+  truck: string;
+  damage: number;
+  fuel: number;
+  capacity: { mass: number; volume: number };
+  upgrades: string[];
+  delivered: number;
+  tons: number;
+  driver: string;
+  time: number;
+}
+
+export function formatLeft(s: number): string {
   const m = Math.ceil(s / 60);
   return m < 60 ? `${m} хв` : `${Math.floor(m / 60)} год ${m % 60} хв`;
 }

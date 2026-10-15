@@ -45,6 +45,7 @@ import { saveSettings, steerGain, timeScale, type Ht2Settings } from './ui/setti
 import { EscArt } from './ui/escArt';
 import { ukMessage } from './ui/uk';
 import { EscMenu, type EscCommand } from './ui/escMenu';
+import { FPanels, type FPanel } from './ui/fPanels';
 import { Tablo } from './ui/tablo';
 import { Cards } from './ui/cards';
 
@@ -170,6 +171,8 @@ export class Ht2Drive {
   paused = false;
   /** Меню Esc «Проблемы в пути» (з графікою esc16.RES). */
   private escMenu: EscMenu | null = null;
+  /** Ліві панелі F1–F4 (клавіші, рейтинг, інфо, компанія). */
+  private fPanels: FPanels | null = null;
   /** Виклик 911: відлік до відновлення (машина на гальмах), куди перенести, ціна. */
   private rescue: { left: number; done?: boolean; ready: Promise<{ position: THREE.Vector3; forward: THREE.Vector3 } | null>; cost: number } | null = null;
   /** Вихід без збереження («не зберігати», «завантажити гру»). */
@@ -327,6 +330,7 @@ export class Ht2Drive {
       if (cmd === 'lights') this.lightsManual = !this.lamps[0]?.visible;
       if (cmd === 'reset') this.recover();
       if (cmd === 'menu') this.toggleEsc();
+      if (cmd === 'f1' || cmd === 'f2' || cmd === 'f3' || cmd === 'f4') this.toggleF(Number(cmd[1]) as FPanel);
       if (cmd === 'horn') this.audio?.playOnce('horn');
       if (cmd === 'engine') {
         this.truck.engineOn = !this.truck.engineOn;
@@ -353,7 +357,13 @@ export class Ht2Drive {
     map.textContent = 'Карта';
     map.setAttribute('aria-label', 'Карта світу');
     map.addEventListener('click', () => this.openMap());
-    this.hud.append(back, music, map);
+    // «Інфо» — панелі F1–F4 оригіналу (на телефоні немає F-клавіш); показується, коли є графіка esc16.RES.
+    const info = document.createElement('button');
+    info.textContent = 'Інфо';
+    info.className = 'ht2-orig-only';
+    info.setAttribute('aria-label', 'Панелі інформації (F1–F4)');
+    info.addEventListener('click', () => this.toggleF(this.fPanels?.open ?? 3));
+    this.hud.append(back, music, map, info);
     // У шарі overlay — під вікнами складу й СТО (вони теж там, вище).
     o.overlay.append(this.hud, this.bar);
     void EscArt.load(o.source).then((art) => {
@@ -363,6 +373,7 @@ export class Ht2Drive {
       this.tablo = new Tablo(art, o.overlay);
       this.tablo.onPage = () => this.audio?.playOnce('pager');
       this.cards = new Cards(art, o.overlay);
+      this.fPanels = new FPanels(art, o.overlay, () => this.fData());
       document.body.classList.add('ht2-orig-ui');
       this.resize();
     });
@@ -693,6 +704,7 @@ export class Ht2Drive {
   /** Меню Esc: відкрити (пауза) чи закрити. Без графіки оригіналу — вихід, як раніше. */
   toggleEsc(): void {
     if (this.escMenu) return this.closeEsc();
+    this.fPanels?.close();
     if (!this.escArt || this.rescue) return;
     if (this.worldMap && !this.worldMap.el.hidden) return;
     this.paused = true;
@@ -703,6 +715,43 @@ export class Ht2Drive {
       command: (c, save) => this.escCommand(c, save),
       close: () => this.closeEsc(),
     });
+  }
+
+  /** Панель F1–F4: відкрити, та сама — закрити (меню Esc закривається). */
+  toggleF(kind: FPanel): void {
+    if (!this.fPanels) return;
+    if (this.escMenu) this.closeEsc();
+    // Кнопка «Інфо», коли панель уже відкрита, — закрити її.
+    this.fPanels.toggle(kind);
+  }
+
+  /** Дані панелей F1–F4. */
+  private fData(): import('./ui/fPanels').FPanelData {
+    return {
+      info: this.careerMode?.info() ?? null,
+      rivals: [...(this.truckers?.allNames ?? [])],
+      keys: [
+        ['ГАЗ', '↑'],
+        ['ГАЛЬМО, НАЗАД', '↓'],
+        ['КЕРМО', '← →'],
+        ['РІЗКО', 'CTRL'],
+        ['РУЧНЕ ГАЛЬМО', 'SHIFT'],
+        ['ДВИГУН', 'ПРОБІЛ'],
+        ['КАМЕРА', 'C'],
+        ['ФАРИ', 'L'],
+        ['ДВІРНИКИ', 'W'],
+        ['ДЗЕРКАЛО', 'M'],
+        ['СИГНАЛ', 'H'],
+        ['ВІДНОВИТИСЯ', 'R, 0'],
+        ['МІНІКАРТА', 'TAB'],
+        ['АВТОПІЛОТ', 'P'],
+        ['МЕНЮ', 'ESC'],
+        ['КЛАВІАТУРА', 'F1'],
+        ['РЕЙТИНГ', 'F2'],
+        ['ІНФО', 'F3'],
+        ['МОЯ КОМПАНІЯ', 'F4'],
+      ],
+    };
   }
 
   /**
@@ -983,6 +1032,7 @@ export class Ht2Drive {
     const sign = this.signs?.update(this.truck.visual.position, this.truck.forward());
     if (sign) this.say(sign, 6);
     const chaser = this.mafia?.chaser;
+    this.fPanels?.update(dt);
     this.map?.update(dt, this.truck.visual.position, this.truck.forward(), [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? []), ...(chaser ? [chaser] : [])], this.careerMode?.target() ?? null);
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
     // Поруч далекобійник — його імʼя й машина (names.sch, vehicle.tech).
@@ -1127,6 +1177,7 @@ export class Ht2Drive {
     if (!this.noSave) this.careerMode?.persist();
     this.careerMode?.dispose();
     this.escMenu?.close();
+    this.fPanels?.close();
     this.rainSound?.stop();
     this.windSound?.stop();
     this.opts.renderer.setAnimationLoop(null);
