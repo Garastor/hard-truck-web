@@ -29,6 +29,7 @@ import { AutoPilot, WayNet } from './engine/vehicle/autopilot';
 import { RoomVisibility } from './track/roomVisibility';
 import { ModelBatch } from './engine/render/modelBatch';
 import { toast } from './engine/ui/mobile';
+import { FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, RemoteTrack, STATE_RATE, emptyState, packState, unpackState, type TruckState } from './net/state';
 
 /** Камера (C): з кабіни, від першої особи (лише прилади Panel), позаду, здалеку. */
 export type CamMode = 'chase' | 'cockpit' | 'first' | 'far';
@@ -326,6 +327,9 @@ function startLamp(t: number): StartLamp {
   return t < START_COUNTDOWN + START_GREEN ? 'g' : 'off';
 }
 
+/** Мережева гра: зсув місць старту вбік від точки старту траси, м (машини поруч у сусідніх смугах). */
+const GRID_SIDE = 2.5;
+
 /** Скільки суперник лежить перекинутим, перш ніж повернутися на дорогу, с (гіпотеза). */
 const OPPONENT_RECOVER = 3;
 
@@ -389,7 +393,9 @@ export class DriveSession {
   /** Суперники (aicar у truck.ini): вантажівки під керуванням автопілота. */
   readonly opponents: {
     truck: TruckVehicle;
-    pilot: AutoPilot;
+    /** Автопілот суперника; у машини друга (мережева гра) — null, її веде remote. */
+    pilot: AutoPilot | null;
+    remote?: { track: RemoteTrack; state: TruckState; gone: boolean };
     odo: Odometer;
     lights: TruckLights | null;
     flippedFor: number;
@@ -765,7 +771,10 @@ export class DriveSession {
     const wet = this.raining && (this.glassRain?.raining ?? true);
     const reverse = this.truck.gear < 0;
     this.lights?.update(this.headlights, false, reverse ? state.throttle > 0 : state.brake > 0, reverse);
-    for (const o of this.opponents) o.lights?.update(this.night, wet, o.pilot.state.brake > 0, o.truck.gear < 0);
+    for (const o of this.opponents) {
+      if (o.remote) o.lights?.update((o.remote.state.flags & FLAG_LIGHTS) !== 0, wet, (o.remote.state.flags & FLAG_BRAKE) !== 0, o.truck.gear < 0);
+      else o.lights?.update(this.night, wet, o.pilot!.state.brake > 0, o.truck.gear < 0);
+    }
   }
   /** Кермування нахилом телефона (дозвіл на iOS — в «Опціях» або на першому дотику, див. Input.toggleTilt). */
   setTilt(on: boolean): void {
@@ -834,6 +843,8 @@ export class DriveSession {
     rivals: TruckDef[] = [],
     raceKind: 'laps' | 'route' | 'free' = 'laps',
     setup: TruckSetup = {},
+    /** Мережева гра: місце на старті (0 — господар, 1 — гість), машини поруч у сусідніх смугах. */
+    grid: number | null = null,
   ): Promise<DriveSession> {
     await initRapier();
     const s = new DriveSession(scene, camera, built, def);
@@ -880,6 +891,8 @@ export class DriveSession {
     // База: на прохання користувача — трохи далі від тунелів, ніж Observer оригіналу, щоб було видно вказівники
     // «Погрузка» й «Запчасти» і зручно повернути.
     if (raceKind === 'free') s.spawn.position = s.groundAt(s.spawn.position.clone().addScaledVector(s.spawn.forward, -BASE_SPAWN_BACK).setY(s.spawn.position.y - 2.5));
+    s.startSpawn = { position: s.spawn.position.clone(), forward: s.spawn.forward.clone() };
+    if (grid !== null) s.spawn = s.gridSpawn(grid);
     s.room = s.locate(s.spawn.position) ?? s.track.guessRoom(s.spawn.position);
     s.prevPos.copy(s.spawn.position);
     for (const r of s.track.rooms.values()) for (const e of r.events) if (e.type === EVENT_CHECKPOINT) s.checkpoints.add(e.param);
@@ -1491,7 +1504,7 @@ export class DriveSession {
     });
   }
 
-  private stepOpponents(dt: number): void {
+  private stepOpponents(dt: number, now = performance.now() / 1000): void {
     const go = this.countdown <= 0;
     const vec = (t: TruckVehicle) => {
       const p = t.body.translation();
@@ -1500,9 +1513,14 @@ export class DriveSession {
     const all = [this.truck, ...this.opponents.map((o) => o.truck)].map(vec);
     for (const [i, o] of this.opponents.entries()) {
       const pos = all[i + 1];
+      if (o.remote) {
+        this.stepRemote(dt, now, o.truck, o.remote);
+        o.odo.update(pos, this.route);
+        continue;
+      }
       const tp = pos;
       const others = all.filter((_, k) => k !== i + 1);
-      const st = o.pilot.update(pos, o.truck.forward(), o.truck.speedKmh, dt, others);
+      const st = o.pilot!.update(pos, o.truck.forward(), o.truck.speedKmh, dt, others);
       if (!go) {
         st.throttle = 0;
         st.brake = 0;
@@ -1522,6 +1540,104 @@ export class DriveSession {
         }
       }
     }
+  }
+
+  /** Точка старту траси до зсуву на місце в мережевій грі. */
+  private startSpawn: { position: THREE.Vector3; forward: THREE.Vector3 } | null = null;
+
+  /** Місце на старті мережевої гри: господар — ліва смуга, гість — права (±GRID_SIDE від точки старту). */
+  private gridSpawn(slot: number): { position: THREE.Vector3; forward: THREE.Vector3 } {
+    const base = this.startSpawn ?? this.spawn;
+    const right = new THREE.Vector3().crossVectors(base.forward, new THREE.Vector3(0, 1, 0)).normalize();
+    const at = base.position.clone().addScaledVector(right, slot === 0 ? -GRID_SIDE : GRID_SIDE).setY(base.position.y - 2.5);
+    return { position: this.groundAt(at), forward: base.forward.clone() };
+  }
+
+  /** Свій стан для друга (мережева гра): STATE_RATE разів на секунду; null — не мережева гра. */
+  onLocalState: ((data: ArrayBuffer) => void) | null = null;
+  private stateTimer = 0;
+  private readonly sendBuf = emptyState();
+
+  private sendState(dt: number, input: { brake: number; throttle: number }): void {
+    if (!this.onLocalState) return;
+    this.stateTimer -= dt;
+    if (this.stateTimer > 0) return;
+    this.stateTimer += 1 / STATE_RATE;
+    if (this.stateTimer < 0) this.stateTimer = 0;
+    const t = this.truck;
+    const b = this.sendBuf;
+    const p = t.body.translation();
+    const r = t.body.rotation();
+    const v = t.body.linvel();
+    const reverse = t.gear < 0;
+    b.time = performance.now() / 1000;
+    b.pos.set(p.x, p.y, p.z);
+    b.quat.set(r.x, r.y, r.z, r.w);
+    b.vel.set(v.x, v.y, v.z);
+    b.steer = t.wheelSteer;
+    b.rpm = t.rpm;
+    b.flags = (this.headlights ? FLAG_LIGHTS : 0) | ((reverse ? input.throttle : input.brake) > 0 ? FLAG_BRAKE : 0) | (reverse ? FLAG_REVERSE : 0);
+    this.onLocalState(packState(b));
+  }
+
+  /**
+   * Машина друга (мережева гра): вантажівка def на його місці старту, кінематична — її ставить стан із мережі
+   * (pushRemoteState). Для мінікарти, звуку й місця в гонці — як суперник.
+   */
+  addRemote(def: TruckDef, slot: number): void {
+    const model = buildTruckModel(this.built.assembler, def, true);
+    if (!model) throw new Error(`Модель ${def.carNode} відсутня в цій локації`);
+    this.wayNet ??= new WayNet(this.built.assembler.b3d);
+    this.route ??= new RouteProgress(this.wayNet, this.spawn.position, this.spawn.forward);
+    const truck = new TruckVehicle(this.world, def, model, this.gridSpawn(slot));
+    truck.makeKinematic();
+    this.scene.add(truck.visual);
+    const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
+    hideLampReflections(model.root);
+    this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z), (x, y, z) => this.glossAt(x, y, z), (f, t) => this.lampSeen(f, t)));
+    this.batches.push(new ModelBatch(truck.visual, (o) => model.wheels.includes(o)));
+    const state = emptyState();
+    const p = truck.body.translation();
+    const r = truck.body.rotation();
+    state.pos.set(p.x, p.y, p.z);
+    state.quat.set(r.x, r.y, r.z, r.w);
+    this.opponents.push({
+      truck,
+      pilot: null,
+      remote: { track: new RemoteTrack(), state, gone: false },
+      odo: new Odometer(),
+      lights,
+      flippedFor: 0,
+      shake: new Shake(1.7 * (this.opponents.length + 1)),
+      surface: 'asphalt',
+      surfaceHeight: Infinity,
+      surfaceTimer: 0.2 * Math.random(),
+    });
+    this.updateOpponentRooms();
+    this.updateActiveRooms();
+  }
+
+  /** Пакет стану машини друга. */
+  pushRemoteState(data: ArrayBuffer): void {
+    const s = unpackState(data);
+    const o = this.opponents.find((x) => x.remote && !x.remote.gone);
+    if (s && o) o.remote!.track.push(s, performance.now() / 1000);
+  }
+
+  /** Друг вийшов: його машину прибрати з траси (тіло вимкнути). */
+  remoteGone(): void {
+    for (const o of this.opponents) {
+      if (!o.remote || o.remote.gone) continue;
+      o.remote.gone = true;
+      o.truck.visual.visible = false;
+      o.truck.body.setEnabled(false);
+    }
+  }
+
+  private stepRemote(dt: number, now: number, truck: TruckVehicle, remote: NonNullable<DriveSession['opponents'][number]['remote']>): void {
+    if (remote.gone) return;
+    const s = remote.track.sample(now, remote.state) ?? remote.state;
+    truck.followRemote(dt, s.pos, s.quat, s.steer, s.rpm, s.vel.length() * 3.6, (s.flags & FLAG_REVERSE) !== 0);
   }
 
   /** Місце гравця в гонці (1 — лідер) за пройденою вздовж дороги відстанню. */
@@ -1625,9 +1741,11 @@ export class DriveSession {
     const state = this.controls(dt);
     this.acc += Math.min(dt, 0.1);
     const step = this.world.timestep;
+    const now = performance.now() / 1000;
     while (this.acc >= step) {
       this.truck.update(step, state);
-      this.stepOpponents(step);
+      // Машина друга — на момент кінця цього кроку (решта кроків кадру ще попереду).
+      this.stepOpponents(step, now - (this.acc - step));
       this.world.step();
       this.afterStep();
       this.tick(step);
@@ -1638,6 +1756,7 @@ export class DriveSession {
     const alpha = this.acc / step;
     this.truck.syncVisual(alpha);
     for (const o of this.opponents) o.truck.syncVisual(alpha);
+    this.sendState(dt, state);
     this.movables?.update();
     // Впав зі світу — на точку рестарту.
     if (this.truck.body.translation().y < this.fallY) this.truck.reset(this.restartPoint());

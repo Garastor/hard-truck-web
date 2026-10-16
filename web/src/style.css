@@ -1003,12 +1003,56 @@ body.career #stats {
 }
 
 .net-session {
-  font-size: 15px;
+  font-size: 13px;
 }
 
 .net-session h3 {
-  margin: 0 0 14px;
-  font-size: 18px;
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+
+.net-session .net-label {
+  margin: 8px 0 4px;
+  font: 700 11px/1.2 Arial, sans-serif;
+  color: #fce488;
+  letter-spacing: 0.5px;
+}
+
+.net-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.net-chip {
+  min-height: 0;
+  /* Ціль для пальця: на телефоні сцена 640×480 зменшується до ≈ 0,8 — кнопка ≈ 24 px заввишки. */
+  padding: 7px 10px;
+  border: 1px solid rgba(240, 220, 138, 0.45);
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.35);
+  color: #f0e6c8;
+  font: 600 12px/16px Arial, sans-serif;
+  text-shadow: 1px 1px 0 #000;
+  cursor: pointer;
+}
+
+.net-chip.on {
+  border-color: #fce488;
+  background: rgba(252, 228, 136, 0.28);
+  color: #fff;
+}
+
+.net-chip:disabled {
+  cursor: default;
+}
+
+.net-chip:disabled:not(.on) {
+  opacity: 0.55;
+}
+
+.net-trucks .net-chip {
+  min-width: 82px;
 }
 
 .net-player {

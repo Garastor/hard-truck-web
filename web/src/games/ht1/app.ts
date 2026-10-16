@@ -28,7 +28,7 @@ import {
 } from './ui/menuScreens';
 import { HUD_CYAN, PixelFont, box, pixelCanvas, uiScale } from './engine/ui/pixelFont';
 import { MenuArt } from './engine/ui/menuArt';
-import { netMenu } from './ui/netScreens';
+import { lobbyMessage, netMenu, startOf, type NetLobby, type NetStart } from './ui/netScreens';
 import { parseFon } from './engine/formats/fon';
 import { installDevTools } from './devTools';
 import { loadSwap, motionOnGesture, requestMotionPermission, setSwap } from './engine/input/input';
@@ -203,7 +203,8 @@ async function startDrive(): Promise<void> {
   try {
     await ensureTrucks();
     const cfg = careerCfg;
-    const def = trucks.find((t) => String(t.index) === String(cfg?.truck ?? truckSel.value)) ?? trucks[0];
+    const net = netRun;
+    const def = trucks.find((t) => String(t.index) === String(cfg?.truck ?? net?.truck ?? truckSel.value)) ?? trucks[0];
     controls.enabled = false;
     scene.fog = new THREE.Fog(0x8fb4d8, 150, 900);
     // Rapier (WASM ~2 МБ) вантажимо лише при вході в режим їзди.
@@ -215,8 +216,9 @@ async function startDrive(): Promise<void> {
     const id = levelSel.value as LevelId;
     const kind = cfg?.kind ?? (id === 'CIRCUIT' ? 'laps' : id === 'MENU3D' ? 'free' : 'route');
     const others = trucks.filter((t) => t !== def);
-    const rivals = cfg?.rivals ?? (id === 'TRIAL' || id === 'MENU3D' || !others.length ? [] : Array.from({ length: nAi }, (_, i) => others[i % others.length]));
-    drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup ?? { arcade: difficultySel.value === 'arcade' });
+    const rivals = net ? [] : (cfg?.rivals ?? (id === 'TRIAL' || id === 'MENU3D' || !others.length ? [] : Array.from({ length: nAi }, (_, i) => others[i % others.length])));
+    drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup ?? { arcade: difficultySel.value === 'arcade' }, net?.grid ?? null);
+    if (net) joinNetDrive(drive, net);
     drive.onSettingsCommand = (cmd) => {
       if (cmd === 'swap') return setSwap(!loadSwap());
       const style = drive?.cabStyleCurrent === '2d' ? '3d' : '2d';
@@ -246,7 +248,7 @@ async function startDrive(): Promise<void> {
     drive.input.onTiltDenied = () => toast(TILT_DENIED, 8000);
     if (loadControl() === 'tilt') drive.setTilt(true);
     drive.night = id === 'NIGHT';
-    if (!cfg) drive.setWeather(weatherSel.value === 'rain');
+    if (!cfg) drive.setWeather(net ? net.rain : weatherSel.value === 'rain');
     setStatus(null);
   } catch (e) {
     console.error(e);
@@ -360,6 +362,13 @@ $('toMenu').addEventListener('click', () => {
   document.body.classList.remove('bar-open');
   stopDrive();
   selectTab('scene');
+  // Мережева гра: «додому» — до сесії з тим самим другом (з'єднання живе), інакше — до з'єднання.
+  if (netRun) {
+    const lobby = netRun.lobby;
+    netRun = null;
+    void netLoop(lobby.peer.open ? lobby : null);
+    return;
+  }
   void menuLoop();
 });
 
@@ -762,6 +771,60 @@ const HELP = [
   'ГРА ЗБЕРІГАЄТЬСЯ автоматично для кожного водія в цьому браузері.',
 ].join('\n\n');
 
+/** Мережева гра: поточний заїзд (домовленість сесії, вантажівки, місце на старті); null — не мережева гра. */
+let netRun: NetStart | null = null;
+
+/** «Мережева гра»: з'єднання й сесія (from — повернення до сесії з тим самим другом), далі — заїзд. */
+async function netLoop(from: NetLobby | null): Promise<void> {
+  history.replaceState(null, '', location.pathname);
+  await ensureTrucks();
+  if (menuArt === undefined) menuArt = await MenuArt.load((n) => source.read(n));
+  if (!menuArt) return menuLoop();
+  const start = await netMenu(menuArt, currentDriver(), trucks.map(truckSpec), from);
+  if (!start) return menuLoop();
+  await netPlay(start);
+}
+
+/** Заїзд мережевої гри: траса господаря, своя вантажівка й машина друга. */
+async function netPlay(start: NetStart): Promise<void> {
+  netRun = start;
+  careerCfg = null;
+  levelSel.value = start.level;
+  selectTab('drive');
+  await open();
+}
+
+/** Звʼязати заїзд із другом: свій стан — йому, його — машині друга; повідомлення сесії на трасі. */
+function joinNetDrive(d: DriveSession, net: NetStart): void {
+  const { lobby } = net;
+  const { peer } = lobby;
+  const friend = trucks.find((t) => t.index === net.friendTruck) ?? d.def;
+  d.addRemote(friend, net.grid === 0 ? 1 : 0);
+  d.onLocalState = (data) => peer.sendFast(data);
+  const name = peer.peerName ?? 'Друг';
+  peer.events = {
+    onFast: (data) => drive?.pushRemoteState(data),
+    onMessage: (m) => {
+      // Господар почав новий заїзд (із сесії) — їдемо за ним.
+      if (m.t === 'start') {
+        lobbyMessage(lobby, m);
+        if (netRun === net) void netPlay(startOf(lobby, m.level, m.rain));
+        return;
+      }
+      if (m.t === 'lobby' && netRun === net) {
+        toast(`${name} повернувся до сесії`);
+        drive?.remoteGone();
+      }
+      lobbyMessage(lobby, m);
+    },
+    onClose: () => {
+      if (netRun !== net) return;
+      toast(`${name}: з'єднання закрито`);
+      drive?.remoteGone();
+    },
+  };
+}
+
 async function menuLoop(): Promise<void> {
   history.replaceState(null, '', location.pathname);
   stopDrive();
@@ -796,10 +859,7 @@ async function menuLoop(): Promise<void> {
     }
     return startCareer(newCareer({ name: driver, difficulty: pick.difficulty, rivals: pick.rivals, trucks: trucks.map(truckSpec) }));
   }
-  if (choice === 'net') {
-    await netMenu(menuArt, currentDriver());
-    return menuLoop();
-  }
+  if (choice === 'net') return netLoop(null);
   if (choice === 'quick') {
     levelSel.value = 'CIRCUIT';
     selectTab('drive');

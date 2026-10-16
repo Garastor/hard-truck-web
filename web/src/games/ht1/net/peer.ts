@@ -19,7 +19,15 @@ export type NetMessage =
   | { t: 'hello'; v: number; name: string }
   | { t: 'ping'; at: number }
   | { t: 'pong'; at: number }
-  | { t: 'bye' };
+  | { t: 'bye' }
+  /** Вибір господаря в сесії: траса й погода. */
+  | { t: 'setup'; level: string; rain: boolean }
+  /** Вантажівка гравця (номер у TRUCK.TCH). */
+  | { t: 'pick'; truck: number }
+  /** Господар почав заїзд: траса, погода (обидва вантажать трасу). */
+  | { t: 'start'; level: string; rain: boolean }
+  /** Гравець повернувся із заїзду до сесії. */
+  | { t: 'lobby' };
 
 export type CloseReason = 'bye' | 'lost' | 'failed' | 'version' | 'local';
 
@@ -27,6 +35,8 @@ export interface NetPeerEvents {
   /** Канал відкрито й друг привітався (його ім'я). */
   onReady?: (name: string) => void;
   onMessage?: (m: NetMessage) => void;
+  /** Пакет каналу `fast` (стан машини). */
+  onFast?: (data: ArrayBuffer) => void;
   onClose?: (reason: CloseReason) => void;
 }
 
@@ -40,6 +50,10 @@ export class NetPeer {
   rtt: number | null = null;
   events: NetPeerEvents = {};
   private closed = false;
+  /** З'єднання ще живе. */
+  get open(): boolean {
+    return !this.closed;
+  }
   private lastHeard = performance.now();
   private timer = 0;
 
@@ -53,6 +67,12 @@ export class NetPeer {
       this.timer = window.setInterval(() => this.tick(), PING_EVERY);
     };
     this.ctrl.onmessage = (e) => this.receive(e.data);
+    this.fast.binaryType = 'arraybuffer';
+    this.fast.onmessage = (e) => {
+      if (!(e.data instanceof ArrayBuffer)) return;
+      this.lastHeard = performance.now();
+      this.events.onFast?.(e.data);
+    };
     this.ctrl.onclose = () => this.finish('lost');
     this.pc.onconnectionstatechange = () => {
       if (this.pc.connectionState === 'failed') this.finish('failed');
@@ -92,6 +112,11 @@ export class NetPeer {
 
   send(m: NetMessage): void {
     if (this.ctrl.readyState === 'open') this.ctrl.send(JSON.stringify(m));
+  }
+
+  /** Стан машини (канал без повторів); якщо канал ще не відкрито чи переповнений — пакет пропускаємо. */
+  sendFast(data: ArrayBuffer): void {
+    if (this.fast.readyState === 'open' && this.fast.bufferedAmount < 16384) this.fast.send(data);
   }
 
   /** Тип з'єднання: адреса в мережі (host) чи через зовнішню адресу (srflx). */

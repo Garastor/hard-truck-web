@@ -6,7 +6,8 @@
  * y 113…311 (заголовок праворуч угорі, y 120…128); s — x 19…456, y 17…454.
  */
 import type { MenuArt } from '../engine/ui/menuArt';
-import { NetPeer, type CloseReason } from '../net/peer';
+import { TRACKS } from '../career/career';
+import { NetPeer, type CloseReason, type NetMessage } from '../net/peer';
 import { QrScanner, cameraAvailable, qrCanvas } from '../net/qr';
 import { maskButton, Screen } from './menuScreens';
 
@@ -21,13 +22,72 @@ const CLOSE_TEXT: Record<CloseReason, string> = {
   local: '',
 };
 
-/** Розділ «Мережева гра»: з'єднання → сесія → знову з'єднання; повертається до головного меню. */
-export async function netMenu(art: MenuArt, driver: string): Promise<void> {
+/** Траси мережевої гри (як у кар'єрі). */
+const NET_TRACKS: [string, string][] = Object.entries(TRACKS).map(([id, t]) => [id, t.title]);
+
+/** Вантажівка для вибору: номер у TRUCK.TCH і назва. */
+export interface NetTruck {
+  index: number;
+  name: string;
+}
+
+/** Домовленість у сесії; живе, поки живе з'єднання (повернення із заїзду — до неї ж). */
+export interface NetLobby {
+  peer: NetPeer;
+  level: string;
+  rain: boolean;
+  truck: number;
+  friendTruck: number | null;
+  /** Друг зараз на трасі (почав заїзд і ще не повернувся до сесії). */
+  friendDriving: boolean;
+}
+
+/** Початок заїзду: траса, погода, вантажівки й місця на старті (господар — 0). */
+export interface NetStart {
+  lobby: NetLobby;
+  level: string;
+  rain: boolean;
+  truck: number;
+  friendTruck: number;
+  grid: number;
+}
+
+/**
+ * Повідомлення сесії, що приходять і поза екраном сесії (на трасі): вибір друга, «друг повернувся», — оновлюють
+ * домовленість. Повертає true, якщо повідомлення про сесію.
+ */
+export function lobbyMessage(lobby: NetLobby, m: NetMessage): boolean {
+  if (m.t === 'setup' && !lobby.peer.host) {
+    lobby.level = m.level;
+    lobby.rain = m.rain;
+  } else if (m.t === 'pick') lobby.friendTruck = m.truck;
+  else if (m.t === 'lobby') lobby.friendDriving = false;
+  else if (m.t === 'start') lobby.friendDriving = true;
+  else return false;
+  return true;
+}
+
+export function startOf(lobby: NetLobby, level = lobby.level, rain = lobby.rain): NetStart {
+  return { lobby, level, rain, truck: lobby.truck, friendTruck: lobby.friendTruck ?? lobby.truck, grid: lobby.peer.host ? 0 : 1 };
+}
+
+/**
+ * Розділ «Мережева гра»: з'єднання → сесія. Результат — початок заїзду (null — головне меню). from — повернення
+ * із заїзду до сесії з тим самим з'єднанням.
+ */
+export async function netMenu(art: MenuArt, driver: string, trucks: NetTruck[], from: NetLobby | null = null): Promise<NetStart | null> {
   let note: string | null = null;
+  let lobby = from;
   for (;;) {
-    const peer = await connectScreen(art, driver, note);
-    if (!peer) return;
-    note = await sessionScreen(art, driver, peer);
+    if (!lobby) {
+      const peer = await connectScreen(art, driver, note);
+      if (!peer) return null;
+      lobby = { peer, level: 'CIRCUIT', rain: false, truck: trucks.some((t) => t.index === 1) ? 1 : (trucks[0]?.index ?? 1), friendTruck: null, friendDriving: false };
+    }
+    const r = await sessionScreen(art, driver, lobby, trucks);
+    if (typeof r !== 'string' && r) return r;
+    note = r;
+    lobby = null;
   }
 }
 
@@ -231,40 +291,108 @@ function connectScreen(art: MenuArt, driver: string, note: string | null): Promi
   });
 }
 
-/** Сесія (s/back_net): хто в грі, затримка, тип зв'язку; ВИЙТИ — закрити з'єднання. Результат — причина для екрана з'єднання. */
-function sessionScreen(art: MenuArt, driver: string, peer: NetPeer): Promise<string | null> {
+/**
+ * Сесія (s/back_net): хто в грі, затримка, тип зв'язку; господар обирає трасу й погоду, кожен — свою вантажівку.
+ * СТАРТ (господар) — обидва вантажать трасу; ВИЙТИ — закрити з'єднання. Результат — початок заїзду або причина
+ * закриття для екрана з'єднання (null — вийшли самі).
+ */
+function sessionScreen(art: MenuArt, driver: string, lobby: NetLobby, trucks: NetTruck[]): Promise<NetStart | string | null> {
   return new Promise((resolve) => {
+    const { peer } = lobby;
     const scr = new Screen(art, 's/back_net.txr');
     const box = scr.place(el('div', 'net-text net-session'), 34, 30, 408, 410);
-    let route: string | null = null;
-    const render = () => {
-      const me = `${driver}${peer.host ? ' (створив гру)' : ''}`;
-      const him = `${peer.peerName ?? '…'}${peer.host ? '' : ' (створив гру)'}`;
-      const ms = peer.rtt === null ? '…' : `${Math.round(peer.rtt)} мс`;
-      const how = route === 'host' ? 'напряму в локальній мережі' : route === 'srflx' ? 'напряму через інтернет' : route ? route : '…';
-      box.innerHTML = `<h3>МЕРЕЖЕВА ГРА</h3>
-        <p>Гравці:</p><p class="net-player">1. ${escapeHtml(me)}</p><p class="net-player">2. ${escapeHtml(him)}</p>
-        <p>Затримка: ${ms}</p><p>Зв’язок: ${how}</p>
-        <p class="net-note">З’єднання працює. Спільна гонка — наступним кроком.</p>`;
+    const head = el('div', '');
+    const levelRow = el('div', 'net-chips');
+    const weatherRow = el('div', 'net-chips');
+    const truckRow = el('div', 'net-chips net-trucks');
+    const foot = el('p', 'net-note');
+    const label = (text: string) => {
+      const p = el('div', 'net-label');
+      p.textContent = text;
+      return p;
     };
+    box.append(head, label('ТРАСА'), levelRow, label('ПОГОДА'), weatherRow, label('ВАША ВАНТАЖІВКА'), truckRow, foot);
+    let route: string | null = null;
+    const nameOf = (i: number | null) => (i === null ? '…' : (trucks.find((t) => t.index === i)?.name ?? `№${i}`));
+    const chip = (row: HTMLElement, text: string, on: boolean, enabled: boolean, click: () => void) => {
+      const b = el('button', `net-chip${on ? ' on' : ''}`);
+      b.textContent = text;
+      b.disabled = !enabled;
+      b.addEventListener('click', click);
+      row.append(b);
+    };
+    const sendSetup = () => peer.send({ t: 'setup', level: lobby.level, rain: lobby.rain });
+    const renderHead = () => {
+      const me = `${driver}${peer.host ? ' (створив гру)' : ''} — ${nameOf(lobby.truck)}`;
+      const him = `${peer.peerName ?? '…'}${peer.host ? '' : ' (створив гру)'} — ${nameOf(lobby.friendTruck)}${lobby.friendDriving ? ' (на трасі)' : ''}`;
+      const ms = peer.rtt === null ? '…' : `${Math.round(peer.rtt)} мс`;
+      const how = route === 'host' ? 'напряму в мережі' : route === 'srflx' ? 'напряму через інтернет' : '…';
+      head.innerHTML = `<h3>МЕРЕЖЕВА ГРА</h3>
+        <p class="net-player">1. ${escapeHtml(me)}</p><p class="net-player">2. ${escapeHtml(him)}</p>
+        <p>Затримка: ${ms} · ${how}</p>`;
+    };
+    const render = () => {
+      renderHead();
+      levelRow.replaceChildren();
+      for (const [id, title] of NET_TRACKS)
+        chip(levelRow, title, lobby.level === id, peer.host, () => {
+          lobby.level = id;
+          sendSetup();
+          render();
+        });
+      weatherRow.replaceChildren();
+      for (const [rain, title] of [[false, 'Сухо'], [true, 'Дощ']] as const)
+        chip(weatherRow, title, lobby.rain === rain, peer.host, () => {
+          lobby.rain = rain;
+          sendSetup();
+          render();
+        });
+      truckRow.replaceChildren();
+      for (const t of trucks)
+        chip(truckRow, t.name, lobby.truck === t.index, true, () => {
+          lobby.truck = t.index;
+          peer.send({ t: 'pick', truck: t.index });
+          render();
+        });
+      foot.textContent = peer.host ? 'Оберіть трасу й натисніть СТАРТ — друг завантажить її разом з вами.' : 'Трасу й погоду обирає той, хто створив гру. Чекаємо, поки він натисне СТАРТ.';
+    };
+    // Раз на секунду — лише рядки гравців (кнопки вибору не перебудовуємо — не збивати натискання).
     const timer = window.setInterval(() => {
-      render();
+      renderHead();
       void peer.route().then((r) => (route = r));
     }, 1000);
-    const done = (v: string | null) => {
+    const done = (v: NetStart | string | null) => {
       clearInterval(timer);
       scr.close();
       resolve(v);
     };
-    peer.events = { onClose: (reason) => done(CLOSE_TEXT[reason] || null) };
-    maskButton(scr, art, 's/cancel', 489, 17, () => {
+    peer.events = {
+      onMessage: (m) => {
+        if (m.t === 'start') {
+          lobby.friendDriving = true;
+          return done(startOf(lobby, m.level, m.rain));
+        }
+        if (lobbyMessage(lobby, m)) render();
+      },
+      onClose: (reason) => done(CLOSE_TEXT[reason] || null),
+    };
+    const leave = () => {
       peer.close();
       done(null);
-    });
-    scr.keys(null, () => {
-      peer.close();
-      done(null);
-    });
+    };
+    if (peer.host) {
+      maskButton(scr, art, 's/start', 489, 17, () => {
+        peer.send({ t: 'start', level: lobby.level, rain: lobby.rain });
+        lobby.friendDriving = true;
+        done(startOf(lobby));
+      });
+      maskButton(scr, art, 's/cancel', 489, 77, leave);
+    } else maskButton(scr, art, 's/cancel', 489, 17, leave);
+    scr.keys(null, leave);
+    // Друзі мають знати вибір одне одного (і після повернення із заїзду).
+    peer.send({ t: 'pick', truck: lobby.truck });
+    if (peer.host) sendSetup();
+    peer.send({ t: 'lobby' });
     render();
     void peer.route().then((r) => (route = r));
   });

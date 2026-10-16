@@ -759,6 +759,40 @@ export class TruckVehicle {
     }
   }
 
+  /**
+   * Машина друга в мережевій грі: тіло рухає не фізика, а стан із мережі. Кінематичне тіло штовхає машину гравця,
+   * а саме від ударів не відскакує (у друга на телефоні — навпаки).
+   */
+  makeKinematic(): void {
+    this.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+  }
+
+  /**
+   * Крок машини друга (до world.step): поза на кінець кроку, кут керованих коліс, оберти й швидкість — з мережі;
+   * підвіска й обертання коліс — променями контролера, як у своєї машини.
+   */
+  followRemote(dt: number, pos: THREE.Vector3, quat: THREE.Quaternion, steer: number, rpm: number, speedKmh: number, reverse: boolean): void {
+    this.savePrev();
+    this.body.setNextKinematicTranslation(pos);
+    this.body.setNextKinematicRotation(quat);
+    this.steerAngle = steer;
+    this.ctrl.setWheelSteering(0, steer);
+    this.ctrl.setWheelSteering(1, steer);
+    for (let i = 0; i < this.wheels; i++) {
+      this.ctrl.setWheelEngineForce(i, 0);
+      this.ctrl.setWheelBrake(i, 0);
+    }
+    this.ctrl.updateVehicle(dt, undefined, undefined, this.rayFilter);
+    this.rpm = rpm;
+    this.speedKmh = speedKmh;
+    this.gear = reverse ? -1 : 1;
+  }
+
+  /** Кут керованих коліс, рад (+ — уліво) — для стану в мережі. */
+  get wheelSteer(): number {
+    return this.steerAngle;
+  }
+
   reset(spawn: { position: THREE.Vector3; forward: THREE.Vector3 }): void {
     const f = spawn.forward.clone().setY(0).normalize();
     const q = new THREE.Quaternion().setFromRotationMatrix(
