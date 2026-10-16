@@ -15,7 +15,7 @@ import { FOV } from './ui/viewer';
 import { Ht2World, toThree, type LoadedRegion } from './world/world';
 import { AutoPilot } from './engine/vehicle/autopilot';
 import { Ht2Roads } from './world/roads';
-import { Traffic, trafficKinds } from './traffic/traffic';
+import { Traffic, recolor, trafficKinds } from './traffic/traffic';
 import { CareerMode } from './career/careerMode';
 import { Police, SPEED_LIMIT } from './traffic/police';
 import { Mafia } from './traffic/mafia';
@@ -54,24 +54,42 @@ import { Tablo } from './ui/tablo';
 import { Cards } from './ui/cards';
 
 /**
- * Камера за машиною — підібрана так, щоб кадр збігся зі знімком оригіналу в тій самій точці (ZilR біля бази «Южный»,
- * позиція й курс — з телеметрії king.exe): 13,3 м позаду початку моделі в порту (у памʼяті гри — 8,8 м позаду точки
- * машини, отже та на ≈ 4,5 м позаду початку моделі), 4,2 м над ним (5,3 м над землею), нахил униз ≈ 17,5°.
- * Кут огляду — вертикальний 2·atan(0,45·4/3) ≈ 62°: ypyramid = 0,9 з TRUCK.INI, перераховане на екран 4:3
- * (з 48,5° вантажівка займала півкадру проти третини в оригіналі). Для інших машин — гіпотеза (ті самі числа).
+ * Камера за машиною — як у телеметрії king.exe (ZilR біля бази «Южный»): 8,8 м позаду точки машини, 5,3 м над землею
+ * (4,2 м над початком моделі); нахил униз 26° — рядок «уперед» матриці камери (−0,90, 0, −0,437). Точка машини —
+ * середина моделі вздовж курсу (гіпотеза: з нею ширина машини в кадрі збігається зі знімком оригіналу; у ZilR — 2,3 м
+ * позаду початку моделі, що біля кабіни). Раніше камера стояла на 13,3 м позаду початку моделі — машина була вдвічі
+ * меншою в кадрі.
  */
-const CHASE_BACK = 13.3;
+const CHASE_BACK = 8.8;
 const CHASE_UP = 4.2;
-const CHASE_PITCH = Math.asin(0.3);
-const CHASE_FOV = THREE.MathUtils.radToDeg(2 * Math.atan(0.45 * (4 / 3)));
+const CHASE_PITCH = Math.asin(0.437);
 /**
- * Кут огляду з кабіни — як у грі (king.exe 0x5972d0): ширина піраміди xpyramid з TRUCK.INI [EFFECTS] (за
- * замовчуванням 1,6, клавішами 1,2…2,0), висота — за пропорцією екрана; у порту — як на екрані 4:3 (вертикаль
- * 2·atan(0,8·3/4) ≈ 62°), ширші екрани бачать більше з боків. Було 48,5° (ypyramid [RENDER]) — кермо й прилади
- * опинялися під краєм кадру.
+ * Кут огляду всіх камер — як у грі (king.exe 0x5972d0): ширина піраміди xpyramid з TRUCK.INI [EFFECTS] (типово
+ * 1,6, клавішами 1,2…2,0) — тангенс половини горизонтального кута xpyramid/2, висота — за пропорцією екрана; у порту
+ * — як на екрані 4:3 (xpyramid 2 — вертикаль ≈ 74°: обрій на знімку оригіналу на 15 % від верху), ширші екрани
+ * бачать більше з боків. Раніше камера ззаду мала 62° з ypyramid [RENDER] і нахил 17,5° — неба було вдвічі більше.
  */
-const XPYRAMID = 1.6;
-const COCKPIT_FOV = THREE.MathUtils.radToDeg(2 * Math.atan((XPYRAMID / 2) * (3 / 4)));
+/** Середина видимої геометрії моделі вздовж напряму fwd відносно її початку, м. */
+function modelMid(root: THREE.Object3D, fwd: THREE.Vector3): number {
+  root.updateMatrixWorld(true);
+  const p = new THREE.Vector3();
+  let lo = Infinity;
+  let hi = -Infinity;
+  root.traverse((o) => {
+    if (!(o instanceof THREE.Mesh) || !o.visible) return;
+    const a = o.geometry.attributes.position;
+    for (let i = 0; i < a.count; i++) {
+      const s = p.fromBufferAttribute(a, i).applyMatrix4(o.matrixWorld).sub(root.position).dot(fwd);
+      lo = Math.min(lo, s);
+      hi = Math.max(hi, s);
+    }
+  });
+  return Number.isFinite(lo) ? (lo + hi) / 2 : 0;
+}
+
+function viewFov(xpyramid: number): number {
+  return THREE.MathUtils.radToDeg(2 * Math.atan((xpyramid / 2) * (3 / 4)));
+}
 /** Запізнення камери за машиною, с (оригінал: відстань позаду = 8,8 м + 0,58 с × швидкість, повертається за ≈ 1,5 с). */
 const CHASE_LAG = 0.6;
 /** Точка погляду — на цій відстані від місця камери в спокої під нахилом CHASE_PITCH (біля машини), м. */
@@ -133,6 +151,9 @@ export class Ht2Drive {
   private readonly camPos = new THREE.Vector3();
   private readonly camLook = new THREE.Vector3();
   private cockpit = new THREE.Vector3();
+  /** Середина моделі вздовж курсу відносно її початку, м (точка машини для камери) — для якої моделі пораховано. */
+  private chaseMid = 0;
+  private chaseFor: TruckVehicle | null = null;
   private readonly colliders = new Map<string, RAPIER.Collider[]>();
   private acc = 0;
   private last = performance.now();
@@ -364,6 +385,30 @@ export class Ht2Drive {
       range: () => (this.world.scene.fog as THREE.Fog | null)?.far ?? VIEW_FALLBACK,
       sees: (p) => this.canSee(p),
     };
+    // Фізичні машини трафіку поруч з гравцем — та сама модель руху king.exe, що й у гравця, з їхнім vehicle.tech.
+    this.traffic.physics = {
+      make: (kind, pos, forward, speed) => {
+        const rec = this.trucks.records.find((r) => r.carNode === kind.model);
+        const def = rec && truckDef(this.trucks, rec);
+        const model = def && buildTruckModel(this.trucks.asm, def, false);
+        if (!rec || !def || !model) return null;
+        if (kind.variant > 0) recolor(model.root, this.trucks, kind.variant + 1);
+        const v = new TruckVehicle(this.rapier, def, model, { position: this.groundAt(pos), forward: forward.clone() }, {
+          cargoMass: 0,
+          surfaceEffects: !this.arcade,
+          engine: HT2_KING_ENGINE,
+          brake: HT2_KING_BRAKE,
+          king: { ...HT2_KING, travel: rec.suspension },
+        });
+        v.body.setLinvel({ x: forward.x * speed, y: 0, z: forward.z * speed }, true);
+        this.world.scene.add(v.visual);
+        return v;
+      },
+      remove: (v) => {
+        this.world.scene.remove(v.visual);
+        v.dispose();
+      },
+    };
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);
     this.input.onCommand = (cmd) => {
       if (cmd === 'camera') this.camMode = NEXT_CAM[this.camMode];
@@ -408,18 +453,21 @@ export class Ht2Drive {
     map.textContent = 'Карта';
     map.setAttribute('aria-label', 'Карта світу');
     map.addEventListener('click', () => (this.tabMap ? this.tabMap.cycle() : this.openMap()));
-    // «Інфо» — панелі F1–F4 оригіналу (на телефоні немає F-клавіш); показується, коли є графіка esc16.RES.
-    const info = document.createElement('button');
-    info.textContent = 'Інфо';
-    info.className = 'ht2-orig-only';
-    info.setAttribute('aria-label', 'Панелі інформації (F1–F4)');
-    info.addEventListener('click', () => this.toggleF(this.fPanels?.open ?? 3));
-    const cb = document.createElement('button');
-    cb.textContent = 'Рація';
-    cb.className = 'ht2-orig-only';
-    cb.setAttribute('aria-label', 'Рація (F5)');
-    cb.addEventListener('click', () => this.radio?.toggle());
-    this.hud.append(back, music, map, info, cb);
+    // Бічні панелі й рація оригіналу (на телефоні немає F-клавіш): показуються, коли є графіка esc16.RES; та сама
+    // кнопка ще раз — сховати панель, інша — перемкнути на свою.
+    const orig = (text: string, label: string, onClick: () => void) => {
+      const b = document.createElement('button');
+      b.textContent = text;
+      b.className = 'ht2-orig-only';
+      b.setAttribute('aria-label', label);
+      b.addEventListener('click', onClick);
+      return b;
+    };
+    const info = orig('Інфо', 'Інфо (F3)', () => this.toggleF(3));
+    const rating = orig('Рейтинг', 'Рейтинг (F2)', () => this.toggleF(2));
+    const company = orig('Компанія', 'Моя компанія (F4)', () => this.toggleF(4));
+    const cb = orig('Рація', 'Рація (F5)', () => this.radio?.toggle());
+    this.hud.append(back, music, map, info, rating, company, cb);
     // У шарі overlay — під вікнами складу й СТО (вони теж там, вище).
     o.overlay.append(this.hud, this.bar);
     void EscArt.load(o.source).then((art) => {
@@ -1277,6 +1325,7 @@ export class Ht2Drive {
       this.trailer?.update(step, this.truck.brakePedal(state), this.def.tech.brakePower, this.truck.kinematic);
       this.race?.control(step);
       this.truckers?.control(step, obstacles);
+      this.traffic?.control(step);
       this.rapier.step();
       this.acc -= step;
     }
@@ -1285,6 +1334,7 @@ export class Ht2Drive {
     this.race?.after(dt, alpha);
     this.detectHits();
     this.truckers?.after(dt, this.truck.visual.position, alpha);
+    this.traffic?.after(alpha);
     this.truck.syncVisual(alpha);
     this.trailer?.syncVisual(alpha);
     this.audio?.update(this.truck.rpm, state.throttle, this.truck.engineOn);
@@ -1431,11 +1481,11 @@ export class Ht2Drive {
       this.camera.position.copy(this.cockpit).applyQuaternion(v.quaternion).add(v.position);
       this.camera.quaternion.copy(v.quaternion).multiply(tilt);
       this.camera.near = 0.2;
-      this.camera.fov = COCKPIT_FOV;
+      this.camera.fov = viewFov(this.opts.settings?.xpyramid ?? 1.6);
       this.camera.updateProjectionMatrix();
       return;
     }
-    const fov = this.camMode === 'far' ? FOV : CHASE_FOV;
+    const fov = this.camMode === 'far' ? FOV : viewFov(this.opts.settings?.xpyramid ?? 1.6);
     if (this.camera.near !== 1 || this.camera.fov !== fov) {
       this.camera.near = 1;
       this.camera.fov = fov;
@@ -1445,7 +1495,11 @@ export class Ht2Drive {
     const tow = this.trailer ? 1.7 : 1;
     // Камера за машиною — як в оригіналі (CHASE_*); «далека» — порту.
     const far = this.camMode === 'far';
-    const dist = (far ? 28 : CHASE_BACK) * tow;
+    if (this.chaseFor !== this.truck) {
+      this.chaseFor = this.truck;
+      this.chaseMid = modelMid(v, fwd);
+    }
+    const dist = far ? 28 * tow : (CHASE_BACK - this.chaseMid) * tow;
     const height = (far ? 12 : CHASE_UP) * tow;
     const flat = fwd.clone().setY(0).normalize();
     const want = v.position.clone().addScaledVector(flat, -dist).addScaledVector(up, height);

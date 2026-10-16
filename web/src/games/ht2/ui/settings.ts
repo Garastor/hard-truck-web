@@ -32,6 +32,11 @@ export interface Ht2Settings {
   steerCenter: number;
   force: number;
   automatic: boolean;
+  /**
+   * Ширина піраміди огляду (TRUCK.INI [EFFECTS] xpyramid, king.exe 0x5972d0 → рендерер +0x58; клавішами 1,2…2,0):
+   * тангенс половини горизонтального кута — xpyramid/2, для всіх камер.
+   */
+  xpyramid: number;
 }
 
 const KEY = 'ht2.settings.v1';
@@ -52,6 +57,7 @@ export function defaultSettings(ini: Ini | null): Ht2Settings {
     steerCenter: pct('power', 50),
     force: pct('force', 50),
     automatic: true,
+    xpyramid: Math.min(2, Math.max(1.2, ini ? iniNum(ini, 'EFFECTS', 'xpyramid', 1.6) : 1.6)),
   };
 }
 
