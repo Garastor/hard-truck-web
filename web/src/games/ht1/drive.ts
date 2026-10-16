@@ -87,6 +87,51 @@ const SHAKE_ANGLE = THREE.MathUtils.degToRad(0.245);
 const SHAKE_LIFT = 0.005;
 const SHAKE_PX = 1.2;
 const SHAKE_FULL_KMH = 50;
+/** На сенсорних пристроях (телефон, планшет) трясіння сильніше в 1,5 раза (на прохання користувача). */
+const SHAKE_MOBILE = 1.5;
+/**
+ * Трясіння кузова, видиме ззовні (власна вантажівка з камер позаду, суперники; на прохання користувача; лише
+ * модель, фізика не змінюється): найбільший кут, рад, і підйом, м. Помітніше за кабіну — дивимось здалеку.
+ */
+const BODY_SHAKE_ANGLE = THREE.MathUtils.degToRad(0.8);
+const BODY_SHAKE_LIFT = 0.03;
+
+/**
+ * Погойдування (−1…1 × сила): тангаж, крен, підйом. Суми синусоїд некратних частот 2…4,5 Гц (на прохання
+ * користувача — плавніше, ніж перші 4…9 Гц); сила плавно тягнеться до заданої. phase — зсув, щоб машини не
+ * гойдались в унісон.
+ */
+class Shake {
+  pitch = 0;
+  roll = 0;
+  lift = 0;
+  amp = 0;
+  private time: number;
+  constructor(phase = 0) {
+    this.time = phase;
+  }
+  update(dt: number, want: number): void {
+    this.amp += (want - this.amp) * (1 - Math.exp(-dt * 4));
+    this.time += dt;
+    const t = this.time * Math.PI * 2;
+    const a = this.amp;
+    this.pitch = a * (0.6 * Math.sin(t * 3.1) + 0.4 * Math.sin(t * 4.4 + 1.3));
+    this.roll = a * (0.6 * Math.sin(t * 2.1 + 0.7) + 0.4 * Math.sin(t * 3.9 + 2.1));
+    this.lift = a * (0.5 * Math.sin(t * 2.7 + 0.4) + 0.5 * Math.sin(t * 4.2 + 2.6));
+  }
+}
+
+/** Сила трясіння: на колесах (не в повітрі) — за нерівністю покриття й швидкістю. */
+function roughness(surface: Surface, height: number, speedKmh: number): number {
+  return height < 2.5 ? SURFACE_ROUGH[surface] * Math.min(1, Math.abs(speedKmh) / SHAKE_FULL_KMH) : 0;
+}
+
+/** Трясіння кузова: модель у власних осях (після syncVisual — наступний кадр її знову ставить за тілом). */
+function shakeBody(visual: THREE.Object3D, sh: Shake): void {
+  if (sh.amp < 1e-3) return;
+  visual.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(sh.pitch * BODY_SHAKE_ANGLE, 0, sh.roll * BODY_SHAKE_ANGLE)));
+  visual.position.add(new THREE.Vector3(0, sh.lift * BODY_SHAKE_LIFT, 0).applyQuaternion(visual.quaternion));
+}
 /** Гучність звуків пневмогальм (шипіння й клапан — удвічі тихші за перший варіант, на прохання користувача). */
 const AIR_RELEASE_VOLUME = 0.35;
 const AIR_VALVE_VOLUME = 0.21;
@@ -285,7 +330,18 @@ export class DriveSession {
   /** Сектор, з якого почався відлік кола. */
   private lapRoom: string | null = null;
   /** Суперники (aicar у truck.ini): вантажівки під керуванням автопілота. */
-  readonly opponents: { truck: TruckVehicle; pilot: AutoPilot; odo: Odometer; lights: TruckLights | null; flippedFor: number }[] = [];
+  readonly opponents: {
+    truck: TruckVehicle;
+    pilot: AutoPilot;
+    odo: Odometer;
+    lights: TruckLights | null;
+    flippedFor: number;
+    /** Трясіння кузова й покриття під машиною (промінь раз на 0,2 с). */
+    shake: Shake;
+    surface: Surface;
+    surfaceHeight: number;
+    surfaceTimer: number;
+  }[] = [];
   private readonly playerOdo = new Odometer();
   /** Маршрут гонки від старту гравця — для місця в гонці. */
   private route: RouteProgress | null = null;
@@ -440,9 +496,29 @@ export class DriveSession {
   private updateSurface(dt: number): void {
     if ((this.surfaceTimer -= dt) > 0) return;
     this.surfaceTimer = 0.2;
-    const room = this.room ? this.built.rooms.find((r) => r.name === this.room) : null;
-    if (!room) return;
-    const t = this.truck.body.translation();
+    const probe = this.probeSurface(this.truck.body.translation(), this.room);
+    if (!probe) return;
+    // Висота тіла над видимою поверхнею (відʼємна — під нею); без влучання — високо в повітрі.
+    this.surfaceHeight = probe.height;
+    if (!probe.surface) {
+      this.overWater = false;
+      return;
+    }
+    this.surface = probe.surface;
+    this.offRoad = this.surface !== 'asphalt' && this.surface !== 'water';
+    this.overWater = this.surface === 'water';
+    const fx = SURFACE_FX[this.surface];
+    // У повітрі (далеко над поверхнею) покриття не діє.
+    if (this.surfaceHeight < 2.5) this.truck.setSurface(fx.grip, fx.roll, fx.steer, fx.maxKmh / 3.6, fx.drag);
+  }
+
+  /**
+   * Покриття під точкою — промінь у видиму геометрію кімнати: висота тіла над поверхнею (без влучання — Infinity,
+   * покриття null). Без кімнати — null.
+   */
+  private probeSurface(t: { x: number; y: number; z: number }, roomName: string | null): { height: number; surface: Surface | null } | null {
+    const room = roomName ? this.built.rooms.find((r) => r.name === roomName) : null;
+    if (!room) return null;
     // Промінь з 6 м над тілом: машина, що вже пірнула, теж «бачить» поверхню води над собою.
     this.ray.set(new THREE.Vector3(t.x, t.y + SURFACE_RAY_UP, t.z), new THREE.Vector3(0, -1, 0));
     this.ray.far = SURFACE_RAY_UP + 5;
@@ -456,20 +532,10 @@ export class DriveSession {
     const hit = this.ray
       .intersectObject(room, true)
       .find((h) => (h.object as THREE.Mesh).isMesh && (h.distance > SURFACE_RAY_UP - 3 || /water|river/i.test(name(h))));
-    // Висота тіла над видимою поверхнею (відʼємна — під нею); без влучання — високо в повітрі.
-    this.surfaceHeight = hit ? hit.distance - SURFACE_RAY_UP : Infinity;
-    if (!hit) {
-      this.overWater = false;
-      return;
-    }
+    if (!hit) return { height: Infinity, surface: null };
     const mesh = hit.object as THREE.Mesh;
     const mat = (Array.isArray(mesh.material) ? mesh.material[hit.face?.materialIndex ?? 0] : mesh.material) as THREE.MeshBasicMaterial;
-    this.surface = classifySurface(mat?.name ?? '', texelAt(mat?.map, hit.uv));
-    this.offRoad = this.surface !== 'asphalt' && this.surface !== 'water';
-    this.overWater = this.surface === 'water';
-    const fx = SURFACE_FX[this.surface];
-    // У повітрі (далеко над поверхнею) покриття не діє.
-    if (this.surfaceHeight < 2.5) this.truck.setSurface(fx.grip, fx.roll, fx.steer, fx.maxKmh / 3.6, fx.drag);
+    return { height: hit.distance - SURFACE_RAY_UP, surface: classifySurface(mat?.name ?? '', texelAt(mat?.map, hit.uv)) };
   }
   /** Покриття під машиною (за матеріалом і кольором текстури). */
   surface: Surface = 'asphalt';
@@ -1253,23 +1319,24 @@ export class DriveSession {
     if (this.hudFonts) this.setHudFonts(...this.hudFonts);
   }
 
-  /** Трясіння кабіни (−1…1 × сила): тангаж, крен, підйом — див. SHAKE_*. */
-  private readonly cabShake = { pitch: 0, roll: 0, lift: 0 };
-  private shakeAmp = 0;
-  private shakeTime = 0;
+  /** Трясіння власної машини: кабіна зсередини (SHAKE_*), кузов ззовні (BODY_SHAKE_*). */
+  private readonly cabShake = new Shake();
+  private readonly shakeScale = matchMedia('(pointer: coarse)').matches ? SHAKE_MOBILE : 1;
   private updateShake(dt: number): void {
-    // На колесах (не в повітрі) — за нерівністю покриття й швидкістю; зміна сили — плавно.
-    const grounded = this.surfaceHeight < 2.5;
-    const want = grounded ? SURFACE_ROUGH[this.surface] * Math.min(1, Math.abs(this.truck.speedKmh) / SHAKE_FULL_KMH) : 0;
-    this.shakeAmp += (want - this.shakeAmp) * (1 - Math.exp(-dt * 4));
-    this.shakeTime += dt;
-    const t = this.shakeTime * Math.PI * 2;
-    const a = this.shakeAmp;
-    // Суми синусоїд некратних частот — нерегулярне погойдування. 2…4,5 Гц (на прохання користувача — плавніше,
-    // ніж перші 4…9 Гц, амплітуда та сама).
-    this.cabShake.pitch = a * (0.6 * Math.sin(t * 3.1) + 0.4 * Math.sin(t * 4.4 + 1.3));
-    this.cabShake.roll = a * (0.6 * Math.sin(t * 2.1 + 0.7) + 0.4 * Math.sin(t * 3.9 + 2.1));
-    this.cabShake.lift = a * (0.5 * Math.sin(t * 2.7 + 0.4) + 0.5 * Math.sin(t * 4.2 + 2.6));
+    this.cabShake.update(dt, roughness(this.surface, this.surfaceHeight, this.truck.speedKmh) * this.shakeScale);
+    // Кузов власної машини видно лише з камер позаду.
+    if (this.camMode === 'chase' || this.camMode === 'far') shakeBody(this.truck.visual, this.cabShake);
+    for (const o of this.opponents) {
+      if ((o.surfaceTimer -= dt) <= 0) {
+        o.surfaceTimer = 0.2;
+        const t = o.truck.body.translation();
+        const probe = this.probeSurface(t, this.locate(new THREE.Vector3(t.x, t.y, t.z)));
+        o.surfaceHeight = probe?.height ?? Infinity;
+        if (probe?.surface) o.surface = probe.surface;
+      }
+      o.shake.update(dt, roughness(o.surface, o.surfaceHeight, o.truck.speedKmh) * this.shakeScale);
+      shakeBody(o.truck.visual, o.shake);
+    }
   }
 
   private updateCab(state: { steer: number }): void {
@@ -1283,7 +1350,7 @@ export class DriveSession {
     // Кабіна — разом із машиною (погляд з інерцією повертається в ній), панель — нерухомо в кадрі.
     this.cab.quaternion.copy(this.panelMode ? this.camera.quaternion : this.cabQuat);
     const sh = this.cabShake;
-    if (this.shakeAmp > 1e-3) {
+    if (sh.amp > 1e-3) {
       this.cab.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(sh.pitch * SHAKE_ANGLE, 0, sh.roll * SHAKE_ANGLE)));
       this.cab.position.add(new THREE.Vector3(0, sh.lift * SHAKE_LIFT, 0).applyQuaternion(this.cab.quaternion));
     }
@@ -1336,7 +1403,7 @@ export class DriveSession {
       const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
       hideLampReflections(model.root);
       this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z), (x, y, z) => this.glossAt(x, y, z), (f, t) => this.lampSeen(f, t)));
-      this.opponents.push({ truck, pilot, odo: new Odometer(), lights, flippedFor: 0 });
+      this.opponents.push({ truck, pilot, odo: new Odometer(), lights, flippedFor: 0, shake: new Shake(1.7 * (i + 1)), surface: 'asphalt', surfaceHeight: Infinity, surfaceTimer: 0.2 * Math.random() });
     });
   }
 
