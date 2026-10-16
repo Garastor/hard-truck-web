@@ -144,6 +144,8 @@ export interface PlayerState {
   wanted: boolean;
   /** Фарба Stealth — пост не бачить машину. */
   stealth: boolean;
+  /** Скло (броньоване — 0,2): поштовх від куль ×g. */
+  glass?: number;
 }
 
 export interface PoliceDeps {

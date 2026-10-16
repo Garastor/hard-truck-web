@@ -37,7 +37,7 @@ import { decodeCp1251 } from './engine/formats/binary';
 import { RaceMode } from './race';
 import { Trailer } from './vehicles/trailer';
 import { Truckers, truckerKinds, truckerNames } from './traffic/truckers';
-import { parseUpgrades, tuning, type Tuning } from './career/upgrades';
+import { parseUpgrades, tireGrip, tuning, type Tuning } from './career/upgrades';
 import { parseServices, parseTowns } from './career/economy';
 import { Music } from './ui/music';
 import { SceneAssembler } from './engine/render/sceneBuilder';
@@ -532,7 +532,8 @@ export class Ht2Drive {
       if (cmd === 'menu') this.toggleEsc();
       if (cmd === 'f1' || cmd === 'f2' || cmd === 'f3' || cmd === 'f4') this.toggleF(Number(cmd[1]) as FPanel);
       if (cmd === 'f5') this.radio?.toggle();
-      if (cmd === 'horn') this.audio?.playOnce('horn');
+      // Сигнал (0x543bb0): з покращенням — hornupgrSound.
+      if (cmd === 'horn') this.audio?.playOnce(this.tuning.horn ? 'hornupgr' : 'horn');
       if (cmd === 'engine') {
         this.truck.engineOn = !this.truck.engineOn;
         if (this.truck.engineOn) this.audio?.play('start', 0.8);
@@ -756,8 +757,11 @@ export class Ht2Drive {
       this.skipHits--;
       return;
     }
+    // Посилена рама: імпульс удару ×0,3 від самого початку (0x554c20); захист фар — деформація переду ×0,2.
+    const t = this.tuning;
+    dv.multiplyScalar(t.damage);
     if (dv.length() < 2) return;
-    this.dents?.hit(dv.applyQuaternion(this.truck.visual.quaternion.clone().invert()));
+    this.dents?.hit(dv.applyQuaternion(this.truck.visual.quaternion.clone().invert()), t.front);
   }
 
   /**
@@ -842,7 +846,7 @@ export class Ht2Drive {
   /** Параметри фізики вантажівки: вантаж (у тягача — у причепі), покращення. */
   private setup(cargo: number) {
     const t = this.tuning;
-    const base = { cargoMass: this.hitched ? 0 : cargo, torque: t.torque, grip: t.grip, surfaceEffects: !this.arcade };
+    const base = { cargoMass: this.hitched ? 0 : cargo, torque: t.torque, surfaceEffects: !this.arcade, tractionControl: t.antiSpin, engineBrake: t.engineBrake };
     // Рух king.exe (G10 В3); `?physics=rapier` — колишня модель на шинах Rapier (для порівняння).
     if (new URLSearchParams(location.search).get('physics') === 'rapier') return { ...base, engine: HT2_ENGINE, brake: HT2_BRAKE, rollLift: HT2_ROLL_LIFT, steerLimit: HT2_STEER_LIMIT, steerPower: HT2_STEER_POWER };
     return { ...base, engine: HT2_KING_ENGINE, brake: HT2_KING_BRAKE, king: { ...HT2_KING, travel: this.rec?.suspension } };
@@ -1173,6 +1177,7 @@ export class Ht2Drive {
       // Заборонена зона (вогонь на ураження) — той самий лічильник розшуку.
       wanted: wanted(cm.fines) || this.zone.hot,
       stealth: this.tuning.stealth,
+      glass: this.tuning.glass,
     });
     for (const e of events) this.policeEvent(e);
   }
@@ -1195,6 +1200,7 @@ export class Ht2Drive {
       vel: new THREE.Vector3(lv.x, 0, lv.z),
       phase: this.police?.phase ?? 0,
       hour: this.hour,
+      glass: this.tuning.glass,
     }, this.camera.position);
     for (const e of events) {
       if (e.kind === 'shot') this.policeEvent(e);
@@ -1214,6 +1220,7 @@ export class Ht2Drive {
       forward: this.truck.forward(),
       vel: new THREE.Vector3(lv.x, 0, lv.z),
       hunted: (f.mafiaDebt ?? 0) > 0 || !!f.mafiaInterest,
+      glass: this.tuning.glass,
       share: cm.capitalShare(),
     });
     for (const e of events) {
@@ -1730,7 +1737,8 @@ export class Ht2Drive {
     // Далі від осі дороги WAY, ніж половина ширини W (з запасом 0,5 м) — узбіччя.
     const off = this.roads.offRoad(p);
     this.offRoad = off;
-    this.truck.setSurface(1, off ? OFFROAD_ROLL : 1);
+    // Шини (0x502780): μ за поверхнею й варіантом шин відносно звичайних на асфальті; узбіччя — поверхня 2 (гіпотеза).
+    this.truck.setSurface(tireGrip(this.tuning.tires, this.raining, off ? 2 : 1), off ? OFFROAD_ROLL : 1);
     // Узбіччя трусить як ґрунт (покриття 2 у 0x502780; що узбіччя — ґрунт, гіпотеза: покриття за матеріалом не знайдено).
     this.truck.roughness = off ? ROUGH_GROUND : ROUGH_ASPHALT;
   }

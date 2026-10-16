@@ -123,8 +123,16 @@ export interface TruckSetup {
   grip?: number;
   /** Множник моменту двигуна (форсований двигун). */
   torque?: number;
-  /** Антипробуксовочна система (АПС): тяга ведучого колеса не перевищує межу зчеплення. */
+  /**
+   * Антипробуксовочна система (АПС): тяга ведучого колеса не перевищує межу зчеплення. У русі king.exe (покращення
+   * ABS, 0x4ffc1c) — газ ≤ 0,9 × 0,9 частки, за якої тяга дорівнює зчепленню ведучих коліс.
+   */
   tractionControl?: boolean;
+  /**
+   * Гальмо двигуном (покращення PR_ENGINE_BRAKE, 0x507360): до гальмування двигуном тертям −n·c_f додається
+   * −n·E·√b (b — педаль гальма), E = engineBrake·c_f. 0 — немає.
+   */
+  engineBrake?: number;
   /** Регульоване сидіння (РС): очі водія вище на стільки метрів. */
   seatRaise?: number;
   /** Покриття дороги впливає на зчеплення й опір (симулятор; в аркаді — ні). */
@@ -237,6 +245,7 @@ export class TruckVehicle {
   /** Пошкодження гальм: множник сили (1 — справні). */
   private brakeFactor = 1;
   private readonly tractionControl: boolean;
+  private readonly engineBrake: number;
   /** Для світлових плям фар і габаритів (локальна система машини). */
   lightGeometry: LightGeometry = { groundY: -1, frontZ: -4, backZ: 4, width: 2.5 };
   /**
@@ -307,6 +316,7 @@ export class TruckVehicle {
     this.brakeProfile = setup.brake;
     this.king = setup.king ?? null;
     this.tractionControl = setup.tractionControl ?? false;
+    this.engineBrake = setup.engineBrake ?? 0;
     this.surfaceEffects = setup.surfaceEffects ?? true;
     this.wheelRadius = tech.wheelRadius;
     this.wheels = model.wheels.length;
@@ -655,10 +665,15 @@ export class TruckVehicle {
     // Без газу двигун лише гальмує (0x4aa320) — проти руху й до зупинки, з наростанням від нуля, як кочення: інакше
     // гальмування холостими обертами на передачі штовхало вантажівку з місця назад.
     const engineBraking = this.engine.throttle === 0;
-    const drive = engineBraking ? 0 : this.engine.force;
+    let drive = engineBraking ? 0 : this.engine.force;
+    if (this.tractionControl && drive > 0) {
+      let grip = 0;
+      for (const w of wheels) if (w.ground && w.driven) grip += w.mu * w.load;
+      drive = Math.min(drive, 0.81 * grip);
+    }
     let force = wheelForces(wheels, drive, pedal, vFwd, this.slip);
     if (handbrake && pedal <= KING.brakeFrom) force += wheelForces(wheels.map((w, i) => (i >= 2 ? w : { ...w, ground: false })), 0, 1, vFwd);
-    let resist = engineBraking ? Math.abs(this.engine.force) * Math.min(1, Math.abs(vFwd)) : 0;
+    let resist = engineBraking ? Math.abs(this.engine.force) * Math.min(1, Math.abs(vFwd)) * (1 + this.engineBrake * Math.sqrt(pedal)) : 0;
     for (const w of wheels) if (w.ground) resist += rollingForce(w.load, vFwd) * this.surfaceRoll;
     const over = Math.abs(vFwd) - this.surfaceMaxSpeed;
     if (over > 0) resist += mass * SOFT_DRAG * Math.min(1, over / SOFT_DRAG_SPAN);

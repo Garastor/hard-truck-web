@@ -21,7 +21,7 @@ import { detectGame } from '@app/registry';
 import { HT2_DIR } from '../gameDirs';
 import { findStores, hideIllegal, orderPay, parseGoods, parseServices, parseTowns } from '@ht2/career/economy';
 import { HT2_MOD_REGIONS } from '@ht2/files';
-import { install, parseUpgrades, tuning } from '@ht2/career/upgrades';
+import { install, parseUpgrades, tireGrip, tuning } from '@ht2/career/upgrades';
 import { parseMarkets } from '@ht2/career/market';
 import { TERRAIN, terrainHeightAt, terrainHeights } from '@ht2/world/terrain';
 import { defaultSettings, timeScale } from '@ht2/ui/settings';
@@ -260,11 +260,16 @@ describe.skipIf(!has)('HT2: покращення (restable.sch)', () => {
     expect(by['PR_BRAKES:1'].price).toBe(4500);
     expect(by['PR_TIRES:1'].price).toBe(2000);
     expect(by['PR_EXTRA_TANK:1'].price).toBe(500);
-    expect(ups.length).toBe(6);
+    expect(ups.length).toBe(14);
     const owned = install(['PR_TIRES:2', 'PR_ABS:1'], by['PR_TIRES:1']);
     expect(owned).toEqual(['PR_ABS:1', 'PR_TIRES:1']);
-    expect(tuning(owned).grip).toBeGreaterThan(1);
+    expect(tuning(owned).tires).toBe(1);
     expect(tuning([]).torque).toBe(1);
+    // king.exe (upgrades.md): форсований ×1,4, з присадкою ще ×1,25; шини — відношення μ до звичайних на асфальті.
+    expect(tuning(['PR_FORCED_ENGINE:1', 'PR_OIL_ADDITIVE:1']).torque).toBeCloseTo(1.75, 6);
+    expect(tireGrip(1, false, 1)).toBeCloseTo(0.8 / 0.6, 6);
+    expect(tireGrip(2, false, 2)).toBeCloseTo(0.8 / 0.55, 6);
+    expect(tireGrip(0, true, 1)).toBe(1);
   });
 });
 

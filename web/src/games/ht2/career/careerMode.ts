@@ -87,7 +87,8 @@ export class CareerMode {
     const p = this.drive.truck.visual.position;
     const dist = Math.min(50, p.distanceTo(this.lastPos));
     this.lastPos.copy(p);
-    const perMeter = ((this.drive.fuelConsumption * 10) / 100 / 1000) * (this.drive.arcade ? 0.5 : 1);
+    // Присадка в масло: витрата ∝ B = 0,8 (0x500612).
+    const perMeter = ((this.drive.fuelConsumption * 10) / 100 / 1000) * (this.drive.arcade ? 0.5 : 1) * this.drive.tuning.fuel;
     c.fuel = Math.max(0, c.fuel - dist * perMeter * (0.5 + 0.5 * throttle) - (this.drive.truck.engineOn ? dt * 0.0005 : 0));
     if (c.fuel <= 0 && this.drive.truck.engineOn) this.drive.truck.engineOn = false;
   }
@@ -119,7 +120,8 @@ export class CareerMode {
     this.prevVel.set(v.x, v.y, v.z);
     if (dv > HIT_MIN) {
       c.damage = Math.min(1, c.damage + dv * 0.004 * this.drive.tuning.damage * (this.drive.arcade ? 0.5 : 1));
-      if (c.order) c.order.integrity = Math.max(0, c.order.integrity - dv * 0.01);
+      // Пневмопідвіска: удар для вантажу ×0,3 (0x554bb0).
+      if (c.order) c.order.integrity = Math.max(0, c.order.integrity - dv * 0.01 * this.drive.tuning.cargo);
       if (c.order && c.order.integrity <= 0) this.orderLost();
       this.recountGuilt();
     }

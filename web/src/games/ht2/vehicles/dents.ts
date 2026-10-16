@@ -39,10 +39,10 @@ export class Dents {
     this.apply();
   }
 
-  /** Удар: зміна швидкості dv (м/с) у системі машини. */
-  hit(dvLocal: THREE.Vector3): void {
+  /** Удар: зміна швидкості dv (м/с) у системі машини; front — множник деформації переду (захист фар 0,2). */
+  hit(dvLocal: THREE.Vector3, front = 1): void {
     const z = hitZone(dvLocal);
-    this.zones[z] = Math.min(1, (this.zones[z] ?? 0) + dvLocal.length() * PER_MS);
+    this.zones[z] = Math.min(1, (this.zones[z] ?? 0) + dvLocal.length() * PER_MS * (z[0] === 'F' ? front : 1));
     this.apply();
   }
 

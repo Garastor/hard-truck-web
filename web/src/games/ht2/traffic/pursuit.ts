@@ -38,6 +38,8 @@ export interface Quarry {
   forward: THREE.Vector3;
   /** Швидкість, м/с (вектор). */
   vel: THREE.Vector3;
+  /** Скло g (0x567440, гравець+0x5308): шкода й займання від куль ×g; броньоване — 0,2. */
+  glass?: number;
 }
 
 /** Машина-переслідувач: фізика й стан керування. */
@@ -298,7 +300,7 @@ export function fireRay(world: RAPIER.World, from: THREE.Vector3, dir: THREE.Vec
   const point = from.clone().addScaledVector(dir, hit.timeOfImpact);
   const onTarget = hit.collider.parent() === q.body;
   if (onTarget) {
-    const m = q.body.mass() * force;
+    const m = q.body.mass() * force * (q.glass ?? 1);
     q.body.applyImpulseAtPoint({ x: dir.x * m, y: dir.y * m, z: dir.z * m }, point, true);
   }
   return { hit: onTarget, point };
