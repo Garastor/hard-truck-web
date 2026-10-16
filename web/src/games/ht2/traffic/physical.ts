@@ -34,7 +34,7 @@ export function newPhysState(): PhysState {
 }
 
 /** Кут коліс δ → кермо (обернене до δ = 45°·a·|s|^p, HT2_KING; як `Ht2Drive.pilot`). */
-function steerFor(delta: number): number {
+export function steerFor(delta: number): number {
   const k = HT2_KING;
   return Math.sign(delta) * (Math.abs(delta) / (Math.PI / 4) / k.steerScale) ** (1 / k.steerPower);
 }

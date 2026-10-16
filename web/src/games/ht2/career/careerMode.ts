@@ -12,6 +12,7 @@ import type { SidePanel } from '../ui/panel';
 import { active, advance, makeRivals, place, PREMIUM_SHARE } from './competition';
 import { hireOffer, LICENCE_TIME, newDriver, tickCompany } from './company';
 import { ukMessage } from '../ui/uk';
+import { arrestCard, noFines, SPEEDING_PER_DEGREE, type Fines } from './law';
 
 /**
  * Кар'єра в режимі їзди HT2: склади (замовлення й здача вантажу), СТО (ремонт), удари (пошкодження машини й
@@ -347,31 +348,44 @@ export class CareerMode {
     return t.replace(/%[gd]/, value === undefined ? '' : String(Math.round(value))).replace(/%%/g, '%');
   }
 
-  /**
-   * Штраф поліції за перевищення швидкості: $20 за км/год понад ліміт (гіпотеза). З графікою оригіналу — картка
-   * радара (mess16: обмеження, ваша швидкість, штраф) без зупинки гри.
-   */
-  /** Останній штраф (рація: «навіщо штраф, командире?» — домовитися з інспектором поруч), с реального часу. */
-  lastFine: { amount: number; at: number } | null = null;
+  /** Штрафи, що висять на гравці (career/law.ts); є хоч один — міліція жене. */
+  get fines(): Fines {
+    return (this.career.fines ??= noFines());
+  }
 
-  async fine(over: number, limit = 60): Promise<void> {
+  /** Перевищення, яке зафіксував пост (0x4d1360): штраф 250 × ступінь (перезаписується) — гравець розшукуваний. */
+  private speedInfo: { limit: number; speed: number } | null = null;
+
+  speeding(limit: number, speed: number, degree: number): void {
+    this.fines.speeding = SPEEDING_PER_DEGREE * degree;
+    this.speedInfo = { limit, speed };
+    this.persist();
+  }
+
+  /**
+   * Затримання (подія 2 king.exe, 0x430a80): картка (один штраф — своя, кілька — 15 з переліком), сума списується
+   * з грошей без перевірки на мінус, усі штрафи обнуляються. Ролик trp.bne і вилучення прихованого вантажу — пізніше.
+   */
+  async arrest(): Promise<void> {
     const c = this.career;
-    this.lastFine = { amount: over * 20, at: performance.now() / 1000 };
+    const card = arrestCard(this.fines);
+    if (!card) return;
+    const line = (l: { key: string; amount?: number }) => this.msg(l.key, l.key, l.amount).replace(/\s*\n\s*/g, ' ');
+    const text = card.lines.map(line).join('\n');
+    c.money -= card.amount;
+    c.fines = noFines();
+    const info = this.speedInfo;
+    this.speedInfo = null;
+    this.persist();
     if (this.drive.cards) {
-      const amount = over * 20;
-      this.drive.cards.show(16, { limit, speed: limit + over, amount });
-      this.drive.say(this.msg('FINE_SPEEDING', 'ШТРАФ ЗА ПЕРЕВИЩЕННЯ ШВИДКОСТІ $%g', amount));
-      c.money = Math.max(0, c.money - amount);
-      this.persist();
+      this.drive.cards.show(card.card, { amount: card.amount, text, limit: info?.limit, speed: info?.speed });
+      this.drive.say(`${this.msg('MONEY_PAID', 'СПЛАЧЕНО: ')}$${card.amount}`);
       return;
     }
     this.busy = true;
     this.drive.paused = true;
     try {
-      const amount = over * 20;
-      await modal(this.drive.overlay, 'Поліція', this.msg('FINE_SPEEDING', 'ШТРАФ ЗА ПЕРЕВИЩЕННЯ ШВИДКОСТІ $%g', amount), ['Сплатити']);
-      c.money = Math.max(0, c.money - amount);
-      this.persist();
+      await modal(this.drive.overlay, 'Міліція', `${text || 'Штраф'}\n${this.msg('MONEY_PAID', 'СПЛАЧЕНО: ')}$${card.amount}`, ['Сплатити']);
     } finally {
       this.drive.paused = false;
       this.busy = false;
