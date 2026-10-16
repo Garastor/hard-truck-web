@@ -22,6 +22,7 @@ import { CareerMode } from './career/careerMode';
 import { Police, parseAmbushes, type PoliceEvent } from './traffic/police';
 import { RED_LIGHT_FINE, bribeSum, copsTakeBribes, totalFine, wanted } from './career/law';
 import { Mafia, parseMafiaAmbushes } from './traffic/mafia';
+import { ForbiddenZone, Helicopters } from './traffic/helicopters';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
 import { WorldMap, type MapPoint } from './world/worldMap';
@@ -31,7 +32,7 @@ import { terrainCollider } from './world/terrain';
 import { parseMsk } from './engine/formats/msk';
 import { findStores } from './career/economy';
 import { Climate, sunHeight, trafficLights } from './world/climate';
-import { iniNum, parseIni } from './engine/formats/ini';
+import { iniGet, iniNum, parseIni } from './engine/formats/ini';
 import { decodeCp1251 } from './engine/formats/binary';
 import { RaceMode } from './race';
 import { Trailer } from './vehicles/trailer';
@@ -228,6 +229,9 @@ export class Ht2Drive {
   private radarBlink = 0;
   private radarLit = false;
   mafia: Mafia | null = null;
+  /** Гелікоптери Ка-50 (Б11) і заборонена зона регіону db. */
+  copters: Helicopters | null = null;
+  readonly zone = new ForbiddenZone();
   private signs: Signs | null = null;
   markets: Markets | null = null;
   private worldMap: WorldMap | null = null;
@@ -427,6 +431,7 @@ export class Ht2Drive {
         obstacles: () => [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? [])],
         props: (names, on) => this.world.setAmbushProps(names, on),
         people: this.copBribes.length || 15,
+        chasers: () => this.copters?.chasers() ?? [],
       });
       // Мафія (Б10, re/notes/ht2/mafia.md): засідки MAFIA з mod_*.sch, машини Cayman на моделі руху king.exe.
       this.mafia = new Mafia(parseMafiaAmbushes(regionMods, this.world.regions.values()), {
@@ -441,6 +446,17 @@ export class Ht2Drive {
         policeNear: (p, r) => this.police?.near(p, r) ?? false,
       });
       this.accidents = this.makeAccidents();
+      // Гелікоптери Ка-50 (Б11, re/notes/ht2/helicopters.md): модель k50 з TRUCKS.B3D, звук helicopterSound.
+      this.copters = new Helicopters({
+        rapier: this.rapier,
+        scene: this.world.scene,
+        model: () => {
+          const o = this.trucks.asm.dynamicObject('k50');
+          return o && { root: o.root, setSwitch: o.setSwitch };
+        },
+        obstacles: () => [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? [])],
+        loop: () => this.audio?.loopSound('helicopter') ?? null,
+      });
     }
     if (o.race) {
       const ms = await o.source.read('Ms.sch').then(readSch).catch(() => []);
@@ -451,6 +467,11 @@ export class Ht2Drive {
     // Погода: повзунок «погода» і TRUCK.INI [EFFECTS] wtemp (період зміни, реальних годин); ?weather=bad|good — стала.
     const ini = await o.source.read('TRUCK.INI').then((b) => parseIni(decodeCp1251(b))).catch(() => null);
     const wtemp = ini ? iniNum(ini, 'EFFECTS', 'wtemp', 0.13) : 0.13;
+    // TRUCK.INI [CAR] helicopters (king.exe 0x4df950): усе, крім "on", вимикає гелікоптери; без ключа — увімкнено.
+    if (ini && (iniGet(ini, 'CAR', 'helicopters') ?? 'on').toLowerCase() !== 'on') {
+      this.copters?.dispose();
+      this.copters = null;
+    }
     this.climate = new Climate(o.settings?.weather ?? 0.6, wtemp, o.weather === 'bad' ? 'bad' : o.weather ? 'good' : null);
     const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
     if (!o.race) {
@@ -1137,10 +1158,36 @@ export class Ht2Drive {
       pos: this.truck.visual.position,
       forward: this.truck.forward(),
       vel: new THREE.Vector3(lv.x, 0, lv.z),
-      wanted: wanted(cm.fines),
+      // Заборонена зона (вогонь на ураження) — той самий лічильник розшуку.
+      wanted: wanted(cm.fines) || this.zone.hot,
       stealth: this.tuning.stealth,
     });
     for (const e of events) this.policeEvent(e);
+  }
+
+  /** Гелікоптери Ка-50 (Б11) і заборонена зона db (traffic/helicopters.ts). */
+  private updateCopters(dt: number): void {
+    const cm = this.careerMode;
+    if (!this.copters || !cm || this.paused) return;
+    const pos = this.truck.visual.position;
+    for (const e of this.zone.update(dt, this.world.loaded.values(), pos, cm.orderRegion() === 'aa')) {
+      // mess 87, на пейджер без звуку (0x56ae60); шлях 3 → 2 → 1 — одразу вогонь (лічильник 34).
+      if (e === 'warn') this.say('ЗАБОРОНЕНА ЗОНА. ВОГОНЬ НА УРАЖЕННЯ', 6);
+      else if (e === 'fire') this.police?.escalate(4);
+    }
+    const lv = this.truck.body.linvel();
+    const events = this.copters.update(dt, new Set(this.world.loaded.keys()), {
+      body: this.truck.body,
+      pos,
+      forward: this.truck.forward(),
+      vel: new THREE.Vector3(lv.x, 0, lv.z),
+      phase: this.police?.phase ?? 0,
+      hour: this.hour,
+    }, this.camera.position);
+    for (const e of events) {
+      if (e.kind === 'shot') this.policeEvent(e);
+      else this.audio?.play('hitgrnd', Math.max(0.05, 1 - e.dist / 150));
+    }
   }
 
   /** Мафія (Б10): на прицілі — борг мафії чи «цікавий мафії»; попередження, стрілянина, напад, міни. */
@@ -1182,7 +1229,10 @@ export class Ht2Drive {
     } else if (e.kind === 'shot') {
       this.audio?.play('shoot', Math.max(0.1, 1 - e.dist / 150));
       if (e.hit) this.audio?.play('hit_bullet');
-    } else if (e.kind === 'arrest') void cm.arrest();
+    } else if (e.kind === 'arrest') {
+      this.zone.hot = false;
+      void cm.arrest();
+    }
   }
 
   /**
@@ -1747,6 +1797,7 @@ export class Ht2Drive {
     this.world.update(this.camera, this.truck.visual.position);
     this.careerMode?.update(dt, state.throttle);
     this.updatePolice(dt);
+    this.updateCopters(dt);
     this.updateMafia(dt);
     if (this.markets && this.careerMode) this.markets.update(this.truck.visual.position, Math.floor(this.careerMode.career.time / 86400));
     const sign = this.signs?.update(this.truck.visual.position, this.truck.forward());
@@ -1965,6 +2016,7 @@ export class Ht2Drive {
     this.debris?.dispose();
     this.police?.dispose();
     this.mafia?.dispose();
+    this.copters?.dispose();
     this.markets?.dispose();
     this.worldMap?.dispose();
     this.race?.dispose();

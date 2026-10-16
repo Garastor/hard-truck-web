@@ -150,6 +150,11 @@ export interface PoliceDeps {
   people: number;
   /** Показати чи сховати реквізит засідки (шипи) — king.exe 0x569310 на зайнятій засідці. */
   props(names: readonly string[], on: boolean): void;
+  /**
+   * Інші переслідувачі, що ведуть ціль (гелікоптери, helicopters.ts): той самий лічильник +0x51D0 — попередження й
+   * затримання від найближчого з усіх; стріляють вони самі.
+   */
+  chasers?(): readonly { pos: THREE.Vector3; speed: number }[];
 }
 
 export class Police {
@@ -215,6 +220,13 @@ export class Police {
     for (const c of this.cops) c.v.syncVisual(alpha);
   }
 
+  /** Підняти лічильник переслідування (заборонена зона: одразу 4 — вогонь, без попереджень). */
+  escalate(n: number): void {
+    if (this.phase >= n) return;
+    this.phase = n;
+    this.phaseTime = 0;
+  }
+
   /** Кадр: засідки, погоня, попередження, стрілянина, затримання. */
   update(dt: number, pl: PlayerState): PoliceEvent[] {
     const ev: PoliceEvent[] = [];
@@ -228,12 +240,19 @@ export class Police {
     if (pl.wanted && this.cops.some((c) => !c.post)) this.route.update(dt, pl.pos);
 
     // Тактичний рівень: найближча машина, що веде ціль.
-    let lead: Cop | null = null;
+    let lead: { pos: THREE.Vector3; speed: number; cop: Cop | null } | null = null;
     let leadD = Infinity;
     for (const c of this.cops) {
       const d = c.v.visual.position.distanceTo(pl.pos);
       if (c.engaged && d < leadD) {
-        lead = c;
+        lead = { pos: c.v.visual.position, speed: c.v.speedKmh / 3.6, cop: c };
+        leadD = d;
+      }
+    }
+    for (const x of (pl.wanted && this.deps.chasers?.()) || []) {
+      const d = x.pos.distanceTo(pl.pos);
+      if (d < leadD) {
+        lead = { ...x, cop: null };
         leadD = d;
       }
     }
@@ -244,14 +263,14 @@ export class Police {
       if (this.phase === 1 && leadD < WARN_R) this.setPhase(2, ev);
       else if (this.phase === 2 && this.phaseTime > WARN2_AFTER) this.setPhase(3, ev);
       else if (this.phase === 3 && this.phaseTime > SHOOT_AFTER) this.setPhase(4, ev);
-      if (this.phase >= 2 && this.arrested(lead, leadD, pl)) {
+      if (this.phase >= 2 && this.arrested(lead.pos, lead.speed, leadD, pl)) {
         ev.push({ kind: 'arrest' });
         this.phase = 0;
         for (const c of this.cops) c.engaged = false;
       }
-      if (this.phase === 4 && leadD < ACT_R && speed > 1 && (this.shotTimer -= dt) <= 0) {
+      if (lead.cop && this.phase === 4 && leadD < ACT_R && speed > 1 && (this.shotTimer -= dt) <= 0) {
         this.shotTimer = SHOT_EVERY;
-        ev.push(this.shoot(lead, pl, leadD));
+        ev.push(this.shoot(lead.cop, pl, leadD));
       }
     }
     for (const c of [...this.cops]) {
@@ -282,12 +301,11 @@ export class Police {
     if (n === 3) ev.push({ kind: 'warn', n: 2 });
   }
 
-  private arrested(c: Cop, d: number, pl: PlayerState): boolean {
-    const copSpeed = c.v.speedKmh / 3.6;
+  private arrested(copPos: THREE.Vector3, copSpeed: number, d: number, pl: PlayerState): boolean {
     if (d < 40 && pl.vel.length() < 1 && copSpeed < 1) return true;
     if (pl.vel.length() >= 0.3) return false;
     if (d < 15 || this.stoppedTime > 1) return true;
-    const rel = this.tmp.copy(c.v.visual.position).sub(pl.pos).setY(0);
+    const rel = this.tmp.copy(copPos).sub(pl.pos).setY(0);
     const ahead = rel.dot(pl.forward);
     const side = Math.abs(rel.x * pl.forward.z - rel.z * pl.forward.x);
     return ahead > side && ahead > 20 && copSpeed < 3;

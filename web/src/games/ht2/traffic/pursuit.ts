@@ -285,13 +285,21 @@ export function shoot(world: RAPIER.World, c: Chaser, q: Quarry, spread: number,
   const from = c.v.visual.position.clone().setY(c.v.visual.position.y + 1.3);
   const dir = q.pos.clone().setY(q.pos.y + 1.5).sub(from).normalize();
   dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() * 2 - 1) * spread);
-  const own = c.v.body;
+  return fireRay(world, from, dir, range, q, 0.1, c.v.body).hit;
+}
+
+/**
+ * Промінь кулі (0x567440) з точки from у напрямку dir: влучання в ціль — поштовх force × маса в точці влучання;
+ * point — куди влучила куля (null — нікуди). own — тіло стрільця (промінь крізь нього).
+ */
+export function fireRay(world: RAPIER.World, from: THREE.Vector3, dir: THREE.Vector3, range: number, q: Quarry, force: number, own?: RAPIER.RigidBody): { hit: boolean; point: THREE.Vector3 | null } {
   const hit = world.castRay(new RAPIER.Ray(from, dir), range, true, undefined, undefined, undefined, undefined, (col) => col.parent() !== own);
-  const onPlayer = !!hit && hit.collider.parent() === q.body;
-  if (onPlayer) {
-    const m = q.body.mass();
-    const p = from.clone().addScaledVector(dir, hit!.timeOfImpact);
-    q.body.applyImpulseAtPoint({ x: dir.x * m * 0.1, y: dir.y * m * 0.1, z: dir.z * m * 0.1 }, p, true);
+  if (!hit) return { hit: false, point: null };
+  const point = from.clone().addScaledVector(dir, hit.timeOfImpact);
+  const onTarget = hit.collider.parent() === q.body;
+  if (onTarget) {
+    const m = q.body.mass() * force;
+    q.body.applyImpulseAtPoint({ x: dir.x * m, y: dir.y * m, z: dir.z * m }, point, true);
   }
-  return onPlayer;
+  return { hit: onTarget, point };
 }

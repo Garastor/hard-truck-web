@@ -412,6 +412,12 @@ export class CareerMode {
     this.fines.mafiaInterest = forMafia && this.capitalShare() > 0.15 && Math.random() < (o!.pay >= 10000 ? 0.8 : 0.5);
   }
 
+  /** Регіон складу призначення поточного замовлення (виняток забороненої зони — Алмазний, aa; king.exe 0x41ef90). */
+  orderRegion(): string | null {
+    const o = this.career.order;
+    return (o && this.stores.find((s) => s.id === o.to)?.region) ?? null;
+  }
+
   /** Частка капіталу гравця серед усіх (capital.ts; суперники — зі стартовою машиною ZilR, GAME.CNF `live`). */
   capitalShare(): number {
     const recs = this.drive.trucksData.records;
