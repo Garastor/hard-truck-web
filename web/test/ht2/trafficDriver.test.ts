@@ -14,7 +14,7 @@ function road(axis: THREE.Vector3[], lanes: number, id: number): RoadLine[] {
       const d = b.clone().sub(a).setY(0).normalize();
       return p.clone().addScaledVector(new THREE.Vector3(-d.z, 0, d.x), (k + 0.5) * 3);
     });
-    out.push({ name: `r${id}:${k}`, pts, next: [], width: lanes * 6, region: 'x', road: id, lane: k, lanes, laneWidth: 3, flags: 0, siblings: out });
+    out.push({ name: `r${id}:${k}`, pts, next: [], width: lanes * 6, region: 'x', road: id, lane: k, lanes, laneWidth: 3, flags: 0, cls: 1, length: 0, siblings: out });
   }
   return out;
 }

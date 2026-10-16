@@ -387,3 +387,17 @@ function place(m: Mover, dt: number): void {
   const dLat = ((m.lat - m.latGoal) * (1 - Math.exp(-dt / LANE_TAU))) / Math.max(0.5, m.speed * dt);
   m.heading.copy(dir).addScaledVector(right, -THREE.MathUtils.clamp(dLat, -0.3, 0.3)).normalize();
 }
+
+/**
+ * Абстрактний рух далекої машини (king.exe prescribeAdvance 0x41a9d0: позиція ІІ на осі дороги, крейсерська
+ * швидкість без огляду й лідерів): лише вздовж ліній за планом, бічний зсув скинуто.
+ */
+export function coast(m: Mover, dt: number): void {
+  if (m.gone) return;
+  m.speed = m.cruise;
+  m.lat = m.latGoal = 0;
+  m.bypass = null;
+  m.waited = 0;
+  advance(m, m.cruise * dt);
+  place(m, dt);
+}

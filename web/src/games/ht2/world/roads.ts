@@ -43,6 +43,10 @@ export interface RoadLine extends WayLine {
   laneWidth: number;
   /** Прапорці ATTR сегмента. */
   flags: number;
+  /** Клас ATTR (1/2/3; частота появи привидів ×1 / ×0,5 / ×0,25). */
+  cls: number;
+  /** Довжина, м. */
+  length: number;
   /** Усі смуги того самого напрямку дороги за номером (для перестроювання); в осі — порожньо. */
   siblings: RoadLine[];
 }
@@ -62,6 +66,7 @@ export class Ht2Roads {
   readonly axes: RoadLine[] = [];
   private readonly grid = new Map<string, RoadLine[]>();
   private readonly axisGrid = new Map<string, RoadLine[]>();
+  private readonly byRoad = new Map<string, RoadLine[]>();
 
   constructor(regions: Iterable<{ id: string; way: Way }>) {
     for (const { id, way } of regions)
@@ -77,7 +82,7 @@ export class Ht2Roads {
           const hw = width / 2;
           const lanes = Math.max(1, Math.floor((hw + 1.75) / 3.5));
           const road = this.axes.length;
-          this.axes.push({ name: `${room.name}#${road}`, pts, next: [], width, region: id, road, lane: -1, lanes, laneWidth: hw / lanes, flags: s.type, siblings: [] });
+          this.axes.push({ name: `${room.name}#${road}`, pts, next: [], width, region: id, road, lane: -1, lanes, laneWidth: hw / lanes, flags: s.type, cls: s.cls, length: polyLength(pts), siblings: [] });
         }
     for (const a of this.axes) for (const k of cellsOf(a.pts)) push(this.axisGrid, k, a);
 
@@ -100,6 +105,8 @@ export class Ht2Roads {
             lanes: a.lanes,
             laneWidth: a.laneWidth,
             flags: a.flags,
+            cls: a.cls,
+            length: a.length,
             siblings: d.lines,
           };
           d.lines.push(line);
@@ -127,7 +134,15 @@ export class Ht2Roads {
         }
       }
     }
-    for (const l of this.lines) for (const k of cellsOf(l.pts)) push(this.grid, k, l);
+    for (const l of this.lines) {
+      for (const k of cellsOf(l.pts)) push(this.grid, k, l);
+      push(this.byRoad, String(l.road), l);
+    }
+  }
+
+  /** Лінії руху дороги (усі смуги обох напрямків). */
+  linesOf(road: number): RoadLine[] {
+    return this.byRoad.get(String(road)) ?? [];
   }
 
   /** Напрямки руху осі: розділене шосе — один (сусідня вісь ліворуч), інакше обидва. */
@@ -178,13 +193,13 @@ export class Ht2Roads {
   }
 
   /** Відстань по горизонталі до найближчої осі дороги й сама вісь (null — доріг поблизу немає). */
-  nearestAxis(p: THREE.Vector3): { axis: RoadLine; dist: number } | null {
-    let best: { axis: RoadLine; dist: number } | null = null;
+  nearestAxis(p: THREE.Vector3): { axis: RoadLine; dist: number; point: THREE.Vector3 } | null {
+    let best: { axis: RoadLine; dist: number; point: THREE.Vector3 } | null = null;
     for (const a of new Set(nearCells(this.axisGrid, p))) {
       const q = closestOn(a.pts, p);
       if (!q) continue;
       const dist = Math.hypot(q.point.x - p.x, q.point.z - p.z);
-      if (!best || dist < best.dist) best = { axis: a, dist };
+      if (!best || dist < best.dist) best = { axis: a, dist, point: q.point };
     }
     return best;
   }
@@ -253,6 +268,12 @@ function bezier(p: THREE.Vector3[]): THREE.Vector3[] {
     );
   }
   return out;
+}
+
+function polyLength(pts: THREE.Vector3[]): number {
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) len += pts[i].distanceTo(pts[i - 1]);
+  return len;
 }
 
 /** Без повторних точок (нульові відрізки ламають дотичні). */

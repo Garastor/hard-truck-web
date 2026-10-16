@@ -347,7 +347,17 @@ export class Ht2Drive {
       const names = await o.source.read('names.sch').then(readSch).catch(() => []);
       this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r), truckerKinds(vehicles, this.trucks), Math.round(4 * (o.settings?.traffic ?? 1)));
     }
-    this.traffic = new Traffic(this.world.scene, this.rapier, this.roads, this.trucks, trafficKinds(vehicles, this.trucks), (r) => this.world.loaded.has(r), Math.round(12 * (o.settings?.traffic ?? 1)));
+    // Населення трафіку — `dumb N` і `ghost N` з playertypes GAME.CNF, насиченість — повзунок (TRUCK.INI trafs).
+    const types = cnf ? (assoc(cnf, 'playertypes')?.slice(1) ?? []) : [];
+    const count = (name: string, def: number) => {
+      const e = assoc(types, name);
+      return e ? num(e[1]) : def;
+    };
+    this.traffic = new Traffic(this.world.scene, this.rapier, this.roads, this.trucks, trafficKinds(vehicles, this.trucks), (r) => this.world.loaded.has(r), {
+      dumb: count('dumb', 70),
+      ghost: count('ghost', 25),
+      density: o.settings?.traffic ?? 1,
+    });
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);
     this.input.onCommand = (cmd) => {
       if (cmd === 'camera') this.camMode = NEXT_CAM[this.camMode];
