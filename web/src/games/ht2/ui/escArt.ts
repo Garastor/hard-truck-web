@@ -27,7 +27,21 @@ export class EscArt {
     readonly menu: PixelFont | null,
   ) {}
 
-  static async load(source: FileSource): Promise<EscArt | null> {
+  /** Завантажене для джерела файлів: нова гра й завантаження збереження не читають 57 МБ заново. */
+  private static readonly cache = new WeakMap<FileSource, Promise<EscArt | null>>();
+
+  static load(source: FileSource): Promise<EscArt | null> {
+    let p = EscArt.cache.get(source);
+    if (!p) {
+      p = EscArt.read(source);
+      EscArt.cache.set(source, p);
+      // Без файлу — не запамʼятовувати: після імпорту файлів гри спробувати знову.
+      void p.then((art) => art || EscArt.cache.delete(source));
+    }
+    return p;
+  }
+
+  private static async read(source: FileSource): Promise<EscArt | null> {
     try {
       const res = parseRmp(await source.read('COMMON/esc16.RES'));
       const font = (n: string) => source.read(n).then((b) => new PixelFont(parseFon(b))).catch(() => null);

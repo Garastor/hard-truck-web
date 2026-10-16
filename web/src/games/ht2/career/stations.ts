@@ -27,7 +27,10 @@ export interface OrderView {
   dock: number;
 }
 
-/** Склад: замовлення цього місця завантаження (king.exe: поля з x = 125, рядки 572…692 через 20). */
+/**
+ * Склад: замовлення цього місця завантаження (king.exe: поля з x = 125, рядки 572…692 через 20). Клітинки фону —
+ * 554…694 через 20; порт ставить базову лінію на 569: на 572 векторні літери (нижчі за MENU.FON) лягали на нижню лінію.
+ */
 export function orderPanel(art: EscArt, parent: HTMLElement, o: OrderView, take: () => void): SidePanel {
   const p = new SidePanel(art, parent, 'm_16\\BackOrder.txr');
   const rows = [
@@ -39,7 +42,7 @@ export function orderPanel(art: EscArt, parent: HTMLElement, o: OrderView, take:
     `${o.volume.toFixed(2)}М3`,
     `${Math.round(o.fragility)}%`,
   ];
-  rows.forEach((t, i) => p.write(125, 572 + i * 20, t.slice(0, 16), VALUE));
+  rows.forEach((t, i) => p.write(125, 569 + i * 20, t.slice(0, 16), VALUE));
   // Підпис — посередині червоної смуги фону (рядки 716…735), біля правого краю вікна, як і кнопка.
   p.write(ACT_RIGHT, 730, `СКЛАД ЗАВАНТАЖЕННЯ ${o.dock}`, VALUE, undefined, 'right');
   p.action(ACT_RIGHT - ACT_W, 745, ACT_W, 'Взяти', take);

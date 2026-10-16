@@ -256,6 +256,8 @@ export class Ht2Drive {
 
   static async start(opts: Ht2DriveOptions): Promise<Ht2Drive> {
     opts.setStatus('Завантаження світу й вантажівок…');
+    // Графіка інтерфейсу (esc16.RES, 57 МБ) — паралельно зі світом; init чекає її перед показом інтерфейсу.
+    void EscArt.load(opts.source);
     await initRapier();
     const world = await Ht2World.create(opts.source);
     const trucks = await loadTrucks(opts.source, world.common.lib.palette);
@@ -446,11 +448,13 @@ export class Ht2Drive {
     this.hud.append(back, music, map, info, rating, company, cb);
     // У шарі overlay — під вікнами складу й СТО (вони теж там, вище).
     o.overlay.append(this.hud, this.bar);
-    void EscArt.load(o.source).then((art) => {
-      this.escArtLoading = false;
-      if (this.disposed) return;
-      // Файл необовʼязковий — без нього тихий інтерфейс порту; підказати, як отримати оригінальний.
-      if (!art) return this.say('Немає COMMON/esc16.RES — інтерфейс порту. Меню: Демо → Файли гри → Імпортувати', 12);
+    // Інтерфейс оригіналу — до першого кадру, щоб не блимав інтерфейс порту (графіка вже вантажиться зі start).
+    const art = await EscArt.load(o.source);
+    this.escArtLoading = false;
+    if (this.disposed) return;
+    // Файл необовʼязковий — без нього тихий інтерфейс порту; підказати, як отримати оригінальний.
+    if (!art) this.say('Немає COMMON/esc16.RES — інтерфейс порту. Меню: Демо → Файли гри → Імпортувати', 12);
+    else {
       this.escArt = art;
       this.tablo = new Tablo(art, o.overlay);
       this.tablo.onPage = () => this.audio?.playOnce('pager');
@@ -477,8 +481,7 @@ export class Ht2Drive {
       // Одразу — мінікарта (стан 2): у порту її видно з початку їзди (king.exe починає зі схованої карти).
       this.tabMap.show(2);
       document.body.classList.add('ht2-orig-ui');
-      this.resize();
-    });
+    }
     window.addEventListener('resize', this.onResize);
     this.resize();
     this.last = performance.now();
