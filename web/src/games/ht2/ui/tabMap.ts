@@ -93,7 +93,8 @@ export class TabMap {
     if (this.time - this.avoidAt > 0.5 || this.avoidAt > this.time) {
       this.avoidAt = this.time;
       this.avoid = [...document.querySelectorAll<HTMLElement>('.touch-btn, .ht2-hud, .ht2-hud button, .touch-top-row, .touch-more')]
-        .filter((e) => e.offsetParent)
+        // Видимі (не display: none); offsetParent не годиться — у position: fixed (.ht2-hud) він завжди null.
+        .filter((e) => e.getClientRects().length > 0)
         .map((e) => e.getBoundingClientRect());
     }
     let y0 = box.y0;
