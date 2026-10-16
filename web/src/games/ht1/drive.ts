@@ -88,6 +88,11 @@ const SURFACE_FX: Record<Surface, { grip: number; roll: number; steer: number; m
  * тротуари) — немає, узбіччя (трава, ґрунт) — повне, гравій — половина, болото — 30 %; пісок і вода — на око.
  */
 const SURFACE_ROUGH: Record<Surface, number> = { asphalt: 0, dirt: 1, gravel: 0.5, swamp: 0.3, sand: 0.7, water: 0.3 };
+/**
+ * Трясіння кузова ззовні за покриттям (частка BODY_SHAKE_*; окремо від кабіни — на прохання користувача): гравій і
+ * брід — найсильніше (з часткою кабіни 0,5 і 0,3 їх майже не було видно), трава, пісок, болото — помірно.
+ */
+const BODY_ROUGH: Record<Surface, number> = { asphalt: 0, dirt: 1, gravel: 1.5, swamp: 1, sand: 1, water: 1.5 };
 
 /**
  * Трясіння кабіни на нерівному покритті (власне налаштування порту, на прохання користувача; камера нерухома —
@@ -140,9 +145,9 @@ class Shake {
   }
 }
 
-/** Сила трясіння: на колесах (не в повітрі) — за нерівністю покриття й швидкістю. */
-function roughness(surface: Surface, height: number, speedKmh: number): number {
-  return height < 2.5 ? SURFACE_ROUGH[surface] * Math.min(1, Math.abs(speedKmh) / SHAKE_FULL_KMH) : 0;
+/** Сила трясіння: на колесах (не в повітрі) — за нерівністю покриття (таблиця кабіни чи кузова) й швидкістю. */
+function roughness(table: Record<Surface, number>, surface: Surface, height: number, speedKmh: number): number {
+  return height < 2.5 ? table[surface] * Math.min(1, Math.abs(speedKmh) / SHAKE_FULL_KMH) : 0;
 }
 
 /**
@@ -1344,13 +1349,15 @@ export class DriveSession {
     if (this.hudFonts) this.setHudFonts(...this.hudFonts);
   }
 
-  /** Трясіння власної машини: кабіна зсередини (SHAKE_*), кузов ззовні (BODY_SHAKE_*). */
+  /** Трясіння власної машини: кабіна зсередини (SHAKE_*, SURFACE_ROUGH), кузов ззовні (BODY_SHAKE_*, BODY_ROUGH). */
   private readonly cabShake = new Shake();
+  private readonly bodyShake = new Shake(0.9);
   private readonly shakeScale = matchMedia('(pointer: coarse)').matches ? SHAKE_MOBILE : 1;
   private updateShake(dt: number): void {
-    this.cabShake.update(dt, roughness(this.surface, this.surfaceHeight, this.truck.speedKmh) * this.shakeScale);
+    this.cabShake.update(dt, roughness(SURFACE_ROUGH, this.surface, this.surfaceHeight, this.truck.speedKmh) * this.shakeScale);
+    this.bodyShake.update(dt, roughness(BODY_ROUGH, this.surface, this.surfaceHeight, this.truck.speedKmh) * this.shakeScale);
     // Кузов власної машини видно лише з камер позаду.
-    if (this.camMode === 'chase' || this.camMode === 'far') shakeBody(this.truck, this.cabShake);
+    if (this.camMode === 'chase' || this.camMode === 'far') shakeBody(this.truck, this.bodyShake);
     for (const o of this.opponents) {
       if ((o.surfaceTimer -= dt) <= 0) {
         o.surfaceTimer = 0.2;
@@ -1359,7 +1366,7 @@ export class DriveSession {
         o.surfaceHeight = probe?.height ?? Infinity;
         if (probe?.surface) o.surface = probe.surface;
       }
-      o.shake.update(dt, roughness(o.surface, o.surfaceHeight, o.truck.speedKmh) * this.shakeScale);
+      o.shake.update(dt, roughness(BODY_ROUGH, o.surface, o.surfaceHeight, o.truck.speedKmh) * this.shakeScale);
       shakeBody(o.truck, o.shake);
     }
   }
