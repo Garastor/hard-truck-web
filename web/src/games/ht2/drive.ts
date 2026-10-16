@@ -56,6 +56,7 @@ import type { RivalRun } from './career/competition';
 import { Navigator, type NavTurn } from './world/navigator';
 import { WindDebris } from './world/windDebris';
 import { WorldObjects } from './world/objects';
+import { Blasts } from './world/blasts';
 import { Tablo } from './ui/tablo';
 import { applyTabloSkin, lcdLabel } from './ui/tabloSkin';
 import { Cards } from './ui/cards';
@@ -189,6 +190,16 @@ export class Ht2Drive {
   private readonly colliders = new Map<string, RAPIER.Collider[]>();
   /** Збивні стовпи й рухомі предмети світу. */
   private objects!: WorldObjects;
+  /** Вибухи й полумʼя (mnBlow3, mnFire). */
+  private blasts: Blasts | null = null;
+
+  private blastFx(): Blasts {
+    if (!this.blasts) {
+      this.blasts = new Blasts(this.world.common);
+      this.world.scene.add(this.blasts.group);
+    }
+    return this.blasts;
+  }
   private acc = 0;
   private last = performance.now();
   /** Остання надійна точка на дорозі (для відновлення після падіння). */
@@ -947,6 +958,7 @@ export class Ht2Drive {
     this.world.setClimate(hour, c.bad, this.flashTime > 0 && this.tick % 2 === 1, c.w());
     this.world.updateTrees(dt, c.wind);
     this.updateDebris(dt, c.wind, c.w());
+    this.blastFx().update(dt, c.wind);
     const dusk = sunHeight(hour) < 0.2;
     this.world.setNight(dusk);
     this.cabLight?.color.copy(this.world.ambientColor).multiplyScalar(1.4);
@@ -1765,6 +1777,7 @@ export class Ht2Drive {
     // Збиті знаки й стовпи, рухомі предмети (world/objects.ts) — до обліку ударів.
     for (const e of this.objects.after(dt)) {
       this.audio?.play(e.sound, e.volume);
+      if (e.blast) this.blastFx().blow3(e.blast.matrix, e.blast.column);
       // Підрив цілої заправки гравцем — «злочинна недбалість», відшкодування 6200 (king.exe 0x56f120).
       const cm = this.careerMode;
       if (e.benzo?.intact && cm && e.benzo.body === this.truck.body.handle) {
@@ -2014,6 +2027,7 @@ export class Ht2Drive {
     this.music?.dispose();
     this.traffic?.dispose();
     this.debris?.dispose();
+    this.blasts?.dispose();
     this.police?.dispose();
     this.mafia?.dispose();
     this.copters?.dispose();

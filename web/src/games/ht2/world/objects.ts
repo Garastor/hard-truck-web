@@ -167,6 +167,8 @@ export interface ObjectEvent {
   volume: number;
   /** Підрив заправки: хто вдарив (тіло) і чи станція була ціла (штраф 6200). */
   benzo?: { body: number; intact: boolean };
+  /** Вибух колонки: матриця станції й номер колонки (ефект mnBlow3 — world/blasts.ts). */
+  blast?: { matrix: THREE.Matrix4; column: number };
 }
 
 interface Station {
@@ -291,7 +293,7 @@ export class WorldObjects {
         st.bits |= 1 << (2 * q.column);
         this.stationBits.set(key, st.bits);
         this.applyStation(st, st.bits);
-        ev.push({ sound: q.column % 2 ? 'blowgazstation3' : 'blowgazstation2', volume: 1 });
+        ev.push({ sound: q.column % 2 ? 'blowgazstation3' : 'blowgazstation2', volume: 1, blast: { matrix: st.columns[0].def.matrix, column: q.column } });
       }
     }
     for (const list of this.movables.values())
