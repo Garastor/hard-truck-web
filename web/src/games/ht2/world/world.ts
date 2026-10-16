@@ -36,6 +36,12 @@ export interface RegionInfo {
 export interface LoadedRegion {
   id: string;
   built: BuiltScene;
+  /**
+   * Реквізит засідок — анімовані обʼєкти `anmobj000<тип><id % 1000>` (тип 2 — шипи міліції AnmObj0002, 1 — міни мафії
+   * AnmObj0001; номери — списки обʼєктів рядків `ambush` у mod_*.sch). King.exe вмикає їх лише на зайнятій засідці
+   * (0x569310); за замовчуванням сховані.
+   */
+  props: Map<string, THREE.Object3D[]>;
   /** Процедурний рельєф ($$GeneratorOfTerrain, регіон aa): висоти сітки для колізій (terrain.ts). */
   terrain?: Float32Array;
 }
@@ -62,6 +68,14 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
   const rmp = parseRmp(res);
   const palette = common?.lib.palette ?? null;
   const built = buildScene(scene, rmp, { lit: true, colorKey: true, nearGroup: 0, fallback: common ?? undefined, palette: palette ?? undefined });
+  // Реквізит засідок — схований і поза злиттям нерухомої геометрії (mergeStatic пропускає невидиме).
+  const props = new Map<string, THREE.Object3D[]>();
+  built.root.traverse((o) => {
+    const name = String(o.userData.instance ?? '').toLowerCase();
+    if (!AMBUSH_PROP.test(name)) return;
+    o.visible = false;
+    (props.get(name) ?? props.set(name, []).get(name)!).push(o);
+  });
   // Нерухома геометрія регіону — одна сітка на матеріал у клітинці (було ≈ 500 мешів на регіон).
   const merged = mergeStatic(built.root);
   built.stats.meshes = merged.after;
@@ -101,7 +115,14 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
         }
       });
   };
-  return { id, built, terrain };
+  return { id, built, terrain, props };
+}
+
+const AMBUSH_PROP = /^anmobj000[12]\d{3}$/;
+
+/** Імʼя реквізиту засідки: тип 2 — міліція, 1 — мафія; id — номер з рядка ambush. */
+export function ambushProp(kind: 'police' | 'mafia', id: number): string {
+  return `anmobj000${kind === 'police' ? 2 : 1}${String(id % 1000).padStart(3, '0')}`;
 }
 
 function boundsOf(way: Way): [number, number, number, number] {
@@ -145,6 +166,17 @@ export class Ht2World {
   private readonly flare: LensFlare;
   private weatherW = 0;
   private loading: string | null = null;
+  /** Увімкнений реквізит засідок (імена ambushProp). */
+  private readonly propsOn = new Set<string>();
+
+  /** Показати чи сховати реквізит засідки (шипи міліції, міни мафії) — і в регіонах, що завантажаться пізніше. */
+  setAmbushProps(names: readonly string[], on: boolean): void {
+    for (const n of names) {
+      if (on) this.propsOn.add(n);
+      else this.propsOn.delete(n);
+      for (const r of this.loaded.values()) for (const o of r.props.get(n) ?? []) o.visible = on;
+    }
+  }
   private lastCheck = 0;
   private readonly waiters: (() => void)[] = [];
   onChange: (() => void) | null = null;
@@ -339,6 +371,7 @@ export class Ht2World {
     void loadRegion(this.source, next, this.common)
       .then((reg) => {
         this.loaded.set(next, reg);
+        for (const [name, list] of reg.props) for (const o of list) o.visible = this.propsOn.has(name);
         const glows = reg.built.root.getObjectByName('glows');
         if (glows) glows.visible = this.night;
         for (let i = 0; i < 16; i++) this.setIllum(reg, i, illumOn(i, this.hour));

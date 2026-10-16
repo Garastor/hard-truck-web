@@ -570,7 +570,7 @@ export class SceneAssembler {
         if (vs) this.addPolys(d.polys, vs, batches);
         return;
       case 18:
-        this.addInstance(d.space, d.object, into);
+        this.addInstance(d.space, d.object, into, block.name);
         return;
       case 28:
         this.addSprites(d.center, d.raw, into);
@@ -740,7 +740,8 @@ export class SceneAssembler {
 
   private readonly spriteMats = new Map<string, THREE.SpriteMaterial>();
 
-  private addInstance(spaceName: string, objectName: string, into: THREE.Object3D): void {
+  /** name — імʼя блоку-екземпляра (напр. `anmobj0002090` — шипи засідки 1090), у `userData.instance`. */
+  private addInstance(spaceName: string, objectName: string, into: THREE.Object3D, name = ''): void {
     // Порожній простір: у моделях (вантажівки) — система координат батька (деталі кабіни, колеса);
     // у кімнатах — привʼязка до спостерігача (сонце, лінзи) — поки не відтворюємо.
     if (!spaceName && this.buildingRooms) return;
@@ -757,6 +758,7 @@ export class SceneAssembler {
       this.flush(b, g);
       g.matrixAutoUpdate = false;
       g.matrix.copy(m);
+      if (name) g.userData.instance = name;
       into.add(g);
       this.stats.instances++;
       return;
@@ -766,6 +768,7 @@ export class SceneAssembler {
     const inst = tpl.clone();
     inst.matrixAutoUpdate = false;
     inst.matrix.copy(m);
+    if (name) inst.userData.instance = name;
     into.add(inst);
     this.stats.instances++;
   }

@@ -6,7 +6,7 @@ import { isList, num, str, type SExpr } from '../formats/sexpr';
 import type { Way } from '../formats/way';
 import { Navigator } from '../world/navigator';
 import type { Ht2Roads, RoadLine } from '../world/roads';
-import { toThree } from '../world/world';
+import { ambushProp, toThree } from '../world/world';
 import { steerFor } from './physical';
 
 /**
@@ -80,6 +80,8 @@ export interface Ambush {
   heading: THREE.Vector3;
   /** Ліміт швидкості, км/год (null — пост перевищення не фіксує). */
   limit: number | null;
+  /** Реквізит засідки — шипи (імена анімованих обʼєктів, world.ambushProp). */
+  props: string[];
 }
 
 const DIRS: Record<string, [number, number]> = { NORTH: [0, 1], SOUTH: [0, -1], EAST: [1, 0], WEST: [-1, 0] };
@@ -109,7 +111,8 @@ export function parseAmbushes(mods: { sch: SExpr[] }[], ways: Iterable<{ way: Wa
         }
       if (heading.dot(dir) < 0) heading.negate();
       const limit = e.length > 9 && typeof e[9] === 'number' ? num(e[9]) : null;
-      out.push({ name: str(e[1]), pos: toThree(...node.pos), dir, heading, limit });
+      const props = isList(e[7]) ? e[7].filter((x): x is number => typeof x === 'number').map((id) => ambushProp('police', id)) : [];
+      out.push({ name: str(e[1]), pos: toThree(...node.pos), dir, heading, limit, props });
     }
   return out;
 }
@@ -170,6 +173,8 @@ export interface PoliceDeps {
   obstacles(): readonly THREE.Vector3[];
   /** Кількість інспекторів (names.sch COP*). */
   people: number;
+  /** Показати чи сховати реквізит засідки (шипи) — king.exe 0x569310 на зайнятій засідці. */
+  props(names: readonly string[], on: boolean): void;
 }
 
 export class Police {
@@ -365,6 +370,7 @@ export class Police {
         p.cop = null;
         p.active = false;
         c.engaged = true;
+        this.deps.props(p.props, false);
       }
     }
   }
@@ -404,10 +410,10 @@ export class Police {
     const v = this.deps.make(p.pos, p.heading);
     if (!v) return;
     p.cop = this.add(v, p);
+    this.deps.props(p.props, true);
   }
 
   private release(c: Cop): void {
-    if (c.post) c.post.cop = null;
     this.remove(c);
   }
 
@@ -424,7 +430,10 @@ export class Police {
     const i = this.cops.indexOf(c);
     if (i < 0) return;
     this.cops.splice(i, 1);
-    if (c.post?.cop === c) c.post.cop = null;
+    if (c.post?.cop === c) {
+      c.post.cop = null;
+      this.deps.props(c.post.props, false);
+    }
     this.deps.remove(c.v);
   }
 
