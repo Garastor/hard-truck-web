@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { HT2_ENGINE, HT2_INPUT, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER, HT2_BRAKE } from './vehicles/controls';
+import { HT2_ENGINE, HT2_INPUT, HT2_KING, HT2_KING_BRAKE, HT2_KING_ENGINE, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER, HT2_BRAKE } from './vehicles/controls';
 import * as THREE from 'three';
 import type { FileSource } from '@shared/source';
 import { EngineAudio } from './engine/audio/engineAudio';
@@ -340,7 +340,7 @@ export class Ht2Drive {
     this.input.onCommand = (cmd) => {
       if (cmd === 'camera') this.camMode = NEXT_CAM[this.camMode];
       if (cmd === 'autopilot') {
-        this.autopilot = this.autopilot ? null : new AutoPilot(this.roads);
+        this.autopilot = this.autopilot ? null : this.pilot();
         // З напівпричепом — повільніше в поворотах (кермо на швидкості обмежене).
         if (this.autopilot && this.trailer) Object.assign(this.autopilot, { cruise: 45, bendGain: 5, bendFloor: 0.25 });
       }
@@ -554,7 +554,10 @@ export class Ht2Drive {
   /** Параметри фізики вантажівки: вантаж (у тягача — у причепі), покращення. */
   private setup(cargo: number) {
     const t = this.tuning;
-    return { cargoMass: this.hitched ? 0 : cargo, torque: t.torque, grip: t.grip, engine: HT2_ENGINE, rollLift: HT2_ROLL_LIFT, steerLimit: HT2_STEER_LIMIT, steerPower: HT2_STEER_POWER, brake: HT2_BRAKE, surfaceEffects: !this.arcade };
+    const base = { cargoMass: this.hitched ? 0 : cargo, torque: t.torque, grip: t.grip, surfaceEffects: !this.arcade };
+    // Рух king.exe (G10 В3); `?physics=rapier` — колишня модель на шинах Rapier (для порівняння).
+    if (new URLSearchParams(location.search).get('physics') === 'rapier') return { ...base, engine: HT2_ENGINE, brake: HT2_BRAKE, rollLift: HT2_ROLL_LIFT, steerLimit: HT2_STEER_LIMIT, steerPower: HT2_STEER_POWER };
+    return { ...base, engine: HT2_KING_ENGINE, brake: HT2_KING_BRAKE, king: HT2_KING };
   }
 
   /** Запис vehicle.tech поточної вантажівки. */
@@ -598,6 +601,7 @@ export class Ht2Drive {
     const trailerBody = this.trailer.body.handle;
     this.truck.rayFilter = (c) => c.parent()?.handle !== trailerBody;
     this.truck.setTowLoad(this.trailer.kingpinLoad);
+    this.truck.tow = { mass: this.trailer.mass, wheels: this.trailer.wheelCount };
   }
 
   /** Вантажопідйомність і обʼєм (площа × висота, гіпотеза): кузова вантажівки або напівпричепа. */
@@ -1198,7 +1202,7 @@ export class Ht2Drive {
     const step = this.rapier.timestep;
     while (this.acc >= step) {
       this.truck.update(step, state);
-      this.trailer?.update(step, this.truck.brakePedal(state), this.def.tech.brakePower);
+      this.trailer?.update(step, this.truck.brakePedal(state), this.def.tech.brakePower, this.truck.kinematic);
       this.race?.control(step);
       this.truckers?.control(step, obstacles);
       this.rapier.step();
@@ -1276,9 +1280,16 @@ export class Ht2Drive {
    * Автопрохід для перевірок (без requestAnimationFrame): автопілот seconds секунд — відстань, найдовше застрягання,
    * перекидання, регіони дорогою.
    */
+  /** Автопілот для поточної вантажівки: у кінематичному русі king.exe — переслідування цілі по дузі з її базою. */
+  private pilot(): AutoPilot {
+    const ap = new AutoPilot(this.roads);
+    if (this.truck.kinematic) ap.kinematicBase = this.truck.base;
+    return ap;
+  }
+
   async smoke(seconds: number): Promise<{ seconds: number; distance: number; stuckFor: number; flips: number; regions: string[]; ok: boolean }> {
     const prev = this.autopilot;
-    this.autopilot ??= new AutoPilot(this.roads);
+    this.autopilot ??= this.pilot();
     const regions = new Set<string>();
     let distance = 0;
     let stuck = 0;

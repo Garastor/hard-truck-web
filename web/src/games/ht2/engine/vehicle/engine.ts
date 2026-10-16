@@ -66,6 +66,8 @@ export interface EngineProfile {
   rpmFollow?: number;
   /** Гальмування двигуном: частка maxTorque/n₀ на оберт (перша гра — 0,1). */
   engineBrake?: number;
+  /** Ширина кривої моменту exp(−(|n − n₀| / (w·n₀))⁴): перша гра — 1,5, king.exe — 1. */
+  torqueWidth?: number;
 }
 
 export const GEAR_R = 0;
@@ -132,7 +134,7 @@ export class Engine {
     const { maxTorque: m } = this.spec;
     const n0 = this.n0;
     n = Math.max(n, 0.1 * n0);
-    let t = m * Math.exp(-((Math.abs(n - n0) / (1.5 * n0)) ** 4));
+    let t = m * Math.exp(-((Math.abs(n - n0) / ((this.profile.torqueWidth ?? 1.5) * n0)) ** 4));
     if (n < n0) t *= Math.sin((Math.PI / 2) * (n / n0)) * (n / n0) ** 0.2;
     return t * this.powerFactor;
   }

@@ -4,6 +4,7 @@ import { GROUP_BUMPER, GROUP_MOVABLE, g2t, groups } from '../physics/world';
 import type { ControlState } from '../input/input';
 import { visibleBox, type TruckDef, type TruckModel } from './trucks';
 import { Engine, GEAR_R, type EngineProfile } from './engine';
+import { KING, rollingForce, steerLimit, wheelForces, yawRate, type KingWheel, type WheelSlip } from './kingModel';
 
 /**
  * Вантажівка на DynamicRayCastVehicleController (Rapier).
@@ -134,6 +135,18 @@ export interface TruckSetup {
   steerPower?: number;
   /** Педаль гальма за часом утримання, с (0…1), і множник сили гальм — замість t/(t + 1) першої гри. */
   brake?: { pedal: (t: number) => number; scale: number };
+  /** Рух за формулами king.exe (kingModel.ts) замість шин Rapier — Дальнобойщики 2. */
+  king?: KingSetup;
+}
+
+/** Параметри руху king.exe, яких немає у vehicle.tech (див. vehicles/controls.ts: HT2_KING). */
+export interface KingSetup {
+  /** Зчеплення коліс з асфальтом μ. */
+  mu: number;
+  /** Множник μ у дощ. */
+  rain: number;
+  /** Множник межі керма k (1,5·atan(μ·k·L/v²)). */
+  steerK: number;
 }
 
 /** Тінь над дорогою, м — щоб не мерехтіла з дорогою (гіпотеза порту). */
@@ -226,6 +239,22 @@ export class TruckVehicle {
   private readonly steerLimit: ((speed: number) => number) | undefined;
   private readonly steerPower: number;
   private readonly brakeProfile: { pedal: (t: number) => number; scale: number } | undefined;
+  /** Рух king.exe (null — шини й тертя Rapier, як у першій грі). */
+  private readonly king: KingSetup | null;
+  /**
+   * Напівпричіп у русі king.exe: його маса — у рівнянні тягача (v += F/(M + M_прич)·dt), його колеса — гальмують і
+   * котяться разом з тягачем (навантаження — порівну, без частки на сідлі; гіпотеза). Сам причіп іде кінематично
+   * за шворнем (Trailer.update).
+   */
+  tow: { mass: number; wheels: number } | null = null;
+  /** Кінематичний рух king.exe (кермо дає кутову швидкість v·sin δ / L). */
+  get kinematic(): boolean {
+    return this.king !== null;
+  }
+  /** Колісна база, м: від передньої осі до середини задніх (для кількох задніх осей — гіпотеза). */
+  readonly base: number;
+  /** Стан коліс king: 1 — пробуксовка, −1 — заблоковане. */
+  readonly slip: WheelSlip[];
   /** Тестовий режим: дощ (у кар'єрі він уже в setup.grip). */
   weatherGrip = 1;
   setSurface(grip: number, roll: number, steer = 1, maxSpeed = Infinity): void {
@@ -233,7 +262,8 @@ export class TruckVehicle {
     this.surfaceGrip = grip;
     this.surfaceRoll = roll;
     this.surfaceSteer = steer;
-    this.surfaceMaxSpeed = maxSpeed;
+    // Без межі покриття може прийти null (не лише Infinity) — інакше «перевищення» було б завжди.
+    this.surfaceMaxSpeed = maxSpeed ?? Infinity;
   }
 
   /** Вплив пошкоджень (режим «симулятор»): момент, недоступні верхні передачі, сила гальм. */
@@ -256,6 +286,7 @@ export class TruckVehicle {
     this.steerLimit = setup.steerLimit;
     this.steerPower = setup.steerPower ?? 1;
     this.brakeProfile = setup.brake;
+    this.king = setup.king ?? null;
     this.tractionControl = setup.tractionControl ?? false;
     this.surfaceEffects = setup.surfaceEffects ?? true;
     this.wheelRadius = tech.wheelRadius;
@@ -276,6 +307,12 @@ export class TruckVehicle {
     gameFrame.add(model.root);
     this.visual.add(gameFrame);
     this.wheelVisual = model.wheels.map((obj, i) => ({ obj, base: model.wheelBase[i] }));
+    this.slip = model.wheels.map(() => 0);
+    // Колісна база: z передніх (0, 1) і середнє z решти коліс (у системі Three.js уперед — −z).
+    const wz = model.wheelBase.map((m) => g2t(new THREE.Vector3().setFromMatrixPosition(m)).z);
+    const front = (wz[0] + wz[1]) / 2;
+    const rear = wz.slice(2).reduce((a, b) => a + b, 0) / Math.max(1, wz.length - 2);
+    this.base = Math.max(1, Math.abs(rear - front));
 
     // Габарити кузова в локальних координатах Three.js.
     gameFrame.updateMatrixWorld(true);
@@ -462,6 +499,7 @@ export class TruckVehicle {
     this.brakeTime = brake > 0 ? this.brakeTime + dt : 0;
     const bp = this.brakeProfile;
     const brakePedal = brake > 0 ? brake * (bp ? bp.pedal(this.brakeTime) : this.brakeTime / (this.brakeTime + 1)) : 0;
+    if (this.king) return this.updateKing(dt, input.steer, brakePedal, !!input.handbrake);
 
     // Сила двигуна — порівну на ведучі колеса (у Rapier відʼємна сила — уперед).
     // Гальма: сила колеса = педаль × B (передні 0,49·breakpower, задні 0,35·breakpower — ЗіЛ, s6);
@@ -501,6 +539,124 @@ export class TruckVehicle {
     this.ctrl.updateVehicle(dt, undefined, undefined, this.rayFilter);
     this.applyBumpStops(dt);
     this.applyTireLateral(dt);
+  }
+
+  /**
+   * Крок руху за king.exe (kingModel.ts). Rapier лишається для підвіски (тримає кузов над дорогою й нахиляє його за
+   * нерівностями — в оригіналі кузов вирівнюється за площиною контактів), ударів і польоту; тертя шин Rapier вимкнене.
+   * Уздовж ґрунту швидкість задаємо самі: v += (½·g_дот + ΣF/M)·dt, потім — уздовж курсу; поворот — кутова швидкість
+   * v·sin δ / L навколо нормалі ґрунту. Усі колеса в повітрі — рух лише Rapier (балістика).
+   */
+  private updateKing(dt: number, steer: number, pedal: number, handbrake: boolean): void {
+    const K = this.king!;
+    const ctrl = this.ctrl;
+    for (let i = 0; i < this.wheels; i++) {
+      ctrl.setWheelEngineForce(i, 0);
+      ctrl.setWheelBrake(i, 0);
+      ctrl.setWheelFrictionSlip(i, 0);
+    }
+    const mu = K.mu * this.grip * this.surfaceGrip * (this.weatherGrip < 1 ? K.rain : 1);
+    const r = this.body.rotation();
+    const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+    const lv0 = this.body.linvel();
+    // Кермо: δ = 45°·s, |s| — не більше межі зчеплення на цій швидкості.
+    const lim = steerLimit(lv0.x * fwd.x + lv0.y * fwd.y + lv0.z * fwd.z, mu, this.base, K.steerK);
+    const delta = KING.steerMax * Math.max(-lim, Math.min(lim, steer));
+    // Колеса на моделі: + — ліворуч; внутрішнє повертається більше (Аккерман — лише вигляд).
+    this.steerAngle = -delta;
+    const inner = Math.abs(delta);
+    const outer = inner > 1e-4 ? Math.atan(1 / (1 / Math.tan(inner) + this.track / this.base)) : 0;
+    const left = this.steerAngle > 0;
+    ctrl.setWheelSteering(0, Math.sign(this.steerAngle) * (left ? inner : outer));
+    ctrl.setWheelSteering(1, Math.sign(this.steerAngle) * (left ? outer : inner));
+    ctrl.updateVehicle(dt, undefined, undefined, this.rayFilter);
+    this.applyBumpStops(dt);
+    // Швидкість — уже з імпульсами підвіски (їх не затирати: інакше кузов провалюється крізь дорогу).
+    const lv = this.body.linvel();
+    const v = new THREE.Vector3(lv.x, lv.y, lv.z);
+
+    // Контакти: нормаль ґрунту — середня нормаль коліс на землі; навантаження N_i = M·g/n·|n_i,y| (рівний розподіл).
+    const n = new THREE.Vector3();
+    const wheels: KingWheel[] = [];
+    const M = this.mass;
+    const share = (M * KING.g) / this.wheels;
+    let onGround = 0;
+    for (let i = 0; i < this.wheels; i++) {
+      const nr = ctrl.wheelIsInContact(i) ? ctrl.wheelContactNormal(i) : null;
+      if (nr) {
+        n.add(nr as THREE.Vector3Like);
+        onGround++;
+      }
+      wheels.push({ ground: !!nr, driven: this.driven[i], load: nr ? share * Math.abs(nr.y) : 0, mu, brake: KING.brakeLoad * share * this.brakeFactor });
+    }
+    if (!onGround || n.lengthSq() < 1e-6) {
+      this.slip.fill(0);
+      return;
+    }
+    // Колеса причепа (вважаємо на землі, без приводу).
+    const tow = this.tow;
+    if (tow)
+      for (let i = 0; i < tow.wheels; i++) {
+        const load = (tow.mass * KING.g) / tow.wheels;
+        wheels.push({ ground: true, driven: false, load, mu, brake: KING.brakeLoad * load * this.brakeFactor });
+      }
+    const mass = M + (tow?.mass ?? 0);
+    n.normalize();
+    const all = onGround === this.wheels;
+    const ft = fwd.clone().addScaledVector(n, -fwd.dot(n));
+    if (ft.lengthSq() < 1e-6) return;
+    ft.normalize();
+    const vn = v.dot(n);
+    const vt = v.clone().addScaledVector(n, -vn);
+    const vFwd = vt.dot(ft);
+
+    // Поздовжні сили: двигун і гальма; ручне — задні колеса на повну; кочення; мʼяке покриття понад його швидкість.
+    let force = wheelForces(wheels, this.engine.force, pedal, vFwd, this.slip);
+    if (handbrake && pedal <= KING.brakeFrom) force += wheelForces(wheels.map((w, i) => (i >= 2 ? w : { ...w, ground: false })), 0, 1, vFwd);
+    let resist = 0;
+    for (const w of wheels) if (w.ground) resist += rollingForce(w.load, vFwd) * this.surfaceRoll;
+    const over = Math.abs(vFwd) - this.surfaceMaxSpeed;
+    if (over > 0) resist += mass * SOFT_DRAG * Math.min(1, over / SOFT_DRAG_SPAN);
+    force -= Math.sign(vFwd) * resist;
+
+    // Вага: дотична складова; усі колеса на землі — половина.
+    const gravity = this.world.gravity;
+    const g = new THREE.Vector3(gravity.x, gravity.y, gravity.z);
+    const gt = g.clone().addScaledVector(n, -g.dot(n));
+    const gEff = gt.clone().multiplyScalar(all ? KING.slope : 1);
+    const next = vt.clone().addScaledVector(ft, (force / mass) * dt).addScaledVector(gEff, dt);
+    // Майже стоїть, а гальмо (чи ручне) втримує проти двигуна й схилу — стоїть.
+    const brakes = wheels.reduce((sum, w) => sum + (w.ground ? Math.min(w.brake, w.mu * w.load) : 0), 0);
+    const hold = (handbrake ? 1 : pedal > KING.brakeFrom ? pedal : 0) * brakes;
+    const push = Math.abs(this.engine.force + mass * gEff.dot(ft));
+    const along = next.dot(ft);
+    if (hold > 0 && Math.abs(vFwd) < 0.5 && push <= hold) next.set(0, 0, 0);
+    // Опір і гальма зупиняють, але не розганяють назад.
+    else if (vFwd !== 0 && Math.sign(along) !== Math.sign(vFwd) && Math.sign(force) === -Math.sign(vFwd) && Math.abs(this.engine.force) < resist + hold) next.addScaledVector(ft, -along);
+    // Рівний ґрунт і всі колеса на землі — швидкість уздовж курсу (бічного ковзання немає).
+    if (all && n.y >= KING.flat) {
+      const speed = next.length() * (Math.sign(next.dot(ft)) || 0);
+      next.copy(ft).multiplyScalar(speed);
+    }
+    // Rapier за крок додасть усю вагу — її дотичну частину віднімаємо наперед; уздовж нормалі — як є (підвіска).
+    next.addScaledVector(gt, -dt).addScaledVector(n, vn);
+    this.body.setLinvel(next, true);
+    // Поворот: кутова швидкість навколо нормалі — кінематична (обидва передні колеса в повітрі — 0); крен і
+    // тангаж від підвіски лишаються.
+    const omega = wheels[0].ground || wheels[1].ground ? -yawRate(vFwd, delta, this.base) : 0;
+    this.slip.length = this.wheels;
+    const av = this.body.angvel();
+    const w = new THREE.Vector3(av.x, av.y, av.z);
+    w.addScaledVector(n, omega - w.dot(n));
+    this.body.setAngvel(w, true);
+  }
+
+  /** Колія передньої осі, м (для кута зовнішнього колеса). */
+  private get track(): number {
+    const a = new THREE.Vector3().setFromMatrixPosition(this.wheelVisual[0].base);
+    const b = new THREE.Vector3().setFromMatrixPosition(this.wheelVisual[1].base);
+    return a.distanceTo(b);
   }
 
   /** Відбійники підвіски (див. SUSPENSION.bump_*): сила вгору в точці кріплення колеса, коли стиснення велике. */

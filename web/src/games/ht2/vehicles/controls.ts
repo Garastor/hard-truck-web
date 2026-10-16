@@ -1,4 +1,5 @@
 import type { EngineProfile } from '../engine/vehicle/engine';
+import type { KingSetup } from '../engine/vehicle/truckVehicle';
 import type { InputProfile } from '../engine/input/input';
 
 /**
@@ -54,6 +55,30 @@ export const HT2_ENGINE: EngineProfile = {
   // різниця — у гальмуванні двигуном, не в опорі руху. 0,22 → вибіг −0,53…−0,60 (механізм — гіпотеза).
   engineBrake: 0.22,
 };
+
+/**
+ * Двигун для руху king.exe: крива моменту exp(−(|n − n₀|/n₀)⁴) (0x507380; у першій грі ширина 1,5·n₀), решта — як
+ * HT2_ENGINE (виміряне телеметрією).
+ */
+export const HT2_KING_ENGINE: EngineProfile = { ...HT2_ENGINE, torqueWidth: 1 };
+
+/**
+ * Рух king.exe (engine/vehicle/kingModel.ts), параметри, яких немає у vehicle.tech:
+ * - μ асфальту: таблиця зчеплення за покриттям у king.exe заповнюється не знайденим кодом (за замовчуванням 0,5).
+ *   Гальмування ZilR у записі сталося ≈ 7 м/с² (re/notes/ht2/telemetry.md) — у моделі воно впирається в μ·g, тож
+ *   μ ≈ 0,71 (гіпотеза до звірки В4);
+ * - дощ: за замовчуванням 0,5 → 0,3, тобто ×0,6;
+ * - k межі керма [0x263c] не прочитано: з k = g межа бічного прискорення ≈ 1,18·μ·g ≈ 0,84 g — у записі повороти
+ *   0,7…1 g (гіпотеза).
+ */
+export const HT2_KING: KingSetup = { mu: 0.71, rain: 0.6, steerK: 9.8 };
+
+/**
+ * Гальма для руху king.exe: педаль з клавіші (t + 0,001)/(t + 1) (0x4ff800), сила колеса — 1,5 × навантаження ×
+ * педаль у межах μ·N (kingModel.ts). Так сповільнення ≈ 5 м/с² за 0,5 с і ≈ 7 за 1 с — як у записі ZilR (на 0,1 с у
+ * записі ≈ 3, тут ≈ 1,3).
+ */
+export const HT2_KING_BRAKE = { pedal: (t: number) => (t + 0.001) / (t + 1), scale: 1 };
 
 export const HT2_INPUT: InputProfile = {
   // До упору: на місці ≈ 0,4 с, на 26–35 км/год ≈ 0,8 с, на 57 км/год ≈ 1 с; з Ctrl — ≈ 0,4 с на будь-якій

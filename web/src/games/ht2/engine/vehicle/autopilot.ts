@@ -80,6 +80,11 @@ export class AutoPilot {
   /** Сповільнення перед поворотом: підсилення за кривизною й найменша частка крейсерської (тягач з причепом — сильніше). */
   bendGain = 2.2;
   bendFloor = 0.3;
+  /**
+   * Колісна база для кінематичного руху king.exe, м (0 — кермо = кут до цілі × 2,2, як для шин Rapier). Задана —
+   * переслідування цілі по дузі: кут коліс δ = atan(2·L·sin α / d), кермо = δ / 45°.
+   */
+  kinematicBase = 0;
   private stuck = 0;
   private reversing = 0;
   /** Бічний зсув для обгону (м), плавно змінюється. */
@@ -138,7 +143,10 @@ export class AutoPilot {
     const far = this.net.advance(n.line, n.seg, n.t, 12 + speedKmh * 0.6);
     const to = target.clone().sub(pos).setY(0);
     const angle = Math.atan2(to.dot(rightV), to.dot(forward));
-    s.steer = THREE.MathUtils.clamp(angle * 2.2, -1, 1);
+    if (this.kinematicBase > 0) {
+      const delta = Math.atan((2 * this.kinematicBase * Math.sin(angle)) / Math.max(4, to.length()));
+      s.steer = THREE.MathUtils.clamp(delta / (Math.PI / 4), -1, 1);
+    } else s.steer = THREE.MathUtils.clamp(angle * 2.2, -1, 1);
     // Кривизна попереду → зниження швидкості.
     const toFar = far.clone().sub(pos).setY(0).normalize();
     const bend = 1 - Math.max(0, toFar.dot(forward));

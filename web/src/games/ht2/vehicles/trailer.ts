@@ -93,6 +93,7 @@ export class Trailer {
     );
     // Центр візка коліс і центр мас уздовж причепа (z Three, + назад): частка ваги на шворні — важіль.
     const axleZ = model.wheelBase.reduce((s, m) => s + g2t(new THREE.Vector3().setFromMatrixPosition(m)).z, 0) / model.wheelBase.length;
+    this.axle.set(0, this.kingpin.y, axleZ);
     const comZ = com.z + center.z;
     this.kingpinLoad = mass * 9.81 * THREE.MathUtils.clamp((axleZ - comZ) / (axleZ - this.kingpin.z), 0, 1);
     this.ctrl = world.createVehicleController(this.body);
@@ -166,9 +167,69 @@ export class Trailer {
     }
   }
 
-  /** Крок фізики (до world.step): гальма й опір кочення. */
-  update(dt: number, brake: number, brakePower: number): void {
+  /**
+   * Рух king.exe: причіп іде кінематично за шворнем — вісь коліс не ковзає вбік (кутова швидкість — бічна швидкість
+   * шворня / відстань до осі), уздовж — як тягне сідло. Гальма й кочення причепа рахує тягач (TruckVehicle.tow).
+   * Підвіска й удари — Rapier. Викликати після кроку тягача (потрібна його нова швидкість).
+   */
+  private follow(dt: number): void {
+    for (let i = 0; i < this.wheels.length; i++) {
+      this.ctrl.setWheelBrake(i, 0);
+      this.ctrl.setWheelFrictionSlip(i, 0);
+    }
+    this.ctrl.updateVehicle(dt, undefined, undefined, (c) => c.parent()?.handle !== this.tractor.body.handle);
+    const n = new THREE.Vector3();
+    for (let i = 0; i < this.wheels.length; i++) {
+      const nr = this.ctrl.wheelIsInContact(i) ? this.ctrl.wheelContactNormal(i) : null;
+      if (nr) n.add(nr as THREE.Vector3Like);
+    }
+    // У повітрі — лише Rapier (шарнір тримає зчіпку).
+    if (n.lengthSq() < 1e-6) return;
+    n.normalize();
+    const tq = this.tractor.body.rotation();
+    const tt = this.tractor.body.translation();
+    const kp = this.saddle.clone().applyQuaternion(new THREE.Quaternion(tq.x, tq.y, tq.z, tq.w)).add(new THREE.Vector3(tt.x, tt.y, tt.z));
+    const vk = this.tractor.body.velocityAtPoint(kp);
+    const vK = new THREE.Vector3(vk.x, vk.y, vk.z);
+    const r = this.body.rotation();
+    const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+    const t = this.body.translation();
+    const axle = this.axle.clone().applyQuaternion(q).add(new THREE.Vector3(t.x, t.y, t.z));
+    // Від шворня до осі в площині ґрунту; бічний напрям — n × arm.
+    const arm = axle.clone().sub(kp);
+    arm.addScaledVector(n, -arm.dot(n));
+    const len = arm.length();
+    if (len < 0.5) return;
+    const lat = new THREE.Vector3().crossVectors(n, arm).divideScalar(len);
+    const omega = -vK.dot(lat) / len;
+    const com = this.body.worldCom();
+    const toCom = new THREE.Vector3(com.x, com.y, com.z).sub(kp);
+    const lv = this.body.linvel();
+    const vn = lv.x * n.x + lv.y * n.y + lv.z * n.z;
+    const v = vK.clone().add(new THREE.Vector3().crossVectors(n, toCom).multiplyScalar(omega));
+    v.addScaledVector(n, -v.dot(n));
+    // Rapier за крок додасть вагу — дотичну частину віднімаємо наперед; уздовж нормалі — підвіска.
+    const g = this.world.gravity;
+    const gv = new THREE.Vector3(g.x, g.y, g.z);
+    v.addScaledVector(gv.addScaledVector(n, -gv.dot(n)), -dt).addScaledVector(n, vn);
+    this.body.setLinvel(v, true);
+    const av = this.body.angvel();
+    const w = new THREE.Vector3(av.x, av.y, av.z);
+    w.addScaledVector(n, omega - w.dot(n));
+    this.body.setAngvel(w, true);
+  }
+
+  get wheelCount(): number {
+    return this.wheels.length;
+  }
+
+  /** Центр осей коліс у системі тіла (Three.js). */
+  private axle = new THREE.Vector3();
+
+  /** Крок фізики (до world.step): гальма й опір кочення; kinematic — рух king.exe (follow). */
+  update(dt: number, brake: number, brakePower: number, kinematic = false): void {
     this.savePrev();
+    if (kinematic) return this.follow(dt);
     const n = this.wheels.length;
     const force = (brake * brakePower) / n + (ROLLING * this.mass * 9.81) / n;
     for (let i = 0; i < n; i++) this.ctrl.setWheelBrake(i, force * dt);
