@@ -43,6 +43,8 @@ export interface RoadLine extends WayLine {
   laneWidth: number;
   /** Прапорці ATTR сегмента. */
   flags: number;
+  /** Усі смуги того самого напрямку дороги за номером (для перестроювання); в осі — порожньо. */
+  siblings: RoadLine[];
 }
 
 interface Directed {
@@ -75,7 +77,7 @@ export class Ht2Roads {
           const hw = width / 2;
           const lanes = Math.max(1, Math.floor((hw + 1.75) / 3.5));
           const road = this.axes.length;
-          this.axes.push({ name: `${room.name}#${road}`, pts, next: [], width, region: id, road, lane: -1, lanes, laneWidth: hw / lanes, flags: s.type });
+          this.axes.push({ name: `${room.name}#${road}`, pts, next: [], width, region: id, road, lane: -1, lanes, laneWidth: hw / lanes, flags: s.type, siblings: [] });
         }
     for (const a of this.axes) for (const k of cellsOf(a.pts)) push(this.axisGrid, k, a);
 
@@ -98,6 +100,7 @@ export class Ht2Roads {
             lanes: a.lanes,
             laneWidth: a.laneWidth,
             flags: a.flags,
+            siblings: d.lines,
           };
           d.lines.push(line);
           this.lines.push(line);

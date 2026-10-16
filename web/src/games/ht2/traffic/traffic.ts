@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { visibleBox } from '../engine/vehicle/trucks';
 import { GROUP_WORLD, groups } from '../engine/physics/world';
 import { isList, num, str, type SExpr } from '../formats/sexpr';
-import type { Ht2Roads, RoadLine } from '../world/roads';
+import type { Ht2Roads } from '../world/roads';
+import { newMover, step, type Mover, type Obstacle } from './driver';
 import type { Ht2Trucks } from '../vehicles/trucks';
 
 /**
@@ -12,15 +13,20 @@ import type { Ht2Trucks } from '../vehicles/trucks';
  * (`Fiat_all1` → `Fiat_all3`; кластери TRUCKS.OVL `Fiat1_car_cl`…). Кількість у світі — `dumb 70` з ENV/GAME.CNF;
  * порт тримає їх лише довкола гравця (MAX_CARS у радіусі 150…700 м).
  *
- * Рух — без фізики оригіналу (гіпотеза порту): машина котиться смугою мережі доріг з крейсерською швидкістю,
- * пригальмовує перед машиною чи вантажівкою попереду на своїй смузі. Тіло в Rapier — кінематичне: гравець
- * упирається в нього, але штовхнути не може.
+ * Рух — водій за king.exe (`driver.ts`: швидкість на кривих, дистанція до лідера, перестроювання перед поворотом,
+ * обʼїзд тих, хто стоїть), але без фізики: машина котиться лінією смуги (у king.exe ближче 80 м до гравця вона
+ * фізична). Тіло в Rapier — кінематичне: гравець упирається в нього, але штовхнути не може.
  */
 const MAX_CARS = 12;
 const SPAWN_MIN = 150;
 const SPAWN_MAX = 600;
 const DESPAWN = 750;
 const GAP = 14;
+/** Крейсерська швидкість обережних водіїв dumb (king.exe 0x4d4700: межа 20 м/с; розкид — порту), м/с. */
+const CRUISE_MIN = 17;
+const CRUISE_MAX = 20;
+/** Півдовжина гравця й інших точок-перешкод, м. */
+const AVOID_HALF = 2.5;
 
 export interface TrafficKind {
   model: string;
@@ -41,25 +47,18 @@ export function trafficKinds(sch: SExpr[], trucks: Ht2Trucks): TrafficKind[] {
   return out;
 }
 
-interface Car {
+interface Car extends Mover {
   kind: TrafficKind;
   root: THREE.Group;
   body: RAPIER.RigidBody;
-  line: RoadLine;
-  seg: number;
-  t: number;
-  speed: number;
-  cruise: number;
-  halfLen: number;
-  pos: THREE.Vector3;
-  /** Початок першого відрізка нової лінії — кінець попередньої (проміжок між смугами на стику — навпростець). */
-  from: THREE.Vector3 | null;
 }
 
 export class Traffic {
   readonly cars: Car[] = [];
   private readonly templates = new Map<string, THREE.Object3D>();
   private spawnTimer = 0;
+  /** Позиції перешкод (гравець, причіп, суперники) минулого кроку — для їхньої швидкості. */
+  private avoidPrev: THREE.Vector3[] = [];
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -111,7 +110,15 @@ export class Traffic {
       this.spawn(player);
     }
     const avoid = [player, ...extra];
-    for (const c of this.cars) this.drive(c, dt, avoid);
+    const obstacles: Obstacle[] = this.cars.map((c) => ({ pos: c.pos, vel: c.heading.clone().multiplyScalar(c.speed), half: c.halfLen, mover: c }));
+    avoid.forEach((p, i) => {
+      const prev = this.avoidPrev[i];
+      const vel = prev && dt > 0 && this.avoidPrev.length === avoid.length ? p.clone().sub(prev).divideScalar(dt) : new THREE.Vector3();
+      obstacles.push({ pos: p, vel: vel.lengthSq() < 900 ? vel : new THREE.Vector3(), half: AVOID_HALF });
+    });
+    this.avoidPrev = avoid.map((p) => p.clone());
+    for (const c of this.cars) this.drive(c, dt, avoid, obstacles);
+    for (let i = this.cars.length - 1; i >= 0; i--) if (this.cars[i].gone) this.remove(i);
   }
 
   private spawn(player: THREE.Vector3): void {
@@ -147,8 +154,11 @@ export class Traffic {
         body,
       );
       this.scene.add(root);
-      const cruise = (40 + Math.random() * 30) / 3.6;
-      this.cars.push({ kind, root, body, line, seg, t: 0, speed: cruise, cruise, halfLen: size.z / 2, pos: p.clone(), from: null });
+      const cruise = CRUISE_MIN + Math.random() * (CRUISE_MAX - CRUISE_MIN);
+      const car: Car = Object.assign(newMover(line, seg, 0, cruise, size.z / 2), { kind, root, body });
+      root.position.copy(car.pos);
+      root.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), car.heading, new THREE.Vector3(0, 1, 0)));
+      this.cars.push(car);
       return;
     }
   }
@@ -160,62 +170,19 @@ export class Traffic {
     this.cars.splice(i, 1);
   }
 
-  /** Рух смугою: дистанція до машин попереду (і гравця) — пригальмувати; кінець лінії — наступна лінія. */
-  private drive(c: Car, dt: number, avoid: readonly THREE.Vector3[]): void {
-    const a = segStart(c);
-    const b = c.line.pts[c.seg + 1];
-    const dir = b.clone().sub(a);
-    const len = dir.length() || 1;
-    dir.divideScalar(len);
-    let ahead = Infinity;
-    let blocked = false;
-    for (const o of [...this.cars.map((x) => x.pos), ...avoid]) {
-      if (o === c.pos) continue;
+  /** Рух водія; гравець (тягач чи причіп) упритул спереду — стоп одразу. */
+  private drive(c: Car, dt: number, avoid: readonly THREE.Vector3[], obstacles: readonly Obstacle[]): void {
+    step(c, dt, obstacles);
+    // Кінематична машина інакше штовхає гравця з «нескінченною» масою (на перехресті вантажівка з причепом
+    // виїжджає збоку, гальмувати пізно).
+    for (const o of avoid) {
       const rel = o.clone().sub(c.pos);
-      const along = rel.dot(dir);
-      const side = rel.clone().addScaledVector(dir, -along).length();
-      if (along > 0 && side < 3 && along < ahead) ahead = along;
-      // Гравець (тягач чи причіп) упритул спереду — стоп одразу: кінематична машина інакше штовхає його з
-      // «нескінченною» масою (на перехресті вантажівка з причепом виїжджає збоку, гальмувати пізно).
-      if (avoid.includes(o) && along > 0 && along < c.halfLen + 5 && side < 2.5) blocked = true;
+      const along = rel.x * c.heading.x + rel.z * c.heading.z;
+      const side = Math.abs(rel.x * c.heading.z - rel.z * c.heading.x);
+      if (along > 0 && along < c.halfLen + 5 && side < 2.5) c.speed = 0;
     }
-    const want = ahead < GAP ? 0 : ahead < GAP * 3 ? c.cruise * ((ahead - GAP) / (GAP * 2)) : c.cruise;
-    c.speed += THREE.MathUtils.clamp(want - c.speed, -8 * dt, 3 * dt);
-    if (blocked) c.speed = 0;
-    let move = c.speed * dt;
-    while (move > 0) {
-      const p0 = segStart(c);
-      const p1 = c.line.pts[c.seg + 1];
-      const segLen = p0.distanceTo(p1) || 0.001;
-      const left = (1 - c.t) * segLen;
-      if (move < left) {
-        c.t += move / segLen;
-        move = 0;
-      } else {
-        move -= left;
-        c.t = 0;
-        c.seg++;
-        c.from = null;
-        if (c.seg + 1 >= c.line.pts.length) {
-          const next = c.line.next;
-          if (!next.length) {
-            // Тупик — машина зникає (зʼявиться інша).
-            c.pos.set(1e9, 0, 0);
-            return;
-          }
-          c.line = next[Math.floor(Math.random() * next.length)] as RoadLine;
-          c.seg = 0;
-          c.from = p1.clone();
-        }
-      }
-    }
-    const p0 = segStart(c);
-    const p1 = c.line.pts[c.seg + 1];
-    c.pos.copy(p0).lerp(p1, c.t);
-    const fwd = p1.clone().sub(p0).normalize();
-    // lookAt ставить +Z від цілі до ока: ціль — уперед, тож −Z (перед моделі) дивиться за рухом (з −fwd машини
-    // їхали задом наперед — помітив користувач).
-    const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), fwd, new THREE.Vector3(0, 1, 0)));
+    // lookAt ставить +Z від цілі до ока: ціль — уперед, тож −Z (перед моделі) дивиться за рухом.
+    const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), c.heading, new THREE.Vector3(0, 1, 0)));
     // Плавний поворот на зламах ламаної.
     c.root.quaternion.slerp(q, Math.min(1, dt * 6));
     c.root.position.copy(c.pos);
@@ -226,11 +193,6 @@ export class Traffic {
   dispose(): void {
     for (let i = this.cars.length - 1; i >= 0; i--) this.remove(i);
   }
-}
-
-/** Початок поточного відрізка машини. */
-function segStart(c: Car): THREE.Vector3 {
-  return c.seg === 0 && c.from ? c.from : c.line.pts[c.seg];
 }
 
 /** Варіант кольору: матеріали `<…>1` моделі → `<…>N` (Fiat_all1 → Fiat_all3), якщо такий є в TRUCKS.B3D. */
