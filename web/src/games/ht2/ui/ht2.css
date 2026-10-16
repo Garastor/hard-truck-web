@@ -575,3 +575,8 @@ body.ht2-orig-ui .touch-btn.gas.pressed {
   background: var(--ht2-lcd-flat) center / 100% 100% no-repeat;
   filter: brightness(1.35) saturate(1.2);
 }
+
+/* Відкрита бічна панель F1–F4: ліва група (згорнута «☰») — під панеллю, щоб не перекривати її. */
+body.ht2-side-open .ht2-hud {
+  z-index: 2;
+}
