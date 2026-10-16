@@ -10,6 +10,9 @@ import type { Upgrade } from './upgrades';
  */
 const VALUE = 'rgb(240, 232, 150)';
 const LCD = 'rgb(255, 40, 30)';
+/** Кнопки дій складу, ринку й найму: правий край вікна й ширина колонки значень, пікселі фону. */
+const ACT_RIGHT = 205;
+const ACT_W = 90;
 
 export interface OrderView {
   goods: string;
@@ -37,9 +40,9 @@ export function orderPanel(art: EscArt, parent: HTMLElement, o: OrderView, take:
     `${Math.round(o.fragility)}%`,
   ];
   rows.forEach((t, i) => p.write(125, 572 + i * 20, t.slice(0, 16), VALUE));
-  // Підпис і кнопка — біля правого краю вікна (x = 205), кнопка завширшки з колонку значень.
-  p.write(205, 732, `СКЛАД ЗАВАНТАЖЕННЯ ${o.dock}`, VALUE, undefined, 'right');
-  p.action(115, 745, 90, 'Взяти', take);
+  // Підпис — посередині червоної смуги фону (рядки 716…735), біля правого краю вікна, як і кнопка.
+  p.write(ACT_RIGHT, 730, `СКЛАД ЗАВАНТАЖЕННЯ ${o.dock}`, VALUE, undefined, 'right');
+  p.action(ACT_RIGHT - ACT_W, 745, ACT_W, 'Взяти', take);
   return p;
 }
 
@@ -58,7 +61,7 @@ export function salePanel(art: EscArt, parent: HTMLElement, s: SaleView, buy: ()
   p.write(103, 620, `$${Math.round(s.price)}`, VALUE);
   p.write(103, 640, `${Math.round(s.power)} К.С.`, VALUE);
   p.write(103, 660, `${(s.load / 1000).toFixed(2)}Т`, VALUE);
-  p.action(20, 690, 185, 'Купити (+)', buy);
+  p.action(ACT_RIGHT - ACT_W, 690, ACT_W, 'Купити', buy);
   return p;
 }
 
@@ -85,7 +88,7 @@ export function jobPanel(art: EscArt, parent: HTMLElement, j: JobView, hire: () 
   p.write(101, 640, `$${Math.round(j.price)}`, VALUE);
   p.write(145, 660, `${Math.round(j.power)} К.С.`, VALUE);
   p.write(145, 680, `${(j.load / 1000).toFixed(2)}Т`, VALUE);
-  p.action(20, 700, 185, 'Найняти (+)', hire);
+  p.action(ACT_RIGHT - ACT_W, 700, ACT_W, 'Найняти', hire);
   return p;
 }
 
