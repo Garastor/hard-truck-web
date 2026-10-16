@@ -63,7 +63,8 @@ export function gameSelectScreen(cards: GameCard[], fonts: { small: TextFont | n
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', fit);
       root.remove();
-      document.body.classList.remove('in-menu');
+      // in-menu лишається, поки гра вантажиться: її меню саме зніме його, закриваючись (інакше на мить видно
+      // технічну панель першої гри).
       resolve(cards[i].meta.id);
     };
     cards.forEach((card, i) => {

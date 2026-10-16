@@ -987,7 +987,11 @@ body.career #stats {
 
 body.in-menu #bar,
 body.in-menu #menu,
-body.in-menu #fps {
+body.in-menu #fps,
+body.booting #bar,
+body.booting #menu,
+body.booting #fps,
+body.booting #stats {
   display: none;
 }
 

@@ -807,6 +807,7 @@ async function menuLoop(): Promise<void> {
 
 /** Без LOAD.RES (немає файлу) — просте меню. */
 async function fallbackMenu(): Promise<void> {
+  document.body.classList.remove('in-menu'); // після екрана вибору гри
   const saved = loadCareer();
   const opts = saved ? ['Продовжити гру', 'Нова гра', 'Пробний заїзд'] : ['Нова гра', 'Пробний заїзд'];
   const i = await modal(overlay, 'Дальнобійники', 'Меню без графіки оригіналу (бракує LOAD.RES).', opts);

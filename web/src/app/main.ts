@@ -191,6 +191,9 @@ async function boot(): Promise<void> {
     else if ((await showImport(FILE_SETS[pick], true)) === pick) game = pick;
   }
   setLastGame(game);
+  // До запуску гри технічну панель першої гри не показуємо (index.html: body.booting) — інакше вона блимає,
+  // поки шукаємо файли й готуємо екран вибору.
+  document.body.classList.remove('booting');
   const id = game;
   await GAME_MODULES[id].run({
     renderer,
