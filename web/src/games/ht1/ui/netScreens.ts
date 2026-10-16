@@ -40,6 +40,8 @@ export interface NetLobby {
   friendTruck: number | null;
   /** Друг зараз на трасі (почав заїзд і ще не повернувся до сесії). */
   friendDriving: boolean;
+  /** Друг завантажив трасу поточного заїзду (для господаря — можна давати старт). */
+  friendReady: boolean;
 }
 
 /** Початок заїзду: траса, погода, вантажівки й місця на старті (господар — 0). */
@@ -63,6 +65,7 @@ export function lobbyMessage(lobby: NetLobby, m: NetMessage): boolean {
   } else if (m.t === 'pick') lobby.friendTruck = m.truck;
   else if (m.t === 'lobby') lobby.friendDriving = false;
   else if (m.t === 'start') lobby.friendDriving = true;
+  else if (m.t === 'ready') lobby.friendReady = true;
   else return false;
   return true;
 }
@@ -82,7 +85,7 @@ export async function netMenu(art: MenuArt, driver: string, trucks: NetTruck[], 
     if (!lobby) {
       const peer = await connectScreen(art, driver, note);
       if (!peer) return null;
-      lobby = { peer, level: 'CIRCUIT', rain: false, truck: trucks.some((t) => t.index === 1) ? 1 : (trucks[0]?.index ?? 1), friendTruck: null, friendDriving: false };
+      lobby = { peer, level: 'CIRCUIT', rain: false, truck: trucks.some((t) => t.index === 1) ? 1 : (trucks[0]?.index ?? 1), friendTruck: null, friendDriving: false, friendReady: false };
     }
     const r = await sessionScreen(art, driver, lobby, trucks);
     if (typeof r !== 'string' && r) return r;
@@ -382,6 +385,7 @@ function sessionScreen(art: MenuArt, driver: string, lobby: NetLobby, trucks: Ne
     };
     if (peer.host) {
       maskButton(scr, art, 's/start', 489, 17, () => {
+        lobby.friendReady = false;
         peer.send({ t: 'start', level: lobby.level, rain: lobby.rain });
         lobby.friendDriving = true;
         done(startOf(lobby));

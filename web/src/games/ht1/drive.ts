@@ -1590,7 +1590,7 @@ export class DriveSession {
     this.wayNet ??= new WayNet(this.built.assembler.b3d);
     this.route ??= new RouteProgress(this.wayNet, this.spawn.position, this.spawn.forward);
     const truck = new TruckVehicle(this.world, def, model, this.gridSpawn(slot));
-    truck.makeKinematic();
+    truck.makeRemote();
     this.scene.add(truck.visual);
     const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
     hideLampReflections(model.root);
@@ -1662,10 +1662,16 @@ export class DriveSession {
     return st;
   }
 
+  /**
+   * Мережева гра: старт тримається (червоний на світлофорі), доки обидва не завантажать трасу — тоді відлік
+   * починається в обох одночасно.
+   */
+  holdStart = false;
+
   /** Спільний облік кроку: відлік, одометр гравця. */
   private tick(dt: number): void {
     const before = this.countdown;
-    this.countdown -= dt;
+    if (!this.holdStart) this.countdown -= dt;
     if (before > 0 && this.countdown <= 0) this.raceStart = this.clock;
     if (this.raceKind !== 'free') this.updateStartLight();
     if (this.opponents.length) {

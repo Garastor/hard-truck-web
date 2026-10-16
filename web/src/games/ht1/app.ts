@@ -21,7 +21,7 @@ import type { DriveSession } from './drive';
 import type { TruckSetup } from './engine/vehicle/truckVehicle';
 import { currentDriver, listCareers, loadCareer, newCareer, setCurrentDriver, truckSpec, type Career } from './career/career';
 import { CareerGame, HOME_SVG, type LevelKind } from './career/careerUi';
-import { modal, setHudFont } from './engine/ui/modal';
+import { boxContentWidth, modal, pixelText, setHudFont } from './engine/ui/modal';
 import {
   driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
   type ControlMode, type OptionsState, type QualityLevel,
@@ -771,6 +771,16 @@ const HELP = [
   'ГРА ЗБЕРІГАЄТЬСЯ автоматично для кожного водія в цьому браузері.',
 ].join('\n\n');
 
+/** Скільки господар чекає, поки друг завантажить трасу, перш ніж дати старт без нього, мс. */
+const NET_READY_TIMEOUT = 30000;
+
+/** Час заїзду: хв:сс,д. */
+function raceTime(s: number): string {
+  const m = Math.floor(s / 60);
+  const sec = s - m * 60;
+  return `${m}:${sec < 10 ? '0' : ''}${sec.toFixed(1).replace('.', ',')}`;
+}
+
 /** Мережева гра: поточний заїзд (домовленість сесії, вантажівки, місце на старті); null — не мережева гра. */
 let netRun: NetStart | null = null;
 
@@ -802,6 +812,38 @@ function joinNetDrive(d: DriveSession, net: NetStart): void {
   d.addRemote(friend, net.grid === 0 ? 1 : 0);
   d.onLocalState = (data) => peer.sendFast(data);
   const name = peer.peerName ?? 'Друг';
+  // Спільний старт: світлофор чекає на червоному, доки обидва не завантажать трасу; старт дає господар.
+  d.holdStart = true;
+  peer.send({ t: 'ready' });
+  const go = () => {
+    if (!d.holdStart || drive !== d) return;
+    d.holdStart = false;
+    if (peer.host) peer.send({ t: 'go' });
+  };
+  const tryGo = () => peer.host && lobby.friendReady && go();
+  if (peer.host) window.setTimeout(go, NET_READY_TIMEOUT);
+  // Результати: час кожного від зеленого; місце — за часом (старт одночасний).
+  let mine: number | null = null;
+  let theirs: number | null = null;
+  let table: HTMLElement | null = null;
+  const renderTable = () => {
+    if (!table) return;
+    const rows = [
+      { who: currentDriver(), time: mine },
+      { who: name, time: theirs },
+    ].sort((a, b) => (a.time ?? Infinity) - (b.time ?? Infinity));
+    const text = rows.map((r, i) => `${i + 1}. ${r.who} — ${r.time === null ? 'ще їде' : raceTime(r.time)}`).join('\n');
+    table.replaceChildren(pixelText(text, boxContentWidth()));
+  };
+  d.onFinish = (r) => {
+    mine = r.time;
+    peer.send({ t: 'finish', time: r.time });
+    table = document.createElement('div');
+    renderTable();
+    void modal(overlay, 'Фініш', table, ['До сесії']).then(() => {
+      if (drive === d) $('toMenu').click();
+    });
+  };
   peer.events = {
     onFast: (data) => drive?.pushRemoteState(data),
     onMessage: (m) => {
@@ -815,14 +857,24 @@ function joinNetDrive(d: DriveSession, net: NetStart): void {
         toast(`${name} повернувся до сесії`);
         drive?.remoteGone();
       }
+      if (m.t === 'go' && !peer.host) go();
+      if (m.t === 'finish' && netRun === net) {
+        theirs = m.time;
+        if (table) renderTable();
+        else toast(`${name} фінішував: ${raceTime(m.time)}`);
+      }
       lobbyMessage(lobby, m);
+      if (m.t === 'ready') tryGo();
     },
     onClose: () => {
       if (netRun !== net) return;
       toast(`${name}: з'єднання закрито`);
       drive?.remoteGone();
+      go();
     },
   };
+  if (d.holdStart) toast('Чекаємо, поки друг завантажить трасу…');
+  tryGo();
 }
 
 async function menuLoop(): Promise<void> {
