@@ -764,9 +764,12 @@ export class SceneAssembler {
       this.stats.instances++;
       return;
     }
-    const tpl = this.template(objectName);
+    // Заправка AnmObj0004 — окремий екземпляр з живими перемикачами (Benzo<k>Key, BenzoKey: вибух колонок,
+    // world/objects.ts); решта — клон спільного шаблону.
+    const live = /^anmobj0004$/i.test(objectName) ? (this.topByName.has(objectName.toLowerCase()) ? this : this.fallback)?.dynamicObject(objectName)?.root : null;
+    const tpl = live ?? this.template(objectName);
     if (!m || !tpl) return;
-    const inst = tpl.clone();
+    const inst = live ?? tpl.clone();
     inst.matrixAutoUpdate = false;
     inst.matrix.copy(m);
     if (name) inst.userData.instance = name;

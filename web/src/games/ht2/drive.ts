@@ -1713,7 +1713,17 @@ export class Ht2Drive {
     // Частка кроку фізики, що «не дійшла» до наступного, — модель між станами кроків (без ривків при 120 Гц).
     const alpha = this.acc / step;
     // Збиті знаки й стовпи, рухомі предмети (world/objects.ts) — до обліку ударів.
-    for (const e of this.objects.after(dt)) this.audio?.play(e.sound, e.volume);
+    for (const e of this.objects.after(dt)) {
+      this.audio?.play(e.sound, e.volume);
+      // Підрив цілої заправки гравцем — «злочинна недбалість», відшкодування 6200 (king.exe 0x56f120).
+      const cm = this.careerMode;
+      if (e.benzo?.intact && cm && e.benzo.body === this.truck.body.handle) {
+        cm.fines.accident += 6200;
+        cm.fines.violations |= 0x20;
+        this.say(cm.msg('VIOLATION_NEGLIGENCE', 'ЗЛОЧИННА НЕДБАЛІСТЬ'), 5);
+        cm.persist();
+      }
+    }
     this.race?.after(dt, alpha);
     this.detectHits();
     if (this.careerMode && !this.paused) this.accidents?.update(dt);

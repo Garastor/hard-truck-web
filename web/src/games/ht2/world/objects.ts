@@ -14,20 +14,30 @@ import type { SceneAssembler } from '../engine/render/sceneBuilder';
  * повалено: колізія зникає, машина їде далі зі швидкістю × (1 − A/P), A = (Pmax − 5000)·φmax·0,6496, обʼєкт лягає
  * майже на землю (0,98·φmax) у бік удару. Звук hit_sign (1, 4) чи hit_ironpillar (5, 6), гучність min(P/Pmax, 1).
  *
+ * **Заправка** AnmObj0004: колонки `sharp_benzo_0…2` (вид 3, параметр — номер колонки), решта `sharp_benzo_*` —
+ * нерухомі стовпи навісу. Удар колонки на швидкості ≥ 5 м/с підриває її, далі сусідні (із середньої — навмання вліво
+ * чи вправо) через 4·i ± 1,5 с; перемикачі Benzo<k>Key → 1, BenzoKey → 1 (колізії колонок зникають), звук
+ * blowgazstation2/3. Штраф 6200 і «злочинна недбалість» — якщо вдарив гравець, а станція була ціла (0x4dd2a0, 0x56f120).
+ *
  * **Рухомі предмети** AnmObj0201…0209 (фургони, бочки, каністри) — тверді тіла з масами з vehicle.tech; від удару
  * відлітають і котяться, на місце не повертаються (поза зберігається, поки триває гра).
  *
  * Гіпотези порту: φmax = 0,9·π/2 (у exe 0,9·acos(…) — вектор не зʼясовано); падіння — за 0,5 с; колізія стовпа —
  * брус уздовж ламаної, товщина — подвоєний радіус блоку (не менше 0,1 м), висота — values[0]; форма предмета —
  * габарит моделі (exe — точки Corner_Mark і площини CollisionPlane); лампа й ореол поваленого ліхтаря та
- * світлофор не гаснуть (ще не зроблено).
+ * світлофор не гасне (ще не зроблено); ефект вибуху заправки mnBlow3 — не відтворено (лише перемикачі й звук).
  */
 const MIN_P = 5000;
 const PHI_MAX = 0.9 * (Math.PI / 2);
 const FALL_TIME = 0.5;
 
 export interface Pole {
+  /** 1 знак, 4 світлофор, 5 радар, 6 ліхтар, 3 колонка заправки, 0 — нерухомий стовп навісу заправки. */
   kind: number;
+  /** Імʼя видимого обʼєкта (без `e_`; для ліхтаря `<РЕГ>Fonar<nn>` — ореол `<РЕГ>Glow<nn>`). */
+  name: string;
+  /** Колонка заправки: номер 0…2 і ключ станції (простір екземпляра AnmObj0004). */
+  column?: number;
   /** Простір `<X>Space_`: видимі обʼєкти й поворот при падінні. */
   space: string;
   /** Матриця простору (координати гри). */
@@ -82,10 +92,35 @@ export function findPoles(asm: SceneAssembler, find: (name: string) => Block | u
       const h = asFloat(sd.trigger.values[0]);
       out.push({
         kind,
+        name: d.object.replace(/^e_/i, ''),
         space: d.space.toLowerCase(),
         matrix: m,
         points: sd.points.map((p) => new THREE.Vector3(...p).applyMatrix4(m)),
         height: h > 0.5 && h < 30 ? h : 3,
+        radius: Math.max(0.05, sd.trigger.i2 * 0.01),
+      });
+    }
+  }
+  // Заправки: колонки й стовпи навісу в шаблоні AnmObj0004 (COMMON), розставленому екземплярами.
+  for (const [b] of walk(asm.b3d.blocks)) {
+    const d = b.data;
+    if (d.t !== 18 || !/^anmobj0004$/i.test(d.object)) continue;
+    const tpl = find(d.object);
+    const m = asm.space(d.space);
+    if (!tpl || !m) continue;
+    for (const [s] of walk([tpl])) {
+      const sd = s.data;
+      if (sd.t !== 20 || !/^sharp_benzo_/i.test(s.name)) continue;
+      const v = sd.trigger.values;
+      const column = v.length > 2 && (v[1] & 0xffff) === 2 && v[1] >>> 16 === 3 ? v[2] & 0xff : undefined;
+      out.push({
+        kind: column === undefined ? 0 : 3,
+        name: b.name,
+        column,
+        space: d.space.toLowerCase(),
+        matrix: m,
+        points: sd.points.map((p) => new THREE.Vector3(...p).applyMatrix4(m)),
+        height: 3,
         radius: Math.max(0.05, sd.trigger.i2 * 0.01),
       });
     }
@@ -95,7 +130,7 @@ export function findPoles(asm: SceneAssembler, find: (name: string) => Block | u
 
 /** Простори стовпів і рухомі предмети — поза злиттям нерухомої геометрії (позначка noMerge). */
 export function markObjects(root: THREE.Object3D, poles: Pole[]): Movable[] {
-  const spaces = new Set(poles.map((p) => p.space));
+  const spaces = new Set(poles.filter((p) => p.kind !== 0 && p.kind !== 3).map((p) => p.space));
   const movables: Movable[] = [];
   root.traverse((o) => {
     const space = String(o.userData.space ?? '').toLowerCase();
@@ -128,8 +163,20 @@ interface MovableState {
 }
 
 export interface ObjectEvent {
-  sound: 'hit_sign' | 'hit_ironpillar';
+  sound: string;
   volume: number;
+  /** Підрив заправки: хто вдарив (тіло) і чи станція була ціла (штраф 6200). */
+  benzo?: { body: number; intact: boolean };
+}
+
+interface Station {
+  /** Підірвані колонки — біти 1 << k (як +0x1a0 у exe). */
+  bits: number;
+  queue: { column: number; at: number }[];
+  time: number;
+  /** Перемикачі в моделі екземпляра: імʼя → групи станів. */
+  switches: Map<string, THREE.Object3D[]>;
+  columns: PoleState[];
 }
 
 export class WorldObjects {
@@ -139,6 +186,10 @@ export class WorldObjects {
   private readonly fallen = new Map<string, { axis: THREE.Vector3; to: number }>();
   private readonly poses = new Map<string, { p: RAPIER.Vector; q: RAPIER.Rotation }>();
   private readonly prevVel = new Map<number, { v: RAPIER.Vector; w: RAPIER.Vector }>();
+  private readonly stations = new Map<string, Station>();
+  /** Стан заправок (біти) — переживає вивантаження регіону. */
+  private readonly stationBits = new Map<string, number>();
+  private glows = new Map<string, THREE.Object3D>();
 
   constructor(private readonly rapier: RAPIER.World) {}
 
@@ -167,6 +218,27 @@ export class WorldObjects {
       return st;
     });
     this.poles.set(id, ps);
+    root.getObjectByName('glows')?.children.forEach((g) => g.name && this.glows.set(g.name.toLowerCase(), g));
+    for (const s of ps) {
+      if (s.def.kind === 6 && s.down) this.glows.get(s.def.name.replace(/fonar/i, 'glow').toLowerCase())?.removeFromParent();
+      if (s.def.kind !== 3) continue;
+      const key = `${id}:${s.def.space}`;
+      let st = this.stations.get(key);
+      if (!st) {
+        const switches = new Map<string, THREE.Object3D[]>();
+        for (const o of byspace.get(s.def.space) ?? [])
+          o.traverse((x) => {
+            const m = /^(benzo\d?key)#(\d+)$/i.exec(x.name);
+            if (!m) return;
+            const list = switches.get(m[1].toLowerCase()) ?? switches.set(m[1].toLowerCase(), []).get(m[1].toLowerCase())!;
+            list[Number(m[2])] = x;
+          });
+        st = { bits: 0, queue: [], time: 0, switches, columns: [] };
+        this.stations.set(key, st);
+      }
+      st.columns.push(s);
+    }
+    for (const [key, st] of this.stations) if (key.startsWith(`${id}:`)) this.applyStation(st, this.stationBits.get(key) ?? 0);
     this.movables.set(
       id,
       movables.map((def) => {
@@ -184,6 +256,7 @@ export class WorldObjects {
     }
     this.poles.delete(id);
     this.movables.delete(id);
+    for (const key of [...this.stations.keys()]) if (key.startsWith(`${id}:`)) this.stations.delete(key);
   }
 
   /** Перед кроками фізики: швидкості тіл (імпульс удару — до зіткнення). */
@@ -204,9 +277,22 @@ export class WorldObjects {
           this.tilt(s, s.fall.axis, s.fall.to * s.fall.t * s.fall.t);
           if (s.fall.t >= 1) s.fall = null;
         }
-        if (s.down || !s.colliders.length) continue;
-        this.checkPole(s, ev);
+        if (s.down || !s.colliders.length || s.def.kind === 0) continue;
+        if (s.def.kind === 3) this.checkColumn(s, ev);
+        else this.checkPole(s, ev);
       }
+    for (const [key, st] of this.stations) {
+      st.time += dt;
+      for (const q of [...st.queue]) {
+        if (q.at > st.time) continue;
+        st.queue.splice(st.queue.indexOf(q), 1);
+        if (st.bits & (1 << (2 * q.column))) continue;
+        st.bits |= 1 << (2 * q.column);
+        this.stationBits.set(key, st.bits);
+        this.applyStation(st, st.bits);
+        ev.push({ sound: q.column % 2 ? 'blowgazstation3' : 'blowgazstation2', volume: 1 });
+      }
+    }
     for (const list of this.movables.values())
       for (const m of list) {
         if (m.body.isSleeping()) continue;
@@ -217,6 +303,48 @@ export class WorldObjects {
         m.def.object.matrixWorldNeedsUpdate = true;
       }
     return ev;
+  }
+
+  /** Тіло, що торкається колізій стовпа (динамічне). */
+  private touching(s: PoleState): RAPIER.RigidBody | null {
+    let hit: RAPIER.RigidBody | null = null;
+    for (const c of s.colliders)
+      this.rapier.contactPairsWith(c, (other) => {
+        const b = other.parent();
+        if (hit || !b || !b.isDynamic()) return;
+        this.rapier.contactPair(c, other, (m) => {
+          if (m.numContacts() > 0) hit = b;
+        });
+      });
+    return hit;
+  }
+
+  /** Колонка заправки: удар ≥ 5 м/с — підрив і ланцюг до сусідніх. */
+  private checkColumn(s: PoleState, ev: ObjectEvent[]): void {
+    const st = [...this.stations.values()].find((x) => x.columns.includes(s));
+    const k = s.def.column ?? 0;
+    if (!st || st.bits & (1 << (2 * k)) || st.queue.length) return;
+    const body = this.touching(s);
+    const pv = body && this.prevVel.get(body.handle);
+    if (!body || !pv || Math.hypot(pv.v.x, pv.v.y, pv.v.z) < 5) return;
+    ev.push({ sound: 'blowgazstation2', volume: 1, benzo: { body: body.handle, intact: st.bits === 0 } });
+    // Порядок: вдарена, далі сусідні; із середньої — навмання вліво чи вправо.
+    const order = k === 1 ? (Math.random() < 0.5 ? [1, 0, 2] : [1, 2, 0]) : k === 0 ? [0, 1, 2] : [2, 1, 0];
+    order.forEach((c, i) => st.queue.push({ column: c, at: st.time + (i === 0 ? 0 : 4 * i + (Math.random() * 2 - 1) * 1.5) }));
+  }
+
+  /** Стан заправки: перемикачі Benzo<k>Key, BenzoKey; колізії колонок зникають з першим вибухом. */
+  private applyStation(st: Station, bits: number): void {
+    st.bits = bits;
+    const set = (name: string, on: boolean) => st.switches.get(name)?.forEach((o, i) => o && (o.visible = i === (on ? 1 : 0)));
+    for (let k = 0; k < 3; k++) set(`benzo${k}key`, !!(bits & (1 << (2 * k))));
+    set('benzokey', bits !== 0);
+    if (bits)
+      for (const c of st.columns) {
+        for (const x of c.colliders) this.rapier.removeCollider(x, true);
+        c.colliders = [];
+        c.down = true;
+      }
   }
 
   private checkPole(s: PoleState, ev: ObjectEvent[]): void {
@@ -255,6 +383,7 @@ export class WorldObjects {
     const to = 0.98 * PHI_MAX;
     s.fall = { axis, to, t: 0 };
     this.fallen.set(s.key, { axis, to });
+    if (s.def.kind === 6) this.glows.get(s.def.name.replace(/fonar/i, 'glow').toLowerCase())?.removeFromParent();
     const A = (pmax - MIN_P) * PHI_MAX * 0.6496;
     if (A < P) {
       const k = 1 - A / P;
@@ -277,6 +406,20 @@ export class WorldObjects {
   private poleColliders(def: Pole): RAPIER.Collider[] {
     const out: RAPIER.Collider[] = [];
     const pts = def.points.length === 1 ? [def.points[0], def.points[0].clone().add(new THREE.Vector3(0.01, 0, 0))] : def.points;
+    const flat = pts.every((p) => Math.hypot(p.x - pts[0].x, p.y - pts[0].y) < 0.3);
+    if (flat && pts.length > 1) {
+      // Вертикальна ламана (колонки, стовпи навісу) — стовп від нижньої до верхньої точки.
+      const z0 = Math.min(...pts.map((p) => p.z));
+      const z1 = Math.max(...pts.map((p) => p.z));
+      const c = g2t(new THREE.Vector3(pts[0].x, pts[0].y, (z0 + z1) / 2));
+      return [
+        this.rapier.createCollider(
+          RAPIER.ColliderDesc.cuboid(def.radius, Math.max(0.2, (z1 - z0) / 2), def.radius)
+            .setTranslation(c.x, c.y, c.z)
+            .setCollisionGroups(groups(GROUP_WORLD, 0xffff)),
+        ),
+      ];
+    }
     for (let i = 0; i + 1 < pts.length; i++) {
       const a = g2t(pts[i]);
       const b = g2t(pts[i + 1]);

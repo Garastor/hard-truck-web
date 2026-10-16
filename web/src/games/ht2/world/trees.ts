@@ -311,6 +311,8 @@ export function buildGlows(b3d: B3d, rmp: RmpArchive): THREE.Group {
     if (d.t !== 40 || d.name2 !== '$$DynamicGlow') continue;
     const [x, y, z, r] = d.bound;
     const s = new THREE.Sprite(mat);
+    // Імʼя `<РЕГ>Glow<nn>` — ореол гасне, коли ліхтар збито (world/objects.ts).
+    s.name = blk.name;
     s.position.set(x, y, z);
     s.scale.setScalar(Math.max(1.5, r * 0.6));
     group.add(s);
