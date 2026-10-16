@@ -533,13 +533,13 @@ body.ht2-orig-ui .touch-top .touch-btn svg {
   height: 20px;
 }
 
-/* Увімкнене / натиснуте — скло світлішає, як підсвічене табло. */
+/* Увімкнене / натиснуте — світлішає лише скло (обідок той самий, не блищить сильніше), як підсвічене табло. */
 body.ht2-orig-ui .ht2-hud button.on,
 body.ht2-orig-ui .ht2-hud button:active,
 body.ht2-orig-ui .touch-top .touch-btn.on,
 body.ht2-orig-ui .touch-top .touch-btn.pressed {
   background: none;
-  filter: brightness(1.35) saturate(1.2);
+  border-image-source: var(--ht2-lcd-on);
 }
 
 body.ht2-orig-ui .ht2-hud button.off,

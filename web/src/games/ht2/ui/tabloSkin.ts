@@ -29,7 +29,8 @@ export function applyTabloSkin(art: EscArt): void {
   };
   const st = document.documentElement.style;
   st.setProperty('--ht2-metal', metalFlat(tablo));
-  st.setProperty('--ht2-lcd', lcdDimmed(tablo));
+  st.setProperty('--ht2-lcd', lcdDimmed(tablo, false));
+  st.setProperty('--ht2-lcd-on', lcdDimmed(tablo, true));
   st.setProperty('--ht2-lcd-flat', url(LCD_FLAT));
 }
 
@@ -62,9 +63,10 @@ function metalFlat(tablo: HTMLCanvasElement): string {
 
 /**
  * LCD-клітинка з приглушеним хромовим обідком (на прохання користувача — на 30 % менш хромований): пікселі обідка
- * (не зелене скло) на 30 % наближено до середнього кольору металу смуги.
+ * (не зелене скло) на 30 % наближено до середнього кольору металу смуги. lit — увімкнена / натиснута кнопка:
+ * світлішає лише скло (×1,35, насиченість ×1,2), обідок той самий — не блищить сильніше.
  */
-function lcdDimmed(tablo: HTMLCanvasElement): string {
+function lcdDimmed(tablo: HTMLCanvasElement, lit: boolean): string {
   const g = tablo.getContext('2d')!;
   const mean = metalMean(tablo);
   const img = g.getImageData(...LCD);
@@ -72,6 +74,10 @@ function lcdDimmed(tablo: HTMLCanvasElement): string {
   for (let i = 0; i < d.length; i += 4) {
     const glass = d[i + 1] > d[i] + 15 && d[i + 1] > d[i + 2];
     if (!glass) for (let k = 0; k < 3; k++) d[i + k] = d[i + k] * 0.7 + mean[k] * 0.3;
+    else if (lit) {
+      const l = (d[i] + d[i + 1] + d[i + 2]) / 3;
+      for (let k = 0; k < 3; k++) d[i + k] = Math.min(255, (l + (d[i + k] - l) * 1.2) * 1.35);
+    }
   }
   const c = document.createElement('canvas');
   c.width = LCD[2];
