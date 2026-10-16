@@ -1603,10 +1603,8 @@ export class DriveSession {
       }, 4000);
     }
     if (this.navMap) {
-      const p = (t: TruckVehicle) => {
-        const v = t.body.translation();
-        return new THREE.Vector3(v.x, v.y, v.z);
-      };
+      // Позиції — моделей (згладжені між кроками фізики), не тіл: інакше точки на карті смикались би.
+      const p = (t: TruckVehicle) => t.visual.position.clone();
       this.navMap.update(dt, p(this.truck), this.truck.forward(), this.opponents.map((o) => p(o.truck)));
     }
     // Під дахом (кімнати з подією 4 «tunnel_rain» — тунелі) дощу немає: ні струменів, ні нових крапель.

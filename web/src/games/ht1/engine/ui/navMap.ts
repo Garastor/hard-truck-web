@@ -12,6 +12,8 @@ const SIZE = 96;
 const RANGE = 260;
 /** Довші відрізки ліній ділимо на шматки не довші за цей, м: колір (покриття) може змінитися посередині. */
 const COLOR_STEP = 10;
+/** Поворот карти за курсом — згладжений (1/с): без цього вона тремтіла б від дрібних змін курсу. */
+const YAW_FOLLOW = 10;
 
 /** Колір відрізка дороги на карті (null — як у попереднього); без функції — усі лінії HUD_CYAN. */
 export type RoadColor = (a: THREE.Vector3, b: THREE.Vector3) => string | null;
@@ -21,14 +23,18 @@ export class NavMap {
   private readonly ctx: CanvasRenderingContext2D;
   /** Лінії доріг за кольором. */
   private readonly roads = new Map<string, Path2D>();
-  private timer = 0;
   private readonly colored: boolean;
+  /** Пікселів полотна на одиницю карти (SIZE): полотно — у роздільності екрана, малюємо в одиницях SIZE. */
+  private readonly res: number;
+  private yaw: number | null = null;
 
   constructor(parent: HTMLElement, net: Pick<WayNet, 'lines'>, colorOf?: RoadColor) {
     this.el = document.createElement('canvas');
     this.el.className = 'pixel nav-map';
-    this.el.width = this.el.height = SIZE;
     const s = hudScale() * (matchMedia('(pointer: coarse)').matches ? 1.25 : 1);
+    // Роздільність екрана (не більше ×2 — телефон), а не 96 px з розтягуванням: лінії рухаються плавно, не сходинками.
+    this.res = s * Math.min(window.devicePixelRatio || 1, 2);
+    this.el.width = this.el.height = Math.round(SIZE * this.res);
     this.el.style.width = this.el.style.height = `${SIZE * s}px`;
     this.ctx = this.el.getContext('2d')!;
     this.colored = !!colorOf;
@@ -61,16 +67,26 @@ export class NavMap {
     parent.append(this.el);
   }
 
-  /** Перемальовуємо 10 разів на секунду. target — куди їхати (зелена точка; далі за край карти — на краю). */
+  /**
+   * Перемальовуємо щокадру (раніше — 10 разів на секунду, карта рухалась ривками). target — куди їхати (зелена
+   * точка; далі за край карти — на краю).
+   */
   update(dt: number, me: THREE.Vector3, heading: THREE.Vector3, rivals: THREE.Vector3[], target?: THREE.Vector3 | null): void {
-    if ((this.timer -= dt) > 0) return;
-    this.timer = 0.1;
     const ctx = this.ctx;
+    ctx.setTransform(this.res, 0, 0, this.res, 0, 0);
     frame(ctx, 0, 0, SIZE, SIZE);
     const c = SIZE / 2;
     const k = (SIZE / 2 - 4) / RANGE;
     // Повертаємо так, щоб напрям руху дивився вгору: у площині XZ (Z — до глядача) кут = atan2(x, -z).
-    const yaw = Math.atan2(heading.x, -heading.z);
+    const want = Math.atan2(heading.x, -heading.z);
+    if (this.yaw === null) this.yaw = want;
+    else {
+      let d = want - this.yaw;
+      d -= Math.round(d / (2 * Math.PI)) * 2 * Math.PI;
+      // Розворот на місці, рестарт — одразу.
+      this.yaw = Math.abs(d) > 1.5 ? want : this.yaw + d * (1 - Math.exp(-dt * YAW_FOLLOW));
+    }
+    const yaw = this.yaw;
     ctx.save();
     ctx.beginPath();
     ctx.rect(2, 2, SIZE - 4, SIZE - 4);
