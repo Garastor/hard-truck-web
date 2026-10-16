@@ -467,6 +467,11 @@ body.ht2-esc-open .ht2-drive-bar {
 /* З графікою оригіналу — стиль табло: смуги синього металу, клітинки LCD-скла, темні літери й значки. */
 body.ht2-orig-ui .touch-top {
   top: calc(env(safe-area-inset-top, 0px) + var(--ht2-tablo-h, 0px) + 6px);
+  /* Як ліва група (.ht2-hud): 8 px від краю, а не 16 (--sr). */
+  right: max(8px, env(safe-area-inset-right));
+  /* Ціле число пікселів (не 8 px × --ui): дробовий проміжок ставив групу «•••» на півпіксель, і ряди клітинок
+     округлювалися до пікселів екрана по-різному на ПК і телефоні. */
+  gap: 6px;
 }
 
 /* Телефон у ландшафті: обидві групи — на 60% бокового відступу (52 px → ≈31 px), запас під виріз лишається. */
@@ -478,6 +483,15 @@ body.ht2-orig-ui .touch-top {
   body.ht2-orig-ui .touch-top {
     right: calc(var(--sr) * 0.6);
   }
+
+  /* Бічні панелі — на 40% ближче до краю: 60% безпечної зони (виріз), а не вся вона. */
+  .ht2-panel.right {
+    right: calc(env(safe-area-inset-right, 0px) * 0.6);
+  }
+
+  .ht2-panel.left {
+    left: calc(env(safe-area-inset-left, 0px) * 0.6);
+  }
 }
 
 body.ht2-orig-ui .ht2-hud,
@@ -485,8 +499,8 @@ body.ht2-orig-ui .touch-top-row,
 body.ht2-orig-ui .touch-more {
   gap: 2px;
   padding: 0;
-  border: 6px solid transparent;
-  border-image: var(--ht2-metal) 8 fill / 6px stretch;
+  border: 3px solid transparent; /* підкладка виступає на 3 px (було 6 — група на 5 % менша, на прохання користувача) */
+  border-image: var(--ht2-metal) 8 fill / 3px stretch;
 }
 
 body.ht2-orig-ui .touch-more {
@@ -522,13 +536,13 @@ body.ht2-orig-ui .touch-top .touch-btn svg {
   height: 20px;
 }
 
-/* Увімкнене / натиснуте — скло світлішає, як підсвічене табло. */
+/* Увімкнене / натиснуте — світлішає лише скло (обідок той самий, не блищить сильніше), як підсвічене табло. */
 body.ht2-orig-ui .ht2-hud button.on,
 body.ht2-orig-ui .ht2-hud button:active,
 body.ht2-orig-ui .touch-top .touch-btn.on,
 body.ht2-orig-ui .touch-top .touch-btn.pressed {
   background: none;
-  filter: brightness(1.35) saturate(1.2);
+  border-image-source: var(--ht2-lcd-on);
 }
 
 body.ht2-orig-ui .ht2-hud button.off,
@@ -541,7 +555,10 @@ body.ht2-orig-ui .touch-top .touch-btn.unavailable {
   image-rendering: pixelated;
 }
 
-/* Кермо й педалі — без рамок: саме LCD-скло, що згасає до країв, і темна стрілка. */
+/*
+ * Кермо й педалі — без рамок: LCD-скло, прозоре на 60 % (натиснуто — на 10 % і світліше), темна стрілка. Скло —
+ * окремим шаром ::before, щоб прозорість і яскравість не зачіпали стрілку.
+ */
 body.ht2-orig-ui .touch-btn.left,
 body.ht2-orig-ui .touch-btn.right,
 body.ht2-orig-ui .touch-btn.brake,
@@ -549,18 +566,65 @@ body.ht2-orig-ui .touch-btn.gas {
   border: 0;
   border-radius: 0;
   box-shadow: none;
-  background: var(--ht2-lcd-flat) center / 100% 100% no-repeat;
+  background: none;
   color: rgb(24, 40, 22);
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent), linear-gradient(180deg, transparent, #000 22%, #000 78%, transparent);
-  -webkit-mask-composite: source-in;
-  mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent), linear-gradient(180deg, transparent, #000 22%, #000 78%, transparent);
-  mask-composite: intersect;
+  isolation: isolate;
+}
+
+body.ht2-orig-ui .touch-btn.left::before,
+body.ht2-orig-ui .touch-btn.right::before,
+body.ht2-orig-ui .touch-btn.brake::before,
+body.ht2-orig-ui .touch-btn.gas::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--ht2-lcd-flat) center / 100% 100% no-repeat;
+  opacity: 0.4;
 }
 
 body.ht2-orig-ui .touch-btn.left.pressed,
 body.ht2-orig-ui .touch-btn.right.pressed,
 body.ht2-orig-ui .touch-btn.brake.pressed,
 body.ht2-orig-ui .touch-btn.gas.pressed {
-  background: var(--ht2-lcd-flat) center / 100% 100% no-repeat;
+  background: none;
+}
+
+body.ht2-orig-ui .touch-btn.left.pressed::before,
+body.ht2-orig-ui .touch-btn.right.pressed::before,
+body.ht2-orig-ui .touch-btn.brake.pressed::before,
+body.ht2-orig-ui .touch-btn.gas.pressed::before {
+  opacity: 0.9;
   filter: brightness(1.35) saturate(1.2);
+}
+
+/* Відкрита бічна панель F1–F4: ліва група (згорнута «☰») — під панеллю, щоб не перекривати її. */
+body.ht2-side-open .ht2-hud {
+  z-index: 2;
+}
+
+/*
+ * Зовнішні кути смуг кнопок і кнопок керма й педалей — заокруглені радіусом внутрішнього кута рамок (хромовий
+ * обідок LCD-клітинки табло ≈ 3 px) плюс 1,5 px — на прохання користувача; border-image не зважає на border-radius — тому обрізання clip-path.
+ */
+body.ht2-orig-ui .ht2-hud,
+body.ht2-orig-ui .touch-top-row,
+body.ht2-orig-ui .touch-more,
+body.ht2-orig-ui .touch-btn.left,
+body.ht2-orig-ui .touch-btn.right,
+body.ht2-orig-ui .touch-btn.brake,
+body.ht2-orig-ui .touch-btn.gas {
+  clip-path: inset(0 round 4.5px);
+}
+
+/* Дзеркало заднього огляду (drive.ts renderMirror): рамка mirrT?.msk поверх вікна з видом назад; без графіки — лінія. */
+.ht2-mirror {
+  position: fixed;
+  z-index: 3;
+  pointer-events: none;
+}
+
+div.ht2-mirror {
+  box-sizing: border-box;
+  border: 2px solid #8c8c8c;
 }

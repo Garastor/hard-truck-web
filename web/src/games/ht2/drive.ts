@@ -3,7 +3,7 @@ import { HT2_ENGINE, HT2_INPUT, HT2_KING, HT2_KING_BRAKE, HT2_KING_ENGINE, HT2_R
 import * as THREE from 'three';
 import type { FileSource } from '@shared/source';
 import { EngineAudio } from './engine/audio/engineAudio';
-import { levelCollision } from './engine/physics/collision';
+import { instanceCollision, levelCollision } from './engine/physics/collision';
 import { TruckVehicle } from './engine/vehicle/truckVehicle';
 import { ROUGH_ASPHALT, ROUGH_GROUND } from './engine/vehicle/kingModel';
 import { buildTruckModel, type TruckDef } from './engine/vehicle/trucks';
@@ -16,9 +16,12 @@ import { Ht2World, toThree, type LoadedRegion } from './world/world';
 import { AutoPilot } from './engine/vehicle/autopilot';
 import { Ht2Roads } from './world/roads';
 import { Traffic, recolor, trafficKinds } from './traffic/traffic';
+import { Accidents } from './traffic/accidents';
+import { TrafficLights } from './world/trafficLights';
 import { CareerMode } from './career/careerMode';
-import { Police, SPEED_LIMIT } from './traffic/police';
-import { Mafia } from './traffic/mafia';
+import { Police, parseAmbushes, type PoliceEvent } from './traffic/police';
+import { RED_LIGHT_FINE, bribeSum, copsTakeBribes, totalFine, wanted } from './career/law';
+import { Mafia, parseMafiaAmbushes } from './traffic/mafia';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
 import { WorldMap, type MapPoint } from './world/worldMap';
@@ -68,6 +71,17 @@ const NOTE_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentC
  * меншою в кадрі.
  */
 const CHASE_BACK = 8.8;
+/**
+ * Дзеркало заднього огляду (M) — лише з кабіни, посередині під табло, у рамці `m16\mirrT?.msk` з esc16.RES
+ * (S/M/L/H — 170…480 px: розмір за роздільністю, гіпотеза; ≈ 30 % ширини екрана — тут найдетальніша H, масштабована).
+ * Вікно рамки H — x 10…469, y 10…159. Кут огляду — підібраний (у king.exe не знайдено).
+ */
+const MIRROR_MASK = 'm16\\mirrth.msk';
+const MIRROR_W = 480;
+const MIRROR_H = 170;
+const MIRROR_IN = [10, 10, 469, 159] as const;
+const MIRROR_SHARE = 0.3;
+const MIRROR_FOV = 20;
 const CHASE_UP = 4.2;
 const CHASE_PITCH = Math.asin(0.437);
 /**
@@ -111,8 +125,6 @@ const RESCUE_SECONDS = 5;
 const RESCUE_COST = 1000;
 /** Рація: радіус зв'язку, м; скільки після штрафу можна домовитися, с; перемирʼя з мафією, с (гіпотези). */
 const RADIO_R = 500;
-const BRIBE_WINDOW = 120;
-const TRUCE_SECONDS = 600;
 
 /**
  * Їзда у світі Дальнобойщиків 2 (G4): вантажівка з vehicle.tech і TRUCKS.B3D на тій самій фізиці, що й у першій
@@ -155,6 +167,15 @@ export class Ht2Drive {
   private readonly input = new Input(HT2_INPUT);
   private audio: EngineAudio | null = null;
   private camMode: CamMode = 'chase';
+  /** Дзеркало заднього огляду ввімкнене (видно лише з кабіни). */
+  private mirrorOn = false;
+  private mirror: {
+    rt: THREE.WebGLRenderTarget;
+    cam: THREE.PerspectiveCamera;
+    scene: THREE.Scene;
+    ortho: THREE.OrthographicCamera;
+    frame: HTMLElement;
+  } | null = null;
   private readonly camPos = new THREE.Vector3();
   private readonly camLook = new THREE.Vector3();
   private cockpit = new THREE.Vector3();
@@ -170,6 +191,22 @@ export class Ht2Drive {
   private safe: { position: THREE.Vector3; forward: THREE.Vector3 } | null = null;
   private safeTimer = 0;
   private readonly hud = document.createElement('div');
+  /** Ліва група кнопок під «☰» і сама «☰» (згортається, коли відкрито бічну панель F1–F4). */
+  private hudGroup: HTMLElement | null = null;
+  private hudBurger: HTMLElement | null = null;
+  private sidePanelOpen = false;
+  /** Дотик поза бічною панеллю F1–F4 (не по кнопці) — закрити її; дотик проходить далі (кермо, педалі працюють). */
+  private readonly onOutsideTap = (e: PointerEvent) => {
+    if (this.fPanels?.open == null && !this.radio?.open) return;
+    // Панель пропускає дотики крізь себе (pointer-events: none) — тож попадання в неї — за прямокутником.
+    if ((e.target as Element | null)?.closest('button')) return;
+    for (const p of document.querySelectorAll('.ht2-panel')) {
+      const r = p.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return;
+    }
+    this.fPanels?.close();
+    this.radio?.close();
+  };
   private readonly bar = document.createElement('div');
   private touch: HTMLElement | null = null;
   /** Дороги всіх регіонів (WAY) і автопілот (клавіша P; для тестів — smoke). */
@@ -178,6 +215,15 @@ export class Ht2Drive {
   traffic: Traffic | null = null;
   careerMode: CareerMode | null = null;
   police: Police | null = null;
+  /** ДТП гравця (штраф за порушення ПДР при зіткненні, king.exe 0x4cfe70) — лише в кар'єрі. */
+  accidents: Accidents | null = null;
+  /** Світлофори (тригери 0x1D і лампи TrafficLightKey, king.exe 0x4ce160 / 0x56ffd0). */
+  readonly lights = new TrafficLights();
+  /** Хто з інспекторів COP1…COP15 бере хабар (names.sch). */
+  private copBribes: boolean[] = [];
+  /** Радар-детектор: фаза блимання лампи RD_LampKey і чи світить. */
+  private radarBlink = 0;
+  private radarLit = false;
   mafia: Mafia | null = null;
   private signs: Signs | null = null;
   markets: Markets | null = null;
@@ -360,14 +406,37 @@ export class Ht2Drive {
     };
     if (o.career) this.markets = new Markets(this.world.scene, this.rapier, this.trucks, parseMarkets(regionMods, this.world.regions.values()), (p) => this.groundAtPublic(p).y - 2.5);
     if (o.career) {
-      const [merch, messages, restable] = await Promise.all([
+      const [merch, messages, restable, names] = await Promise.all([
         o.source.read('merchandise.sch').then(readSch).catch(() => []),
         o.source.read('Ms.sch').then(readSch).catch(() => []),
         o.source.read('restable.sch').then(readSch).catch(() => []),
+        o.source.read('names.sch').then(readSch).catch(() => []),
       ]);
       this.careerMode = new CareerMode(this, o.career, merch, messages, parseUpgrades(restable, true), parseTowns(regionMods), parseServices(regionMods));
-      this.police = new Police(this.world.scene, this.rapier, this.trucks, this.world.regions.values());
-      this.mafia = new Mafia(this.world.scene, this.rapier, this.trucks, this.world.regions.values(), (p) => this.groundAtPublic(p).y - 2.5);
+      this.copBribes = copsTakeBribes(names);
+      this.police = new Police(parseAmbushes(regionMods, this.world.regions.values()), {
+        rapier: this.rapier,
+        roads: this.roads,
+        make: (pos, forward) => this.makeCar('BmwM5police', 0, pos, forward, 0),
+        remove: (v) => this.removeCar(v),
+        sees: (p) => this.canSee(p),
+        obstacles: () => [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? [])],
+        props: (names, on) => this.world.setAmbushProps(names, on),
+        people: this.copBribes.length || 15,
+      });
+      // Мафія (Б10, re/notes/ht2/mafia.md): засідки MAFIA з mod_*.sch, машини Cayman на моделі руху king.exe.
+      this.mafia = new Mafia(parseMafiaAmbushes(regionMods, this.world.regions.values()), {
+        rapier: this.rapier,
+        roads: this.roads,
+        make: (pos, forward) => this.makeCar('Cayman', 0, pos, forward, 0),
+        remove: (v) => this.removeCar(v),
+        sees: (p) => this.canSee(p),
+        obstacles: () => [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? [])],
+        props: (names, on) => this.world.setAmbushProps(names, on),
+        propPositions: (name) => [...this.world.loaded.values()].flatMap((r) => (r.props.get(name) ?? []).map((o) => o.getWorldPosition(new THREE.Vector3()))),
+        policeNear: (p, r) => this.police?.near(p, r) ?? false,
+      });
+      this.accidents = this.makeAccidents();
     }
     if (o.race) {
       const ms = await o.source.read('Ms.sch').then(readSch).catch(() => []);
@@ -395,34 +464,15 @@ export class Ht2Drive {
       ghost: count('ghost', 25),
       density: o.settings?.traffic ?? 1,
     });
+    this.traffic.signals = this.lights;
     this.traffic.view = {
       range: () => (this.world.scene.fog as THREE.Fog | null)?.far ?? VIEW_FALLBACK,
       sees: (p) => this.canSee(p),
     };
     // Фізичні машини трафіку поруч з гравцем — та сама модель руху king.exe, що й у гравця, з їхнім vehicle.tech.
     this.traffic.physics = {
-      make: (kind, pos, forward, speed) => {
-        const rec = this.trucks.records.find((r) => r.carNode === kind.model);
-        const def = rec && truckDef(this.trucks, rec);
-        const model = def && buildTruckModel(this.trucks.asm, def, false);
-        if (!rec || !def || !model) return null;
-        if (kind.variant > 0) recolor(model.root, this.trucks, kind.variant + 1);
-        const v = new TruckVehicle(this.rapier, def, model, { position: this.groundAt(pos), forward: forward.clone() }, {
-          cargoMass: 0,
-          surfaceEffects: !this.arcade,
-          engine: HT2_KING_ENGINE,
-          brake: HT2_KING_BRAKE,
-          king: { ...HT2_KING, travel: rec.suspension },
-        });
-        v.body.setLinvel({ x: forward.x * speed, y: 0, z: forward.z * speed }, true);
-        v.engine.engageFor(speed);
-        this.world.scene.add(v.visual);
-        return v;
-      },
-      remove: (v) => {
-        this.world.scene.remove(v.visual);
-        v.dispose();
-      },
+      make: (kind, pos, forward, speed) => this.makeCar(kind.model, kind.variant, pos, forward, speed),
+      remove: (v) => this.removeCar(v),
     };
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);
     this.input.onCommand = (cmd) => {
@@ -439,8 +489,10 @@ export class Ht2Drive {
       }
       if (cmd === 'lights') this.lightsManual = !this.lamps[0]?.visible;
       // Двірники — окрема дія гри («Wipers», W); у порту без натискання вмикаються в дощ.
-      if (cmd === 'wipers') this.wipersManual = !(this.glassRain?.wipersOn ?? this.raining);
-      if (cmd === 'reset') this.recover();
+      if (cmd === 'wipers') this.wipersManual = !(this.glassRain?.wipersOn ?? this.wipersManual ?? this.raining);
+      if (cmd === 'mirror') this.mirrorOn = !this.mirrorOn;
+      // «Відновитися» — те саме, що 911 у меню Esc (на прохання користувача).
+      if (cmd === 'reset') this.call911();
       if (cmd === 'menu') this.toggleEsc();
       if (cmd === 'f1' || cmd === 'f2' || cmd === 'f3' || cmd === 'f4') this.toggleF(Number(cmd[1]) as FPanel);
       if (cmd === 'f5') this.radio?.toggle();
@@ -494,7 +546,16 @@ export class Ht2Drive {
       group.hidden = !group.hidden;
       burger.classList.toggle('on', !group.hidden);
     });
+    // Кнопка групи, що відкриває панель (Меню, Інфо, Рейтинг, Компанія, Рація), згортає групу; музика — ні.
+    group.addEventListener('click', (e) => {
+      if ((e.target as Element).closest('button') === music) return;
+      group.hidden = true;
+      burger.classList.remove('on');
+    });
     this.hud.append(burger, group);
+    this.hudGroup = group;
+    this.hudBurger = burger;
+    document.addEventListener('pointerdown', this.onOutsideTap, true);
     // У шарі overlay — під вікнами складу й СТО (вони теж там, вище).
     o.overlay.append(this.hud, this.bar);
     // Інтерфейс оригіналу — до першого кадру, щоб не блимав інтерфейс порту (графіка вже вантажиться зі start).
@@ -586,6 +647,11 @@ export class Ht2Drive {
   /** Колізії регіону: підлога й стіни з `hit_road_*`/`hit_obj_*` (усі кімнати регіону разом). */
   private addRegion(reg: LoadedRegion): void {
     const col = levelCollision(reg.built.assembler.b3d);
+    // Будівлі складів, СТО, заправки — окремі обʼєкти колізій, розставлені екземплярами.
+    const asm = reg.built.assembler;
+    const inst = instanceCollision(asm.b3d, (n) => asm.block(n) ?? this.world.common.block(n), (n) => asm.space(n));
+    col.floors.push(...inst.floors);
+    col.walls.push(...inst.walls);
     const cs: RAPIER.Collider[] = [];
     // Процедурний рельєф (aa) — heightfield.
     if (reg.terrain) cs.push(terrainCollider(this.rapier, reg.terrain));
@@ -654,6 +720,70 @@ export class Ht2Drive {
     }
     if (dv.length() < 2) return;
     this.dents?.hit(dv.applyQuaternion(this.truck.visual.quaternion.clone().invert()));
+  }
+
+  /**
+   * Облік ДТП (traffic/accidents.ts): партнери — динамічні тіла поблизу (машини трафіку у фізичному режимі,
+   * міліція, суперники); кути кузова — ±1,25 м убік і ±3,5 м уздовж від центру тягача (гіпотеза: у king.exe —
+   * точки тіла +0xEF8).
+   */
+  private makeAccidents(): Accidents {
+    const fines = () => this.careerMode!.fines;
+    return new Accidents({
+      world: this.rapier,
+      roads: this.roads,
+      player: () => {
+        const pos = this.truck.visual.position;
+        const fwd = this.truck.forward().setY(0).normalize();
+        const side = new THREE.Vector3(-fwd.z, 0, fwd.x);
+        const lv = this.truck.body.linvel();
+        const corners = [
+          [1, 1],
+          [1, -1],
+          [-1, 1],
+          [-1, -1],
+        ].map(([a, b]) => pos.clone().addScaledVector(fwd, 3.5 * a).addScaledVector(side, 1.25 * b));
+        return { bodies: [this.truck.body, ...(this.trailer ? [this.trailer.body] : [])], pos, forward: fwd, vel: new THREE.Vector3(lv.x, lv.y, lv.z), corners };
+      },
+      candidates: () => {
+        const out: RAPIER.RigidBody[] = [];
+        const p = this.truck.visual.position;
+        this.rapier.bodies.forEach((b) => {
+          if (!b.isDynamic() || b === this.truck.body || b === this.trailer?.body) return;
+          const t = b.translation();
+          if (Math.hypot(t.x - p.x, t.z - p.z) < 150) out.push(b);
+        });
+        return out;
+      },
+      partner: (b) => ({ kind: this.police?.isCop(b) ? 'police' : this.mafia?.isMafia(b) ? 'mafia' : 'car', mass: b.mass() }),
+      mafiaDebt: (amount) => {
+        fines().mafiaDebt = (fines().mafiaDebt ?? 0) + amount;
+        this.careerMode!.persist();
+      },
+      queueAhead: () => {
+        const p = this.truck.visual.position;
+        const f = this.truck.forward();
+        return (this.traffic?.cars ?? []).some((c) => {
+          const rel = c.pos.clone().sub(p);
+          const along = rel.x * f.x + rel.z * f.z;
+          return c.speed < 1 && along > 0 && along < 15 && Math.abs(rel.x * f.z - rel.z * f.x) < 2;
+        });
+      },
+      policeNear: (p) => this.police?.near(p, 200) ?? false,
+      fine: (amount, bits) => {
+        fines().accident += amount;
+        fines().violations |= bits;
+        this.careerMode!.persist();
+      },
+      forget: () => {
+        if (!fines().accident && !fines().violations && !fines().mafiaDebt) return;
+        // 180 с без ДТП (0x4cfe70): відшкодування, порушення й борг мафії забуваються.
+        fines().accident = 0;
+        fines().violations = 0;
+        fines().mafiaDebt = 0;
+        this.careerMode!.persist();
+      },
+    });
   }
 
   /** Ігрових секунд за реальну (повзунок «тривалість доби»). */
@@ -922,6 +1052,21 @@ export class Ht2Drive {
     });
   }
 
+  /**
+   * Бічна панель F1–F4 відкрита — ліва група кнопок згортається й іде під панель (body.ht2-side-open), щоб її не
+   * перекривати; закрита — «☰» знову над сценою.
+   */
+  private syncSidePanel(): void {
+    const open = this.fPanels?.open != null || !!this.radio?.open || !!this.escMenu;
+    if (open === this.sidePanelOpen) return;
+    this.sidePanelOpen = open;
+    document.body.classList.toggle('ht2-side-open', open);
+    if (open && this.hudGroup) {
+      this.hudGroup.hidden = true;
+      this.hudBurger?.classList.remove('on');
+    }
+  }
+
   /** Панель F1–F4: відкрити, та сама — закрити (меню Esc закривається). */
   toggleF(kind: FPanel): void {
     if (!this.fPanels) return;
@@ -951,11 +1096,116 @@ export class Ht2Drive {
     this.navTurn = target ? this.navigator.turn(this.truck.visual.position, this.truck.forward(), target) : null;
   }
 
+  /** Машина з vehicle.tech на моделі руху king.exe (фізичний трафік, міліція). */
+  private makeCar(carNode: string, variant: number, pos: THREE.Vector3, forward: THREE.Vector3, speed: number): TruckVehicle | null {
+    const rec = this.trucks.records.find((r) => r.carNode === carNode);
+    const def = rec && truckDef(this.trucks, rec);
+    const model = def && buildTruckModel(this.trucks.asm, def, false);
+    if (!rec || !def || !model) return null;
+    if (variant > 0) recolor(model.root, this.trucks, variant + 1);
+    const v = new TruckVehicle(this.rapier, def, model, { position: this.groundAt(pos), forward: forward.clone() }, {
+      cargoMass: 0,
+      surfaceEffects: !this.arcade,
+      engine: HT2_KING_ENGINE,
+      brake: HT2_KING_BRAKE,
+      king: { ...HT2_KING, travel: rec.suspension },
+    });
+    v.body.setLinvel({ x: forward.x * speed, y: 0, z: forward.z * speed }, true);
+    v.engine.engageFor(speed);
+    this.world.scene.add(v.visual);
+    return v;
+  }
+
+  private removeCar(v: TruckVehicle): void {
+    this.world.scene.remove(v.visual);
+    v.dispose();
+  }
+
+  /** Міліція (Б9): пости, погоня, попередження, стрілянина, затримання (traffic/police.ts, career/law.ts). */
+  private updatePolice(dt: number): void {
+    const cm = this.careerMode;
+    if (!this.police || !cm || this.paused) return;
+    const lv = this.truck.body.linvel();
+    const events = this.police.update(dt, {
+      body: this.truck.body,
+      pos: this.truck.visual.position,
+      forward: this.truck.forward(),
+      vel: new THREE.Vector3(lv.x, 0, lv.z),
+      wanted: wanted(cm.fines),
+      stealth: this.tuning.stealth,
+    });
+    for (const e of events) this.policeEvent(e);
+  }
+
+  /** Мафія (Б10): на прицілі — борг мафії чи «цікавий мафії»; попередження, стрілянина, напад, міни. */
+  private updateMafia(dt: number): void {
+    const cm = this.careerMode;
+    if (!this.mafia || !cm || this.paused) return;
+    const lv = this.truck.body.linvel();
+    const f = cm.fines;
+    const events = this.mafia.update(dt, {
+      body: this.truck.body,
+      pos: this.truck.visual.position,
+      forward: this.truck.forward(),
+      vel: new THREE.Vector3(lv.x, 0, lv.z),
+      hunted: (f.mafiaDebt ?? 0) > 0 || !!f.mafiaInterest,
+      share: cm.capitalShare(),
+    });
+    for (const e of events) {
+      if (e.kind === 'warn') this.say('ЗУПИНИ МАШИНУ! ТРЕБА ПОГОВОРИТИ', 6);
+      else if (e.kind === 'shot') {
+        this.audio?.play('shoot', Math.max(0.1, 1 - e.dist / 150));
+        if (e.hit) this.audio?.play('hit_bullet');
+      } else if (e.kind === 'attack') void cm.robbed();
+      else if (e.kind === 'mine') {
+        // Вибух міни (mineExplose, 0x56f240): поштовх угору в точці міни [Г: сила], звук mineSound.
+        const m = this.truck.body.mass();
+        this.truck.body.applyImpulseAtPoint({ x: 0, y: m * 3, z: 0 }, e.pos, true);
+        this.audio?.play('mine');
+      }
+    }
+  }
+
+  private policeEvent(e: PoliceEvent): void {
+    const cm = this.careerMode!;
+    if (e.kind === 'speeding') cm.speeding(e.limit, e.speed, e.degree);
+    else if (e.kind === 'warn') {
+      // mess.txt 54/55 і звуки police_01/02 (king.exe 0x56ad20).
+      this.say(e.n === 1 ? 'НЕГАЙНО ЗУПИНІТЬ МАШИНУ' : 'ЗУПИНІТЬСЯ, АБО БУДЕМО СТРІЛЯТИ', 6);
+      this.audio?.play(e.n === 1 ? 'police_01' : 'police_02');
+    } else if (e.kind === 'shot') {
+      this.audio?.play('shoot', Math.max(0.1, 1 - e.dist / 150));
+      if (e.hit) this.audio?.play('hit_bullet');
+    } else if (e.kind === 'arrest') void cm.arrest();
+  }
+
+  /**
+   * Радар-детектор (king.exe 0x538370): пост ближче 100 м → сигнал s = відстань × 0,01; лампа RD_LampKey —
+   * рівень clamp(1 + ⌊3s⌋, 1…3), блимає з частотою 2 + 5s Гц (половину періоду світить), на спалах — звук antiradar.
+   */
+  private updateRadarLamp(dt: number, radar: boolean): void {
+    if (!this.cabSwitch) return;
+    const s = radar ? (this.police?.radarSignal(this.truck.visual.position) ?? 0) : 0;
+    if (s <= 0) {
+      if (this.radarLit) this.cabSwitch('RD_LampKey', 0);
+      this.radarLit = false;
+      this.radarBlink = 0;
+      return;
+    }
+    this.radarBlink = (this.radarBlink + dt * (2 + 5 * s)) % 1;
+    const lit = this.radarBlink < 0.5;
+    if (lit !== this.radarLit) {
+      this.cabSwitch('RD_LampKey', lit ? THREE.MathUtils.clamp(1 + Math.floor(3 * s), 1, 3) : 0);
+      if (lit) this.audio?.play('antiradar');
+      this.radarLit = lit;
+    }
+  }
+
   /** Абоненти рації поруч (RADIO_R): міліція на постах, мафія в засідці чи в погоні, далекобійники; ближчі — першими. */
   private radioContacts(): RadioContact[] {
     const p = this.truck.visual.position;
     const out: (RadioContact & { d: number })[] = [];
-    for (const s of this.police?.nearby(p, RADIO_R) ?? []) out.push({ kind: 'pol', id: s.id, name: 'МІЛІЦІЯ', d: s.pos.distanceTo(p) });
+    for (const s of this.police?.nearby(p, RADIO_R) ?? []) out.push({ kind: 'pol', id: s.person, name: 'МІЛІЦІЯ', d: s.pos.distanceTo(p) });
     for (const s of this.mafia?.nearby(p, RADIO_R) ?? []) out.push({ kind: 'maf', id: s.id, name: 'МАФІЯ', d: s.pos.distanceTo(p) });
     this.truckers?.list.forEach((r, i) => {
       const d = r.truck.visual.position.distanceTo(p);
@@ -987,44 +1237,60 @@ export class Ht2Drive {
         },
       };
     };
-    const truce = (text: string) => () => {
-      this.mafia?.makeTruce(TRUCE_SECONDS);
-      this.say(text);
-    };
     if (c.kind === 'pol') {
-      const f = cm?.lastFine && performance.now() / 1000 - cm.lastFine.at < BRIBE_WINDOW ? cm.lastFine : null;
+      // Хабар (king.exe offerBribe 0x432560): сума — штрафи − 200 (за штраф) чи вартість вантажу − 500 («дах»),
+      // округлена; бере лише інспектор з одиницею в names.sch, інакше — штраф за спробу підкупу (+200 / +500).
+      // id абонента — номер інспектора (портрет escpolice<N>).
+      const takes = !!this.copBribes[c.id];
+      const fineBribe = cm ? bribeSum(totalFine(cm.fines), 200) : 0;
+      const roofBribe = cm?.career.order ? bribeSum(cm.career.order.value, 500) : 0;
+      const refused = (extra: number) => {
+        if (!cm) return;
+        cm.fines.bribery += extra;
+        this.say(cm.msg('FINE_BRIBERY', 'ШТРАФ ЗА СПРОБУ ПІДКУПУ $%g', cm.fines.bribery));
+        cm.persist();
+      };
       return [
         {
           key: 'ask1',
-          price: f ? Math.max(10, Math.round(f.amount * 0.6)) : null,
+          price: fineBribe > 0 ? fineBribe : null,
           act: () => {
-            if (!cm || !f) return;
-            cm.lastFine = null;
-            if (Math.random() < 0.25) {
-              const extra = Math.round(f.amount * 0.6);
-              cm.career.money = Math.max(0, cm.career.money - extra);
-              this.cards?.show(11, { amount: extra });
-              this.say(cm.msg('FINE_BRIBERY', 'ШТРАФ ЗА СПРОБУ ПІДКУПУ $%g', extra));
-            } else {
-              cm.career.money += f.amount;
-              this.say(`ШТРАФ СКАСОВАНО: +$${f.amount}`);
-            }
+            if (!cm) return;
+            if (!takes) return refused(200);
+            // Штрафи міліції обнуляються; борг і інтерес мафії — ні (їх скидає «дах»).
+            Object.assign(cm.fines, { illegal: 0, accident: 0, violations: 0, speeding: 0, redLight: 0, bribery: 0, stolen: 0 });
+            this.say('ШТРАФИ ЗНЯТО');
             cm.persist();
           },
         },
-        { key: 'ask2', price: 800, act: truce('ЗАМОВЛЕННЯ ПІД ОХОРОНОЮ МІЛІЦІЇ') },
+        {
+          key: 'ask2',
+          price: roofBribe > 0 ? roofBribe : null,
+          // «Дах» (0x4725e0): борг і інтерес мафії скидаються — мафія більше не жене.
+          act: () => {
+            if (!takes) return refused(500);
+            if (cm) Object.assign(cm.fines, { mafiaDebt: 0, mafiaInterest: false });
+            cm?.persist();
+            this.say('ЗАМОВЛЕННЯ ПІД ОХОРОНОЮ МІЛІЦІЇ');
+          },
+        },
         { key: 'ask3', ...rivalAct(1000, (r) => (r.eta += 120), 'КОНКУРЕНТА ЗАТРИМАНО') },
         { key: 'ask4', bye: true },
       ];
     }
+    const order = cm?.career.order;
+    const mafiaBribe = cm ? Math.round(0.7 * ((order ? 10 * Math.sqrt(order.goods.price * order.units) : 0) + (cm.fines.mafiaDebt ?? 0))) : 0;
     if (c.kind === 'maf')
       return [
         {
+          // Відкуп (offerBribe, прапорець 8): 0,7 × (вартість вантажу + борг); гроші беруть завжди, у 30 % «кидають»,
+          // інакше лише прапорець 0x100000, який king.exe ніде не читає — борг і інтерес мафії лишаються (mafia.md §6).
           key: 'ask1',
-          price: 1500,
-          act: () => (Math.random() < 0.15 ? this.say('БАНДИТИ ВЗЯЛИ ГРОШІ Й ОБДУРИЛИ') : truce('МАФІЯ ВАС НЕ ЧІПАТИМЕ')()),
+          price: mafiaBribe > 0 ? mafiaBribe : null,
+          act: () => this.say(Math.random() < 0.3 ? 'БАНДИТИ ВЗЯЛИ ГРОШІ Й ОБДУРИЛИ' : 'БАНДИТИ ВЗЯЛИ ГРОШІ'),
         },
         { key: 'ask2', ...rivalAct(2000, (r) => (r.out = true), 'КОНКУРЕНТ ЗІЙШОВ З ДИСТАНЦІЇ') },
+        // «Заказ машины» (0x433660): при боргу чи інтересі мафії — відмова; інакше не розібрано.
         { key: 'ask3', off: true },
         { key: 'ask4', bye: true },
       ];
@@ -1228,6 +1494,61 @@ export class Ht2Drive {
       this.camera.near = near;
       this.camera.updateProjectionMatrix();
     }
+    if (this.mirrorOn && this.camMode === 'cockpit') this.renderMirror(r);
+    else if (this.mirror) this.mirror.frame.hidden = true;
+  }
+
+  /** Дзеркало: вид назад з місця водія, віддзеркалений зліва направо, у вікні рамки оригіналу під табло. */
+  private renderMirror(r: THREE.WebGLRenderer): void {
+    const size = r.getSize(new THREE.Vector2());
+    const k = Math.round(size.x * MIRROR_SHARE) / MIRROR_W;
+    const fw = Math.round(MIRROR_W * k);
+    const fh = Math.round(MIRROR_H * k);
+    const fx = Math.round((size.x - fw) / 2);
+    const fy = Math.round(parseFloat(getComputedStyle(document.body).getPropertyValue('--ht2-tablo-h')) || 0);
+    const x = Math.round(fx + MIRROR_IN[0] * k);
+    const y = Math.round(fy + MIRROR_IN[1] * k);
+    const w = Math.round((MIRROR_IN[2] - MIRROR_IN[0] + 1) * k);
+    const h = Math.round((MIRROR_IN[3] - MIRROR_IN[1] + 1) * k);
+    if (!this.mirror) {
+      const rt = new THREE.WebGLRenderTarget(1, 1);
+      const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: rt.texture, depthTest: false, depthWrite: false }));
+      // Дзеркало: ліве й праве міняються місцями.
+      quad.scale.x = -1;
+      const scene = new THREE.Scene();
+      scene.add(quad);
+      const url = this.escArt?.url(MIRROR_MASK);
+      const frame = document.createElement(url ? 'img' : 'div');
+      frame.className = 'ht2-mirror';
+      if (url) (frame as HTMLImageElement).src = url;
+      this.opts.overlay.append(frame);
+      this.mirror = { rt, cam: new THREE.PerspectiveCamera(MIRROR_FOV, w / h, 0.5, this.camera.far), scene, ortho: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), frame };
+    }
+    const m = this.mirror;
+    const ratio = r.getPixelRatio();
+    if (m.rt.width !== Math.round(w * ratio) || m.rt.height !== Math.round(h * ratio)) m.rt.setSize(Math.round(w * ratio), Math.round(h * ratio));
+    m.cam.aspect = w / h;
+    m.cam.far = this.camera.far;
+    m.cam.updateProjectionMatrix();
+    // Погляд назад з місця водія: орієнтація машини, розвернута на 180° навколо вертикалі.
+    m.cam.position.copy(this.camera.position);
+    m.cam.quaternion.copy(this.truck.visual.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI));
+    m.cam.updateMatrixWorld();
+    r.setRenderTarget(m.rt);
+    r.clear();
+    r.render(this.world.scene, m.cam);
+    r.setRenderTarget(null);
+    const auto = r.autoClear;
+    r.autoClear = false;
+    r.setScissorTest(true);
+    r.setScissor(x, size.y - y - h, w, h);
+    r.setViewport(x, size.y - y - h, w, h);
+    r.render(m.scene, m.ortho);
+    r.setScissorTest(false);
+    r.setViewport(0, 0, size.x, size.y);
+    r.autoClear = auto;
+    m.frame.hidden = false;
+    Object.assign(m.frame.style, { left: `${fx}px`, top: `${fy}px`, width: `${fw}px`, height: `${fh}px` });
   }
 
   /** Інтер'єр кабіни `<prefixCab>Cab` (CABINES.B3D, текстури CABINES.RES) — вантажиться при першому вигляді з кабіни. */
@@ -1311,6 +1632,7 @@ export class Ht2Drive {
       this.cabSwitch('RD_Key', radar ? 1 : 0);
       this.cabSwitch('RD_LampKey', 0);
     }
+    this.updateRadarLamp(dt, radar);
     if (!inside) return;
     const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (this.def.tech.viewerTilt * Math.PI) / 180);
     this.cab.position.copy(this.camera.position);
@@ -1376,6 +1698,8 @@ export class Ht2Drive {
       this.race?.control(step);
       this.truckers?.control(step, obstacles);
       this.traffic?.control(step);
+      this.police?.control(step);
+      this.mafia?.control(step);
       this.rapier.step();
       this.acc -= step;
     }
@@ -1383,8 +1707,17 @@ export class Ht2Drive {
     const alpha = this.acc / step;
     this.race?.after(dt, alpha);
     this.detectHits();
+    if (this.careerMode && !this.paused) this.accidents?.update(dt);
+    this.lights.update(dt, this.world.loaded.values());
+    // Проїзд стоп-лінії на червоне (0x56ffd0): штраф 830, лише якщо міліція ближче 200 м; раз за перетин.
+    if (this.lights.player(this.truck.visual.position) && this.careerMode && this.police?.near(this.truck.visual.position, 200)) {
+      this.careerMode.fines.redLight += RED_LIGHT_FINE;
+      this.careerMode.persist();
+    }
     this.truckers?.after(dt, this.truck.visual.position, alpha);
     this.traffic?.after(alpha);
+    this.police?.after(alpha);
+    this.mafia?.after(alpha);
     this.truck.syncVisual(alpha);
     this.trailer?.syncVisual(alpha);
     this.audio?.update(this.truck.rpm, state.throttle, this.truck.engineOn);
@@ -1394,16 +1727,21 @@ export class Ht2Drive {
     this.updateCab(dt);
     this.world.update(this.camera, this.truck.visual.position);
     this.careerMode?.update(dt, state.throttle);
-    const fine = this.police?.update(dt, this.truck.visual.position, this.truck.speedKmh);
-    if (fine && this.careerMode && !this.tuning.antiRadar) void this.careerMode.fine(fine.over, SPEED_LIMIT);
-    // Мафія полює лише на вантажі класу formafia (merchandise.sch: горілка, алмази, Pentium III…).
-    const mafia = this.careerMode && !this.paused ? this.mafia?.update(dt, this.truck.visual.position, !!this.careerMode.career.order?.goods.forMafia) : null;
-    if (mafia === 'robbed') void this.careerMode!.robbed();
-    if (mafia === 'escaped') this.say('Мафія відстала', 4);
+    this.updatePolice(dt);
+    this.updateMafia(dt);
     if (this.markets && this.careerMode) this.markets.update(this.truck.visual.position, Math.floor(this.careerMode.career.time / 86400));
     const sign = this.signs?.update(this.truck.visual.position, this.truck.forward());
     if (sign) this.say(sign, 6);
     this.fPanels?.update(dt);
+    this.syncSidePanel();
+    // Кнопка карти світиться, поки карта на екрані (огляд чи мінікарта).
+    this.input.setToggle('map', this.tabMap ? this.tabMap.state !== 0 : !!this.worldMap && !this.worldMap.el.hidden);
+    // Фари й двигун у групі «•••» — світяться, поки ввімкнені.
+    this.input.setToggle('lights', !!this.lamps[0]?.visible);
+    this.input.setToggle('engine', this.truck.engineOn);
+    // Двірники — два стани (увімкнені / вимкнені): світяться, поки ввімкнені (і без скла кабіни — за вибором чи дощем).
+    this.input.setToggle('wipers', this.glassRain?.wipersOn ?? this.wipersManual ?? this.raining);
+    this.input.setToggle('mirror', this.mirrorOn);
     this.updateNavigator(dt);
     this.tabMap?.draw(dt, {
       me: this.truck.visual.position,
@@ -1581,7 +1919,11 @@ export class Ht2Drive {
     this.careerMode?.dispose();
     this.escMenu?.close();
     this.fPanels?.close();
+    document.removeEventListener('pointerdown', this.onOutsideTap, true);
+    document.body.classList.remove('ht2-side-open');
     this.tabMap?.dispose();
+    this.mirror?.rt.dispose();
+    this.mirror?.frame.remove();
     this.radio?.close();
     this.rainSound?.stop();
     this.windSound?.stop();

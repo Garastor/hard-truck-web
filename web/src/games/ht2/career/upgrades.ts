@@ -62,6 +62,8 @@ export interface Tuning {
   tank: number;
   damage: number;
   antiRadar: boolean;
+  /** Фарба Stealth — пости й камери міліції не бачать машину (king.exe 0x4d1360). */
+  stealth: boolean;
 }
 
 export function tuning(owned: readonly string[] = []): Tuning {
@@ -73,6 +75,7 @@ export function tuning(owned: readonly string[] = []): Tuning {
     tank: has('PR_EXTRA_TANK:1') ? 1.5 : 1,
     damage: has('PR_REINFORCED_CHASSIS:1') ? 0.6 : 1,
     antiRadar: has('PR_ANTI_RADAR:1'),
+    stealth: has('PR_STEALTH_BODY_PAINT:1'),
   };
 }
 

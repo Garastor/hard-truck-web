@@ -21,7 +21,8 @@ import { ukName } from '../ui/uk';
  */
 const SHOW_R = 450;
 const NEAR_R = 22;
-const USED_DISCOUNT = 0.6;
+const USED_DISCOUNT = 0.65;
+const STOLEN_DISCOUNT = 0.45;
 export const USED_DAMAGE = 0.3;
 
 export interface Market {
@@ -34,6 +35,8 @@ export interface Market {
 export interface ForSale {
   rec: TechRecord;
   used: boolean;
+  /** Крадена (king.exe біт 2 машини, ціна × 0,45): без сканера не видно, міліція може вважати викраденою. */
+  stolen?: boolean;
   price: number;
   spot: number;
 }
@@ -112,9 +115,12 @@ export class Markets {
     const out: ForSale[] = [];
     m.spots.forEach((_, spot) => {
       const rec = pool[Math.floor(rnd() * pool.length)];
-      const used = rnd() < 0.2;
+      // Частки — як forsale 25 / forsale_used 5 / forsale_stolen 5 у GAME.CNF (гіпотеза: місце ринку — випадкове).
+      const r = rnd();
+      const used = r < 5 / 35;
+      const stolen = !used && r < 10 / 35;
       if (!rec || this.sold.has(`${m.id}:${day}:${spot}`)) return;
-      out.push({ rec, used, price: Math.round(rec.price * (used ? USED_DISCOUNT : 1)), spot });
+      out.push({ rec, used, stolen, price: Math.round(rec.price * (used ? USED_DISCOUNT : stolen ? STOLEN_DISCOUNT : 1)), spot });
     });
     return out;
   }

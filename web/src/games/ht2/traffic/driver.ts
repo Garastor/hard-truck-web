@@ -86,6 +86,10 @@ export interface Mover {
   backLane: number;
   /** Скільки чекає, пропускаючи на перехресті, с. */
   waitJ: number;
+  /** Відстань до стоп-лінії світлофора, перед якою треба стати (червоне), м; Infinity — ні (ставить трафік). */
+  stopAt: number;
+  /** Гальмує на червоне (вже вирішив стати). */
+  redStop: boolean;
   /** Дорога після кінця лінії (null — тупик). */
   plan: number | null;
   /** Бажана смуга. */
@@ -122,6 +126,8 @@ export function newMover(line: RoadLine, seg: number, t: number, cruise: number,
     overtaking: false,
     backLane: -1,
     waitJ: 0,
+    stopAt: Infinity,
+    redStop: false,
     plan: null,
     wantLane: line.lane,
     gone: false,
@@ -325,7 +331,7 @@ export function step(m: Mover, dt: number, obstacles: readonly Obstacle[], net: 
   if (m.gone) return;
   const want = decide(m, dt, obstacles, net);
   const dv = want - m.speed;
-  const acc = dv > 0 ? Math.min(ACCEL, 0.3 + 0.6 * dv) : want === 0 ? -BRAKE : -Math.min(BRAKE, Math.max(1.5, 0.8 * -dv));
+  const acc = dv > 0 ? Math.min(ACCEL, 0.3 + 0.6 * dv) : want === 0 ? -BRAKE : -Math.min(BRAKE, Math.max(2.5, 0.8 * -dv));
   m.speed = Math.max(0, dv > 0 ? Math.min(want, m.speed + acc * dt) : Math.max(want, m.speed + acc * dt));
   advance(m, m.speed * dt);
   m.lat = m.latGoal + (m.lat - m.latGoal) * Math.exp(-dt / LANE_TAU);
@@ -409,6 +415,17 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
     want = Math.min(want, followLimit(m, { gap: junction.dist - JUNCTION_STOP - m.halfLen, speed: 0 }, want));
     m.waitJ = m.speed < 1 ? m.waitJ + dt : m.waitJ;
   } else m.waitJ = 0;
+  // Червоне світло (king.exe: точка зупинки +0x40b0 від тригера 0x1D): стати перед стоп-лінією. Порт: рівне
+  // гальмування 2 м/с² до точки за 2,5 м перед лінією; «не встигаю» (проїхати) — лише якщо на початку не вистачає
+  // і екстреного 6 м/с²; почавши гальмувати, стоїть до кінця (інакше запізнення біля лінії вирішувало «проїхати»).
+  if (Number.isFinite(m.stopAt)) {
+    const gap = m.stopAt - m.halfLen - 1;
+    if (m.redStop || gap > (m.speed * m.speed) / (2 * 6) + 1) {
+      m.redStop = true;
+      const left = gap - 1.5;
+      want = Math.min(want, left <= 0.3 ? 0 : Math.sqrt(2 * 2 * left));
+    }
+  } else m.redStop = false;
   return want < 0.1 ? 0 : want;
 }
 

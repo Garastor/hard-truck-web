@@ -1,3 +1,4 @@
+import type { Fines } from './law';
 import type { Order } from './economy';
 import type { RivalRun } from './competition';
 import type { HiredDriver } from './company';
@@ -48,6 +49,12 @@ export interface Ht2Career {
   upgrades?: string[];
   /** Вмʼятини за зонами кузова (0…1, dents.ts); ремонт на СТО скидає. */
   dents?: Partial<Record<string, number>>;
+  /** Штрафи, що висять на гравці (law.ts): розшук міліцією до затримання чи хабара. */
+  fines?: Fines;
+  /** Машина крадена (куплена на ринку як крадена): міліція з імовірністю 50 % вважає її викраденою. */
+  stolen?: boolean;
+  /** Ціна моделі нової — для відшкодування за крадену (0,8 ціни). */
+  truckPrice?: number;
   /** Остання позиція (координати гри) і склад, де стоїмо. */
   pos?: [number, number, number];
   heading?: [number, number];
