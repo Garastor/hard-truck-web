@@ -106,6 +106,8 @@ const SHAKE_MOBILE = 1.5;
  */
 const BODY_SHAKE_ANGLE = THREE.MathUtils.degToRad(0.8);
 const BODY_SHAKE_LIFT = 0.03;
+/** Колеса на нерівностях (разом із трясінням кузова): найбільший підскок кожного колеса, м. */
+const WHEEL_BUMP = 0.04;
 
 /**
  * Погойдування (−1…1 × сила): тангаж, крен, підйом. Суми синусоїд некратних частот 2…4,5 Гц (на прохання
@@ -130,6 +132,11 @@ class Shake {
     this.roll = a * (0.6 * Math.sin(t * 2.1 + 0.7) + 0.4 * Math.sin(t * 3.9 + 2.1));
     this.lift = a * (0.5 * Math.sin(t * 2.7 + 0.4) + 0.5 * Math.sin(t * 4.2 + 2.6));
   }
+  /** Підскок колеса i (−1…1 × сила): частіше за кузов (5…8 Гц), у кожного колеса — свій ритм. */
+  wheel(i: number): number {
+    const t = this.time * Math.PI * 2;
+    return this.amp * (0.6 * Math.sin(t * 5.3 + i * 1.9) + 0.4 * Math.sin(t * 7.7 + i * 2.7));
+  }
 }
 
 /** Сила трясіння: на колесах (не в повітрі) — за нерівністю покриття й швидкістю. */
@@ -137,11 +144,13 @@ function roughness(surface: Surface, height: number, speedKmh: number): number {
   return height < 2.5 ? SURFACE_ROUGH[surface] * Math.min(1, Math.abs(speedKmh) / SHAKE_FULL_KMH) : 0;
 }
 
-/** Трясіння кузова: модель у власних осях (після syncVisual — наступний кадр її знову ставить за тілом). */
-function shakeBody(visual: THREE.Object3D, sh: Shake): void {
+/**
+ * Трясіння кузова й коліс (після syncVisual — наступний кадр знову ставить модель за тілом): кузов гойдається, колеса
+ * лишаються на землі й підскакують на нерівностях.
+ */
+function shakeBody(truck: TruckVehicle, sh: Shake): void {
   if (sh.amp < 1e-3) return;
-  visual.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(sh.pitch * BODY_SHAKE_ANGLE, 0, sh.roll * BODY_SHAKE_ANGLE)));
-  visual.position.add(new THREE.Vector3(0, sh.lift * BODY_SHAKE_LIFT, 0).applyQuaternion(visual.quaternion));
+  truck.shakeVisual(sh.pitch * BODY_SHAKE_ANGLE, sh.roll * BODY_SHAKE_ANGLE, sh.lift * BODY_SHAKE_LIFT, (i) => sh.wheel(i) * WHEEL_BUMP);
 }
 /** Гучність звуків пневмогальм (шипіння й клапан — удвічі тихші за перший варіант, на прохання користувача). */
 const AIR_RELEASE_VOLUME = 0.35;
@@ -1340,7 +1349,7 @@ export class DriveSession {
   private updateShake(dt: number): void {
     this.cabShake.update(dt, roughness(this.surface, this.surfaceHeight, this.truck.speedKmh) * this.shakeScale);
     // Кузов власної машини видно лише з камер позаду.
-    if (this.camMode === 'chase' || this.camMode === 'far') shakeBody(this.truck.visual, this.cabShake);
+    if (this.camMode === 'chase' || this.camMode === 'far') shakeBody(this.truck, this.cabShake);
     for (const o of this.opponents) {
       if ((o.surfaceTimer -= dt) <= 0) {
         o.surfaceTimer = 0.2;
@@ -1350,7 +1359,7 @@ export class DriveSession {
         if (probe?.surface) o.surface = probe.surface;
       }
       o.shake.update(dt, roughness(o.surface, o.surfaceHeight, o.truck.speedKmh) * this.shakeScale);
-      shakeBody(o.truck.visual, o.shake);
+      shakeBody(o.truck, o.shake);
     }
   }
 

@@ -718,6 +718,42 @@ export class TruckVehicle {
     }
   }
 
+  /** Від системи батька колеса до системи моделі (visual) — ланцюжок вузлів моделі незмінний, рахуємо раз. */
+  private wheelFrames: THREE.Matrix4[] | null = null;
+  private wheelFrame(i: number): THREE.Matrix4 {
+    this.wheelFrames ??= this.wheelVisual.map(({ obj }) => {
+      const m = new THREE.Matrix4();
+      for (let o = obj.parent; o && o !== this.visual; o = o.parent) {
+        if (o.matrixAutoUpdate) o.updateMatrix();
+        m.premultiply(o.matrix);
+      }
+      return m;
+    });
+    return this.wheelFrames[i];
+  }
+
+  /**
+   * Візуальне трясіння (лише модель, після syncVisual; фізика не змінюється): кузов повертається на pitch/roll, рад, і
+   * піднімається на lift, м, у власних осях, а колеса лишаються на землі — ніби працює підвіска — і кожне ще
+   * підскакує на bump(i), м.
+   */
+  shakeVisual(pitch: number, roll: number, lift: number, bump: (i: number) => number): void {
+    // Як нижче з моделлю: поворот, потім підйом уздовж повернутої осі Y.
+    const shake = new THREE.Matrix4()
+      .makeRotationFromEuler(new THREE.Euler(pitch, 0, roll))
+      .multiply(new THREE.Matrix4().makeTranslation(0, lift, 0));
+    this.visual.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, 0, roll)));
+    this.visual.position.add(new THREE.Vector3(0, lift, 0).applyQuaternion(this.visual.quaternion));
+    const undo = shake.clone().invert();
+    for (let i = 0; i < this.wheels; i++) {
+      const P = this.wheelFrame(i);
+      const Pinv = P.clone().invert();
+      // Колесо в системі моделі: зворотне трясіння (лишається, де було) і підскок угору.
+      const up = new THREE.Matrix4().makeTranslation(0, bump(i), 0);
+      this.wheelVisual[i].obj.matrix.premultiply(Pinv.multiply(undo).multiply(up).multiply(P));
+    }
+  }
+
   reset(spawn: { position: THREE.Vector3; forward: THREE.Vector3 }): void {
     const f = spawn.forward.clone().setY(0).normalize();
     const q = new THREE.Quaternion().setFromRotationMatrix(
