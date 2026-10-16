@@ -17,6 +17,8 @@ import { hudScale } from '../engine/ui/pixelFont';
  * 0,125 с; гравець — `I_tr_myNN_K`: NN — напрям (24 сектори по 15° за годинниковою стрілкою від півночі карти),
  * K — кадр анімації 0…5 (той самий лічильник); далекобійники й суперники гонки — `I_tr_opp`; фініш гонки —
  * `I_race` з написом.
+ * Відхилення порту на малих екранах: рамка мінікарти не заходить на кнопки (верхній ряд і сенсорні), масштаб
+ * мінікарти не дрібніший, ніж у king.exe при 1024×768; гравець — у центрі рамки.
  * Гіпотези: колір підписів (палітра екрана, індекс 5, не розібрано); оригінал показує суперників лише з певним
  * прапорцем гравця (0x80, імовірно покращення) чи в мережевій грі — у порту завжди; дороги з прапорцем 0x20
  * оригінал ховає, доки їх не «відкриє» подія (0x529850) — у порту видно всі.
@@ -32,6 +34,11 @@ const MARGIN_Y = 130;
 const OFFSET = 40;
 /** Кадр анімації значків, с (king.exe: 0,125 с; 6 кадрів). */
 const FRAME_TIME = 0.125;
+/** Екран, масштаб якого — найдрібніший для мінікарти порту (CSS px). */
+const REF_W = 1024;
+const REF_H = 768;
+/** Проміжок між мінікартою й кнопками, CSS px. */
+const AVOID_GAP = 6;
 
 export interface TabMapScene {
   me: THREE.Vector3;
@@ -52,6 +59,9 @@ export class TabMap {
   private readonly bounds = new THREE.Box2();
   state: TabMapState = 0;
   private time = 0;
+  /** Межі кнопок порту, з-під яких зсувається мінікарта. */
+  private avoid: DOMRect[] = [];
+  private avoidAt = -1;
 
   constructor(
     private readonly art: EscArt,
@@ -69,6 +79,28 @@ export class TabMap {
     this.canvas.hidden = true;
     this.ctx = this.canvas.getContext('2d')!;
     parent.append(this.canvas);
+  }
+
+  /**
+   * Відступ мінікарти від кнопок порту: верхній край — нижче кнопок, що над прямокутником, нижній — вище сенсорних
+   * кнопок під ним (оригінальна розмітка W/20…W/3 − W/20 × H/4…3H/4 на телефоні накриває керування). Межі кнопок
+   * перечитуються раз на пів секунди; якщо місця лишається менше 80 px — прямокутник оригіналу.
+   */
+  private fitBox(box: { x0: number; x1: number; y0: number; y1: number }, H: number): void {
+    if (this.time - this.avoidAt > 0.5 || this.avoidAt > this.time) {
+      this.avoidAt = this.time;
+      this.avoid = [...document.querySelectorAll<HTMLElement>('.touch-btn, .ht2-hud button')]
+        .filter((e) => e.offsetParent)
+        .map((e) => e.getBoundingClientRect());
+    }
+    let y0 = box.y0;
+    let y1 = box.y1;
+    for (const r of this.avoid) {
+      if (r.right < box.x0 || r.left > box.x1 || r.bottom < box.y0 || r.top > box.y1) continue;
+      if ((r.top + r.bottom) / 2 < H / 2) y0 = Math.max(y0, Math.ceil(r.bottom) + AVOID_GAP);
+      else y1 = Math.min(y1, Math.floor(r.top) - AVOID_GAP);
+    }
+    if (y1 - y0 >= 80) Object.assign(box, { y0, y1 });
   }
 
   /** Наступний стан: сховано → огляд → мінікарта → сховано. */
@@ -107,12 +139,15 @@ export class TabMap {
     let k = Math.min((W - MARGIN_X) / size.x, (H - top - MARGIN_Y) / size.y);
     let ox = OFFSET - this.bounds.min.x * k;
     let oy = top + OFFSET - this.bounds.min.y * k;
-    // Прямокутник мінікарти.
+    // Прямокутник мінікарти; порт зсуває його краї з-під кнопок (сенсорних і верхнього ряду).
     const box = { x0: Math.floor(W / 20), x1: Math.floor(W / 3 - W / 20), y0: Math.floor(H / 4), y1: Math.floor(H - H / 4) };
     if (zoom) {
-      k *= 2;
-      ox = W / 6 - s.me.x * k;
-      oy = H / 2 - s.me.z * k;
+      this.fitBox(box, H);
+      // На малих екранах — не дрібніше, ніж king.exe при 1024×768 (інакше значки злипаються; відхилення порту).
+      const ref = Math.min((REF_W - MARGIN_X) / size.x, (REF_H - MARGIN_Y) / size.y);
+      k = 2 * Math.max(k, ref);
+      ox = (box.x0 + box.x1) / 2 - s.me.x * k;
+      oy = (box.y0 + box.y1) / 2 - s.me.z * k;
     }
     const at = (p: THREE.Vector3) => [ox + p.x * k, oy + p.z * k] as const;
     const inside = (x: number, y: number) => !zoom || (x >= box.x0 && x <= box.x1 && y >= box.y0 && y <= box.y1);
