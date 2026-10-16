@@ -21,9 +21,16 @@ import type { Ht2Trucks } from '../vehicles/trucks';
  * обʼїзд тих, хто стоїть), але без фізики: машина котиться лінією смуги (у king.exe ближче 80 м до гравця вона
  * фізична). Тіло в Rapier — кінематичне: гравець упирається в нього, але штовхнути не може.
  */
-/** Модель зʼявляється ближче за це до гравця й зникає далі за VISIBLE_OFF (гіпотеза порту: у king.exe — модулі світу), м. */
+/**
+ * Модель — у радіусі R = кінець туману + 50 м (від VISIBLE_ON до VISIBLE_MAX; гіпотеза порту: у king.exe — модулі
+ * світу). Відхилення від оригіналу (на прохання користувача): машини не виникають і не зникають на очах — модель
+ * вмикається ближче R − 100 м лише невидимою (поза кадром, за рельєфом чи туманом), привиди зʼявляються й
+ * зникають лише в невидимих точках, машина в тупику стоїть, доки її видно.
+ */
 const VISIBLE_ON = 700;
-const VISIBLE_OFF = 750;
+const VISIBLE_MAX = 1100;
+/** Далі за R + це модель зникає навіть на виду, м. */
+const VISIBLE_DROP = 300;
 /**
  * Привиди (king.exe 0x420ed0): поява за 2·GHOST_NEAR від гравця, дорога — не ближче GHOST_NEAR; зникають далі
  * GHOST_KEEP, якщо старші за GHOST_AGE с чи далі GHOST_FAR.
@@ -114,6 +121,13 @@ export class Traffic {
   /** Фари машин, що зʼявляються (king.exe: при створенні — з 22:00 до 6:00; ставить режим їзди). */
   lights = false;
 
+  /** Що бачить гравець: дальність (кінець туману, м) і чи видно точку з камери. Без нього — без перевірок. */
+  view: { range(): number; sees(p: THREE.Vector3): boolean } | null = null;
+
+  private sees(p: THREE.Vector3): boolean {
+    return this.view?.sees(p) ?? false;
+  }
+
   /** Скільки привидів зараз. */
   get ghosts(): number {
     return this.all.reduce((n, c) => n + (c.ghost ? 1 : 0), 0);
@@ -153,12 +167,15 @@ export class Traffic {
     this.updateGhosts(dt, player);
     this.detectJams(dt);
 
-    // Абстрактні — уздовж мережі; поблизу в завантаженому регіоні — з моделлю й водієм.
+    // Абстрактні — уздовж мережі; поблизу в завантаженому регіоні — з моделлю й водієм (вмикається й вимикається
+    // невидимою).
+    const R = this.view ? THREE.MathUtils.clamp(this.view.range() + 50, VISIBLE_ON, VISIBLE_MAX) : VISIBLE_ON;
     for (const c of this.all) {
       const d = c.pos.distanceTo(player);
-      const near = d < (c.root ? VISIBLE_OFF : VISIBLE_ON) && this.loaded(c.line.region);
-      if (near && !c.root) this.activate(c);
-      else if (!near && c.root) this.deactivate(c);
+      const loaded = this.loaded(c.line.region);
+      if (!c.root) {
+        if (loaded && (d < R - 100 || (d < R && !this.sees(c.pos)))) this.activate(c);
+      } else if (!loaded || d > R + VISIBLE_DROP || (d > R + 50 && !this.sees(c.pos))) this.deactivate(c);
       c.age += dt;
     }
     this.cars = this.all.filter((c) => c.root);
@@ -175,12 +192,12 @@ export class Traffic {
       if (c.root) this.drive(c, dt, avoid, obstacles);
       else coast(c, dt);
     }
-    // Тупик: привид зникає, постійна машина — заново далеко від гравця.
+    // Тупик: привид зникає, постійна машина — заново далеко від гравця (на виду — стоїть, доки не сховається).
     for (let i = this.all.length - 1; i >= 0; i--) {
       const c = this.all[i];
-      if (!c.gone) continue;
+      if (!c.gone || (c.root && this.sees(c.pos))) continue;
       this.remove(i);
-      if (!c.ghost) this.addDumb(player, VISIBLE_OFF);
+      if (!c.ghost) this.addDumb(player, R + 50);
     }
     this.cars = this.all.filter((c) => c.root);
   }
@@ -220,7 +237,8 @@ export class Traffic {
       const c = this.all[i];
       if (!c.ghost) continue;
       const d = c.pos.distanceTo(player);
-      if ((d > GHOST_KEEP && (c.age > GHOST_AGE || d > GHOST_FAR)) || !this.loaded(c.line.region)) this.remove(i);
+      const old = d > GHOST_KEEP && (c.age > GHOST_AGE || d > GHOST_FAR);
+      if (!this.loaded(c.line.region) || d > VISIBLE_MAX + VISIBLE_DROP || (old && !this.sees(c.pos))) this.remove(i);
     }
     if (this.jam || this.ghosts >= this.config.ghost || !this.kinds.length || Math.random() < 0.5) return;
     for (let attempt = 0; attempt < 8; attempt++) {
@@ -228,6 +246,8 @@ export class Traffic {
       const at = player.clone().add(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)).multiplyScalar(2 * GHOST_NEAR));
       const n = this.roads.nearestAxis(at);
       if (!n || n.axis.flags & 0x50 || n.point.distanceTo(player) < GHOST_NEAR || !this.loaded(n.axis.region)) continue;
+      // Порт: не на очах гравця — інша спроба.
+      if (this.sees(n.point)) continue;
       const p = Math.sqrt(n.axis.width / 14) * (n.axis.cls === 2 ? 0.5 : n.axis.cls === 3 ? 0.25 : 1);
       if (Math.random() >= p) return;
       const lines = this.roads.linesOf(n.axis.road);

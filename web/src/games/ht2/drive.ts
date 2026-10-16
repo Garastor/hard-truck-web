@@ -79,6 +79,8 @@ const CHASE_LOOK = 10;
 
 /** Опір кочення поза асфальтом, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
 const OFFROAD_ROLL = 5;
+/** Дальність видимості трафіку без туману в сцені, м. */
+const VIEW_FALLBACK = 900;
 /** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
 const RESCUE_SECONDS = 5;
 const RESCUE_COST = 1000;
@@ -358,6 +360,10 @@ export class Ht2Drive {
       ghost: count('ghost', 25),
       density: o.settings?.traffic ?? 1,
     });
+    this.traffic.view = {
+      range: () => (this.world.scene.fog as THREE.Fog | null)?.far ?? VIEW_FALLBACK,
+      sees: (p) => this.canSee(p),
+    };
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);
     this.input.onCommand = (cmd) => {
       if (cmd === 'camera') this.camMode = NEXT_CAM[this.camMode];
@@ -743,6 +749,27 @@ export class Ht2Drive {
   groundAtPublic(p: THREE.Vector3): THREE.Vector3 {
     return this.groundAt(p);
   }
+
+  /**
+   * Чи може гравець бачити машину в точці p (для появи й зникнення трафіку): ближче кінця туману, у кадрі камери
+   * (з запасом) і не за рельєфом чи нерухомою колізією (промінь від камери).
+   */
+  canSee(p: THREE.Vector3): boolean {
+    const cam = this.camera.position;
+    const target = p.clone().setY(p.y + 1.2);
+    const dist = cam.distanceTo(target);
+    const fog = this.world.scene.fog as THREE.Fog | null;
+    if (fog && dist > fog.far) return false;
+    this.camera.updateMatrixWorld();
+    this.seeFrustum.setFromProjectionMatrix(this.seeMatrix.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
+    if (!this.seeFrustum.intersectsSphere(new THREE.Sphere(target, 6))) return false;
+    if (dist < 4) return true;
+    const dir = target.clone().sub(cam).divideScalar(dist);
+    const hit = this.rapier.castRay(new RAPIER.Ray(cam, dir), dist - 3, true, undefined, undefined, undefined, undefined, (c) => c.parent()?.isFixed() ?? true);
+    return !hit;
+  }
+  private readonly seeFrustum = new THREE.Frustum();
+  private readonly seeMatrix = new THREE.Matrix4();
   get trucksData(): Ht2Trucks {
     return this.trucks;
   }
