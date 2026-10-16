@@ -465,16 +465,25 @@ export class TruckVehicle {
       this.visual.quaternion.slerpQuaternions(this.prevQuat, this.visual.quaternion.clone(), alpha);
     }
     // Нахил кузова king (косметичний): верх кузова хилиться праворуч на leanSide і вперед на leanFwd.
-    if (this.king && (this.leanSide || this.leanFwd)) {
-      const q = this.visual.quaternion;
-      this.visual.position.addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(q), this.bumpLift);
-      const tilt = new THREE.Vector3(this.leanSide, 0, -this.leanFwd).applyQuaternion(q);
-      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
-      const angle = tilt.length();
-      const axis = new THREE.Vector3().crossVectors(up, tilt).normalize();
-      if (angle > 1e-5) q.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, angle));
+    if (!this.king) return;
+    const q = this.visual.quaternion;
+    this.visual.position.addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(q), this.bumpLift);
+    // У системі моделі: поворот навколо осі «угору × нахил».
+    const tilt = new THREE.Vector3(this.leanSide, 0, -this.leanFwd);
+    const angle = tilt.length();
+    const rot = angle > 1e-5 ? new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0).cross(tilt).normalize(), angle) : null;
+    if (rot) q.multiply(rot);
+    // Колеса лишаються на дорозі (з нерівністю під кожним), кузов ходить відносно них — видно роботу підвіски:
+    // зсув колеса = нерівність − наскільки кузов піднявся в точці кріплення.
+    for (let i = 0; i < this.wheels; i++) {
+      const p = g2t(new THREE.Vector3().setFromMatrixPosition(this.wheelVisual[i].base));
+      const lift = this.bumpLift + (rot ? p.clone().applyQuaternion(rot).y - p.y : 0);
+      this.wheelLift[i] = (this.bumps[i]?.h ?? 0) - lift;
     }
   }
+
+  /** Зсув колеса king угору відносно кузова, м (placeVisual). */
+  private readonly wheelLift: number[] = [];
 
   /** Крок фізики керування (до world.step). */
   update(dt: number, input: ControlState): void {
@@ -636,9 +645,13 @@ export class TruckVehicle {
     const vFwd = vt.dot(ft);
 
     // Поздовжні сили: двигун і гальма; ручне — задні колеса на повну; кочення; мʼяке покриття понад його швидкість.
-    let force = wheelForces(wheels, this.engine.force, pedal, vFwd, this.slip);
+    // Без газу двигун лише гальмує (0x4aa320) — проти руху й до зупинки, з наростанням від нуля, як кочення: інакше
+    // гальмування холостими обертами на передачі штовхало вантажівку з місця назад.
+    const engineBraking = this.engine.throttle === 0;
+    const drive = engineBraking ? 0 : this.engine.force;
+    let force = wheelForces(wheels, drive, pedal, vFwd, this.slip);
     if (handbrake && pedal <= KING.brakeFrom) force += wheelForces(wheels.map((w, i) => (i >= 2 ? w : { ...w, ground: false })), 0, 1, vFwd);
-    let resist = 0;
+    let resist = engineBraking ? Math.abs(this.engine.force) * Math.min(1, Math.abs(vFwd)) : 0;
     for (const w of wheels) if (w.ground) resist += rollingForce(w.load, vFwd) * this.surfaceRoll;
     const over = Math.abs(vFwd) - this.surfaceMaxSpeed;
     if (over > 0) resist += mass * SOFT_DRAG * Math.min(1, over / SOFT_DRAG_SPAN);
@@ -653,11 +666,11 @@ export class TruckVehicle {
     // Майже стоїть, а гальмо (чи ручне) втримує проти двигуна й схилу — стоїть.
     const brakes = wheels.reduce((sum, w) => sum + (w.ground ? Math.min(w.brake, w.mu * w.load) : 0), 0);
     const hold = (handbrake ? 1 : pedal > KING.brakeFrom ? pedal : 0) * brakes;
-    const push = Math.abs(this.engine.force + mass * gEff.dot(ft));
+    const push = Math.abs(drive + mass * gEff.dot(ft));
     const along = next.dot(ft);
     if (hold > 0 && Math.abs(vFwd) < 0.5 && push <= hold) next.set(0, 0, 0);
     // Опір і гальма зупиняють, але не розганяють назад.
-    else if (vFwd !== 0 && Math.sign(along) !== Math.sign(vFwd) && Math.sign(force) === -Math.sign(vFwd) && Math.abs(this.engine.force) < resist + hold) next.addScaledVector(ft, -along);
+    else if (vFwd !== 0 && Math.sign(along) !== Math.sign(vFwd) && Math.sign(force) === -Math.sign(vFwd) && Math.abs(drive) < resist + hold) next.addScaledVector(ft, -along);
     // Рівний ґрунт і всі колеса на землі — швидкість уздовж курсу (бічного ковзання немає).
     if (all && n.y >= KING.flat) {
       // Довжина вектора — як в оригіналі, але лише коли бічна складова мала (поворот за крок): після удару збоку
@@ -897,7 +910,7 @@ export class TruckVehicle {
       const steer = this.ctrl.wheelSteering(i) ?? 0;
       const spin = this.ctrl.wheelRotation(i) ?? 0;
       const m = w.base.clone();
-      m.multiply(new THREE.Matrix4().makeTranslation(0, 0, this.suspAnchor - len));
+      m.multiply(new THREE.Matrix4().makeTranslation(0, 0, this.suspAnchor - len + (this.wheelLift[i] ?? 0)));
       m.multiply(new THREE.Matrix4().makeRotationZ(steer));
       m.multiply(new THREE.Matrix4().makeRotationX(-spin));
       w.obj.matrix.copy(m);
