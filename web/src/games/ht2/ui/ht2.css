@@ -583,7 +583,7 @@ body.ht2-side-open .ht2-hud {
 
 /*
  * Зовнішні кути смуг кнопок і кнопок керма й педалей — заокруглені радіусом внутрішнього кута рамок (хромовий
- * обідок LCD-клітинки табло ≈ 3 px); border-image не зважає на border-radius — тому обрізання clip-path.
+ * обідок LCD-клітинки табло ≈ 3 px) плюс 1,5 px — на прохання користувача; border-image не зважає на border-radius — тому обрізання clip-path.
  */
 body.ht2-orig-ui .ht2-hud,
 body.ht2-orig-ui .touch-top-row,
@@ -592,5 +592,5 @@ body.ht2-orig-ui .touch-btn.left,
 body.ht2-orig-ui .touch-btn.right,
 body.ht2-orig-ui .touch-btn.brake,
 body.ht2-orig-ui .touch-btn.gas {
-  clip-path: inset(0 round 3px);
+  clip-path: inset(0 round 4.5px);
 }
