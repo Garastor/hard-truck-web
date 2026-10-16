@@ -24,8 +24,8 @@ import type { SceneAssembler } from '../engine/render/sceneBuilder';
  *
  * Гіпотези порту: φmax = 0,9·π/2 (у exe 0,9·acos(…) — вектор не зʼясовано); падіння — за 0,5 с; колізія стовпа —
  * брус уздовж ламаної, товщина — подвоєний радіус блоку (не менше 0,1 м), висота — values[0]; форма предмета —
- * габарит моделі (exe — точки Corner_Mark і площини CollisionPlane); лампа й ореол поваленого ліхтаря та
- * світлофор не гасне (ще не зроблено); ефект вибуху заправки mnBlow3 — не відтворено (лише перемикачі й звук).
+ * габарит моделі (exe — точки Corner_Mark і площини CollisionPlane). Поваленого ліхтаря гасне ореол (світла лампи в
+ * порту немає), світлофора — перемикач TL_operative → 0.
  */
 const MIN_P = 5000;
 const PHI_MAX = 0.9 * (Math.PI / 2);
@@ -214,6 +214,7 @@ export class WorldObjects {
       if (was) {
         st.down = true;
         this.tilt(st, was.axis, was.to);
+        if (def.kind === 4) this.lightOff(st);
       } else st.colliders = this.poleColliders(def);
       return st;
     });
@@ -384,12 +385,22 @@ export class WorldObjects {
     s.fall = { axis, to, t: 0 };
     this.fallen.set(s.key, { axis, to });
     if (s.def.kind === 6) this.glows.get(s.def.name.replace(/fonar/i, 'glow').toLowerCase())?.removeFromParent();
+    if (s.def.kind === 4) this.lightOff(s);
     const A = (pmax - MIN_P) * PHI_MAX * 0.6496;
     if (A < P) {
       const k = 1 - A / P;
       body.setLinvel({ x: pv.v.x * k, y: pv.v.y * k, z: pv.v.z * k }, true);
       body.setAngvel({ x: pv.w.x * k, y: pv.w.y * k, z: pv.w.z * k }, true);
     }
+  }
+
+  /** Повалений світлофор не працює: перемикач TL_operative → 0 (лампи без світла; king.exe 0x588090). */
+  private lightOff(s: PoleState): void {
+    for (const v of s.visuals)
+      v.o.traverse((x) => {
+        const m = /^TL_operative#(\d+)$/i.exec(x.name);
+        if (m) x.visible = m[1] === '0';
+      });
   }
 
   /** Нахил видимих обʼєктів простору навколо його початку (основа стовпа), кут φ навколо горизонтальної осі. */
