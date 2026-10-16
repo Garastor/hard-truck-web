@@ -52,6 +52,8 @@ interface Car {
   cruise: number;
   halfLen: number;
   pos: THREE.Vector3;
+  /** Початок першого відрізка нової лінії — кінець попередньої (проміжок між смугами на стику — навпростець). */
+  from: THREE.Vector3 | null;
 }
 
 export class Traffic {
@@ -146,7 +148,7 @@ export class Traffic {
       );
       this.scene.add(root);
       const cruise = (40 + Math.random() * 30) / 3.6;
-      this.cars.push({ kind, root, body, line, seg, t: 0, speed: cruise, cruise, halfLen: size.z / 2, pos: p.clone() });
+      this.cars.push({ kind, root, body, line, seg, t: 0, speed: cruise, cruise, halfLen: size.z / 2, pos: p.clone(), from: null });
       return;
     }
   }
@@ -160,7 +162,7 @@ export class Traffic {
 
   /** Рух смугою: дистанція до машин попереду (і гравця) — пригальмувати; кінець лінії — наступна лінія. */
   private drive(c: Car, dt: number, avoid: readonly THREE.Vector3[]): void {
-    const a = c.line.pts[c.seg];
+    const a = segStart(c);
     const b = c.line.pts[c.seg + 1];
     const dir = b.clone().sub(a);
     const len = dir.length() || 1;
@@ -182,7 +184,7 @@ export class Traffic {
     if (blocked) c.speed = 0;
     let move = c.speed * dt;
     while (move > 0) {
-      const p0 = c.line.pts[c.seg];
+      const p0 = segStart(c);
       const p1 = c.line.pts[c.seg + 1];
       const segLen = p0.distanceTo(p1) || 0.001;
       const left = (1 - c.t) * segLen;
@@ -193,6 +195,7 @@ export class Traffic {
         move -= left;
         c.t = 0;
         c.seg++;
+        c.from = null;
         if (c.seg + 1 >= c.line.pts.length) {
           const next = c.line.next;
           if (!next.length) {
@@ -202,10 +205,11 @@ export class Traffic {
           }
           c.line = next[Math.floor(Math.random() * next.length)] as RoadLine;
           c.seg = 0;
+          c.from = p1.clone();
         }
       }
     }
-    const p0 = c.line.pts[c.seg];
+    const p0 = segStart(c);
     const p1 = c.line.pts[c.seg + 1];
     c.pos.copy(p0).lerp(p1, c.t);
     const fwd = p1.clone().sub(p0).normalize();
@@ -222,6 +226,11 @@ export class Traffic {
   dispose(): void {
     for (let i = this.cars.length - 1; i >= 0; i--) this.remove(i);
   }
+}
+
+/** Початок поточного відрізка машини. */
+function segStart(c: Car): THREE.Vector3 {
+  return c.seg === 0 && c.from ? c.from : c.line.pts[c.seg];
 }
 
 /** Варіант кольору: матеріали `<…>1` моделі → `<…>N` (Fiat_all1 → Fiat_all3), якщо такий є в TRUCKS.B3D. */

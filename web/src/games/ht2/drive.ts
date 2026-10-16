@@ -314,7 +314,7 @@ export class Ht2Drive {
         }
     for (const m of parseMarkets(regionMods, this.world.regions.values())) points.push({ pos: m.spots[0].pos, kind: 'market', label: m.name });
     this.mapPoints = points;
-    this.worldMap = new WorldMap(document.body, this.roads.lines.filter((l) => !l.name.endsWith('r')), points);
+    this.worldMap = new WorldMap(document.body, this.roads.axes, points);
     this.worldMap.onClose = () => {
       this.paused = false;
     };
@@ -430,7 +430,7 @@ export class Ht2Drive {
         },
         say: (t) => this.say(t),
       });
-      this.tabMap = new TabMap(art, o.overlay, this.roads.lines.filter((l) => !l.name.endsWith('r')), this.mapPoints);
+      this.tabMap = new TabMap(art, o.overlay, this.roads.axes, this.mapPoints);
       // Одразу — мінікарта (стан 2): у порту її видно з початку їзди (king.exe починає зі схованої карти).
       this.tabMap.show(2);
       document.body.classList.add('ht2-orig-ui');
@@ -1194,14 +1194,9 @@ export class Ht2Drive {
    */
   private updateSurface(): void {
     const p = this.truck.visual.position;
-    const n = this.roads?.nearest(p);
-    if (!n) return;
-    const a = n.line.pts[n.seg];
-    const b = n.line.pts[n.seg + 1];
-    // Лінії руху зсунуті на w/4 від осі: на дорозі, якщо до найближчої лінії ≤ w/4 (по горизонталі).
-    const qx = a.x + (b.x - a.x) * n.t - p.x;
-    const qz = a.z + (b.z - a.z) * n.t - p.z;
-    const off = Math.hypot(qx, qz) > n.line.width / 4 + 0.5;
+    if (!this.roads) return;
+    // Далі від осі дороги WAY, ніж половина ширини W (з запасом 0,5 м) — узбіччя.
+    const off = this.roads.offRoad(p);
     this.offRoad = off;
     this.truck.setSurface(1, off ? OFFROAD_ROLL : 1);
     // Узбіччя трусить як ґрунт (покриття 2 у 0x502780; що узбіччя — ґрунт, гіпотеза: покриття за матеріалом не знайдено).

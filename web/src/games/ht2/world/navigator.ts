@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Ht2Roads, RoadLine } from './roads';
+import { isFork, type Ht2Roads, type RoadLine } from './roads';
 
 /**
  * Навігатор (покращення на СТО; king.exe `updateNavigator`): стрілка на табло — куди повертати на найближчій
@@ -102,7 +102,7 @@ export class Navigator {
       const next = (line.next as RoadLine[]).filter((n) => dist.has(n));
       if (!next.length) return null;
       const best = next.reduce((a, b) => (dist.get(a)! + this.length.get(a)! <= dist.get(b)! + this.length.get(b)! ? a : b));
-      if (line.next.length > 1) return turnOf(line, best);
+      if (isFork(line)) return turnOf(line, best);
       line = best;
       ahead += this.length.get(line)!;
     }
