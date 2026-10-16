@@ -68,7 +68,7 @@ const SURFACE_WATER = /water|river|stream\d/i;
 const GRASS_SHARE = 0.2;
 const GRASS_WINDOW = 7;
 /**
- * Вплив покриття (однаково в аркаді й «симуляторі» — на прохання користувача) — налаштування порту, не дані
+ * Вплив покриття (в аркаді — удвічі слабший, див. arcadeFx) — налаштування порту, не дані
  * оригіналу: зчеплення й опір кочення відносно асфальту, межа кермування (частка), найбільша швидкість, км/год, і
  * уповільнення понад неї, м/с². Від твердого до найм'якшого; помірно, щоб машина їхала скрізь. Болото — до 25 км/год і гальмує різко
  * (≈ 0,6 g; обидва — на прохання користувача: з 45 км/год і 2 м/с² його пролітали на великій швидкості); брід —
@@ -83,6 +83,24 @@ const SURFACE_FX: Record<Surface, { grip: number; roll: number; steer: number; m
   swamp: { grip: 0.6, roll: 4.5, steer: 0.8, maxKmh: 25, drag: 6 },
   water: { grip: 0.5, roll: 4, steer: 0.8, maxKmh: 40, drag: 6 },
 };
+/**
+ * Аркада: вплив покриття вдвічі слабший (на прохання користувача; трясіння — без змін): відхилення від асфальту
+ * зчеплення, опору кочення й керма — навпіл, уповільнення понад межу — удвічі менше, межа швидкості — вдвічі менша
+ * втрата відносно ARCADE_TOP_KMH (болото 25 → 78, брід 40 → 85, пісок 60 → 95, ґрунт 75 → 103, гравій 95 → 113).
+ */
+const ARCADE_SOFTEN = 0.5;
+const ARCADE_TOP_KMH = 130;
+type SurfaceFx = (typeof SURFACE_FX)[Surface];
+function arcadeFx(fx: SurfaceFx): SurfaceFx {
+  const k = ARCADE_SOFTEN;
+  return {
+    grip: 1 - (1 - fx.grip) * k,
+    roll: 1 + (fx.roll - 1) * k,
+    steer: 1 - (1 - fx.steer) * k,
+    maxKmh: fx.maxKmh === Infinity ? Infinity : ARCADE_TOP_KMH - (ARCADE_TOP_KMH - fx.maxKmh) * k,
+    drag: fx.drag * k,
+  };
+}
 /**
  * Трясіння кабіни за покриттям (частка SHAKE_*; градація — на прохання користувача): тверді (асфальт, бетон,
  * тротуари) — немає, брід — повне, трава (ґрунт) — 60 %, гравій — половина, пісок (рівніший за гравій) — 40 %,
@@ -538,7 +556,7 @@ export class DriveSession {
     this.surface = probe.surface;
     this.offRoad = this.surface !== 'asphalt' && this.surface !== 'water';
     this.overWater = this.surface === 'water';
-    const fx = SURFACE_FX[this.surface];
+    const fx = this.arcade ? arcadeFx(SURFACE_FX[this.surface]) : SURFACE_FX[this.surface];
     // У повітрі (далеко над поверхнею) покриття не діє.
     if (this.surfaceHeight < 2.5) this.truck.setSurface(fx.grip, fx.roll, fx.steer, fx.maxKmh / 3.6, fx.drag);
   }
