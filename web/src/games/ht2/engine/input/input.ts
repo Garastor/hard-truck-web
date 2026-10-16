@@ -2,7 +2,6 @@
  * Єдиний стан керування з різних джерел: клавіатура, сенсорні кнопки, геймпад.
  * Осі: steer −1..1 (вліво/вправо), throttle 0..1, brake 0..1.
  */
-import { soften } from '../ui/softUi';
 
 export interface ControlState {
   steer: number;
@@ -337,7 +336,7 @@ export class Input {
       if (svg) b.innerHTML = svg;
       else b.textContent = label;
       b.setAttribute('aria-label', cls);
-      soften(b);
+      // Значки — векторні SVG (не «м'які» маски softUi): у стилі табло мають бути чіткими на будь-якому екрані.
       const down = (e: PointerEvent) => {
         e.preventDefault();
         b.setPointerCapture(e.pointerId);
@@ -370,7 +369,8 @@ export class Input {
         b.classList.toggle('on', this.sharpLatched);
       });
     }
-    // Група «ще» (згорнута): фари, дзеркало, двірники, двигун (клавіші L, M, W, пробіл), кабіна 2D / 3D і сигнал.
+    // Група «ще» (згорнута): фари, дзеркало, двірники, двигун (клавіші L, M, W, пробіл) і сигнал; кабіни 2D у другій
+    // грі немає — кнопку прибрано.
     const more = document.createElement('div');
     more.className = 'touch-more';
     more.hidden = true;
@@ -388,7 +388,6 @@ export class Input {
       ['mirror', 'mirror', ICONS.mirror],
       ['wipers', 'wipers', ICONS.wipers],
       ['engine', 'engine', ICONS.engine],
-      ['cab', 'cab', ICONS.cab],
       ['horn', 'horn', HORN_SVG],
     ];
     for (const [cls, cmd, icon] of items) btn(cls, '', undefined, cmd, icon, more).dataset.cmd = cmd;
