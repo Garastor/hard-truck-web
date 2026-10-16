@@ -133,6 +133,11 @@ const BODY_SHAKE_ANGLE = THREE.MathUtils.degToRad(0.4);
 const BODY_SHAKE_LIFT = 0.015;
 /** Колеса на нерівностях (разом із трясінням кузова): найбільший підскок кожного колеса, м. */
 const WHEEL_BUMP = 0.02;
+/**
+ * Суперники далі за цю відстань від камери, м, не трясуться: кут 0,4° там менший за піксель, а пошук покриття
+ * променем і перерахунок коліс коштували щокадру (оптимізація для телефона).
+ */
+const SHAKE_FAR = 150;
 
 /**
  * Погойдування (−1…1 × сила): тангаж, крен, підйом. Суми синусоїд некратних частот 2…4,5 Гц (на прохання
@@ -1378,6 +1383,10 @@ export class DriveSession {
     // Кузов власної машини видно лише з камер позаду.
     if (this.camMode === 'chase' || this.camMode === 'far') shakeBody(this.truck, this.bodyShake);
     for (const o of this.opponents) {
+      if (o.truck.visual.position.distanceToSquared(this.camera.position) > SHAKE_FAR * SHAKE_FAR) {
+        o.shake.amp = 0;
+        continue;
+      }
       if ((o.surfaceTimer -= dt) <= 0) {
         o.surfaceTimer = 0.2;
         const t = o.truck.body.translation();

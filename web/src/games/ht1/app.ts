@@ -496,11 +496,20 @@ document.addEventListener('visibilitychange', () => {
     renderer.setAnimationLoop(loop);
   }
 });
+/** Розмір полотна, з яким уже намальовано кадр паузи ('' — не на паузі). */
+let pausedFrame = '';
 function loop(now: number): void {
   if (!limiter.ready(now)) return;
   if (showFps && fpsMeter.tick(now)) showFpsValue(`${fpsMeter.value} fps`);
   const dt = clock.getDelta();
   if (tab === 'drive') {
+    // Пауза: світ стоїть, кадр не змінюється — не перемальовуємо (полотно зберігає зображення; раніше — 60 разів на
+    // секунду даремно). Ще раз — лише після зміни розміру полотна (поворот, якість): воно тоді очищається.
+    if (drive?.paused) {
+      const key = `${renderer.domElement.width}x${renderer.domElement.height}`;
+      if (key === pausedFrame) return;
+      pausedFrame = key;
+    } else pausedFrame = '';
     drive?.update(dt);
   } else if (tab === 'scene' || tab === 'trucks') {
     controls.update();
