@@ -24,17 +24,15 @@ export class NavMap {
   /** Лінії доріг за кольором. */
   private readonly roads = new Map<string, Path2D>();
   private readonly colored: boolean;
-  /** Пікселів полотна на одиницю карти (SIZE): полотно — у роздільності екрана, малюємо в одиницях SIZE. */
-  private readonly res: number;
   private yaw: number | null = null;
 
   constructor(parent: HTMLElement, net: Pick<WayNet, 'lines'>, colorOf?: RoadColor) {
     this.el = document.createElement('canvas');
     this.el.className = 'pixel nav-map';
     const s = hudScale() * (matchMedia('(pointer: coarse)').matches ? 1.25 : 1);
-    // Роздільність екрана (не більше ×2 — телефон), а не 96 px з розтягуванням: лінії рухаються плавно, не сходинками.
-    this.res = s * Math.min(window.devicePixelRatio || 1, 2);
-    this.el.width = this.el.height = Math.round(SIZE * this.res);
+    // 96×96 з розтягуванням — пікселі видно, як в оригінальному табло (роздільність екрана — на прохання
+    // користувача повернуто: виглядала менш автентично).
+    this.el.width = this.el.height = SIZE;
     this.el.style.width = this.el.style.height = `${SIZE * s}px`;
     this.ctx = this.el.getContext('2d')!;
     this.colored = !!colorOf;
@@ -73,7 +71,6 @@ export class NavMap {
    */
   update(dt: number, me: THREE.Vector3, heading: THREE.Vector3, rivals: THREE.Vector3[], target?: THREE.Vector3 | null): void {
     const ctx = this.ctx;
-    ctx.setTransform(this.res, 0, 0, this.res, 0, 0);
     frame(ctx, 0, 0, SIZE, SIZE);
     const c = SIZE / 2;
     const k = (SIZE / 2 - 4) / RANGE;
