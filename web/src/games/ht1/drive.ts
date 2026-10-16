@@ -72,13 +72,14 @@ const GRASS_WINDOW = 7;
  * оригіналу: зчеплення й опір кочення відносно асфальту, межа кермування (частка), найбільша швидкість, км/год, і
  * уповільнення понад неї, м/с². Від твердого до найм'якшого; помірно, щоб машина їхала скрізь. Болото — до 25 км/год і гальмує різко
  * (≈ 0,6 g; обидва — на прохання користувача: з 45 км/год і 2 м/с² його пролітали на великій швидкості); брід —
- * так само різко (з 2 м/с² і газом його проїжджали на 70+ км/год).
+ * так само різко (з 2 м/с² і газом його проїжджали на 70+ км/год). Гравій, ґрунт, пісок — 3,5 м/с² (на прохання
+ * користувача: з 2 м/с² і газом межа майже не відчувалась — 130 → 75 км/год за ≈ 9 с).
  */
 const SURFACE_FX: Record<Surface, { grip: number; roll: number; steer: number; maxKmh: number; drag: number }> = {
   asphalt: { grip: 1, roll: 1, steer: 1, maxKmh: Infinity, drag: 2 },
-  gravel: { grip: 0.9, roll: 1.5, steer: 0.95, maxKmh: 95, drag: 2 },
-  dirt: { grip: 0.8, roll: 2.5, steer: 0.9, maxKmh: 75, drag: 2 },
-  sand: { grip: 0.7, roll: 3.5, steer: 0.85, maxKmh: 60, drag: 2 },
+  gravel: { grip: 0.9, roll: 1.5, steer: 0.95, maxKmh: 95, drag: 3.5 },
+  dirt: { grip: 0.8, roll: 2.5, steer: 0.9, maxKmh: 75, drag: 3.5 },
+  sand: { grip: 0.7, roll: 3.5, steer: 0.85, maxKmh: 60, drag: 3.5 },
   swamp: { grip: 0.6, roll: 4.5, steer: 0.8, maxKmh: 25, drag: 6 },
   water: { grip: 0.5, roll: 4, steer: 0.8, maxKmh: 40, drag: 6 },
 };
