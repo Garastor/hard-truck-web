@@ -42,14 +42,24 @@ describe('код з’єднання мережевої гри', () => {
     ]);
   });
 
-  it('рядок коду короткий і розбирається назад без втрат', () => {
+  it('код короткий, лише алфавітно-цифровий набір QR, розбирається назад без втрат', () => {
     const s = signalFromSdp('offer', CHROME_OFFER);
     const code = encodeSignal(s);
-    expect(code.startsWith('HT1Ox ')).toBe(true);
-    expect(code.length).toBeLessThan(200);
+    expect(code.startsWith('HT1:')).toBe(true);
+    // Три адреси (ім'я mDNS, IPv4, зовнішня) — 154 символи: QR версії 5 (L); з однією адресою — ≈ 115, версія 4.
+    expect(code.length).toBeLessThanOrEqual(160);
+    expect(code).toMatch(/^[0-9A-Z$%*+\-./:]+$/);
     expect(decodeSignal(code)).toEqual(s);
-    // Пробіли й перенесення рядків від месенджера не заважають.
-    expect(decodeSignal(`  ${code.replace(/ /g, '\n')}\n`)).toEqual(s);
+    // Пробіли й перенесення рядків від месенджера, малі літери — не заважають.
+    expect(decodeSignal(`  ${code.slice(0, 40)}\n${code.slice(40, 90)} ${code.slice(90)}\n`)).toEqual(s);
+    expect(decodeSignal(code.toLowerCase())).toEqual(s);
+    const one = encodeSignal({ ...s, candidates: s.candidates.slice(0, 1) });
+    expect(one.length).toBeLessThan(120);
+  });
+
+  it('ключі ICE не з набору base64 — як є', () => {
+    const s = { ...signalFromSdp('offer', CHROME_OFFER), ufrag: 'a_b-c', pwd: 'x~y'.padEnd(24, 'z') };
+    expect(decodeSignal(encodeSignal(s))).toEqual(s);
   });
 
   it('IPv6-адреса з двокрапками', () => {
@@ -57,7 +67,8 @@ describe('код з’єднання мережевої гри', () => {
     const back = decodeSignal(encodeSignal(s));
     expect(back.kind).toBe('answer');
     expect(back.setup).toBe('active');
-    expect(back.candidates[1]).toEqual({ type: 'host', address: 'fe80::1c2b:3a4d', port: 54322 });
+    // IPv6 — повною формою (та сама адреса).
+    expect(back.candidates[1]).toEqual({ type: 'host', address: 'fe80:0:0:0:0:0:1c2b:3a4d', port: 54322 });
   });
 
   it('відновлений SDP містить те саме, що потрібно браузеру', () => {
@@ -72,8 +83,9 @@ describe('код з’єднання мережевої гри', () => {
 
   it('чужий чи пошкоджений код — зрозуміла помилка', () => {
     expect(() => decodeSignal('https://example.com')).toThrow(SignalError);
-    expect(() => decodeSignal('HT1Ox a b c')).toThrow(SignalError);
+    expect(() => decodeSignal('HT1:ABC')).toThrow(SignalError);
     const code = encodeSignal(signalFromSdp('offer', CHROME_OFFER));
-    expect(() => decodeSignal(code + ' hbad')).toThrow(SignalError);
+    expect(() => decodeSignal(code + '00')).toThrow(SignalError);
+    expect(() => decodeSignal(code.slice(0, -6))).toThrow(SignalError);
   });
 });

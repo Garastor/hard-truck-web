@@ -147,8 +147,8 @@ function connectScreen(art: MenuArt, driver: string, note: string | null): Promi
     friend.rows = 2;
     friend.placeholder = 'вставте код';
     friend.addEventListener('input', () => {
-      const v = friend.value.trim();
-      if (v.startsWith('HT1') && v.split(/\s+/).length >= 4) void gotCode(v);
+      const v = friend.value.replace(/\s+/g, '').toUpperCase();
+      if (v.startsWith('HT1:') && v.length > 60) void gotCode(v);
     });
     textBox.append(ownLabel, own, send, friendLabel, friend);
 
@@ -195,6 +195,11 @@ function connectScreen(art: MenuArt, driver: string, note: string | null): Promi
       qrBox.replaceChildren(qrCanvas(code, 182));
       own.value = code;
     };
+    // Дотик до QR-коду — на весь екран (більші клітинки — камера друга читає з більшої відстані); ще дотик — назад.
+    qrBox.title = 'Торкніться — більше';
+    qrBox.addEventListener('click', () => {
+      if (own.value) showBigQr(own.value);
+    });
     const drop = () => {
       action++;
       clearTimeout(timeout);
@@ -299,7 +304,7 @@ function connectScreen(art: MenuArt, driver: string, note: string | null): Promi
     scr.keys(null, () => done(null));
 
     info.innerHTML = `<p>Гра вдвох по Wi-Fi — телефони мають бути в одній мережі.</p>
-      <p><b>СТВОРИТИ ГРУ</b> — покажіть QR-код другу й відскануйте його відповідь.</p>
+      <p><b>СТВОРИТИ ГРУ</b> — покажіть QR-код другу (дотик — на весь екран) і відскануйте його відповідь.</p>
       <p><b>ПРИЄДНАТИСЯ</b> — відскануйте QR-код друга й покажіть йому свій.</p>
       <p><b>КОД ТЕКСТОМ</b> — ті самі коди текстом: надіслати месенджером${camera ? '' : ' (камера тут недоступна — потрібен HTTPS)'}.</p>`;
     if (note) {
@@ -427,6 +432,28 @@ function sessionScreen(art: MenuArt, driver: string, lobby: NetLobby, trucks: Ne
     render();
     void peer.route().then((r) => (route = r));
   });
+}
+
+/** QR-код на весь екран (найбільший квадрат вікна), дотик чи Esc — закрити. */
+function showBigQr(code: string): void {
+  const back = el('div', 'net-bigqr');
+  const side = Math.floor(Math.min(window.innerWidth, window.innerHeight) * 0.94);
+  const c = qrCanvas(code, side * Math.min(2, window.devicePixelRatio || 1));
+  c.style.width = c.style.height = `${side}px`;
+  back.append(c);
+  const close = () => {
+    window.removeEventListener('keydown', onKey, true);
+    back.remove();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape' && e.key !== 'Enter') return;
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+  };
+  back.addEventListener('click', close);
+  window.addEventListener('keydown', onKey, true);
+  document.body.append(back);
 }
 
 /** Помилка камери (getUserMedia) — українською. */

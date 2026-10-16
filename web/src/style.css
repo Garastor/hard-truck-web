@@ -1086,6 +1086,26 @@ body.career #stats {
   image-rendering: pixelated;
 }
 
+.net-qr {
+  cursor: zoom-in;
+}
+
+/* QR-код на весь екран: білий фон — поле навколо коду для камери. */
+.net-bigqr {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  cursor: zoom-out;
+}
+
+.net-bigqr canvas {
+  image-rendering: pixelated;
+}
+
 .net-video {
   object-fit: cover;
   background: #000;

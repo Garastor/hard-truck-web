@@ -5,10 +5,14 @@
  */
 import qrcode from 'qrcode-generator';
 
-/** Полотно з QR-кодом (чорне на білому, поле 4 модулі), сторона — size пікселів (кратна модулю). */
+/**
+ * Полотно з QR-кодом (чорне на білому, поле 4 модулі), сторона — size пікселів (кратна модулю). Код з'єднання — у
+ * алфавітно-цифровому наборі QR (5,5 біта на символ замість 8) і з найменшим запасом на помилки (L): з екрана на
+ * камеру пошкоджень майже немає, а клітинки виходять більші — камера читає легше.
+ */
 export function qrCanvas(text: string, size: number): HTMLCanvasElement {
-  const qr = qrcode(0, 'M');
-  qr.addData(text, 'Byte');
+  const qr = qrcode(0, 'L');
+  qr.addData(text, /^[0-9A-Z $%*+\-./:]*$/.test(text) ? 'Alphanumeric' : 'Byte');
   qr.make();
   const n = qr.getModuleCount();
   const total = n + 8;

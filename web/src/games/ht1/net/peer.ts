@@ -8,7 +8,7 @@
 import { decodeSignal, encodeSignal, sdpFromSignal, sdpMid, signalFromSdp, SignalError } from './signal';
 
 /** Версія протоколу: різні версії порту не з'єднуються (повідомлення гравцям). */
-export const NET_VERSION = 1;
+export const NET_VERSION = 2;
 /** Скільки чекати збору адрес (у локальній мережі — частки секунди), мс. */
 const GATHER_TIMEOUT = 4000;
 /** Пінг і обрив: без жодного повідомлення довше за LOST_AFTER — зв'язок втрачено, мс. */
