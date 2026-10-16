@@ -469,6 +469,17 @@ body.ht2-orig-ui .touch-top {
   top: calc(env(safe-area-inset-top, 0px) + var(--ht2-tablo-h, 0px) + 6px);
 }
 
+/* Телефон у ландшафті: обидві групи — на 60% бокового відступу (52 px → ≈31 px), запас під виріз лишається. */
+@media (pointer: coarse) and (orientation: landscape) {
+  body.ht2-orig-ui .ht2-hud {
+    left: calc(var(--sl) * 0.6);
+  }
+
+  body.ht2-orig-ui .touch-top {
+    right: calc(var(--sr) * 0.6);
+  }
+}
+
 body.ht2-orig-ui .ht2-hud,
 body.ht2-orig-ui .touch-top-row,
 body.ht2-orig-ui .touch-more {
@@ -487,6 +498,8 @@ body.ht2-orig-ui .ht2-hud button,
 body.ht2-orig-ui .touch-top .touch-btn {
   box-sizing: border-box;
   height: 34px;
+  /* Загальне button { min-height: 40px } робило праву групу вищою за ліву. */
+  min-height: 0;
   min-width: 34px;
   width: auto;
   margin: 0;
