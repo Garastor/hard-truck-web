@@ -204,10 +204,9 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
     }
     if (choice === 'drive' || choice === 'career' || choice === 'new' || choice === 'race') {
       let career: Ht2Career | null = null;
-      if (choice === 'new') {
-        if (saved && (await modal(ctx.overlay, 'Нова гра', 'Збережену гру буде втрачено. Почати заново?', ['Почати заново', 'Скасувати'])) !== 0) continue;
-        career = newCareer('Водій', '');
-      } else if (choice === 'career') career = saved ?? newCareer('Водій', '');
+      // Без питання «збережену гру буде втрачено»: чи зберігати, гравець уже вирішив, виходячи з гри в меню.
+      if (choice === 'new') career = newCareer('Водій', '');
+      else if (choice === 'career') career = saved ?? newCareer('Водій', '');
       await new Promise<void>((resolve) => {
         let drive: Ht2Drive | null = null;
         // next — з меню Esc: завантажити збережену гру, почати спочатку, вийти з гри (без ctx.exit — у головне меню).
