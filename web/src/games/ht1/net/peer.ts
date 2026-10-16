@@ -70,7 +70,7 @@ export class NetPeer {
   /** Гість: відповідь на запрошення господаря. */
   static async join(name: string, offerCode: string): Promise<{ peer: NetPeer; code: string }> {
     const offer = decodeSignal(offerCode);
-    if (offer.kind !== 'offer') throw new SignalError('Це відповідь, а не запрошення: відскануйте код того, хто створив гру');
+    if (offer.kind !== 'offer') throw new SignalError('Відскануйте код того, хто створив гру');
     const peer = new NetPeer(false, name);
     try {
       await peer.pc.setRemoteDescription({ type: 'offer', sdp: sdpFromSignal(offer) });
@@ -86,7 +86,7 @@ export class NetPeer {
   /** Господар: відповідь друга — далі з'єднання встановлюється саме. */
   async accept(answerCode: string): Promise<void> {
     const answer = decodeSignal(answerCode);
-    if (answer.kind !== 'answer') throw new SignalError('Це запрошення, а не відповідь: відскануйте код друга, що приєднується');
+    if (answer.kind !== 'answer') throw new SignalError('Відскануйте код друга, що приєднується');
     await this.pc.setRemoteDescription({ type: 'answer', sdp: sdpFromSignal(answer, sdpMid(this.pc.localDescription!.sdp)) });
   }
 
