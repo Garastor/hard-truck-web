@@ -469,6 +469,9 @@ body.ht2-orig-ui .touch-top {
   top: calc(env(safe-area-inset-top, 0px) + var(--ht2-tablo-h, 0px) + 6px);
   /* Як ліва група (.ht2-hud): 8 px від краю, а не 16 (--sr). */
   right: max(8px, env(safe-area-inset-right));
+  /* Ціле число пікселів (не 8 px × --ui): дробовий проміжок ставив групу «•••» на півпіксель, і ряди клітинок
+     округлювалися до пікселів екрана по-різному на ПК і телефоні. */
+  gap: 6px;
 }
 
 /* Телефон у ландшафті: обидві групи — на 60% бокового відступу (52 px → ≈31 px), запас під виріз лишається. */
@@ -612,9 +615,4 @@ body.ht2-orig-ui .touch-btn.right,
 body.ht2-orig-ui .touch-btn.brake,
 body.ht2-orig-ui .touch-btn.gas {
   clip-path: inset(0 round 4.5px);
-}
-
-/* Нижній ряд групи «•••» (дзеркало, сигнал) візуально сидів низько — вище на 1 px (на прохання користувача). */
-body.ht2-orig-ui .touch-more .touch-btn:nth-child(3n) {
-  transform: translateY(-1px);
 }
