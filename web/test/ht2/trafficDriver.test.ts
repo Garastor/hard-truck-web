@@ -136,6 +136,8 @@ describe('HT2: водій трафіку', () => {
   it('повільнішого обганяє лівою смугою й повертається праворуч', () => {
     const lanes = road(straight(3000), 2, 0);
     const slow = newMover(lanes[1], 6, 0, 10, 2);
+    // Повільна лишається у своїй смузі (інакше з імовірністю 25 % сама займає ліву — обганяти нема де).
+    slow.wantLane = 1;
     const m = newMover(lanes[1], 0, 0, 20, 2);
     m.wantLane = 1;
     let left = false;

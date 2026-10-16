@@ -17,9 +17,10 @@ import { AutoPilot } from './engine/vehicle/autopilot';
 import { Ht2Roads } from './world/roads';
 import { Traffic, recolor, trafficKinds } from './traffic/traffic';
 import { Accidents } from './traffic/accidents';
+import { TrafficLights } from './world/trafficLights';
 import { CareerMode } from './career/careerMode';
 import { Police, parseAmbushes, type PoliceEvent } from './traffic/police';
-import { bribeSum, copsTakeBribes, totalFine, wanted } from './career/law';
+import { RED_LIGHT_FINE, bribeSum, copsTakeBribes, totalFine, wanted } from './career/law';
 import { Mafia } from './traffic/mafia';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
@@ -196,6 +197,8 @@ export class Ht2Drive {
   police: Police | null = null;
   /** ДТП гравця (штраф за порушення ПДР при зіткненні, king.exe 0x4cfe70) — лише в кар'єрі. */
   accidents: Accidents | null = null;
+  /** Світлофори (тригери 0x1D і лампи TrafficLightKey, king.exe 0x4ce160 / 0x56ffd0). */
+  readonly lights = new TrafficLights();
   /** Хто з інспекторів COP1…COP15 бере хабар (names.sch). */
   private copBribes: boolean[] = [];
   /** Радар-детектор: фаза блимання лампи RD_LampKey і чи світить. */
@@ -429,6 +432,7 @@ export class Ht2Drive {
       ghost: count('ghost', 25),
       density: o.settings?.traffic ?? 1,
     });
+    this.traffic.signals = this.lights;
     this.traffic.view = {
       range: () => (this.world.scene.fog as THREE.Fog | null)?.far ?? VIEW_FALLBACK,
       sees: (p) => this.canSee(p),
@@ -1561,6 +1565,12 @@ export class Ht2Drive {
     this.race?.after(dt, alpha);
     this.detectHits();
     if (this.careerMode && !this.paused) this.accidents?.update(dt);
+    this.lights.update(dt, this.world.loaded.values());
+    // Проїзд стоп-лінії на червоне (0x56ffd0): штраф 830, лише якщо міліція ближче 200 м; раз за перетин.
+    if (this.lights.player(this.truck.visual.position) && this.careerMode && this.police?.near(this.truck.visual.position, 200)) {
+      this.careerMode.fines.redLight += RED_LIGHT_FINE;
+      this.careerMode.persist();
+    }
     this.truckers?.after(dt, this.truck.visual.position, alpha);
     this.traffic?.after(alpha);
     this.police?.after(alpha);

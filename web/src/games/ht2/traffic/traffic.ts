@@ -151,6 +151,9 @@ export class Traffic {
   /** Що бачить гравець: дальність (кінець туману, м) і чи видно точку з камери. Без нього — без перевірок. */
   view: { range(): number; sees(p: THREE.Vector3): boolean } | null = null;
 
+  /** Світлофори: відстань до стоп-лінії на червоне (world/trafficLights.ts); без них — не зважати. */
+  signals: { stopAhead(p: THREE.Vector3, heading: THREE.Vector3): number } | null = null;
+
   /** Фізичні машини поруч з гравцем; без цього — усі кінематичні. */
   physics: TrafficPhysics | null = null;
 
@@ -228,6 +231,7 @@ export class Traffic {
     });
     this.avoidPrev = avoid.map((p) => p.clone());
     for (const c of this.all) {
+      c.stopAt = c.root || c.vehicle ? (this.signals?.stopAhead(c.pos, c.heading) ?? Infinity) : Infinity;
       if (c.vehicle) this.think(c, dt, obstacles);
       else if (c.root) this.drive(c, dt, avoid, obstacles);
       else coast(c, dt);
