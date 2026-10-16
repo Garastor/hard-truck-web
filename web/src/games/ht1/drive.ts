@@ -1382,7 +1382,7 @@ export class DriveSession {
     this.bodyShake.update(dt, roughness(BODY_ROUGH, this.surface, this.surfaceHeight, this.truck.speedKmh) * this.shakeScale);
     // Кузов власної машини видно лише з камер позаду.
     if (this.camMode === 'chase' || this.camMode === 'far') shakeBody(this.truck, this.bodyShake);
-    for (const o of this.opponents) {
+    for (const [i, o] of this.opponents.entries()) {
       if (o.truck.visual.position.distanceToSquared(this.camera.position) > SHAKE_FAR * SHAKE_FAR) {
         o.shake.amp = 0;
         continue;
@@ -1390,7 +1390,8 @@ export class DriveSession {
       if ((o.surfaceTimer -= dt) <= 0) {
         o.surfaceTimer = 0.2;
         const t = o.truck.body.translation();
-        const probe = this.probeSurface(t, this.locate(new THREE.Vector3(t.x, t.y, t.z)));
+        // Кімната — уже відома (updateOpponentRooms), без повторного пошуку за підлогою.
+        const probe = this.probeSurface(t, this.opponentRooms[i] ?? null);
         o.surfaceHeight = probe?.height ?? Infinity;
         if (probe?.surface) o.surface = probe.surface;
       }
@@ -1781,17 +1782,19 @@ export class DriveSession {
     for (const [room, cs] of this.roomColliders) for (const c of cs) c.setEnabled(on.has(room) || !this.track.rooms.has(room));
   }
 
+  /**
+   * Кімната суперника за підлогою — щокадру по одному (по колу): з 15 суперниками кожен раз на 0,25 с. Раніше — усі
+   * разом раз на 0,25 с: пік ≈ 4 мс кожен 15-й кадр (ривок на телефоні).
+   */
+  private opponentRoomNext = 0;
   private updateOpponentRooms(): void {
-    let changed = false;
-    this.opponents.forEach((o, i) => {
-      const p = o.truck.body.translation();
-      const r = this.locate(new THREE.Vector3(p.x, p.y, p.z)) ?? this.opponentRooms[i] ?? null;
-      if (r !== this.opponentRooms[i]) {
-        this.opponentRooms[i] = r;
-        changed = true;
-      }
-    });
-    if (changed) this.updateActiveRooms();
+    if (!this.opponents.length) return;
+    const i = (this.opponentRoomNext = (this.opponentRoomNext + 1) % this.opponents.length);
+    const p = this.opponents[i].truck.body.translation();
+    const r = this.locate(new THREE.Vector3(p.x, p.y, p.z)) ?? this.opponentRooms[i] ?? null;
+    if (r === this.opponentRooms[i]) return;
+    this.opponentRooms[i] = r;
+    this.updateActiveRooms();
   }
 
   /** Удар: різка зміна швидкості за один крок (≫ гальмування чи розгону) — накопичуємо силу. */
@@ -1887,9 +1890,9 @@ export class DriveSession {
     if (next) next = this.track.canonical(next);
     if (next === this.room) next = null;
     if (jumped) this.locateTimer = 0;
+    this.updateOpponentRooms();
     if (!next && (this.locateTimer -= 1 / 60) <= 0) {
       this.locateTimer = 0.25;
-      this.updateOpponentRooms();
       // Кімнату змінює перетин порталу (як в оригіналі). За підлогою — лише якщо під машиною вже немає
       // підлоги поточної кімнати (рестарт, пропущений портал): підлоги сусідніх кімнат перекриваються
       // (тунель траси під залом запчастин), і «найвища підлога» вводила в оману.

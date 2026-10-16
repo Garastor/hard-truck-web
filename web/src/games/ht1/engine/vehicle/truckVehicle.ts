@@ -167,6 +167,14 @@ export interface TruckSetup {
 
 /** Тінь над дорогою, м — щоб не мерехтіла з дорогою (гіпотеза порту). */
 const SHADOW_LIFT = 0.04;
+/**
+ * Заготовки для обчислень щокадру й щокроку (без нових об'єктів — менше роботи збирачу сміття на телефоні). У кожної
+ * функції свої: одна не викликає іншу посеред обчислень.
+ */
+const V = Array.from({ length: 8 }, () => new THREE.Vector3());
+const M = Array.from({ length: 6 }, () => new THREE.Matrix4());
+const Q = new THREE.Quaternion();
+const E = new THREE.Euler();
 /** Як далеко вниз шукати землю для тіні, коли колеса не торкаються дороги, м. */
 const SHADOW_RAY = 30;
 
@@ -527,8 +535,8 @@ export class TruckVehicle {
   private applyBumpStops(dt: number): void {
     const S = SUSPENSION;
     const r = this.body.rotation();
-    const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    const q = Q.set(r.x, r.y, r.z, r.w);
+    const up = V[0].set(0, 1, 0).applyQuaternion(q);
     const t = this.body.translation();
     for (let i = 0; i < this.wheels; i++) {
       if (!this.ctrl.wheelIsInContact(i)) continue;
@@ -536,7 +544,7 @@ export class TruckVehicle {
       if (excess <= 0) continue;
       const c = this.ctrl.wheelChassisConnectionPointCs(i);
       if (!c) continue;
-      const at = new THREE.Vector3(c.x, c.y, c.z).applyQuaternion(q).add(new THREE.Vector3(t.x, t.y, t.z));
+      const at = V[1].set(c.x, c.y, c.z).applyQuaternion(q).add(V[2].set(t.x, t.y, t.z));
       const v = this.body.velocityAtPoint(at);
       const closing = -(v.x * up.x + v.y * up.y + v.z * up.z); // > 0 — кузов іде вниз, підвіска стискається
       const force = (this.mass / this.wheels) * (S.bump_stiffness * excess + S.bump_damping * Math.max(0, closing));
@@ -555,9 +563,9 @@ export class TruckVehicle {
    */
   private applyTireLateral(dt: number): void {
     const r = this.body.rotation();
-    const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
-    const chassisFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+    const q = Q.set(r.x, r.y, r.z, r.w);
+    const up = V[0].set(0, 1, 0).applyQuaternion(q);
+    const chassisFwd = V[1].set(0, 0, -1).applyQuaternion(q);
     const wheelMass = this.mass / this.wheels;
     for (let i = 0; i < this.wheels; i++) {
       if (!this.ctrl.wheelIsInContact(i)) continue;
@@ -566,8 +574,8 @@ export class TruckVehicle {
       const stepMass = this.towing ? Math.max(wheelMass, load / 9.81) : wheelMass;
       const p = this.ctrl.wheelContactPoint(i);
       if (load <= 0 || !p) continue;
-      const fwd = chassisFwd.clone().applyAxisAngle(up, this.ctrl.wheelSteering(i) ?? 0);
-      const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
+      const fwd = V[2].copy(chassisFwd).applyAxisAngle(up, this.ctrl.wheelSteering(i) ?? 0);
+      const right = V[3].crossVectors(fwd, up).normalize();
       const vp = this.body.velocityAtPoint(p);
       const vLong = vp.x * fwd.x + vp.y * fwd.y + vp.z * fwd.z;
       const vLat = vp.x * right.x + vp.y * right.y + vp.z * right.z;
@@ -626,9 +634,9 @@ export class TruckVehicle {
     const s = this.shadow!;
     const v = this.visual;
     v.updateMatrix();
-    const centerW = s.mid.clone().applyMatrix4(v.matrix);
-    const up = new THREE.Vector3();
-    const ground = new THREE.Vector3();
+    const centerW = V[0].copy(s.mid).applyMatrix4(v.matrix);
+    const up = V[1].set(0, 0, 0);
+    const ground = V[2].set(0, 0, 0);
     let n = 0;
     for (let i = 0; i < this.wheels; i++) {
       if (!this.ctrl.wheelIsInContact(i)) continue;
@@ -662,19 +670,19 @@ export class TruckVehicle {
     }
     s.obj.visible = true;
     // Точка під центром кузова на площині дороги.
-    const pos = centerW.clone().addScaledVector(up, -centerW.clone().sub(ground).dot(up) + SHADOW_LIFT);
+    const pos = V[3].copy(centerW).addScaledVector(up, -V[4].copy(centerW).sub(ground).dot(up) + SHADOW_LIFT);
     // Напрям — уздовж кузова, спроєктований на дорогу (машина сторч — уздовж її «угору»).
-    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(v.quaternion);
+    const fwd = V[5].set(0, 0, -1).applyQuaternion(v.quaternion);
     fwd.addScaledVector(up, -fwd.dot(up));
     if (fwd.lengthSq() < 1e-4) {
       fwd.set(0, 1, 0).applyQuaternion(v.quaternion);
       fwd.addScaledVector(up, -fwd.dot(up));
     }
     fwd.normalize();
-    const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
-    const world = new THREE.Matrix4().makeBasis(right, up, fwd.negate()).setPosition(pos);
+    const right = V[6].crossVectors(fwd, up).normalize();
+    const world = M[0].makeBasis(right, up, fwd.negate()).setPosition(pos);
     // У систему батька вузла: visual⁻¹ · світ · площина, потім батько⁻¹.
-    s.obj.matrix.copy(s.parentInv).multiply(v.matrix.clone().invert()).multiply(world).multiply(s.local);
+    s.obj.matrix.copy(s.parentInv).multiply(M[1].copy(v.matrix).invert()).multiply(world).multiply(s.local);
     s.obj.matrixWorldNeedsUpdate = true;
   }
 
@@ -710,24 +718,23 @@ export class TruckVehicle {
       const len = this.ctrl.wheelSuspensionLength(i) ?? this.suspRest;
       const steer = this.ctrl.wheelSteering(i) ?? 0;
       const spin = this.ctrl.wheelRotation(i) ?? 0;
-      const m = w.base.clone();
-      m.multiply(new THREE.Matrix4().makeTranslation(0, 0, this.suspAnchor - len));
-      m.multiply(new THREE.Matrix4().makeRotationZ(steer));
-      m.multiply(new THREE.Matrix4().makeRotationX(-spin));
-      w.obj.matrix.copy(m);
+      const m = w.obj.matrix.copy(w.base);
+      m.multiply(M[2].makeTranslation(0, 0, this.suspAnchor - len));
+      m.multiply(M[2].makeRotationZ(steer));
+      m.multiply(M[2].makeRotationX(-spin));
     }
   }
 
   /** Від системи батька колеса до системи моделі (visual) — ланцюжок вузлів моделі незмінний, рахуємо раз. */
-  private wheelFrames: THREE.Matrix4[] | null = null;
-  private wheelFrame(i: number): THREE.Matrix4 {
+  private wheelFrames: { m: THREE.Matrix4; inv: THREE.Matrix4 }[] | null = null;
+  private wheelFrame(i: number): { m: THREE.Matrix4; inv: THREE.Matrix4 } {
     this.wheelFrames ??= this.wheelVisual.map(({ obj }) => {
       const m = new THREE.Matrix4();
       for (let o = obj.parent; o && o !== this.visual; o = o.parent) {
         if (o.matrixAutoUpdate) o.updateMatrix();
         m.premultiply(o.matrix);
       }
-      return m;
+      return { m, inv: m.clone().invert() };
     });
     return this.wheelFrames[i];
   }
@@ -739,18 +746,16 @@ export class TruckVehicle {
    */
   shakeVisual(pitch: number, roll: number, lift: number, bump: (i: number) => number): void {
     // Як нижче з моделлю: поворот, потім підйом уздовж повернутої осі Y.
-    const shake = new THREE.Matrix4()
-      .makeRotationFromEuler(new THREE.Euler(pitch, 0, roll))
-      .multiply(new THREE.Matrix4().makeTranslation(0, lift, 0));
-    this.visual.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, 0, roll)));
-    this.visual.position.add(new THREE.Vector3(0, lift, 0).applyQuaternion(this.visual.quaternion));
-    const undo = shake.clone().invert();
+    const rot = Q.setFromEuler(E.set(pitch, 0, roll));
+    const shake = M[3].makeRotationFromQuaternion(rot).multiply(M[4].makeTranslation(0, lift, 0));
+    this.visual.quaternion.multiply(rot);
+    this.visual.position.add(V[7].set(0, lift, 0).applyQuaternion(this.visual.quaternion));
+    const undo = shake.invert();
     for (let i = 0; i < this.wheels; i++) {
       const P = this.wheelFrame(i);
-      const Pinv = P.clone().invert();
       // Колесо в системі моделі: зворотне трясіння (лишається, де було) і підскок угору.
-      const up = new THREE.Matrix4().makeTranslation(0, bump(i), 0);
-      this.wheelVisual[i].obj.matrix.premultiply(Pinv.multiply(undo).multiply(up).multiply(P));
+      const w = M[4].copy(P.inv).multiply(undo).multiply(M[5].makeTranslation(0, bump(i), 0)).multiply(P.m);
+      this.wheelVisual[i].obj.matrix.premultiply(w);
     }
   }
 
