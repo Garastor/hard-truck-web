@@ -63,6 +63,20 @@ describe('стан машини в мережі', () => {
     expect(unpackFleet(buf.slice(0, 30))).toBeNull();
   });
 
+  it('показ зберігає копії станів: розбір пакетів повторно використовує один буфер', () => {
+    const tr = new RemoteTrack();
+    const s = state(0, 0, 10);
+    tr.push(s, 50);
+    s.time = 0.1;
+    s.pos.x = 1;
+    tr.push(s, 50.1);
+    const out = emptyState();
+    // Між пакетами (час відправника 0,05) — посередині, а не обидва стани = останній.
+    tr.sample(50.1 + 0.1 - 0.05, out);
+    expect(out.pos.x).toBeGreaterThan(0.3);
+    expect(out.pos.x).toBeLessThan(0.7);
+  });
+
   it('запізнілий пакет не ламає порядок', () => {
     const tr = new RemoteTrack();
     tr.push(state(1, 10, 0), 101);

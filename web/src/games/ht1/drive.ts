@@ -29,7 +29,7 @@ import { AutoPilot, WayNet } from './engine/vehicle/autopilot';
 import { RoomVisibility } from './track/roomVisibility';
 import { ModelBatch } from './engine/render/modelBatch';
 import { toast } from './engine/ui/mobile';
-import { FIRST_RIVAL, FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, RemoteTrack, STATE_RATE, emptyState, packFleet, unpackFleet, type TruckState } from './net/state';
+import { FIRST_RIVAL, FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, RemoteTrack, STATE_RATE, emptyState, packFleet, readFleet, type TruckState } from './net/state';
 
 /** Камера (C): з кабіни, від першої особи (лише прилади Panel), позаду, здалеку. */
 export type CamMode = 'chase' | 'cockpit' | 'first' | 'far';
@@ -335,6 +335,11 @@ const GRID_ROW = 12;
 /** Скільки суперник лежить перекинутим, перш ніж повернутися на дорогу, с (гіпотеза). */
 const OPPONENT_RECOVER = 3;
 
+/** Машина на трасі: суперник або машина з мережі, що не схована (гравець не вийшов, стан уже приходив). */
+function carActive(o: { remote?: { gone: boolean; waiting: boolean } }): boolean {
+  return !o.remote || (!o.remote.gone && !o.remote.waiting);
+}
+
 /** Машина лежить на боці чи догори колесами. */
 function isFlipped(t: TruckVehicle): boolean {
   const q = t.body.rotation();
@@ -399,6 +404,9 @@ export class DriveSession {
     pilot: AutoPilot | null;
     /** id — номер машини в мережевій грі; waiting — стану ще не було (суперник господаря захований). */
     remote?: { id: number; track: RemoteTrack; state: TruckState; gone: boolean; waiting: boolean };
+    /** Відблиски фар і пакунок моделі цієї машини (пропускаємо, поки машину сховано). */
+    wet: WetReflections;
+    batch: ModelBatch;
     odo: Odometer;
     lights: TruckLights | null;
     flippedFor: number;
@@ -666,6 +674,9 @@ export class DriveSession {
     this.opponents.forEach((o, i) => {
       const snd = this.oppSounds![i];
       if (!snd) return;
+      // Схована машина з мережі (гравець вийшов, суперник ще без стану) — без звуку (інакше двигун грав би з місця,
+      // де її сховано).
+      if (!carActive(o)) return snd.set(0, 1, 0);
       const p = o.truck.body.translation();
       const rel = new THREE.Vector3(p.x - cam.x, p.y - cam.y, p.z - cam.z);
       const d = rel.length();
@@ -775,6 +786,7 @@ export class DriveSession {
     const reverse = this.truck.gear < 0;
     this.lights?.update(this.headlights, false, reverse ? state.throttle > 0 : state.brake > 0, reverse);
     for (const o of this.opponents) {
+      if (!carActive(o)) continue;
       if (o.remote) o.lights?.update((o.remote.state.flags & FLAG_LIGHTS) !== 0, wet, (o.remote.state.flags & FLAG_BRAKE) !== 0, o.truck.gear < 0);
       else o.lights?.update(this.night, wet, o.pilot!.state.brake > 0, o.truck.gear < 0);
     }
@@ -1184,6 +1196,7 @@ export class DriveSession {
     let budget = BATCH_REBUILDS;
     for (let k = 0; k < n; k++) {
       const b = this.batches[(this.batchNext + k) % n];
+      if (this.hiddenParts.has(b)) continue;
       if (b.update(budget > 0)) budget--;
     }
     this.batchNext = (this.batchNext + 1) % Math.max(1, n);
@@ -1421,7 +1434,7 @@ export class DriveSession {
     // Кузов власної машини видно лише з камер позаду.
     if (this.camMode === 'chase' || this.camMode === 'far') shakeBody(this.truck, this.bodyShake);
     for (const [i, o] of this.opponents.entries()) {
-      if (o.truck.visual.position.distanceToSquared(this.camera.position) > SHAKE_FAR * SHAKE_FAR) {
+      if (!carActive(o) || o.truck.visual.position.distanceToSquared(this.camera.position) > SHAKE_FAR * SHAKE_FAR) {
         o.shake.amp = 0;
         continue;
       }
@@ -1501,9 +1514,11 @@ export class DriveSession {
       pilot.cruise = 58 + ((i * 7) % 18);
       const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
       hideLampReflections(model.root);
-      this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z), (x, y, z) => this.glossAt(x, y, z), (f, t) => this.lampSeen(f, t)));
-      this.batches.push(new ModelBatch(truck.visual, (o) => model.wheels.includes(o)));
-      this.opponents.push({ truck, pilot, odo: new Odometer(), lights, flippedFor: 0, shake: new Shake(1.7 * (i + 1)), surface: 'asphalt', surfaceHeight: Infinity, surfaceTimer: 0.2 * Math.random() });
+      const wet = new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z), (x, y, z) => this.glossAt(x, y, z), (f, t) => this.lampSeen(f, t));
+      const batch = new ModelBatch(truck.visual, (o) => model.wheels.includes(o));
+      this.wetReflections.push(wet);
+      this.batches.push(batch);
+      this.opponents.push({ truck, pilot, wet, batch, odo: new Odometer(), lights, flippedFor: 0, shake: new Shake(1.7 * (i + 1)), surface: 'asphalt', surfaceHeight: Infinity, surfaceTimer: 0.2 * Math.random() });
     });
   }
 
@@ -1517,6 +1532,7 @@ export class DriveSession {
     for (const [i, o] of this.opponents.entries()) {
       const pos = all[i + 1];
       if (o.remote) {
+        if (!carActive(o)) continue;
         this.stepRemote(dt, now, o.truck, o.remote);
         o.odo.update(pos, this.route);
         continue;
@@ -1574,6 +1590,8 @@ export class DriveSession {
   shareRivals = false;
   private stateTimer = 0;
   private readonly sendBufs: TruckState[] = [];
+  /** Список машин для пакета — один на всі надсилання. */
+  private readonly sendCars: { id: number; s: TruckState }[] = [];
 
   private sendState(dt: number, input: { brake: number; throttle: number }): void {
     if (!this.onLocalState) return;
@@ -1583,15 +1601,24 @@ export class DriveSession {
     if (this.stateTimer < 0) this.stateTimer = 0;
     const time = performance.now() / 1000;
     const reverse = this.truck.gear < 0;
-    const cars = [{ id: this.localId, s: this.carState(0, this.truck, this.headlights, (reverse ? input.throttle : input.brake) > 0) }];
+    const cars = this.sendCars;
+    let n = 0;
+    const add = (id: number, s: TruckState) => {
+      const c = (cars[n] ??= { id, s });
+      c.id = id;
+      c.s = s;
+      n++;
+    };
+    add(this.localId, this.carState(0, this.truck, this.headlights, (reverse ? input.throttle : input.brake) > 0));
     if (this.shareRivals) {
       let k = 0;
       for (const o of this.opponents) {
         if (!o.pilot) continue;
-        cars.push({ id: FIRST_RIVAL + k, s: this.carState(k + 1, o.truck, this.night, o.pilot.state.brake > 0) });
+        add(FIRST_RIVAL + k, this.carState(k + 1, o.truck, this.night, o.pilot.state.brake > 0));
         k++;
       }
     }
+    cars.length = n;
     this.onLocalState(packFleet(time, cars));
   }
 
@@ -1627,8 +1654,10 @@ export class DriveSession {
     this.scene.add(truck.visual);
     const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
     hideLampReflections(model.root);
-    this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z), (x, y, z) => this.glossAt(x, y, z), (f, t) => this.lampSeen(f, t)));
-    this.batches.push(new ModelBatch(truck.visual, (o) => model.wheels.includes(o)));
+    const wet = new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z), (x, y, z) => this.glossAt(x, y, z), (f, t) => this.lampSeen(f, t));
+    const batch = new ModelBatch(truck.visual, (o) => model.wheels.includes(o));
+    this.wetReflections.push(wet);
+    this.batches.push(batch);
     const state = emptyState();
     const p = truck.body.translation();
     const r = truck.body.rotation();
@@ -1640,6 +1669,8 @@ export class DriveSession {
       truck,
       pilot: null,
       remote,
+      wet,
+      batch,
       odo: new Odometer(),
       lights,
       flippedFor: 0,
@@ -1655,23 +1686,38 @@ export class DriveSession {
   private hideRemote(truck: TruckVehicle, hidden: boolean): void {
     truck.visual.visible = !hidden;
     truck.body.setEnabled(!hidden);
+    this.hiddenDirty = true;
+  }
+
+  /** Відблиски й пакунки схованих машин з мережі — не оновлюємо (набір перераховується лише після змін). */
+  private readonly hiddenParts = new Set<WetReflections | ModelBatch>();
+  private hiddenDirty = false;
+  private updateHiddenParts(): void {
+    if (!this.hiddenDirty) return;
+    this.hiddenDirty = false;
+    this.hiddenParts.clear();
+    for (const o of this.opponents) {
+      if (carActive(o)) continue;
+      this.hiddenParts.add(o.wet);
+      this.hiddenParts.add(o.batch);
+    }
+    this.updateActiveRooms();
   }
 
   /** Пакет машин з мережі. */
   pushRemoteState(data: ArrayBuffer): void {
-    const cars = unpackFleet(data);
-    if (!cars) return;
     const now = performance.now() / 1000;
-    for (const { id, s } of cars) {
-      const o = this.opponents.find((x) => x.remote?.id === id);
+    readFleet(data, (id, s) => {
+      let o: (typeof this.opponents)[number] | undefined;
+      for (const x of this.opponents) if (x.remote?.id === id) o = x;
       const r = o?.remote;
-      if (!r || r.gone) continue;
+      if (!o || !r || r.gone) return;
       r.track.push(s, now);
       if (r.waiting) {
         r.waiting = false;
         this.hideRemote(o.truck, false);
       }
-    }
+    });
   }
 
   /** Гравці вийшли: їхні машини (which — за номером; без нього — усі машини з мережі) прибрати з траси. */
@@ -1810,7 +1856,7 @@ export class DriveSession {
     // Модель між двома останніми кроками фізики — за залишком часу кадру.
     const alpha = this.acc / step;
     this.truck.syncVisual(alpha);
-    for (const o of this.opponents) o.truck.syncVisual(alpha);
+    for (const o of this.opponents) if (carActive(o)) o.truck.syncVisual(alpha);
     this.sendState(dt, state);
     this.movables?.update();
     // Впав зі світу — на точку рестарту.
@@ -1844,7 +1890,8 @@ export class DriveSession {
     this.syncToggles();
     // Відблиски на дорозі — лише на дощових трасах; фари світять і на сухих (якщо ввімкнені). Сила фар у тунелі та
     // сама, що й поза ним (на прохання користувача: раніше в тунелі — на повну, світло різко яскравішало на в'їзді).
-    this.wetReflections.forEach((r, i) => r.update(this.camera, this.raining && (i === 0 ? this.headlights : this.night || wet), wet));
+    this.updateHiddenParts();
+    this.wetReflections.forEach((r, i) => !this.hiddenParts.has(r) && r.update(this.camera, this.raining && (i === 0 ? this.headlights : this.night || wet), wet));
     this.headlightsFx?.update(this.headlights ? (this.night ? 1 : DAY_HEADLIGHTS) : 0, this.truck.forward());
     this.updateSurface(dt);
     this.checkDeath(dt);
@@ -1863,7 +1910,7 @@ export class DriveSession {
     if (this.navMap) {
       // Позиції — моделей (згладжені між кроками фізики), не тіл: інакше точки на карті смикались би.
       const p = (t: TruckVehicle) => t.visual.position.clone();
-      this.navMap.update(dt, p(this.truck), this.truck.forward(), this.opponents.map((o) => p(o.truck)));
+      this.navMap.update(dt, p(this.truck), this.truck.forward(), this.opponents.filter(carActive).map((o) => p(o.truck)));
     }
     // Під дахом (кімнати з подією 4 «tunnel_rain» — тунелі) дощу немає: ні струменів, ні нових крапель.
     // Режим 2D-кабіни — як програмний набір оригіналу: тривимірного дощу там немає; у кабіні дощ видно краплями на
@@ -1960,7 +2007,8 @@ export class DriveSession {
   /** Увімкнути колізії лише кімнат з машинами та їхніх сусідів через портали (решта — вимкнені). */
   private updateActiveRooms(): void {
     if (!this.roomColliders.size) return;
-    const rooms = [this.room, ...this.opponentRooms];
+    // Сховані машини з мережі колізій поруч не потребують (тіло вимкнено).
+    const rooms = [this.room, ...this.opponentRooms.filter((_, i) => !this.opponents[i] || carActive(this.opponents[i]))];
     if (rooms.some((r) => !r)) {
       // Кімната невідома — вмикаємо все, щоб нікуди не провалитися.
       if (this.activeRooms === '*') return;
@@ -1987,6 +2035,7 @@ export class DriveSession {
   private updateOpponentRooms(): void {
     if (!this.opponents.length) return;
     const i = (this.opponentRoomNext = (this.opponentRoomNext + 1) % this.opponents.length);
+    if (!carActive(this.opponents[i])) return;
     const p = this.opponents[i].truck.body.translation();
     const r = this.locate(new THREE.Vector3(p.x, p.y, p.z)) ?? this.opponentRooms[i] ?? null;
     if (r === this.opponentRooms[i]) return;

@@ -35,8 +35,13 @@ interface Detector {
   detect(source: CanvasImageSource): Promise<{ rawValue: string }[]>;
 }
 
-/** Найбільша сторона кадру для розпізнавання, пікселів (менше — швидше, QR-код займає більшу частину кадру). */
-const SCAN_SIZE = 640;
+/**
+ * Розпізнаємо лише квадрат посередині кадру (SCAN_CROP меншої сторони — QR-код друга наводять у центр), зменшений до
+ * SCAN_SIZE пікселів: утричі-вчетверо менше роботи, ніж увесь кадр 640 px, а клітинка QR версії 5 у такому квадраті
+ * все одно ≥ 4 px, поки код займає хоч половину квадрата.
+ */
+const SCAN_SIZE = 400;
+const SCAN_CROP = 0.8;
 /** Пауза між спробами, мс (батарея телефона). */
 const SCAN_EVERY = 150;
 
@@ -67,13 +72,15 @@ export class QrScanner {
       if (this.stopped) return;
       const v = this.video;
       if (v.readyState >= 2 && v.videoWidth) {
-        const k = Math.min(1, SCAN_SIZE / Math.max(v.videoWidth, v.videoHeight));
-        const w = Math.round(v.videoWidth * k);
-        const h = Math.round(v.videoHeight * k);
-        this.frame.width = w;
-        this.frame.height = h;
+        const side = Math.min(v.videoWidth, v.videoHeight) * SCAN_CROP;
+        const w = Math.round(Math.min(SCAN_SIZE, side));
+        const h = w;
+        if (this.frame.width !== w) {
+          this.frame.width = w;
+          this.frame.height = h;
+        }
         const g = this.frame.getContext('2d', { willReadFrequently: true })!;
-        g.drawImage(v, 0, 0, w, h);
+        g.drawImage(v, (v.videoWidth - side) / 2, (v.videoHeight - side) / 2, side, side, 0, 0, w, h);
         let text: string | null = null;
         if (detector) text = (await detector.detect(this.frame).catch(() => []))[0]?.rawValue ?? null;
         else if (decode) text = decode(g.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' })?.data ?? null;
