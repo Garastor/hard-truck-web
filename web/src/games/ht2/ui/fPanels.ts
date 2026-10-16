@@ -135,8 +135,9 @@ export class FPanels {
     keys.slice(0, 36).forEach(([name, key], i) => {
       const x = 25 + Math.floor(i / 18) * 170;
       const y = 469 + (i % 18) * 20;
-      p.write(x, y, name.slice(0, 18), VALUE);
-      p.write(x + 111, y, key.slice(0, 8), VALUE);
+      // Клітинки фону: дія — x 16…133, клавіша — 133…176 (друга колонка — на 170 правіше).
+      p.write(x, y, name, VALUE, undefined, 'left', 104);
+      p.write(x + 111, y, key.slice(0, 8), VALUE, undefined, 'left', 36);
     });
   }
 
@@ -149,10 +150,10 @@ export class FPanels {
     for (const n of d.rivals) rows.push([n, 0, 0, 0]);
     rows.slice(0, 10).forEach(([name, share, hired, tons], i) => {
       const y = 491 + i * 33;
-      p.write(64, y, name.slice(0, 9), VALUE);
-      p.write(168, y, `${share}%`, VALUE, undefined, 'center');
-      p.write(253, y, String(hired), VALUE, undefined, 'center');
-      p.write(328, y, tons.toFixed(1), VALUE, undefined, 'center');
+      p.write(64, y, name, VALUE, undefined, 'left', 76);
+      p.write(168, y, `${share}%`, VALUE, undefined, 'center', 60);
+      p.write(253, y, String(hired), VALUE, undefined, 'center', 60);
+      p.write(328, y, tons.toFixed(1), VALUE, undefined, 'center', 60);
     });
   }
 
@@ -164,17 +165,19 @@ export class FPanels {
     }
     const o = info.order;
     if (o) {
-      p.write(20, 487, `${o.goods} → ${o.town}`.slice(0, 26), VALUE);
-      p.write(20, 545, `${o.arrow} ${o.km.toFixed(1)} КМ`, VALUE);
-      p.write(20, 556, o.left > 0 ? formatLeft(o.left).toUpperCase() : 'ТЕРМІН МИНУВ', o.left > 0 ? VALUE : LOW);
+      // Клітинки фону (у пікселях BackF3): рядок 472…492 (x 17…205), «ЗАКАЗ» 531…557 (x 17…92) — два рядки
+      // розведено до країв клітинки, щоб більші векторні літери не налазили; премія — x 96…172.
+      p.write(20, 487, `${o.goods} → ${o.town}`, VALUE, undefined, 'left', 182);
+      p.write(20, 542, `${o.arrow} ${o.km.toFixed(1)} КМ`, VALUE, undefined, 'left', 70);
+      p.write(20, 555, o.left > 0 ? formatLeft(o.left).toUpperCase() : 'ТЕРМІН МИНУВ', o.left > 0 ? VALUE : LOW, undefined, 'left', 70);
       // Премія першому (конкуренти, G9 Б8); без конкурентів — прочерк.
-      p.write(127, 552, o.premium ? `$${Math.round(o.premium)}` : '—', VALUE);
+      p.write(127, 552, o.premium ? `$${Math.round(o.premium)}` : '—', VALUE, undefined, 'left', 44);
     } else if (info.near) {
-      p.write(20, 487, `СКЛАД ${info.near.town}`.slice(0, 26), VALUE);
-      p.write(20, 545, `${info.near.arrow} ${info.near.km.toFixed(1)} КМ`, VALUE);
+      p.write(20, 487, `СКЛАД ${info.near.town}`, VALUE, undefined, 'left', 182);
+      p.write(20, 548, `${info.near.arrow} ${info.near.km.toFixed(1)} КМ`, VALUE, undefined, 'left', 70);
     }
-    p.write(23, 601, `$${Math.round(info.money)}`, VALUE);
-    p.write(170, 601, info.truck, VALUE, undefined, 'right');
+    p.write(23, 601, `$${Math.round(info.money)}`, VALUE, undefined, 'left', 68);
+    p.write(170, 601, info.truck, VALUE, undefined, 'right', 70);
     const bar = (x: number, y: number, w: number, v: number) => p.bar(x, y, Math.round(w * Math.max(0, Math.min(1, v))), 8, v < 0.3 ? LOW : BAR);
     bar(17, 628, 75, o ? o.mass / info.capacity.mass : 0);
     bar(96, 628, 76, o ? o.volume / info.capacity.volume : 0);
@@ -208,16 +211,16 @@ export class FPanels {
     const list = d.company;
     this.selected = Math.min(this.selected, Math.max(0, list.length - 1));
     p.write(36, 493, `$${Math.round(info.money)}`, VALUE);
-    p.write(200, 493, String(1 + list.length), VALUE, undefined, 'right');
-    p.write(246, 493, `$${Math.round(list.reduce((s, x) => s + x.profit, 0))}`, VALUE, undefined, 'center');
-    p.write(323, 493, String(d.licences), VALUE, undefined, 'center');
+    p.write(200, 493, String(1 + list.length), VALUE, undefined, 'right', 30);
+    p.write(246, 493, `$${Math.round(list.reduce((s, x) => s + x.profit, 0))}`, VALUE, undefined, 'center', 60);
+    p.write(323, 493, String(d.licences), VALUE, undefined, 'center', 50);
     list.slice(0, 10).forEach((x, i) => {
       const y = 559 + i * 20;
       const color = i === this.selected ? 'rgb(255, 255, 255)' : VALUE;
-      p.write(36, y, x.name.slice(0, 9), color);
-      p.write(130, y, `$${Math.round(x.advance)}`, color, undefined, 'center');
-      p.write(195, y, `$${Math.round(x.profit)}`, color, undefined, 'center');
-      p.write(280, y, x.truck.slice(0, 12), color, undefined, 'center');
+      p.write(36, y, x.name, color, undefined, 'left', 62);
+      p.write(130, y, `$${Math.round(x.advance)}`, color, undefined, 'center', 56);
+      p.write(195, y, `$${Math.round(x.profit)}`, color, undefined, 'center', 56);
+      p.write(280, y, x.truck, color, undefined, 'center', 96);
     });
     const sel = list[this.selected];
     if (sel) p.image(`m16\\escphoto${String(sel.photo).padStart(2, '0')}.txr`, 33, 761);

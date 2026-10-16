@@ -369,6 +369,10 @@ body.ht2-esc-open .ht2-drive-bar {
   image-rendering: pixelated;
 }
 
+.ht2-panel-stage.smooth {
+  image-rendering: auto;
+}
+
 .ht2-panel-stage > img:first-child {
   display: block;
 }
@@ -380,6 +384,8 @@ body.ht2-esc-open .ht2-drive-bar {
   /* Над картинками (портрет, картка рації — на них пишуться суми), під кнопками. */
   z-index: 1;
   pointer-events: none;
+  /* Векторний текст у роздільності екрана — не «pixelated» від сцени панелі (рвало літери). */
+  image-rendering: auto;
 }
 
 .ht2-panel-btn,

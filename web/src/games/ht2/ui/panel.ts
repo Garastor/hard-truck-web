@@ -9,6 +9,15 @@ import type { EscArt } from './escArt';
  */
 export const PANEL_CENTER = 650;
 
+/**
+ * Жовті тексти панелей (значення, назви) — не піксельним MENU.FON (8 рядків, на телефоні дрібний і нечіткий), а
+ * векторним шрифтом кнопок порту (.ht2-panel-act), трохи стиснутим по ширині, як написи фону. Розмір — однаковий на
+ * екрані в усіх панелях: TEXT_PX пікселів екрана, навіть коли панель зменшено (F1–F4 на телефоні — ×0,7); на
+ * великому екрані росте разом із панеллю. Табло (LCD-цифри icon.fon, matrix.fon рації) лишаються піксельними.
+ */
+const TEXT_PX = 12;
+const TEXT_SQUEEZE = 0.88;
+
 export type ButtonState = 'p' | 'a' | 'ap' | 'pp' | 'n' | 'ok' | 'f';
 
 export interface PanelButton {
@@ -20,8 +29,14 @@ export class SidePanel {
   readonly el: HTMLDivElement;
   private readonly stage: HTMLDivElement;
   private readonly text: CanvasRenderingContext2D;
+  /** Що намальовано на текстовому шарі — перемальовується в роздільності екрана після зміни масштабу. */
+  private ops: ((ctx: CanvasRenderingContext2D) => void)[] = [];
+  private textRes = 0;
+  /** Поточний масштаб панелі (пікселі екрана на піксель фону). */
+  private s = 1;
   private readonly onResize = () => this.fit();
   readonly width: number;
+  private readonly height: number;
 
   constructor(
     readonly art: EscArt,
@@ -47,8 +62,11 @@ export class SidePanel {
     img.alt = '';
     img.draggable = false;
     const canvas = document.createElement('canvas');
+    this.height = bg?.height ?? 1200;
     canvas.width = this.width;
-    canvas.height = bg?.height ?? 1200;
+    canvas.height = this.height;
+    canvas.style.width = `${this.width}px`;
+    canvas.style.height = `${this.height}px`;
     canvas.className = 'ht2-panel-text';
     this.text = canvas.getContext('2d')!;
     this.stage.append(img, canvas);
@@ -75,26 +93,78 @@ export class SidePanel {
     this.el.style.width = `${this.width * s}px`;
     this.stage.style.width = `${this.width}px`;
     this.stage.style.transform = `translateY(${y}px) scale(${s})`;
+    const textChanged = s !== this.s && (s < 1 || this.s < 1);
+    this.s = s;
+    // Зменшена панель (F1–F4 на телефоні) — згладжування: «pixelated» при зменшенні рве лінії й літери фону.
+    this.stage.classList.toggle('smooth', s < 1);
+    // Текстовий шар — рівно в пікселях екрана (без обрізання до 1…4): інакше браузер перемасштабовує готові літери,
+    // і вони рвуться. Межі — лише від надто малого чи великого полотна.
+    const res = Math.min(6, Math.max(0.25, s * (window.devicePixelRatio || 1)));
+    if (res !== this.textRes || textChanged) {
+      this.textRes = res;
+      const c = this.text.canvas;
+      c.width = Math.round(this.width * res);
+      c.height = Math.round(this.height * res);
+      this.redraw();
+    }
+  }
+
+  private redraw(): void {
+    const ctx = this.text;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.setTransform(this.textRes, 0, 0, this.textRes, 0, 0);
+    for (const op of this.ops) op(ctx);
+  }
+
+  private paintOp(op: (ctx: CanvasRenderingContext2D) => void): void {
+    this.ops.push(op);
+    op(this.text);
   }
 
   /** Стерти тексти. */
   clear(): void {
-    this.text.clearRect(0, 0, this.text.canvas.width, this.text.canvas.height);
+    this.ops = [];
+    this.redraw();
   }
 
-  /** Текст шрифтом (типово menu.fon) від базової лінії; align — від x вліво, по центру чи вправо. */
-  write(x: number, y: number, s: string, color = 'rgb(240, 232, 150)', font: PixelFont | null = this.art.menu, align: 'left' | 'center' | 'right' = 'left'): void {
-    if (!font) return;
+  /**
+   * Текст від базової лінії (місця — як для MENU.FON у king.exe); align — від x вліво, по центру чи вправо.
+   * Типово (menu) — векторний шрифт панелей (TEXT_PX), піксельний — лише табло (icon, matrix). maxW — ширина
+   * клітинки в пікселях фону: довший текст стискається по ширині.
+   */
+  write(x: number, y: number, s: string, color = 'rgb(240, 232, 150)', font: PixelFont | null = this.art.menu, align: 'left' | 'center' | 'right' = 'left', maxW?: number): void {
     const t = s.toUpperCase();
-    const w = font.measure(t);
-    const x0 = align === 'center' ? x - Math.floor(w / 2) : align === 'right' ? x - w : x;
-    font.draw(this.text, t, x0, y - font.height, color);
+    if (font && font !== this.art.menu) {
+      const w = font.measure(t);
+      const x0 = align === 'center' ? x - Math.floor(w / 2) : align === 'right' ? x - w : x;
+      this.paintOp((ctx) => font.draw(ctx, t, x0, y - font.height, color));
+      return;
+    }
+    this.paintOp((ctx) => {
+      // Розмір у пікселях фону: TEXT_PX на екрані (у зменшеній панелі — більше пікселів фону).
+      const px = TEXT_PX / Math.min(1, this.s);
+      ctx.save();
+      ctx.font = `700 ${px.toFixed(2)}px Arial, sans-serif`;
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = color;
+      const k = Math.min(TEXT_SQUEEZE, maxW ? maxW / ctx.measureText(t).width : TEXT_SQUEEZE);
+      const w = ctx.measureText(t).width * k;
+      const x0 = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
+      // Базова лінія MENU.FON — під текстом; великі літери вищі, тож центр рядка — на 4 рядки вище, як у піксельного.
+      ctx.translate(x0, y - 4 + px * 0.36);
+      ctx.scale(k, 1);
+      ctx.fillText(t, 0, 0);
+      ctx.restore();
+    });
   }
 
   /** Смуга-показник (рівень вантажу, стан систем) у пікселях фону. */
   bar(x: number, y: number, w: number, h: number, color: string): void {
-    this.text.fillStyle = color;
-    this.text.fillRect(x, y, w, h);
+    this.paintOp((ctx) => {
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w, h);
+    });
   }
 
   /** Кнопка `<base>_<стан>.txr` у точці фону; state — стан для малювання (типово — за дотиком). */
