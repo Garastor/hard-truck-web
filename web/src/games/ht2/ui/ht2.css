@@ -430,3 +430,123 @@ body.ht2-esc-open .ht2-drive-bar {
   border: 0;
   background: transparent;
 }
+
+/*
+ * Кнопки в дорозі (затверджений концепт A, ui/tabloSkin.ts). Ліва група згорнута під «☰»; угорі праворуч — ряд
+ * «•••», карта, відновитися, вид, під ним розгорнута група «•••» (фари, дзеркало, двірники, двигун, кабіна, сигнал).
+ */
+.ht2-hud-group {
+  display: contents;
+}
+
+.ht2-hud-group[hidden] {
+  display: none;
+}
+
+.touch-top {
+  position: absolute;
+  top: max(8px, env(safe-area-inset-top));
+  right: var(--sr);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: calc(8px * var(--ui, 1));
+  pointer-events: none;
+}
+
+.touch-top-row {
+  display: flex;
+  gap: calc(8px * var(--ui, 1));
+}
+
+.touch-top .touch-btn,
+.touch-top .touch-more {
+  position: static;
+}
+
+/* З графікою оригіналу — стиль табло: смуги синього металу, клітинки LCD-скла, темні літери й значки. */
+body.ht2-orig-ui .touch-top {
+  top: calc(env(safe-area-inset-top, 0px) + var(--ht2-tablo-h, 0px) + 6px);
+}
+
+body.ht2-orig-ui .ht2-hud,
+body.ht2-orig-ui .touch-top-row,
+body.ht2-orig-ui .touch-more {
+  gap: 2px;
+  padding: 0;
+  border: 6px solid transparent;
+  border-image: var(--ht2-metal) 8 fill / 6px stretch;
+}
+
+body.ht2-orig-ui .touch-more {
+  grid-template-rows: repeat(3, 34px);
+  grid-auto-columns: 34px;
+}
+
+body.ht2-orig-ui .ht2-hud button,
+body.ht2-orig-ui .touch-top .touch-btn {
+  box-sizing: border-box;
+  height: 34px;
+  min-width: 34px;
+  width: auto;
+  margin: 0;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 5px solid transparent;
+  border-radius: 0;
+  border-image: var(--ht2-lcd) 7 fill / 5px stretch;
+  box-shadow: none;
+  background: none;
+  color: rgb(24, 40, 22);
+  text-decoration: none;
+}
+
+body.ht2-orig-ui .touch-top .touch-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Увімкнене / натиснуте — скло світлішає, як підсвічене табло. */
+body.ht2-orig-ui .ht2-hud button.on,
+body.ht2-orig-ui .ht2-hud button:active,
+body.ht2-orig-ui .touch-top .touch-btn.on,
+body.ht2-orig-ui .touch-top .touch-btn.pressed {
+  background: none;
+  filter: brightness(1.35) saturate(1.2);
+}
+
+body.ht2-orig-ui .ht2-hud button.off,
+body.ht2-orig-ui .touch-top .touch-btn.unavailable {
+  opacity: 0.5;
+}
+
+.ht2-lcd-label {
+  display: block;
+  image-rendering: pixelated;
+}
+
+/* Кермо й педалі — без рамок: саме LCD-скло, що згасає до країв, і темна стрілка. */
+body.ht2-orig-ui .touch-btn.left,
+body.ht2-orig-ui .touch-btn.right,
+body.ht2-orig-ui .touch-btn.brake,
+body.ht2-orig-ui .touch-btn.gas {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--ht2-lcd-flat) center / 100% 100% no-repeat;
+  color: rgb(24, 40, 22);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent), linear-gradient(180deg, transparent, #000 22%, #000 78%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent), linear-gradient(180deg, transparent, #000 22%, #000 78%, transparent);
+  mask-composite: intersect;
+}
+
+body.ht2-orig-ui .touch-btn.left.pressed,
+body.ht2-orig-ui .touch-btn.right.pressed,
+body.ht2-orig-ui .touch-btn.brake.pressed,
+body.ht2-orig-ui .touch-btn.gas.pressed {
+  background: var(--ht2-lcd-flat) center / 100% 100% no-repeat;
+  filter: brightness(1.35) saturate(1.2);
+}

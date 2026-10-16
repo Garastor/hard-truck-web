@@ -325,7 +325,13 @@ export class Input {
     ui.className = 'touch-ui';
     ui.classList.toggle('tilt-on', this.tiltEnabled);
     this.touchEl = ui;
-    const btn = (cls: string, label: string, action?: Action, cmd?: Command, svg?: string) => {
+    // Угорі праворуч — один ряд (група «ще», карта, відновитися, вид), під ним — розгорнута група «ще».
+    const top = document.createElement('div');
+    top.className = 'touch-top';
+    const row = document.createElement('div');
+    row.className = 'touch-top-row';
+    top.append(row);
+    const btn = (cls: string, label: string, action?: Action, cmd?: Command, svg?: string, parent: HTMLElement = ui) => {
       const b = document.createElement('button');
       b.className = `touch-btn ${cls}`;
       if (svg) b.innerHTML = svg;
@@ -348,7 +354,8 @@ export class Input {
       b.addEventListener('pointerup', up);
       b.addEventListener('pointercancel', up);
       b.addEventListener('contextmenu', (e) => e.preventDefault());
-      ui.append(b);
+      parent.append(b);
+      return b;
     };
     btn('left', '', 'left', undefined, ICONS.left);
     btn('right', '', 'right', undefined, ICONS.right);
@@ -357,63 +364,42 @@ export class Input {
     // Сенсорну «Різко» поки сховано (на прохання користувача; що з нею робити — вирішимо). Ctrl на клавіатурі працює.
     if (this.profile?.sharp && SHARP_TOUCH_BUTTON) {
       // «Різко» (Ctrl): на дотик — перемикач, підсвічений, поки ввімкнений.
-      btn('sharp', 'РІЗКО');
-      const b = ui.lastElementChild as HTMLElement;
+      const b = btn('sharp', 'РІЗКО');
       b.addEventListener('pointerdown', () => {
         this.sharpLatched = !this.sharpLatched;
         b.classList.toggle('on', this.sharpLatched);
       });
     }
-    btn('cam', '', undefined, 'camera', ICONS.cam);
-    btn('reset', '', undefined, 'reset', ICONS.reset);
-    btn('horn', '', undefined, 'horn', HORN_SVG);
-    // Група «ще» (згорнута): фари, дзеркало, навігація, двірники, двигун (клавіші L, M, Tab, W, пробіл), а також
-    // кабіна 2D / 3D і «поміняти місцями» кермо й педалі.
+    // Група «ще» (згорнута): фари, дзеркало, двірники, двигун (клавіші L, M, W, пробіл), кабіна 2D / 3D і сигнал.
     const more = document.createElement('div');
     more.className = 'touch-more';
     more.hidden = true;
-    btn('more', '', undefined, undefined, ICONS.more);
-    const toggle = ui.lastElementChild as HTMLElement;
+    const toggle = btn('more', '', undefined, undefined, ICONS.more, row);
     toggle.addEventListener('pointerdown', () => {
       more.hidden = !more.hidden;
       toggle.classList.toggle('on', !more.hidden);
     });
-    const items: [string, Command][] = [['lights', 'lights'], ['mirror', 'mirror'], ['map', 'map'], ['wipers', 'wipers'], ['engine', 'engine'], ['cab', 'cab'], ['horn', 'horn']];
-    for (const [cls, cmd] of items) {
-      btn(cls === 'horn' ? 'horn-in-group' : cls, '', undefined, cmd, cls === 'horn' ? HORN_SVG : ICONS[cls as keyof typeof ICONS]);
-      const b = ui.lastElementChild as HTMLElement;
-      b.dataset.cmd = cmd;
-      more.append(b);
-    }
-    // Сигнал у групі — лише в розкладці бази (setBaseLayout).
-    (more.querySelector('.horn-in-group') as HTMLElement).hidden = true;
-    this.more = more;
-    ui.append(more);
+    // Карта (Tab) — окремою кнопкою поруч із групою (на прохання користувача), значком, як решта ряду.
+    btn('map', '', undefined, 'map', ICONS.map, row).dataset.cmd = 'map';
+    btn('reset', '', undefined, 'reset', ICONS.reset, row);
+    btn('cam', '', undefined, 'camera', ICONS.cam, row);
+    const items: [string, Command, string][] = [
+      ['lights', 'lights', ICONS.lights],
+      ['mirror', 'mirror', ICONS.mirror],
+      ['wipers', 'wipers', ICONS.wipers],
+      ['engine', 'engine', ICONS.engine],
+      ['cab', 'cab', ICONS.cab],
+      ['horn', 'horn', HORN_SVG],
+    ];
+    for (const [cls, cmd, icon] of items) btn(cls, '', undefined, cmd, icon, more).dataset.cmd = cmd;
+    top.append(more);
+    ui.append(top);
     parent.append(ui);
     this.touchUi = ui;
     return ui;
   }
 
   private touchUi: HTMLElement | null = null;
-  private more: HTMLElement | null = null;
-  private baseExtras: HTMLElement[] = [];
-
-  /**
-   * Розкладка бази (кар'єра): сигнал переходить у групу «•••» разом із group (Рейтинг), на місці сигналу — top
-   * (Головне меню, Ремонт); null — звичайна (траса, тест).
-   */
-  setBaseLayout(layout: { group: HTMLElement[]; top: HTMLElement[] } | null): void {
-    const ui = this.touchUi;
-    if (!ui || !this.more) return;
-    for (const e of this.baseExtras) e.remove();
-    this.baseExtras = [];
-    ui.classList.toggle('base-layout', !!layout);
-    (this.more.querySelector('.horn-in-group') as HTMLElement).hidden = !layout;
-    if (!layout) return;
-    for (const e of layout.group) this.more.append(e);
-    for (const e of layout.top) ui.append(e);
-    this.baseExtras = [...layout.group, ...layout.top];
-  }
   /** Підсвітка увімкнених функцій у групі «ще» (фари, дзеркало…); hidden — кнопку не показувати. */
   /** unavailable — функції немає (навігація без «НС»): кнопка видна, але сіра. */
   setToggle(cmd: Command, on: boolean, hidden = false, unavailable = false): void {

@@ -52,7 +52,13 @@ import type { RivalRun } from './career/competition';
 import { Navigator, type NavTurn } from './world/navigator';
 import { WindDebris } from './world/windDebris';
 import { Tablo } from './ui/tablo';
+import { applyTabloSkin, lcdLabel } from './ui/tabloSkin';
 import { Cards } from './ui/cards';
+
+/** «☰» — ліва група кнопок; нота — музика (значки кольору тексту). */
+const BURGER_SVG =
+  '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M4 6.5h16M4 12h16M4 17.5h16"/></svg>';
+const NOTE_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 4v11.5a3 3 0 1 0 2 2.8V8h7V4z"/></svg>';
 
 /**
  * Камера за машиною — як у телеметрії king.exe (ZilR біля бази «Южный»): 8,8 м позаду точки машини, 5,3 м над землею
@@ -449,6 +455,7 @@ export class Ht2Drive {
     this.hud.className = 'ht2-hud';
     const back = document.createElement('button');
     back.textContent = '← Меню';
+    back.dataset.lcd = 'Меню';
     back.addEventListener('click', () => (this.escArt ? this.toggleEsc() : o.onExit()));
     this.bar.className = 'ht2-drive-bar';
     this.music = new Music(o.source);
@@ -457,16 +464,14 @@ export class Ht2Drive {
     const music = document.createElement('button');
     music.textContent = '♪';
     music.setAttribute('aria-label', 'Музика');
+    music.dataset.icon = 'music';
     music.addEventListener('click', () => music.classList.toggle('off', !this.music?.toggle()));
-    const map = document.createElement('button');
-    map.textContent = 'Карта';
-    map.setAttribute('aria-label', 'Карта світу');
-    map.addEventListener('click', () => (this.tabMap ? this.tabMap.cycle() : this.openMap()));
     // Бічні панелі й рація оригіналу (на телефоні немає F-клавіш): показуються, коли є графіка esc16.RES; та сама
     // кнопка ще раз — сховати панель, інша — перемкнути на свою.
     const orig = (text: string, label: string, onClick: () => void) => {
       const b = document.createElement('button');
       b.textContent = text;
+      b.dataset.lcd = text;
       b.className = 'ht2-orig-only';
       b.setAttribute('aria-label', label);
       b.addEventListener('click', onClick);
@@ -476,7 +481,20 @@ export class Ht2Drive {
     const rating = orig('Рейтинг', 'Рейтинг (F2)', () => this.toggleF(2));
     const company = orig('Компанія', 'Моя компанія (F4)', () => this.toggleF(4));
     const cb = orig('Рація', 'Рація (F5)', () => this.radio?.toggle());
-    this.hud.append(back, music, map, info, rating, company, cb);
+    // Ліва група згорнута під «☰» (на прохання користувача; карта — праворуч, у ряду сенсорних кнопок).
+    const group = document.createElement('div');
+    group.className = 'ht2-hud-group';
+    group.hidden = true;
+    group.append(back, music, info, rating, company, cb);
+    const burger = document.createElement('button');
+    burger.className = 'ht2-hud-burger';
+    burger.setAttribute('aria-label', 'Меню кнопок');
+    burger.innerHTML = BURGER_SVG;
+    burger.addEventListener('click', () => {
+      group.hidden = !group.hidden;
+      burger.classList.toggle('on', !group.hidden);
+    });
+    this.hud.append(burger, group);
     // У шарі overlay — під вікнами складу й СТО (вони теж там, вище).
     o.overlay.append(this.hud, this.bar);
     // Інтерфейс оригіналу — до першого кадру, щоб не блимав інтерфейс порту (графіка вже вантажиться зі start).
@@ -487,6 +505,14 @@ export class Ht2Drive {
     if (!art) this.say('Немає COMMON/esc16.RES — інтерфейс порту. Меню: Демо → Файли гри → Імпортувати', 12);
     else {
       this.escArt = art;
+      // Кнопки порту — у стилі табло (концепт A): метал, LCD-скло, написи шрифтом табло.
+      applyTabloSkin(art);
+      for (const b of this.hud.querySelectorAll<HTMLElement>('[data-lcd]')) {
+        const label = lcdLabel(art, b.dataset.lcd!);
+        if (label) b.replaceChildren(label);
+      }
+      const note = this.hud.querySelector<HTMLElement>('[data-icon="music"]');
+      if (note) note.innerHTML = NOTE_SVG;
       this.tablo = new Tablo(art, o.overlay);
       this.tablo.onPage = () => this.audio?.playOnce('pager');
       this.cards = new Cards(art, o.overlay);

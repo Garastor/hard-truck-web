@@ -220,8 +220,6 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           .then((d) => {
             drive = d;
             Object.assign(window, { ht2: { drive } });
-            // Дизайн-концепт кнопок (ui/concept): лише для обговорення, з адреси `&uiconcept[=A|B|C]`.
-            if (params.has('uiconcept')) void showConcept(d, params.get('uiconcept'));
           })
           .catch((e) => {
             console.error(e);
@@ -246,12 +244,4 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
       Object.assign(window, { ht2: { viewer } });
     });
   }
-}
-
-/** Концепт кнопок поверх їзди, коли графіка esc16.RES завантажилась (без неї — нічого). */
-async function showConcept(drive: Ht2Drive, variant: string | null): Promise<void> {
-  while (drive.escArtLoading) await new Promise((r) => setTimeout(r, 200));
-  if (!drive.escArt) return;
-  const { showUiConcept } = await import('./ui/concept/uiConcept');
-  showUiConcept(drive.escArt, variant === 'A' || variant === 'B' ? variant : 'C');
 }
