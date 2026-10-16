@@ -15,7 +15,7 @@ export function mergeStatic(root: THREE.Object3D, CELL = 250): { before: number;
   const c = new THREE.Vector3();
   let before = 0;
   const visit = (o: THREE.Object3D): void => {
-    if (!o.visible) return;
+    if (!o.visible || o.userData.noMerge) return;
     if (o instanceof SideSwitch || o instanceof DistanceSwitch || o instanceof THREE.LOD || o instanceof THREE.Sprite) return;
     if (o !== root && /#\d+$/.test(o.name)) return; // стани перемикача 21
     if (o instanceof THREE.InstancedMesh) return;

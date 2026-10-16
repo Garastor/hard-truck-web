@@ -759,6 +759,7 @@ export class SceneAssembler {
       g.matrixAutoUpdate = false;
       g.matrix.copy(m);
       if (name) g.userData.instance = name;
+      if (spaceName) g.userData.space = spaceName;
       into.add(g);
       this.stats.instances++;
       return;
@@ -769,6 +770,8 @@ export class SceneAssembler {
     inst.matrixAutoUpdate = false;
     inst.matrix.copy(m);
     if (name) inst.userData.instance = name;
+    // Простір розміщення — для обʼєктів, що рухаються (стовпи падають у своєму Space_, world/objects.ts).
+    inst.userData.space = spaceName;
     into.add(inst);
     this.stats.instances++;
   }

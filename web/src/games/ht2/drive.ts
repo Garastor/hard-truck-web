@@ -54,6 +54,7 @@ import { Radio, type RadioAsk, type RadioContact } from './ui/radio';
 import type { RivalRun } from './career/competition';
 import { Navigator, type NavTurn } from './world/navigator';
 import { WindDebris } from './world/windDebris';
+import { WorldObjects } from './world/objects';
 import { Tablo } from './ui/tablo';
 import { applyTabloSkin, lcdLabel } from './ui/tabloSkin';
 import { Cards } from './ui/cards';
@@ -185,6 +186,8 @@ export class Ht2Drive {
   /** Згладжена висота машини для камери ззаду. */
   private camBaseY = NaN;
   private readonly colliders = new Map<string, RAPIER.Collider[]>();
+  /** Збивні стовпи й рухомі предмети світу. */
+  private objects!: WorldObjects;
   private acc = 0;
   private last = performance.now();
   /** Остання надійна точка на дорозі (для відновлення після падіння). */
@@ -328,6 +331,7 @@ export class Ht2Drive {
   private async init(): Promise<void> {
     const o = this.opts;
     this.rapier = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    this.objects = new WorldObjects(this.rapier);
     this.rapier.timestep = 1 / 60;
     this.world.onRegion = (reg, loaded) => (loaded ? this.addRegion(reg) : this.removeRegion(reg.id));
     this.roads = new Ht2Roads(this.world.regions.values());
@@ -664,11 +668,13 @@ export class Ht2Drive {
       if (c) cs.push(c);
     }
     this.colliders.set(reg.id, cs);
+    this.objects.addRegion(reg.id, reg.built.root, reg.poles, reg.movables);
   }
 
   private removeRegion(id: string): void {
     for (const c of this.colliders.get(id) ?? []) this.rapier.removeCollider(c, false);
     this.colliders.delete(id);
+    this.objects.removeRegion(id);
   }
 
   get overlay(): HTMLElement {
@@ -1692,6 +1698,7 @@ export class Ht2Drive {
     this.updateSurface();
     this.acc += dt;
     const step = this.rapier.timestep;
+    this.objects.before();
     while (this.acc >= step) {
       this.truck.update(step, state);
       this.trailer?.update(step, this.truck.brakePedal(state), this.def.tech.brakePower, this.truck.kinematic);
@@ -1705,6 +1712,8 @@ export class Ht2Drive {
     }
     // Частка кроку фізики, що «не дійшла» до наступного, — модель між станами кроків (без ривків при 120 Гц).
     const alpha = this.acc / step;
+    // Збиті знаки й стовпи, рухомі предмети (world/objects.ts) — до обліку ударів.
+    for (const e of this.objects.after(dt)) this.audio?.play(e.sound, e.volume);
     this.race?.after(dt, alpha);
     this.detectHits();
     if (this.careerMode && !this.paused) this.accidents?.update(dt);

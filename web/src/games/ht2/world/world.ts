@@ -1,3 +1,4 @@
+import { findPoles, markObjects, type Movable, type Pole } from './objects';
 import * as THREE from 'three';
 import type { FileSource } from '@shared/source';
 import { parseB3d } from '../engine/formats/b3d';
@@ -42,6 +43,9 @@ export interface LoadedRegion {
    * (0x569310); за замовчуванням сховані.
    */
   props: Map<string, THREE.Object3D[]>;
+  /** Збивні стовпи (знаки, світлофори, радари, ліхтарі) і рухомі предмети — world/objects.ts. */
+  poles: Pole[];
+  movables: Movable[];
   /** Процедурний рельєф ($$GeneratorOfTerrain, регіон aa): висоти сітки для колізій (terrain.ts). */
   terrain?: Float32Array;
 }
@@ -76,6 +80,8 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
     o.visible = false;
     (props.get(name) ?? props.set(name, []).get(name)!).push(o);
   });
+  const poles = findPoles(built.assembler, (n) => built.assembler.block(n) ?? common?.block(n));
+  const movables = markObjects(built.root, poles);
   // Нерухома геометрія регіону — одна сітка на матеріал у клітинці (було ≈ 500 мешів на регіон).
   const merged = mergeStatic(built.root);
   built.stats.meshes = merged.after;
@@ -115,7 +121,7 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
         }
       });
   };
-  return { id, built, terrain, props };
+  return { id, built, terrain, props, poles, movables };
 }
 
 const AMBUSH_PROP = /^anmobj000[12]\d{3}$/;
