@@ -154,6 +154,8 @@ export class Ht2Drive {
   /** Середина моделі вздовж курсу відносно її початку, м (точка машини для камери) — для якої моделі пораховано. */
   private chaseMid = 0;
   private chaseFor: TruckVehicle | null = null;
+  /** Згладжена висота машини для камери ззаду. */
+  private camBaseY = NaN;
   private readonly colliders = new Map<string, RAPIER.Collider[]>();
   private acc = 0;
   private last = performance.now();
@@ -1506,7 +1508,11 @@ export class Ht2Drive {
     const dist = far ? 28 * tow : (CHASE_BACK - this.chaseMid) * tow;
     const height = (far ? 12 : CHASE_UP) * tow;
     const flat = fwd.clone().setY(0).normalize();
-    const want = v.position.clone().addScaledVector(flat, -dist).addScaledVector(up, height);
+    // Висота машини для камери — згладжена (0,35 с): тряска кузова від нерівностей і підвіски не передається в кадр,
+    // підйоми й спуски дороги камера відстежує (як в оригіналі — камера над машиною стала, без тремтіння).
+    const ky = 1 - Math.exp(-dt / 0.35);
+    this.camBaseY = Number.isFinite(this.camBaseY) && Math.abs(v.position.y - this.camBaseY) < 20 ? this.camBaseY + (v.position.y - this.camBaseY) * ky : v.position.y;
+    const want = v.position.clone().setY(this.camBaseY).addScaledVector(flat, -dist).addScaledVector(up, height);
     if (far) {
       this.camPos.lerp(want, 1 - Math.exp(-dt * 4));
       this.camLook.lerp(v.position.clone().addScaledVector(up, 2), 1 - Math.exp(-dt * 10));
@@ -1518,7 +1524,7 @@ export class Ht2Drive {
       const k = 1 - Math.exp(-dt / CHASE_LAG);
       this.camPos.x += (want.x - this.camPos.x) * k;
       this.camPos.z += (want.z - this.camPos.z) * k;
-      this.camPos.y += (want.y - this.camPos.y) * (1 - Math.exp(-dt * 10));
+      this.camPos.y = want.y;
       const target = want.clone().addScaledVector(flat, CHASE_LOOK * Math.cos(CHASE_PITCH)).addScaledVector(up, -CHASE_LOOK * Math.sin(CHASE_PITCH));
       this.camLook.copy(target);
     }
