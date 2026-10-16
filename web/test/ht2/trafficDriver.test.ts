@@ -1,5 +1,5 @@
 /** Водій трафіку HT2 (king.exe 0x4d6510): крива, лідер, обʼїзд, смуга перед поворотом — на синтетичних дорогах. */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import type { RoadLine } from '@ht2/world/roads';
 import { newMover, step, type Mover, type Net, type Obstacle } from '@ht2/traffic/driver';
@@ -40,7 +40,26 @@ function runAll(ms: Mover[], sec: number, net: Net | null = null, extra: Obstacl
 /** Відстань уздовж −Z (напрямок доріг straight). */
 const along = (m: Mover) => -m.pos.z;
 
+/** Детермінований Math.random (mulberry32): водій випадково вибирає дорогу й смугу — без підміни тести нестабільні. */
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 describe('HT2: водій трафіку', () => {
+  beforeEach(() => {
+    vi.spyOn(Math, 'random').mockImplementation(seeded(1));
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('на прямій тримає крейсерську', () => {
     const [l] = road(straight(2000), 1, 0);
     const m = newMover(l, 0, 0, 20, 2);
@@ -139,6 +158,8 @@ describe('HT2: водій трафіку', () => {
     // Повільна лишається у своїй смузі (інакше з імовірністю 25 % сама займає ліву — обганяти нема де).
     slow.wantLane = 1;
     const m = newMover(lanes[1], 0, 0, 20, 2);
+    // Обидві тримаються правої смуги (інакше повільна випадково зʼїжджає ліворуч і обгону немає).
+    slow.wantLane = 1;
     m.wantLane = 1;
     let left = false;
     runAll([slow, m], 40, null, [], () => (left ||= m.line.lane === 0));
