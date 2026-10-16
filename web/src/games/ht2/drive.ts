@@ -3,7 +3,7 @@ import { HT2_ENGINE, HT2_INPUT, HT2_KING, HT2_KING_BRAKE, HT2_KING_ENGINE, HT2_R
 import * as THREE from 'three';
 import type { FileSource } from '@shared/source';
 import { EngineAudio } from './engine/audio/engineAudio';
-import { levelCollision } from './engine/physics/collision';
+import { instanceCollision, levelCollision } from './engine/physics/collision';
 import { TruckVehicle } from './engine/vehicle/truckVehicle';
 import { ROUGH_ASPHALT, ROUGH_GROUND } from './engine/vehicle/kingModel';
 import { buildTruckModel, type TruckDef } from './engine/vehicle/trucks';
@@ -647,6 +647,11 @@ export class Ht2Drive {
   /** Колізії регіону: підлога й стіни з `hit_road_*`/`hit_obj_*` (усі кімнати регіону разом). */
   private addRegion(reg: LoadedRegion): void {
     const col = levelCollision(reg.built.assembler.b3d);
+    // Будівлі складів, СТО, заправки — окремі обʼєкти колізій, розставлені екземплярами.
+    const asm = reg.built.assembler;
+    const inst = instanceCollision(asm.b3d, (n) => asm.block(n) ?? this.world.common.block(n), (n) => asm.space(n));
+    col.floors.push(...inst.floors);
+    col.walls.push(...inst.walls);
     const cs: RAPIER.Collider[] = [];
     // Процедурний рельєф (aa) — heightfield.
     if (reg.terrain) cs.push(terrainCollider(this.rapier, reg.terrain));

@@ -65,54 +65,101 @@ export function levelCollision(b3d: B3d): LevelCollision {
     if (!m) continue;
     room = `room_${m[2]}`;
     const box = roomBoxes.get(room.toLowerCase()) ?? null;
-    const visit = (b: Block, clip: Plane[]): void => {
-      const d = b.data;
-      let emitted: Poly[] = [];
-      switch (d.t) {
-        case 23:
-          if (d.shape.kind === 6) emitted = d.shape.polys.filter((p) => p.length >= 3);
-          break;
-        case 20:
-          for (let i = 0; i + 1 < d.points.length; i++) emitted.push(fence(d.points[i], d.points[i + 1], box));
-          break;
-        case 12:
-          // Площина з нормаллю вниз — стеля (вільний простір під нею). Колізії Rapier двосторонні,
-          // тож стелю пропускаємо, щоб вантажівка не опинилася на ній (база MENU3D).
-          if (d.shape.kind === 5 && box && d.shape.v[2] > -FLOOR_MIN_NZ) emitted = planePatch(d.shape.v as Plane, box);
-          break;
-        case 16:
-        case 17:
-          if (d.shape.kind === 3 || d.shape.kind === 4) {
-            emitted = cylinder(d.shape.a, d.shape.b, d.shape.f[0], d.shape.f[1], d.t === 16 ? 'upper' : 'lower');
-            if (box) {
-              const sides = boxPlanes(box);
-              emitted = emitted.map((p) => clipAll(p, sides)).filter((p): p is Poly => p !== null);
-            }
-          }
-          break;
-        case 9:
-          if (d.shape.kind === 5 && b.groups) {
-            const [nx, ny, nz, w] = d.shape.v;
-            b.groups[0]?.forEach((c) => visit(c, [...clip, [nx, ny, nz, w]]));
-            b.groups[1]?.forEach((c) => visit(c, [...clip, [-nx, -ny, -nz, -w]]));
-            return;
-          }
-          break;
-      }
-      if (emitted.length) {
-        stats[d.t] = (stats[d.t] ?? 0) + 1;
-        isFence = d.t === 20;
-        for (const p of emitted) {
-          const c = clipAll(p, clip);
-          if (c) add(c);
-        }
-        isFence = false;
-      }
-      for (const g of b.groups ?? []) for (const c of g) visit(c, clip);
-    };
-    visit(top, []);
+    shapes(top, [], box, (p, fence, t) => {
+      stats[t] = (stats[t] ?? 0) + 1;
+      isFence = fence;
+      add(p);
+      isFence = false;
+    });
   }
   return { floors, floorRoom, walls, wallRoom, wallFence, hasFloor: floors.length > walls.length / 4, stats };
+}
+
+/**
+ * Колайдери піддерева: 23 полігони, 20 огорожі, 12 площина (у межах box), 16/17 циліндр; 9 — поділ площиною
+ * (обрізає нащадків). emit — полігон (координати блоку), чи огорожа, тип блоку.
+ */
+function shapes(top: Block, clip0: Plane[], box: Box | null, emit: (p: Poly, fence: boolean, t: number) => void): void {
+  const visit = (b: Block, clip: Plane[]): void => {
+    const d = b.data;
+    let emitted: Poly[] = [];
+    switch (d.t) {
+      case 23:
+        if (d.shape.kind === 6) emitted = d.shape.polys.filter((p) => p.length >= 3);
+        break;
+      case 20:
+        for (let i = 0; i + 1 < d.points.length; i++) emitted.push(fence(d.points[i], d.points[i + 1], box));
+        break;
+      case 12:
+        // Площина з нормаллю вниз — стеля (вільний простір під нею). Колізії Rapier двосторонні,
+        // тож стелю пропускаємо, щоб вантажівка не опинилася на ній (база MENU3D).
+        if (d.shape.kind === 5 && box && d.shape.v[2] > -FLOOR_MIN_NZ) emitted = planePatch(d.shape.v as Plane, box);
+        break;
+      case 16:
+      case 17:
+        if (d.shape.kind === 3 || d.shape.kind === 4) {
+          emitted = cylinder(d.shape.a, d.shape.b, d.shape.f[0], d.shape.f[1], d.t === 16 ? 'upper' : 'lower');
+          if (box) {
+            const sides = boxPlanes(box);
+            emitted = emitted.map((p) => clipAll(p, sides)).filter((p): p is Poly => p !== null);
+          }
+        }
+        break;
+      case 9:
+        if (d.shape.kind === 5 && b.groups) {
+          const [nx, ny, nz, w] = d.shape.v;
+          b.groups[0]?.forEach((c) => visit(c, [...clip, [nx, ny, nz, w]]));
+          b.groups[1]?.forEach((c) => visit(c, [...clip, [-nx, -ny, -nz, -w]]));
+          return;
+        }
+        break;
+    }
+    for (const p of emitted) {
+      const c = clipAll(p, clip);
+      if (c) emit(c, d.t === 20, d.t);
+    }
+    for (const g of b.groups ?? []) for (const c of g) visit(c, clip);
+  };
+  visit(top, clip0);
+}
+
+/** Обʼєкти колізій, розставлені екземплярами (блок 18): склади `store_*_hit*`, заправки `benzo_hit`, СТО `STOS_walls/floor`… */
+const INSTANCE_HIT = /hit|^STOS_(walls|floor)$/i;
+
+/**
+ * Колізії розставлених екземплярів: будівлі складів, СТО, заправки, аеропорт мають окремі обʼєкти колізій
+ * (`store_ap_hit`, `benzo_hit`, `benzo_bottom_hit`, `STOS_walls`, `STOS_floor`), які кімнати ставлять блоком 18 у
+ * просторі (блок 24) — як і видимі моделі. Полігони (блок 23) шаблону переводимо матрицею простору в координати гри.
+ * find — шаблон за імʼям (регіон, далі COMMON), space — матриця простору (стовпці, як THREE.Matrix4.elements).
+ */
+export function instanceCollision(b3d: B3d, find: (name: string) => Block | undefined, space: (name: string) => { elements: ArrayLike<number> } | null): { floors: Poly[]; walls: Poly[]; count: number } {
+  const floors: Poly[] = [];
+  const walls: Poly[] = [];
+  let count = 0;
+  const cache = new Map<string, Poly[]>();
+  const local = (name: string): Poly[] => {
+    const key = name.toLowerCase();
+    const hit = cache.get(key);
+    if (hit) return hit;
+    const out: Poly[] = [];
+    const tpl = find(name);
+    if (tpl) shapes(tpl, [], null, (p) => out.push(p));
+    cache.set(key, out);
+    return out;
+  };
+  for (const [b] of walk(b3d.blocks)) {
+    const d = b.data;
+    if (d.t !== 18 || !INSTANCE_HIT.test(d.object)) continue;
+    const m = space(d.space)?.elements;
+    const polys = local(d.object);
+    if (!m || !polys.length) continue;
+    count++;
+    for (const p of polys) {
+      const q = p.map(([x, y, z]) => [m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]]);
+      (Math.abs(normalZ(q)) < FLOOR_MIN_NZ ? walls : floors).push(q);
+    }
+  }
+  return { floors, walls, count };
 }
 
 /** Наскільки близько до лінії огорожі має лежати портал, щоб вирізати в ній прохід, м. */
