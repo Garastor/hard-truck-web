@@ -397,6 +397,7 @@ export class Ht2Drive {
         make: (pos, forward) => this.makeCar('BmwM5police', 0, pos, forward, 0),
         remove: (v) => this.removeCar(v),
         sees: (p) => this.canSee(p),
+        obstacles: () => [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? [])],
         people: this.copBribes.length || 15,
       });
       this.mafia = new Mafia(this.world.scene, this.rapier, this.trucks, this.world.regions.values(), (p) => this.groundAtPublic(p).y - 2.5);

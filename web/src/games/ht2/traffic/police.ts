@@ -27,8 +27,10 @@ import { steerFor } from './physical';
  * машини стоять ближче 40 м. Не бачить ціль довше 25 + 0,2·(v₁ + v₂) с (чи 60 с) — кидає погоню.
  *
  * Гіпотези порту: де «вільні» машини міліції (у грі їх 15, GAME.CNF) — порт викликає їх за DISPATCH_DELAY с поза
- * полем зору на SPAWN_MIN…SPAWN_MAX м; крейсерська швидкість дорогою; поштовх від влучання (Δv = HIT_DV); обгін
- * зліва. Сирена й мигалки (`CopSirenKey`) — хто вмикає, в exe не знайдено.
+ * полем зору на SPAWN_MIN…SPAWN_MAX м; крейсерська швидкість і швидкість у поворотах (v² ≤ BEND_ACCEL/κ); поштовх
+ * від влучання (Δv = HIT_DV); обгін гравця лівою смугою, обʼїзд машин трафіку, розворот на повному кермі, здавання
+ * назад при застряганні; безнадійно застрягла (провалилася, кілька спроб марні) — прибирається, виклик пришле іншу;
+ * тактична точка поза дорогою — на найближчу смугу. Сирена й мигалки (`CopSirenKey`) — хто вмикає, в exe не знайдено.
  */
 const ACTIVATE_EVERY = 300;
 const ACTIVATE_P = 0.3;
@@ -53,10 +55,21 @@ const SPAWN_MAX = 500;
 const HIT_DV = 0.1;
 const CRUISE = 30;
 const ROAD_LOOK = 6;
+const OVERTAKE_R = 40;
+const NEAR_GOAL = 150;
+const OVERTAKE_SIDE = 4.5;
+const BLOCK_AHEAD = 12;
+const BEND_SAMPLES = 8;
+const BEND_STEP = 10;
+const BEND_ACCEL = 6;
+const BEND_BRAKE = 4;
 const U_TURN = 1.6;
 const U_TURN_SPEED = 5;
 const STUCK_AFTER = 2;
 const REVERSE_FOR = 2;
+const MAX_TRIES = 4;
+const LOST_AFTER = 3;
+const FALLING = 25;
 
 export interface Ambush {
   name: string;
@@ -120,6 +133,11 @@ interface Cop {
   stuck: number;
   reverse: number;
   revSteer: number;
+  /** Скільки разів поспіль здавала назад; скільки с без коліс на землі чи перекинута. */
+  tries: number;
+  bad: number;
+  /** Бічний зсув обʼїзду, м (ліворуч — додатний). */
+  offset: number;
   ctrl: ControlState;
 }
 
@@ -148,6 +166,8 @@ export interface PoliceDeps {
   remove(v: TruckVehicle): void;
   /** Гравець бачить точку (для появи «вільних» машин поза полем зору). */
   sees(p: THREE.Vector3): boolean;
+  /** Машини на дорозі (трафік, далекобійники) — щоб обʼїжджати, а не вʼїжджати ззаду. */
+  obstacles(): readonly THREE.Vector3[];
   /** Кількість інспекторів (names.sch COP*). */
   people: number;
 }
@@ -261,14 +281,31 @@ export class Police {
         ev.push(this.shoot(lead, pl, leadD));
       }
     }
-    for (const c of this.cops) this.steer(c, pl, dt);
+    for (const c of [...this.cops]) {
+      // Безнадійно застрягла (колеса не на землі, перекинута, кілька спроб здати назад марні) — прибрати; виклик
+      // пришле іншу (гіпотеза порту, як трафік).
+      const up = this.tmp.set(0, 1, 0).applyQuaternion(c.v.visual.quaternion).y;
+      const air = ![0, 1, 2, 3].some((i) => c.v.ctrl.wheelIsInContact(i));
+      c.bad = (up < 0.5 || air) && c.v.speedKmh < 3 ? c.bad + dt : 0;
+      // Провалилася крізь світ (падає) — теж прибрати.
+      if (c.v.body.linvel().y < -FALLING) c.bad = LOST_AFTER + 1;
+      if (!c.post && (c.bad > LOST_AFTER || (c.tries > MAX_TRIES && !this.deps.sees(c.v.visual.position)))) {
+        this.remove(c);
+        continue;
+      }
+      this.steer(c, pl, dt);
+    }
     return ev;
   }
 
   private setPhase(n: number, ev: PoliceEvent[]): void {
     this.phase = n;
     this.phaseTime = 0;
-    if (n === 2) ev.push({ kind: 'warn', n: 1 });
+    // Стоянку рахуємо від першого попередження (гіпотеза: у exe — від входу контролера в стан очікування).
+    if (n === 2) {
+      ev.push({ kind: 'warn', n: 1 });
+      this.stoppedTime = 0;
+    }
     if (n === 3) ev.push({ kind: 'warn', n: 2 });
   }
 
@@ -378,7 +415,7 @@ export class Police {
     const used = new Set(this.cops.map((c) => c.person));
     const pool = [...Array(Math.max(1, this.deps.people)).keys()].filter((i) => !used.has(i));
     const person = pool.length ? pool[Math.floor(Math.random() * pool.length)] : 0;
-    const cop: Cop = { v, person, post, engaged: false, unseen: 0, seeTimer: 0, stuck: 0, reverse: 0, revSteer: 0, ctrl: { steer: 0, throttle: 0, brake: 0, handbrake: true } };
+    const cop: Cop = { v, person, post, engaged: false, unseen: 0, seeTimer: 0, stuck: 0, reverse: 0, revSteer: 0, tries: 0, bad: 0, offset: 0, ctrl: { steer: 0, throttle: 0, brake: 0, handbrake: true } };
     this.cops.push(cop);
     return cop;
   }
@@ -393,15 +430,18 @@ export class Police {
 
   /** Виклик: машина на дорозі поза полем зору на SPAWN_MIN…SPAWN_MAX м від гравця (гіпотеза порту). */
   private dispatch(pl: PlayerState): void {
-    const lines = this.deps.roads.lines;
-    for (let attempt = 0; attempt < 40; attempt++) {
-      const line = lines[Math.floor(Math.random() * lines.length)];
-      if (line.lane < 0 || line.pts.length < 2) continue;
-      const i = Math.floor(Math.random() * (line.pts.length - 1));
-      const a = line.pts[i];
-      const d = a.distanceTo(pl.pos);
-      if (d < SPAWN_MIN || d > SPAWN_MAX || this.deps.sees(a)) continue;
-      const v = this.deps.make(a, line.pts[i + 1].clone().sub(a).setY(0).normalize());
+    const ring: { a: THREE.Vector3; b: THREE.Vector3 }[] = [];
+    for (const line of this.deps.roads.lines) {
+      if (line.lane < 0) continue;
+      for (let i = 0; i + 1 < line.pts.length; i++) {
+        const d = line.pts[i].distanceTo(pl.pos);
+        if (d > SPAWN_MIN && d < SPAWN_MAX) ring.push({ a: line.pts[i], b: line.pts[i + 1] });
+      }
+    }
+    for (let attempt = 0; attempt < 20 && ring.length; attempt++) {
+      const { a, b } = ring[Math.floor(Math.random() * ring.length)];
+      if (this.deps.sees(a)) continue;
+      const v = this.deps.make(a, b.clone().sub(a).setY(0).normalize());
       if (v) this.add(v, null);
       return;
     }
@@ -421,28 +461,85 @@ export class Police {
     const pv = pl.vel.length();
     let target: THREE.Vector3;
     let want: number;
-    if (c.engaged && d < TACTICAL_R) {
+    // Прямо перед вантажівкою впритул — не гальмувати й не розвертатися (інакше її штовхає), а відірватися вперед.
+    let blocking = false;
+    // Швидкість за кривизною дороги попереду: v² ≤ a/κ, із запасом на гальмування до кожного повороту (гіпотеза).
+    let bendWant = CRUISE;
+    let prev = pos.clone().setY(0);
+    let dir = fwd.clone().setY(0).normalize();
+    for (let k = 1; k <= BEND_SAMPLES; k++) {
+      const p = this.routePoint(pos, fwd, k * BEND_STEP).setY(0);
+      const nd = p.clone().sub(prev);
+      const len = nd.length();
+      if (len < 1) break;
+      nd.divideScalar(len);
+      const kappa = Math.acos(THREE.MathUtils.clamp(nd.dot(dir), -1, 1)) / len;
+      const vTurn = kappa > 1e-4 ? Math.sqrt(BEND_ACCEL / kappa) : CRUISE;
+      bendWant = Math.min(bendWant, Math.sqrt(vTurn * vTurn + 2 * BEND_BRAKE * Math.max(0, (k - 1) * BEND_STEP)));
+      prev = p;
+      dir = nd;
+    }
+    bendWant = Math.max(bendWant, U_TURN_SPEED);
+    // Ціль поруч (у межах TACTICAL_R) чи маршрут уже на лінії біля цілі — тактична точка, а не дороги.
+    const here = d < NEAR_GOAL ? this.deps.roads.nearest(pos, fwd) : null;
+    const arrived = !!here && this.route?.get(here.line) === 0;
+    if ((c.engaged || arrived) && (d < TACTICAL_R || arrived)) {
       // Точка прицілу: попереду цілі на L по її курсу + швидкість цілі × 0,5 с.
       const L = this.phase === 4 ? (15 * (pv + 0.5)) / (pv + 3) : 30;
       target = pl.pos.clone().addScaledVector(pl.forward, L).addScaledVector(pl.vel, 0.5);
-      // Позаду цілі й близько — обгін зліва (гіпотеза порту), а не таран.
+      // Позаду цілі — обгін лівою смугою (гіпотеза порту), а не таран.
       const rel = this.tmp.copy(pos).sub(pl.pos);
-      if (rel.dot(pl.forward) < 3 && d < 15) target.addScaledVector(new THREE.Vector3(pl.forward.z, 0, -pl.forward.x), 4);
+      if (rel.dot(pl.forward) < 5 && d < OVERTAKE_R) target.addScaledVector(new THREE.Vector3(pl.forward.z, 0, -pl.forward.x), OVERTAKE_SIDE);
+      // Точка поза дорогою (двір бази, поворот) — найближча точка смуги: машина лишається на дорозі (гіпотеза порту).
+      if (this.deps.roads.offRoad(target)) {
+        const m = this.deps.roads.nearest(target);
+        if (m) target = m.line.pts[m.seg].clone().lerp(m.line.pts[m.seg + 1], m.t);
+      }
       const along = target.clone().sub(pos).dot(fwd);
-      want = THREE.MathUtils.clamp(pv + 0.5 * along, 0, 40);
+      want = Math.min(bendWant + pv * 0.2, THREE.MathUtils.clamp(pv + 0.5 * along, 0, 40));
+      const ahead = rel.dot(pl.forward);
+      const side = Math.abs(rel.x * pl.forward.z - rel.z * pl.forward.x);
+      if (ahead > 0 && ahead < BLOCK_AHEAD && side < 3 && pv > 2) {
+        blocking = true;
+        if (fwd.dot(pl.forward) > 0) {
+          target = pos.clone().addScaledVector(pl.forward, 20);
+          want = pv + 4;
+        } else {
+          // Назустріч — звернути вбік від її курсу.
+          const left = new THREE.Vector3(pl.forward.z, 0, -pl.forward.x);
+          const away = left.multiplyScalar(Math.sign(rel.dot(left)) || 1);
+          target = pos.clone().addScaledVector(fwd, 6).addScaledVector(away, 12);
+          want = U_TURN_SPEED;
+        }
+      }
     } else {
       target = this.routePoint(pos, fwd, ROAD_LOOK + 0.8 * v);
-      const far = this.routePoint(pos, fwd, 12 + 0.6 * v * 3.6);
-      const bend = 1 - Math.max(0, far.clone().sub(pos).setY(0).normalize().dot(fwd));
-      want = CRUISE * (1 - Math.min(0.7, bend * 2.2));
+      want = bendWant;
     }
+    // Машина попереду в коридорі — обʼїзд убік (як AutoPilot), дуже близько — пригальмувати (гіпотеза порту).
+    const left = new THREE.Vector3(fwd.z, 0, -fwd.x);
+    let block = Infinity;
+    let side = 1;
+    for (const o of this.deps.obstacles()) {
+      const r = this.tmp.copy(o).sub(pos);
+      const ahead = r.dot(fwd);
+      const lat = r.dot(left) - c.offset;
+      if (ahead > 2 && ahead < 10 + 2 * v && Math.abs(lat) < 2.6 && ahead < block) {
+        block = ahead;
+        side = lat >= 0 ? -1 : 1;
+      }
+    }
+    const wantOffset = block < Infinity ? side * OVERTAKE_SIDE : 0;
+    c.offset += THREE.MathUtils.clamp(wantOffset - c.offset, -3 * dt, 3 * dt);
+    target.addScaledVector(left, c.offset);
+    if (block < 8) want = Math.min(want, 4);
     const to = target.sub(pos).setY(0);
     const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
     const angle = Math.atan2(to.dot(right), to.dot(fwd));
     const delta = Math.atan((2 * c.v.base * Math.sin(angle)) / Math.max(4, to.length()));
     ctl.steer = THREE.MathUtils.clamp(steerFor(delta), -1, 1);
     // Ціль позаду — розворот на повному кермі повільно (гіпотеза порту).
-    if (Math.abs(angle) > U_TURN) {
+    if (Math.abs(angle) > U_TURN && !blocking) {
       ctl.steer = Math.sign(angle) || 1;
       want = Math.min(want, U_TURN_SPEED);
     }
@@ -452,12 +549,14 @@ export class Police {
       Object.assign(ctl, { steer: c.revSteer, throttle: 0, brake: 1, handbrake: false });
       return;
     }
-    c.stuck = want > 3 && v < 1 ? c.stuck + dt : 0;
+    c.stuck = want > 1.5 && v < 1 ? c.stuck + dt : 0;
     if (c.stuck > STUCK_AFTER) {
       c.stuck = 0;
       c.reverse = REVERSE_FOR;
       c.revSteer = -ctl.steer;
+      c.tries++;
     }
+    if (v > 8) c.tries = 0;
     const dv = want - v;
     ctl.handbrake = false;
     if (want < 0.1) {
