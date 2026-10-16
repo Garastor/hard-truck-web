@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { FLAG_BRAKE, FLAG_LIGHTS, RemoteTrack, emptyState, packState, unpackState, type TruckState } from '../../../src/games/ht1/net/state';
+import { FIRST_RIVAL, FLAG_BRAKE, FLAG_LIGHTS, RemoteTrack, emptyState, packFleet, packState, unpackFleet, unpackState, type TruckState } from '../../../src/games/ht1/net/state';
 
 function state(time: number, x: number, vx: number): TruckState {
   const s = emptyState();
@@ -47,6 +47,20 @@ describe('стан машини в мережі', () => {
     // Пакети не приходять — уперед за швидкістю не більше ніж на 0,3 с.
     tr.sample(now + 2, out);
     expect(out.pos.x).toBeCloseTo(20 * (10 / 30 + 0.3), 3);
+  });
+
+  it('пакет кількох машин: номери й стани без втрат, 50 байтів на машину', () => {
+    const a = state(3.5, 10, 1);
+    const b = state(3.5, -20, 2);
+    b.flags = FLAG_BRAKE;
+    const buf = packFleet(3.5, [{ id: 1, s: a }, { id: FIRST_RIVAL + 2, s: b }]);
+    expect(buf.byteLength).toBe(10 + 2 * 50);
+    const cars = unpackFleet(buf)!;
+    expect(cars.map((c) => c.id)).toEqual([1, FIRST_RIVAL + 2]);
+    expect(cars[1].s.pos.x).toBeCloseTo(-20, 4);
+    expect(cars[1].s.flags).toBe(FLAG_BRAKE);
+    expect(cars[0].s.time).toBe(3.5);
+    expect(unpackFleet(buf.slice(0, 30))).toBeNull();
   });
 
   it('запізнілий пакет не ламає порядок', () => {

@@ -1051,6 +1051,10 @@ body.career #stats {
   opacity: 0.55;
 }
 
+.net-gap {
+  width: 14px;
+}
+
 .net-trucks .net-chip {
   min-width: 82px;
 }

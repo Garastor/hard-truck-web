@@ -20,20 +20,20 @@ export type NetMessage =
   | { t: 'ping'; at: number }
   | { t: 'pong'; at: number }
   | { t: 'bye' }
-  /** Вибір господаря в сесії: траса й погода. */
-  | { t: 'setup'; level: string; rain: boolean }
+  /** Вибір господаря в сесії: траса, погода, кількість суперників. */
+  | { t: 'setup'; level: string; rain: boolean; rivals: number }
   /** Вантажівка гравця (номер у TRUCK.TCH). */
   | { t: 'pick'; truck: number }
-  /** Господар почав заїзд: траса, погода (обидва вантажать трасу). */
-  | { t: 'start'; level: string; rain: boolean }
+  /** Господар почав заїзд: траса, погода, вантажівки суперників (номери в TRUCK.TCH; обидва вантажать трасу). */
+  | { t: 'start'; level: string; rain: boolean; rivals: number[] }
   /** Гравець повернувся із заїзду до сесії. */
   | { t: 'lobby' }
   /** Трасу завантажено — готовий до старту. */
   | { t: 'ready' }
   /** Господар: обидва готові — відлік (світлофор) почався. */
   | { t: 'go' }
-  /** Гравець фінішував: час заїзду від зеленого, с. */
-  | { t: 'finish'; time: number };
+  /** Гравець фінішував: час заїзду від зеленого, с; місце серед усіх (з суперниками). */
+  | { t: 'finish'; time: number; place: number };
 
 export type CloseReason = 'bye' | 'lost' | 'failed' | 'version' | 'local';
 

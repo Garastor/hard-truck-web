@@ -29,7 +29,7 @@ import { AutoPilot, WayNet } from './engine/vehicle/autopilot';
 import { RoomVisibility } from './track/roomVisibility';
 import { ModelBatch } from './engine/render/modelBatch';
 import { toast } from './engine/ui/mobile';
-import { FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, RemoteTrack, STATE_RATE, emptyState, packState, unpackState, type TruckState } from './net/state';
+import { FIRST_RIVAL, FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, RemoteTrack, STATE_RATE, emptyState, packFleet, unpackFleet, type TruckState } from './net/state';
 
 /** Камера (C): з кабіни, від першої особи (лише прилади Panel), позаду, здалеку. */
 export type CamMode = 'chase' | 'cockpit' | 'first' | 'far';
@@ -395,7 +395,8 @@ export class DriveSession {
     truck: TruckVehicle;
     /** Автопілот суперника; у машини друга (мережева гра) — null, її веде remote. */
     pilot: AutoPilot | null;
-    remote?: { track: RemoteTrack; state: TruckState; gone: boolean };
+    /** id — номер машини в мережевій грі; waiting — стану ще не було (суперник господаря захований). */
+    remote?: { id: number; track: RemoteTrack; state: TruckState; gone: boolean; waiting: boolean };
     odo: Odometer;
     lights: TruckLights | null;
     flippedFor: number;
@@ -1553,10 +1554,17 @@ export class DriveSession {
     return { position: this.groundAt(at), forward: base.forward.clone() };
   }
 
-  /** Свій стан для друга (мережева гра): STATE_RATE разів на секунду; null — не мережева гра. */
+  /**
+   * Свій стан для інших (мережева гра): STATE_RATE разів на секунду пакет машин — своя (номер localId), у господаря
+   * (shareRivals) — ще й суперники з автопілотом (номери від FIRST_RIVAL за порядком); null — не мережева гра.
+   */
   onLocalState: ((data: ArrayBuffer) => void) | null = null;
+  /** Номер своєї машини в мережевій грі (місце на старті). */
+  localId = 0;
+  /** Господар: розсилати й стан своїх суперників (у гостей вони — машини з мережі). */
+  shareRivals = false;
   private stateTimer = 0;
-  private readonly sendBuf = emptyState();
+  private readonly sendBufs: TruckState[] = [];
 
   private sendState(dt: number, input: { brake: number; throttle: number }): void {
     if (!this.onLocalState) return;
@@ -1564,32 +1572,48 @@ export class DriveSession {
     if (this.stateTimer > 0) return;
     this.stateTimer += 1 / STATE_RATE;
     if (this.stateTimer < 0) this.stateTimer = 0;
-    const t = this.truck;
-    const b = this.sendBuf;
+    const time = performance.now() / 1000;
+    const reverse = this.truck.gear < 0;
+    const cars = [{ id: this.localId, s: this.carState(0, this.truck, this.headlights, (reverse ? input.throttle : input.brake) > 0) }];
+    if (this.shareRivals) {
+      let k = 0;
+      for (const o of this.opponents) {
+        if (!o.pilot) continue;
+        cars.push({ id: FIRST_RIVAL + k, s: this.carState(k + 1, o.truck, this.night, o.pilot.state.brake > 0) });
+        k++;
+      }
+    }
+    this.onLocalState(packFleet(time, cars));
+  }
+
+  /** Стан машини для пакета (буфер i — без нових об'єктів щокадру). */
+  private carState(i: number, t: TruckVehicle, lights: boolean, braking: boolean): TruckState {
+    const b = (this.sendBufs[i] ??= emptyState());
     const p = t.body.translation();
     const r = t.body.rotation();
     const v = t.body.linvel();
     const reverse = t.gear < 0;
-    b.time = performance.now() / 1000;
     b.pos.set(p.x, p.y, p.z);
     b.quat.set(r.x, r.y, r.z, r.w);
     b.vel.set(v.x, v.y, v.z);
     b.steer = t.wheelSteer;
     b.rpm = t.rpm;
-    b.flags = (this.headlights ? FLAG_LIGHTS : 0) | ((reverse ? input.throttle : input.brake) > 0 ? FLAG_BRAKE : 0) | (reverse ? FLAG_REVERSE : 0);
-    this.onLocalState(packState(b));
+    b.flags = (lights ? FLAG_LIGHTS : 0) | (braking ? FLAG_BRAKE : 0) | (reverse ? FLAG_REVERSE : 0);
+    return b;
   }
 
   /**
-   * Машина друга (мережева гра): вантажівка def на його місці старту, кінематична — її ставить стан із мережі
-   * (pushRemoteState). Для мінікарти, звуку й місця в гонці — як суперник.
+   * Машина з мережі: гравець (номер — місце на старті; стоїть там, доки не прийде стан) чи суперник господаря (номер
+   * від FIRST_RIVAL; захований, доки не прийде перший стан). Вантажівка def з масою, але без тяжіння — її веде стан
+   * із мережі (pushRemoteState). Для мінікарти, звуку й місця в гонці — як суперник.
    */
-  addRemote(def: TruckDef, slot: number): void {
+  addRemote(def: TruckDef, id: number): void {
     const model = buildTruckModel(this.built.assembler, def, true);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня в цій локації`);
     this.wayNet ??= new WayNet(this.built.assembler.b3d);
     this.route ??= new RouteProgress(this.wayNet, this.spawn.position, this.spawn.forward);
-    const truck = new TruckVehicle(this.world, def, model, this.gridSpawn(slot));
+    const rival = id >= FIRST_RIVAL;
+    const truck = new TruckVehicle(this.world, def, model, this.gridSpawn(rival ? 0 : id));
     truck.makeRemote();
     this.scene.add(truck.visual);
     const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
@@ -1601,10 +1625,12 @@ export class DriveSession {
     const r = truck.body.rotation();
     state.pos.set(p.x, p.y, p.z);
     state.quat.set(r.x, r.y, r.z, r.w);
+    const remote = { id, track: new RemoteTrack(), state, gone: false, waiting: rival };
+    if (rival) this.hideRemote(truck, true);
     this.opponents.push({
       truck,
       pilot: null,
-      remote: { track: new RemoteTrack(), state, gone: false },
+      remote,
       odo: new Odometer(),
       lights,
       flippedFor: 0,
@@ -1617,32 +1643,46 @@ export class DriveSession {
     this.updateActiveRooms();
   }
 
-  /** Пакет стану машини друга. */
-  pushRemoteState(data: ArrayBuffer): void {
-    const s = unpackState(data);
-    const o = this.opponents.find((x) => x.remote && !x.remote.gone);
-    if (s && o) o.remote!.track.push(s, performance.now() / 1000);
+  private hideRemote(truck: TruckVehicle, hidden: boolean): void {
+    truck.visual.visible = !hidden;
+    truck.body.setEnabled(!hidden);
   }
 
-  /** Друг вийшов: його машину прибрати з траси (тіло вимкнути). */
-  remoteGone(): void {
+  /** Пакет машин з мережі. */
+  pushRemoteState(data: ArrayBuffer): void {
+    const cars = unpackFleet(data);
+    if (!cars) return;
+    const now = performance.now() / 1000;
+    for (const { id, s } of cars) {
+      const o = this.opponents.find((x) => x.remote?.id === id);
+      const r = o?.remote;
+      if (!r || r.gone) continue;
+      r.track.push(s, now);
+      if (r.waiting) {
+        r.waiting = false;
+        this.hideRemote(o.truck, false);
+      }
+    }
+  }
+
+  /** Гравці вийшли: їхні машини (which — за номером; без нього — усі машини з мережі) прибрати з траси. */
+  remoteGone(which: (id: number) => boolean = () => true): void {
     for (const o of this.opponents) {
-      if (!o.remote || o.remote.gone) continue;
+      if (!o.remote || o.remote.gone || !which(o.remote.id)) continue;
       o.remote.gone = true;
-      o.truck.visual.visible = false;
-      o.truck.body.setEnabled(false);
+      this.hideRemote(o.truck, true);
     }
   }
 
   private stepRemote(dt: number, now: number, truck: TruckVehicle, remote: NonNullable<DriveSession['opponents'][number]['remote']>): void {
-    if (remote.gone) return;
+    if (remote.gone || remote.waiting) return;
     const s = remote.track.sample(now, remote.state) ?? remote.state;
     truck.followRemote(dt, s.pos, s.quat, s.steer, s.rpm, s.vel.length() * 3.6, (s.flags & FLAG_REVERSE) !== 0);
   }
 
   /** Місце гравця в гонці (1 — лідер) за пройденою вздовж дороги відстанню. */
   racePosition(): number {
-    return 1 + this.opponents.filter((o) => o.odo.distance > this.playerOdo.distance).length;
+    return 1 + this.opponents.filter((o) => !o.remote?.gone && o.odo.distance > this.playerOdo.distance).length;
   }
 
   toggleAutopilot(on = !this.autopilot): void {

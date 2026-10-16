@@ -29,6 +29,7 @@ import {
 import { HUD_CYAN, PixelFont, box, pixelCanvas, uiScale } from './engine/ui/pixelFont';
 import { MenuArt } from './engine/ui/menuArt';
 import { lobbyMessage, netMenu, startOf, type NetLobby, type NetStart } from './ui/netScreens';
+import { FIRST_RIVAL } from './net/state';
 import { parseFon } from './engine/formats/fon';
 import { installDevTools } from './devTools';
 import { loadSwap, motionOnGesture, requestMotionPermission, setSwap } from './engine/input/input';
@@ -216,7 +217,9 @@ async function startDrive(): Promise<void> {
     const id = levelSel.value as LevelId;
     const kind = cfg?.kind ?? (id === 'CIRCUIT' ? 'laps' : id === 'MENU3D' ? 'free' : 'route');
     const others = trucks.filter((t) => t !== def);
-    const rivals = net ? [] : (cfg?.rivals ?? (id === 'TRIAL' || id === 'MENU3D' || !others.length ? [] : Array.from({ length: nAi }, (_, i) => others[i % others.length])));
+    // Мережева гра: суперників рахує господар (у гостей — машини з мережі, joinNetDrive).
+    const netRivals = net?.rivals.map((i) => trucks.find((t) => t.index === i) ?? def) ?? [];
+    const rivals = net ? (net.grid === 0 ? netRivals : []) : (cfg?.rivals ?? (id === 'TRIAL' || id === 'MENU3D' || !others.length ? [] : Array.from({ length: nAi }, (_, i) => others[i % others.length])));
     drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup ?? { arcade: difficultySel.value === 'arcade' }, net?.grid ?? null);
     if (net) joinNetDrive(drive, net);
     drive.onSettingsCommand = (cmd) => {
@@ -810,6 +813,9 @@ function joinNetDrive(d: DriveSession, net: NetStart): void {
   const { peer } = lobby;
   const friend = trucks.find((t) => t.index === net.friendTruck) ?? d.def;
   d.addRemote(friend, net.grid === 0 ? 1 : 0);
+  d.localId = net.grid;
+  d.shareRivals = peer.host;
+  if (!peer.host) net.rivals.forEach((i, k) => d.addRemote(trucks.find((t) => t.index === i) ?? d.def, FIRST_RIVAL + k));
   d.onLocalState = (data) => peer.sendFast(data);
   const name = peer.peerName ?? 'Друг';
   // Спільний старт: світлофор чекає на червоному, доки обидва не завантажать трасу; старт дає господар.
@@ -822,22 +828,25 @@ function joinNetDrive(d: DriveSession, net: NetStart): void {
   };
   const tryGo = () => peer.host && lobby.friendReady && go();
   if (peer.host) window.setTimeout(go, NET_READY_TIMEOUT);
-  // Результати: час кожного від зеленого; місце — за часом (старт одночасний).
-  let mine: number | null = null;
-  let theirs: number | null = null;
+  // Результати: час кожного від зеленого (старт одночасний) і місце серед усіх, з суперниками (рахує телефон гравця
+  // на фініші).
+  type Result = { time: number; place: number } | null;
+  let mine: Result = null;
+  let theirs: Result = null;
   let table: HTMLElement | null = null;
   const renderTable = () => {
     if (!table) return;
     const rows = [
-      { who: currentDriver(), time: mine },
-      { who: name, time: theirs },
-    ].sort((a, b) => (a.time ?? Infinity) - (b.time ?? Infinity));
-    const text = rows.map((r, i) => `${i + 1}. ${r.who} — ${r.time === null ? 'ще їде' : raceTime(r.time)}`).join('\n');
-    table.replaceChildren(pixelText(text, boxContentWidth()));
+      { who: currentDriver(), r: mine },
+      { who: name, r: theirs },
+    ].sort((a, b) => (a.r?.place ?? Infinity) - (b.r?.place ?? Infinity) || (a.r?.time ?? Infinity) - (b.r?.time ?? Infinity));
+    const text = rows.map((x) => (x.r ? `${x.r.place}. ${x.who} — ${raceTime(x.r.time)}` : `—. ${x.who} — ще їде`)).join('\n');
+    const of = net.rivals.length ? `\nУчасників: ${net.rivals.length + 2}` : '';
+    table.replaceChildren(pixelText(text + of, boxContentWidth()));
   };
   d.onFinish = (r) => {
-    mine = r.time;
-    peer.send({ t: 'finish', time: r.time });
+    mine = { time: r.time, place: r.place };
+    peer.send({ t: 'finish', time: r.time, place: r.place });
     table = document.createElement('div');
     renderTable();
     void modal(overlay, 'Фініш', table, ['До сесії']).then(() => {
@@ -850,18 +859,19 @@ function joinNetDrive(d: DriveSession, net: NetStart): void {
       // Господар почав новий заїзд (із сесії) — їдемо за ним.
       if (m.t === 'start') {
         lobbyMessage(lobby, m);
-        if (netRun === net) void netPlay(startOf(lobby, m.level, m.rain));
+        if (netRun === net) void netPlay(startOf(lobby, m.level, m.rain, m.rivals));
         return;
       }
       if (m.t === 'lobby' && netRun === net) {
         toast(`${name} повернувся до сесії`);
-        drive?.remoteGone();
+        // Пішов господар — разом з ним зникають і його суперники.
+        drive?.remoteGone(peer.host ? (id) => id < FIRST_RIVAL : undefined);
       }
       if (m.t === 'go' && !peer.host) go();
       if (m.t === 'finish' && netRun === net) {
-        theirs = m.time;
+        theirs = { time: m.time, place: m.place };
         if (table) renderTable();
-        else toast(`${name} фінішував: ${raceTime(m.time)}`);
+        else toast(`${name} фінішував: ${raceTime(m.time)}, місце ${m.place}`);
       }
       lobbyMessage(lobby, m);
       if (m.t === 'ready') tryGo();

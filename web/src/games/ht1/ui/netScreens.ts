@@ -36,6 +36,8 @@ export interface NetLobby {
   peer: NetPeer;
   level: string;
   rain: boolean;
+  /** Кількість суперників з автопілотом (їх рахує господар). */
+  rivals: number;
   truck: number;
   friendTruck: number | null;
   /** Друг зараз на трасі (почав заїзд і ще не повернувся до сесії). */
@@ -49,6 +51,8 @@ export interface NetStart {
   lobby: NetLobby;
   level: string;
   rain: boolean;
+  /** Вантажівки суперників (номери в TRUCK.TCH), по порядку — номери машин від FIRST_RIVAL. */
+  rivals: number[];
   truck: number;
   friendTruck: number;
   grid: number;
@@ -62,6 +66,7 @@ export function lobbyMessage(lobby: NetLobby, m: NetMessage): boolean {
   if (m.t === 'setup' && !lobby.peer.host) {
     lobby.level = m.level;
     lobby.rain = m.rain;
+    lobby.rivals = m.rivals;
   } else if (m.t === 'pick') lobby.friendTruck = m.truck;
   else if (m.t === 'lobby') lobby.friendDriving = false;
   else if (m.t === 'start') lobby.friendDriving = true;
@@ -70,8 +75,20 @@ export function lobbyMessage(lobby: NetLobby, m: NetMessage): boolean {
   return true;
 }
 
-export function startOf(lobby: NetLobby, level = lobby.level, rain = lobby.rain): NetStart {
-  return { lobby, level, rain, truck: lobby.truck, friendTruck: lobby.friendTruck ?? lobby.truck, grid: lobby.peer.host ? 0 : 1 };
+export function startOf(lobby: NetLobby, level: string, rain: boolean, rivals: number[]): NetStart {
+  return { lobby, level, rain, rivals, truck: lobby.truck, friendTruck: lobby.friendTruck ?? lobby.truck, grid: lobby.peer.host ? 0 : 1 };
+}
+
+/**
+ * Вантажівки суперників (господар, перед стартом): інші моделі, ніж у гравців, по колу; Полігон — без суперників
+ * (заїзд поодинці, як у тестовому режимі).
+ */
+function pickRivals(lobby: NetLobby, trucks: NetTruck[]): number[] {
+  if (lobby.level === 'TRIAL') return [];
+  const taken = new Set([lobby.truck, lobby.friendTruck]);
+  const pool = trucks.filter((t) => !taken.has(t.index));
+  const from = pool.length ? pool : trucks;
+  return Array.from({ length: lobby.rivals }, (_, i) => from[i % from.length].index);
 }
 
 /**
@@ -85,7 +102,7 @@ export async function netMenu(art: MenuArt, driver: string, trucks: NetTruck[], 
     if (!lobby) {
       const peer = await connectScreen(art, driver, note);
       if (!peer) return null;
-      lobby = { peer, level: 'CIRCUIT', rain: false, truck: trucks.some((t) => t.index === 1) ? 1 : (trucks[0]?.index ?? 1), friendTruck: null, friendDriving: false, friendReady: false };
+      lobby = { peer, level: 'CIRCUIT', rain: false, truck: trucks.some((t) => t.index === 1) ? 1 : (trucks[0]?.index ?? 1), rivals: 0, friendTruck: null, friendDriving: false, friendReady: false };
     }
     const r = await sessionScreen(art, driver, lobby, trucks);
     if (typeof r !== 'string' && r) return r;
@@ -314,7 +331,7 @@ function sessionScreen(art: MenuArt, driver: string, lobby: NetLobby, trucks: Ne
       p.textContent = text;
       return p;
     };
-    box.append(head, label('ТРАСА'), levelRow, label('ПОГОДА'), weatherRow, label('ВАША ВАНТАЖІВКА'), truckRow, foot);
+    box.append(head, label('ТРАСА'), levelRow, label('ПОГОДА · СУПЕРНИКИ'), weatherRow, label('ВАША ВАНТАЖІВКА'), truckRow, foot);
     let route: string | null = null;
     const nameOf = (i: number | null) => (i === null ? '…' : (trucks.find((t) => t.index === i)?.name ?? `№${i}`));
     const chip = (row: HTMLElement, text: string, on: boolean, enabled: boolean, click: () => void) => {
@@ -324,7 +341,7 @@ function sessionScreen(art: MenuArt, driver: string, lobby: NetLobby, trucks: Ne
       b.addEventListener('click', click);
       row.append(b);
     };
-    const sendSetup = () => peer.send({ t: 'setup', level: lobby.level, rain: lobby.rain });
+    const sendSetup = () => peer.send({ t: 'setup', level: lobby.level, rain: lobby.rain, rivals: lobby.rivals });
     const renderHead = () => {
       const me = `${driver}${peer.host ? ' (створив гру)' : ''} — ${nameOf(lobby.truck)}`;
       const him = `${peer.peerName ?? '…'}${peer.host ? '' : ' (створив гру)'} — ${nameOf(lobby.friendTruck)}${lobby.friendDriving ? ' (на трасі)' : ''}`;
@@ -347,6 +364,15 @@ function sessionScreen(art: MenuArt, driver: string, lobby: NetLobby, trucks: Ne
       for (const [rain, title] of [[false, 'Сухо'], [true, 'Дощ']] as const)
         chip(weatherRow, title, lobby.rain === rain, peer.host, () => {
           lobby.rain = rain;
+          sendSetup();
+          render();
+        });
+      // Суперники (0…7, як у новій грі оригіналу) — у тому ж рядку, після відступу.
+      const gap = el('span', 'net-gap');
+      weatherRow.append(gap);
+      for (let n = 0; n <= 7; n++)
+        chip(weatherRow, String(n), lobby.rivals === n, peer.host, () => {
+          lobby.rivals = n;
           sendSetup();
           render();
         });
@@ -373,7 +399,7 @@ function sessionScreen(art: MenuArt, driver: string, lobby: NetLobby, trucks: Ne
       onMessage: (m) => {
         if (m.t === 'start') {
           lobby.friendDriving = true;
-          return done(startOf(lobby, m.level, m.rain));
+          return done(startOf(lobby, m.level, m.rain, m.rivals));
         }
         if (lobbyMessage(lobby, m)) render();
       },
@@ -386,9 +412,10 @@ function sessionScreen(art: MenuArt, driver: string, lobby: NetLobby, trucks: Ne
     if (peer.host) {
       maskButton(scr, art, 's/start', 489, 17, () => {
         lobby.friendReady = false;
-        peer.send({ t: 'start', level: lobby.level, rain: lobby.rain });
+        const rivals = pickRivals(lobby, trucks);
+        peer.send({ t: 'start', level: lobby.level, rain: lobby.rain, rivals });
         lobby.friendDriving = true;
-        done(startOf(lobby));
+        done(startOf(lobby, lobby.level, lobby.rain, rivals));
       });
       maskButton(scr, art, 's/cancel', 489, 77, leave);
     } else maskButton(scr, art, 's/cancel', 489, 17, leave);

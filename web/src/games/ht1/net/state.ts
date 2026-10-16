@@ -64,6 +64,55 @@ export function unpackState(buf: ArrayBuffer): TruckState | null {
   return [s.time, s.pos.x, s.pos.y, s.pos.z, s.quat.w, s.vel.x, s.steer, s.rpm].every(Number.isFinite) ? s : null;
 }
 
+/**
+ * Пакет кількох машин (своя; у господаря — ще й суперники з автопілотом): тип 2 (1 байт), кількість (1), час
+ * відправника (float64), далі для кожної — номер (1 байт), 12 чисел float32 (позиція, поворот, швидкість, кут коліс,
+ * оберти) і прапорці (1 байт) — 50 байтів на машину. Номери: 0, 1… — гравці (місце на старті), від FIRST_RIVAL —
+ * суперники господаря.
+ */
+const KIND_FLEET = 2;
+const CAR = 1 + 12 * 4 + 1;
+export const FIRST_RIVAL = 16;
+
+export function packFleet(time: number, cars: { id: number; s: TruckState }[]): ArrayBuffer {
+  const buf = new ArrayBuffer(10 + cars.length * CAR);
+  const v = new DataView(buf);
+  v.setUint8(0, KIND_FLEET);
+  v.setUint8(1, cars.length);
+  v.setFloat64(2, time, true);
+  cars.forEach(({ id, s }, k) => {
+    const at = 10 + k * CAR;
+    v.setUint8(at, id);
+    [s.pos.x, s.pos.y, s.pos.z, s.quat.x, s.quat.y, s.quat.z, s.quat.w, s.vel.x, s.vel.y, s.vel.z, s.steer, s.rpm].forEach((x, i) => v.setFloat32(at + 1 + i * 4, x, true));
+    v.setUint8(at + CAR - 1, s.flags);
+  });
+  return buf;
+}
+
+export function unpackFleet(buf: ArrayBuffer): { id: number; s: TruckState }[] | null {
+  if (buf.byteLength < 10) return null;
+  const v = new DataView(buf);
+  const n = v.getUint8(1);
+  if (v.getUint8(0) !== KIND_FLEET || buf.byteLength !== 10 + n * CAR) return null;
+  const time = v.getFloat64(2, true);
+  const out: { id: number; s: TruckState }[] = [];
+  for (let k = 0; k < n; k++) {
+    const at = 10 + k * CAR;
+    const f = (i: number) => v.getFloat32(at + 1 + i * 4, true);
+    const s: TruckState = {
+      time,
+      pos: new THREE.Vector3(f(0), f(1), f(2)),
+      quat: new THREE.Quaternion(f(3), f(4), f(5), f(6)).normalize(),
+      vel: new THREE.Vector3(f(7), f(8), f(9)),
+      steer: f(10),
+      rpm: f(11),
+      flags: v.getUint8(at + CAR - 1),
+    };
+    if ([time, s.pos.x, s.pos.y, s.pos.z, s.quat.w, s.vel.x, s.steer, s.rpm].every(Number.isFinite)) out.push({ id: v.getUint8(at), s });
+  }
+  return out;
+}
+
 /** Показ машини друга за пакетами (місцевий час — секунди, performance.now / 1000). */
 export class RemoteTrack {
   private readonly states: TruckState[] = [];
