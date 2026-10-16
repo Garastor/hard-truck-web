@@ -104,6 +104,8 @@ const ROLLING_RESISTANCE = 0.015;
  */
 const SOFT_DRAG = 2;
 const SOFT_DRAG_SPAN = 3;
+/** Частка моменту сили інерції, що кренить кузов у русі king.exe (leanBody; гіпотеза, підбір). */
+const KING_LEAN = 0.5;
 /** Бампери: висота низу над дорогою й товщина, м (гіпотеза). */
 const BUMPER_CLEARANCE = 0.35;
 const BUMPER_DEPTH = 0.5;
@@ -650,6 +652,34 @@ export class TruckVehicle {
     const w = new THREE.Vector3(av.x, av.y, av.z);
     w.addScaledVector(n, omega - w.dot(n));
     this.body.setAngvel(w, true);
+    this.leanBody(dt, n, ft, vFwd, omega, force / mass);
+  }
+
+  /**
+   * Крен і клювання кузова: бічної сили шин у кінематичному русі немає, тож пружини Rapier нічим не нахилялися. Сила
+   * інерції −M·a (доцентрове v·ω і поздовжнє прискорення), прикладена в центрі мас над площиною контактів, дає момент
+   * на кузов — підвіска кренить його в поворотах і нахиляє під час гальмування й розгону, з погойдуванням. В оригіналі
+   * кузов стає за площиною контактів плюс крен θ = 0,0109·|a − g| (≤ 2,5°); тут — через підвіску, з множником
+   * KING_LEAN (відгук користувача: «немає кренів»; величина — гіпотеза).
+   */
+  private leanBody(dt: number, n: THREE.Vector3, ft: THREE.Vector3, vFwd: number, omega: number, along: number): void {
+    const ground = new THREE.Vector3();
+    let k = 0;
+    for (let i = 0; i < this.wheels; i++) {
+      const p = this.ctrl.wheelIsInContact(i) ? this.ctrl.wheelContactPoint(i) : null;
+      if (!p) continue;
+      ground.add(p as THREE.Vector3Like);
+      k++;
+    }
+    if (!k) return;
+    ground.divideScalar(k);
+    const c = this.body.worldCom();
+    const h = new THREE.Vector3(c.x, c.y, c.z).sub(ground).dot(n);
+    if (h <= 0) return;
+    // Прискорення: доцентрове ω·n × v і поздовжнє вздовж курсу.
+    const a = new THREE.Vector3().crossVectors(n, ft).multiplyScalar(omega * vFwd).addScaledVector(ft, along);
+    const torque = new THREE.Vector3().crossVectors(n.clone().multiplyScalar(h), a.multiplyScalar(-this.mass * KING_LEAN));
+    this.body.applyTorqueImpulse({ x: torque.x * dt, y: torque.y * dt, z: torque.z * dt }, true);
   }
 
   /** Колія передньої осі, м (для кута зовнішнього колеса). */
