@@ -17,12 +17,18 @@ import { ChaseRoute, lineOfSight, newChaser, shoot, steerChase, type Chaser } fr
  *
  * Розшукуваного (хоч один штраф) переслідують: машина поста, повз яку він проїхав ближче 30 м, і до двох «вільних»
  * машин, що їдуть до нього дорогами (маршрут — щоразу за 3 с) і захоплюють ціль ближче 500 м у прямій видимості.
- * Ближче 50 м — «НЕМЕДЛЕННО ОСТАНОВИТЕ МАШИНУ» (mess 54, police_01), через 10 с — «ОСТАНОВИТЕСЬ ИЛИ БУДЕМ СТРЕЛЯТЬ»
- * (mess 55, police_02), ще через 20 с — стрілянина: постріл кожні 0,15 с, поки гравець їде, промінь 300 м з розкидом
- * ±0,05 рад. Біля цілі машина цілиться в точку попереду неї: L = 30 м (обгін і вихід перед гравцем), під час
- * стрілянини — 15·(v + 0,5)/(v + 3) м, плюс швидкість цілі × 0,5 с. Затримання: гравець стоїть (< 0,3 м/с) і
- * міліція ближче 15 м, або попереду далі 20 м і сама повільніша 3 м/с, або гравець стоїть довше 1 с; чи обидві
- * машини стоять ближче 40 м. Не бачить ціль довше 25 + 0,2·(v₁ + v₂) с (чи 60 с) — кидає погоню.
+ *
+ * Лічильник переслідування (+0x51D0, `phase`) спільний для машин міліції й гелікоптерів; кожен просуває його своїм
+ * таймером, спрацьовує той, що перший. Машина міліції (run_car 0x4d1360) — лише ближче 100 м і при лічильнику 1…19
+ * (34 забороненої зони — ні): на 1 — «НЕМЕДЛЕННО ОСТАНОВИТЕ МАШИНУ» (mess 54, police_01); через 30 с, якщо гравець
+ * їде (> 1 м/с), — «ОСТАНОВИТЕСЬ ИЛИ БУДЕМ СТРЕЛЯТЬ» (mess 55, police_02); ще через 20 с, якщо їде, — фаза 4:
+ * постріл кожні 0,15 с, поки гравець їде, промінь 300 м з розкидом ±0,05 рад; мітка часу одна на гравця. Затримання
+ * машиною — ближче 40 м і обидві повільніші 1 м/с. Гелікоптер (0x568090, helicopters.ts) — ближче 50 м mess 54, через
+ * 10 с mess 55, ще через 20 с +1; затримання після попередження: гравець стоїть (< 0,3 м/с) і гелікоптер ближче 15 м,
+ * або попереду далі 20 м і сам повільніший 3 м/с, або гравець стоїть довше 1 с. Біля цілі машина цілиться в точку
+ * попереду неї: L = 30 м (обгін і вихід перед гравцем), під час стрілянини — 15·(v + 0,5)/(v + 3) м, плюс швидкість
+ * цілі × 0,5 с (за контролером гелікоптера 0x566970 — гіпотеза для машини). Не бачить ціль довше 25 + 0,2·(v₁ + v₂) с
+ * (чи 60 с) — кидає погоню.
  *
  * Гіпотези порту: де «вільні» машини міліції (у грі їх 15, GAME.CNF) — порт викликає їх за DISPATCH_DELAY с поза
  * полем зору на SPAWN_MIN…SPAWN_MAX м; крейсерська швидкість і швидкість у поворотах (v² ≤ BEND_ACCEL/κ); поштовх
@@ -39,11 +45,15 @@ const OCCUPY_MAX = 600;
 const RADAR_R = 50;
 const JOIN_R = 30;
 const CAPTURE_R = 500;
-const WARN_R = 50;
-const WARN2_AFTER = 10;
-const SHOOT_AFTER = 20;
 const ACT_R = 100;
+const CAR_WARN2_AFTER = 30;
+const CAR_SHOOT_AFTER = 20;
+const CAR_ARREST_R = 40;
+const MOVING = 1;
 const SHOT_EVERY = 0.15;
+const HELI_WARN_R = 50;
+const HELI_WARN2_AFTER = 10;
+const HELI_SHOOT_AFTER = 20;
 const SHOT_RANGE = 300;
 const SHOT_SPREAD = 0.05;
 const TACTICAL_R = 50;
@@ -165,9 +175,15 @@ export class Police {
   private dispatchTimer = DISPATCH_DELAY;
   /** Лічильник переслідування (king.exe +0x51D0): 0 — ні, 1 — розшук, 2 — перше попередження, 3 — друге, 4 — стрілянина. */
   phase = 0;
-  private phaseTime = 0;
+  /** Заборонена зона (лічильник 34 у exe): машини міліції такого не женуть, лише гелікоптери. */
+  private zone = false;
+  /** Мітка часу машин міліції (одна на гравця, +0x4098), с від початку. */
+  private carMark = 0;
+  /** Стан гелікоптерного контролера: 0 — ще не попереджав, 1 — mess 54, 2 — mess 55, 3 — +1; час від кроку. */
+  private heliStage = 0;
+  private heliTime = 0;
+  private clock = 0;
   private stoppedTime = 0;
-  private shotTimer = 0;
   /** Маршрут до цілі (updateChasedCars): дорогами до позиції гравця, перерахунок раз на 3 с (pursuit.ts). */
   private readonly route: ChaseRoute;
   private readonly tmp = new THREE.Vector3();
@@ -224,54 +240,75 @@ export class Police {
   escalate(n: number): void {
     if (this.phase >= n) return;
     this.phase = n;
-    this.phaseTime = 0;
+    this.zone = true;
   }
 
   /** Кадр: засідки, погоня, попередження, стрілянина, затримання. */
   update(dt: number, pl: PlayerState): PoliceEvent[] {
     const ev: PoliceEvent[] = [];
     this.updatePosts(dt, pl, ev);
-    if (!pl.wanted) {
-      this.phase = 0;
-      this.phaseTime = 0;
-      for (const c of this.cops) c.engaged = false;
-    } else if (this.phase === 0) this.phase = 1;
+    this.clock += dt;
+    if (!pl.wanted) this.reset();
+    else if (this.phase === 0) this.phase = 1;
     this.updateFree(dt, pl);
     if (pl.wanted && this.cops.some((c) => !c.post)) this.route.update(dt, pl.pos);
 
-    // Тактичний рівень: найближча машина, що веде ціль.
-    let lead: { pos: THREE.Vector3; speed: number; cop: Cop | null } | null = null;
-    let leadD = Infinity;
-    for (const c of this.cops) {
-      const d = c.v.visual.position.distanceTo(pl.pos);
-      if (c.engaged && d < leadD) {
-        lead = { pos: c.v.visual.position, speed: c.v.speedKmh / 3.6, cop: c };
-        leadD = d;
-      }
-    }
-    for (const x of (pl.wanted && this.deps.chasers?.()) || []) {
-      const d = x.pos.distanceTo(pl.pos);
-      if (d < leadD) {
-        lead = { ...x, cop: null };
-        leadD = d;
-      }
-    }
     const speed = pl.vel.length();
     this.stoppedTime = speed < 0.3 ? this.stoppedTime + dt : 0;
-    if (lead && this.phase > 0) {
-      this.phaseTime += dt;
-      if (this.phase === 1 && leadD < WARN_R) this.setPhase(2, ev);
-      else if (this.phase === 2 && this.phaseTime > WARN2_AFTER) this.setPhase(3, ev);
-      else if (this.phase === 3 && this.phaseTime > SHOOT_AFTER) this.setPhase(4, ev);
-      if (this.phase >= 2 && this.arrested(lead.pos, lead.speed, leadD, pl)) {
-        ev.push({ kind: 'arrest' });
-        this.phase = 0;
-        for (const c of this.cops) c.engaged = false;
+    // Машина міліції (0x4d1360): найближча, що веде ціль, ближче 100 м; лічильник 1…19.
+    let car: Cop | null = null;
+    let carD = ACT_R;
+    for (const c of this.cops) {
+      const d = c.v.visual.position.distanceTo(pl.pos);
+      if (c.engaged && d < carD) {
+        car = c;
+        carD = d;
       }
-      if (lead.cop && this.phase === 4 && leadD < ACT_R && speed > 1 && (this.shotTimer -= dt) <= 0) {
-        this.shotTimer = SHOT_EVERY;
-        ev.push(this.shoot(lead.cop, pl, leadD));
+    }
+    if (car && this.phase > 0 && !this.zone) {
+      const late = (t: number) => this.clock > this.carMark + t;
+      if (this.phase === 1) {
+        this.carMark = this.clock;
+        this.step(2, ev, 1);
+      } else if (this.phase === 2 && late(CAR_WARN2_AFTER) && speed > MOVING) {
+        this.carMark = this.clock;
+        this.step(3, ev, 2);
+      } else if (this.phase === 3 && late(CAR_SHOOT_AFTER) && speed > MOVING) {
+        this.carMark = this.clock;
+        this.step(4, ev);
+      } else if (this.phase === 4 && speed > MOVING && late(SHOT_EVERY)) {
+        this.carMark = this.clock;
+        ev.push(this.shoot(car, pl, carD));
       }
+      if (carD < CAR_ARREST_R && speed < MOVING && car.v.speedKmh / 3.6 < MOVING) this.arrest(ev);
+    }
+    // Гелікоптер (0x568090): найближчий, що веде ціль; свій таймер, кожен крок — лічильник +1.
+    let heli: { pos: THREE.Vector3; speed: number } | null = null;
+    let heliD = Infinity;
+    for (const x of (this.phase > 0 && this.deps.chasers?.()) || []) {
+      const d = x.pos.distanceTo(pl.pos);
+      if (d < heliD) {
+        heli = x;
+        heliD = d;
+      }
+    }
+    if (heli && this.phase > 0) {
+      this.heliTime += dt;
+      const next = () => Math.min(4, this.phase + 1);
+      if (this.heliStage === 0 && heliD < HELI_WARN_R && this.phase < 2) {
+        this.heliStage = 1;
+        this.heliTime = 0;
+        this.stoppedTime = 0;
+        this.step(next(), ev, 1);
+      } else if (this.heliStage === 1 && this.heliTime > HELI_WARN2_AFTER) {
+        this.heliStage = 2;
+        this.heliTime = 0;
+        this.step(next(), ev, 2);
+      } else if (this.heliStage === 2 && this.heliTime > HELI_SHOOT_AFTER) {
+        this.heliStage = 3;
+        this.step(next(), ev);
+      }
+      if (this.heliStage > 0 && this.heliArrest(heli.pos, heli.speed, heliD, pl)) this.arrest(ev);
     }
     for (const c of [...this.cops]) {
       // Безнадійно застрягла (колеса не на землі, перекинута, кілька спроб здати назад марні) — прибрати; виклик
@@ -290,25 +327,36 @@ export class Police {
     return ev;
   }
 
-  private setPhase(n: number, ev: PoliceEvent[]): void {
+  /** Новий рівень лічильника; warn — попередження (mess 54/55 і звуки police_01/02). */
+  private step(n: number, ev: PoliceEvent[], warn?: 1 | 2): void {
+    if (this.phase === 0) return;
     this.phase = n;
-    this.phaseTime = 0;
-    // Стоянку рахуємо від першого попередження (гіпотеза: у exe — від входу контролера в стан очікування).
-    if (n === 2) {
-      ev.push({ kind: 'warn', n: 1 });
-      this.stoppedTime = 0;
-    }
-    if (n === 3) ev.push({ kind: 'warn', n: 2 });
+    if (warn) ev.push({ kind: 'warn', n: warn });
   }
 
-  private arrested(copPos: THREE.Vector3, copSpeed: number, d: number, pl: PlayerState): boolean {
-    if (d < 40 && pl.vel.length() < 1 && copSpeed < 1) return true;
+  /** Затримання (подія 2): лічильник 0, цілі знято. */
+  private arrest(ev: PoliceEvent[]): void {
+    if (this.phase === 0) return;
+    ev.push({ kind: 'arrest' });
+    this.reset();
+  }
+
+  private reset(): void {
+    this.phase = 0;
+    this.zone = false;
+    this.heliStage = 0;
+    this.heliTime = 0;
+    for (const c of this.cops) c.engaged = false;
+  }
+
+  /** Затримання гелікоптером (0x568090): гравець стоїть і гелікоптер близько, попереду й повільний, чи стоїть > 1 с. */
+  private heliArrest(pos: THREE.Vector3, heliSpeed: number, d: number, pl: PlayerState): boolean {
     if (pl.vel.length() >= 0.3) return false;
     if (d < 15 || this.stoppedTime > 1) return true;
-    const rel = this.tmp.copy(copPos).sub(pl.pos).setY(0);
+    const rel = this.tmp.copy(pos).sub(pl.pos).setY(0);
     const ahead = rel.dot(pl.forward);
     const side = Math.abs(rel.x * pl.forward.z - rel.z * pl.forward.x);
-    return ahead > side && ahead > 20 && copSpeed < 3;
+    return ahead > side && ahead > 20 && heliSpeed < 3;
   }
 
   private shoot(c: Cop, pl: PlayerState, dist: number): PoliceEvent {
