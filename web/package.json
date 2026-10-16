@@ -13,6 +13,8 @@
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.20.0",
     "fflate": "0.8.2",
+    "jsqr": "1.4.0",
+    "qrcode-generator": "2.0.4",
     "three": "0.186.1"
   },
   "devDependencies": {
