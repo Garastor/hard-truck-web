@@ -667,7 +667,7 @@ export class Ht2Drive {
     this.updateThunder(dt);
     this.tick++;
     // Спалах: розсіяне світло (0,9, 1, 1) через кадр протягом 1 с (king.exe 0x005a9540).
-    this.world.setClimate(hour, c.bad, this.flashTime > 0 && this.tick % 2 === 1);
+    this.world.setClimate(hour, c.bad, this.flashTime > 0 && this.tick % 2 === 1, c.w());
     this.world.updateTrees(dt, c.wind);
     const dusk = sunHeight(hour) < 0.2;
     this.world.setNight(dusk);

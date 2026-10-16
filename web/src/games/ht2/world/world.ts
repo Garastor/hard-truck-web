@@ -8,7 +8,8 @@ import { SKY_LIGHT, SceneAssembler, buildScene, type BuiltScene } from '../engin
 import { HT2_REGIONS, readTextures, regionFiles, type TexLevel } from '../files';
 import { DAY_TIME_HOUR, Weather, type DayTime, type Sky } from './weather';
 import { TREE_LIGHT, buildGlows, buildTrees, type TreeSway } from './trees';
-import { illumOn, sunDirection } from './climate';
+import { illumOn, sunDirection, sunHeight } from './climate';
+import { LensFlare } from './lensFlare';
 import { mergeStatic } from './mergeStatic';
 import { walk } from '../engine/formats/b3d';
 import { parseHeightmap } from '../formats/heightmap';
@@ -140,6 +141,9 @@ export class Ht2World {
   /** Шари неба з рухом текстури (move): хмари. */
   private readonly skyMoving: THREE.MeshBasicMaterial[] = [];
   private lastFrame = 0;
+  /** Відблиски сонця на екрані (lightonglass2) і показник погоди w для них. */
+  private readonly flare: LensFlare;
+  private weatherW = 0;
   private loading: string | null = null;
   private lastCheck = 0;
   private readonly waiters: (() => void)[] = [];
@@ -156,6 +160,8 @@ export class Ht2World {
     this.scene.background = new THREE.Color(0x8fb4d8);
     this.scene.fog = new THREE.Fog(0x8fb4d8, 250, 900);
     this.scene.add(this.sun, this.sun.target, this.moon, this.moon.target, this.ambient);
+    this.flare = new LensFlare(common);
+    this.scene.add(this.flare.group);
     this.setClimate(14, 0);
   }
 
@@ -181,10 +187,12 @@ export class Ht2World {
   /**
    * Світло й туман на годину доби й негоду b (0…1) — плавно, як у king.exe (weather.ts, re/notes/ht2/weather.md);
    * flash — спалах блискавки (розсіяне світло (0,9, 1, 1)). Набір WEATHER1 — гіпотеза (подія weather_change не
-   * розібрана). Також напрям сонця, колір дерев (розсіяне + 0,7 · (сонце + місяць)) і нічні вікна.
+   * розібрана). Також напрям сонця, колір дерев (розсіяне + 0,7 · (сонце + місяць)) і нічні вікна; w — показник
+   * погоди (відблиски сонця — лише при w < 0,2).
    */
-  setClimate(hour: number, b: number, flash = false): void {
+  setClimate(hour: number, b: number, flash = false, w = b > 0 ? 0.5 + b / 2 : 0): void {
     this.hour = hour;
+    this.weatherW = w;
     this.applyIllum();
     if (!this.weather) return;
     const l = this.weather.at(hour, b, 1);
@@ -285,6 +293,7 @@ export class Ht2World {
    */
   update(camera: THREE.Camera, focus: THREE.Vector3 = camera.position, now = performance.now()): void {
     if (this.sky) this.sky.position.copy(camera.position);
+    if (camera instanceof THREE.PerspectiveCamera) this.flare.update(camera, this.sun.position, sunHeight(this.hour), this.weatherW);
     const dt = this.lastFrame ? Math.min(0.1, (now - this.lastFrame) / 1000) : 0;
     this.lastFrame = now;
     for (const m of this.skyMoving) {
