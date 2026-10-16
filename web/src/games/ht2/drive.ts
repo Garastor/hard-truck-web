@@ -557,7 +557,7 @@ export class Ht2Drive {
     const base = { cargoMass: this.hitched ? 0 : cargo, torque: t.torque, grip: t.grip, surfaceEffects: !this.arcade };
     // Рух king.exe (G10 В3); `?physics=rapier` — колишня модель на шинах Rapier (для порівняння).
     if (new URLSearchParams(location.search).get('physics') === 'rapier') return { ...base, engine: HT2_ENGINE, brake: HT2_BRAKE, rollLift: HT2_ROLL_LIFT, steerLimit: HT2_STEER_LIMIT, steerPower: HT2_STEER_POWER };
-    return { ...base, engine: HT2_KING_ENGINE, brake: HT2_KING_BRAKE, king: HT2_KING };
+    return { ...base, engine: HT2_KING_ENGINE, brake: HT2_KING_BRAKE, king: { ...HT2_KING, travel: this.rec?.suspension } };
   }
 
   /** Запис vehicle.tech поточної вантажівки. */

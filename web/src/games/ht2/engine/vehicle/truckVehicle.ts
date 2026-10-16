@@ -4,7 +4,7 @@ import { GROUP_BUMPER, GROUP_MOVABLE, g2t, groups } from '../physics/world';
 import type { ControlState } from '../input/input';
 import { visibleBox, type TruckDef, type TruckModel } from './trucks';
 import { Engine, GEAR_R, type EngineProfile } from './engine';
-import { KING, rollingForce, steerLimit, wheelForces, yawRate, type KingWheel, type WheelSlip } from './kingModel';
+import { KING, roadBump, rollingForce, steerLimit, wheelForces, yawRate, type KingWheel, type WheelSlip } from './kingModel';
 
 /**
  * Вантажівка на DynamicRayCastVehicleController (Rapier).
@@ -157,6 +157,8 @@ export interface KingSetup {
   /** Крен кузова, рад на м/с² бічного прискорення, і межа (запис king.exe). */
   rollK: number;
   rollMax: number;
+  /** Хід підвіски коліс, м (vehicle.tech `suspension`) — масштаб нерівності дороги (roadBump). */
+  travel?: readonly number[];
 }
 
 /** Тінь над дорогою, м — щоб не мерехтіла з дорогою (гіпотеза порту). */
@@ -318,6 +320,7 @@ export class TruckVehicle {
     this.visual.add(gameFrame);
     this.wheelVisual = model.wheels.map((obj, i) => ({ obj, base: model.wheelBase[i] }));
     this.slip = model.wheels.map(() => 0);
+    for (let i = 0; i < model.wheels.length; i++) this.bumps.push({ h: 0, u: 0 });
     // Колісна база: z передніх (0, 1) і середнє z решти коліс (у системі Three.js уперед — −z).
     const wz = model.wheelBase.map((m) => g2t(new THREE.Vector3().setFromMatrixPosition(m)).z);
     const front = (wz[0] + wz[1]) / 2;
@@ -464,6 +467,7 @@ export class TruckVehicle {
     // Нахил кузова king (косметичний): верх кузова хилиться праворуч на leanSide і вперед на leanFwd.
     if (this.king && (this.leanSide || this.leanFwd)) {
       const q = this.visual.quaternion;
+      this.visual.position.addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(q), this.bumpLift);
       const tilt = new THREE.Vector3(this.leanSide, 0, -this.leanFwd).applyQuaternion(q);
       const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
       const angle = tilt.length();
@@ -656,7 +660,11 @@ export class TruckVehicle {
     else if (vFwd !== 0 && Math.sign(along) !== Math.sign(vFwd) && Math.sign(force) === -Math.sign(vFwd) && Math.abs(this.engine.force) < resist + hold) next.addScaledVector(ft, -along);
     // Рівний ґрунт і всі колеса на землі — швидкість уздовж курсу (бічного ковзання немає).
     if (all && n.y >= KING.flat) {
-      const speed = next.length() * (Math.sign(next.dot(ft)) || 0);
+      // Довжина вектора — як в оригіналі, але лише коли бічна складова мала (поворот за крок): після удару збоку
+      // (в оригіналі тоді вмикається «динамічний» режим) поштовх не має ставати розгоном уперед.
+      const along2 = next.dot(ft);
+      const side = Math.sqrt(Math.max(0, next.lengthSq() - along2 * along2));
+      const speed = side < 0.5 ? next.length() * (Math.sign(along2) || 0) : along2;
       next.copy(ft).multiplyScalar(speed);
     }
     // Rapier за крок додасть усю вагу — її дотичну частину віднімаємо наперед; уздовж нормалі — як є (підвіска).
@@ -670,6 +678,7 @@ export class TruckVehicle {
     const w = new THREE.Vector3(av.x, av.y, av.z);
     w.addScaledVector(n, omega - w.dot(n));
     this.body.setAngvel(w, true);
+    for (let i = 0; i < this.wheels; i++) if (wheels[i].ground) roadBump(this.bumps[i], dt, vFwd, this.king!.travel?.[i] ?? 0.3, Math.random());
     this.lean(dt, n, ft, gt, vFwd * omega, force / mass);
   }
 
@@ -690,10 +699,27 @@ export class TruckVehicle {
     // Крен — за записом оригіналу (лінійний, без межі 2,5°): напрям і згладжування ті самі.
     const K = this.king!;
     const roll = Math.min(K.rollMax, K.rollK * len);
-    // У системі кузова: x — праворуч, z — уперед.
-    this.leanSide = f * this.leanSide + (1 - f) * roll * -d.dot(left);
-    this.leanFwd = f * this.leanFwd + (1 - f) * theta * d.dot(ft) * LEAN_PITCH;
+    // Площина контактів з нерівностями доріг (roadBump): ліві колеса — парні, передні — 0 і 1.
+    let l = 0, r = 0, fr = 0, bk = 0;
+    this.bumps.forEach((b, i) => {
+      if (i % 2) r += b.h;
+      else l += b.h;
+      if (i < 2) fr += b.h;
+      else bk += b.h;
+    });
+    const half = this.wheels / 2;
+    const bumpRoll = (l - r) / half / this.track;
+    const bumpPitch = (fr / 2 - bk / Math.max(1, this.wheels - 2)) / this.base;
+    // Висота — з центру контактів без згладжування (як 0x2214 в оригіналі), нахил — згладжений.
+    this.bumpLift = (l + r) / this.wheels;
+    // У системі кузова: x — праворуч, z — уперед. Ліві колеса вище — кузов хилиться праворуч; передні — назад.
+    this.leanSide = f * this.leanSide + (1 - f) * (roll * -d.dot(left) + bumpRoll);
+    this.leanFwd = f * this.leanFwd + (1 - f) * (theta * d.dot(ft) * LEAN_PITCH - bumpPitch);
   }
+
+  /** Нерівності дороги під колесами (roadBump) і зсув кузова за ними вгору, м. */
+  private readonly bumps: { h: number; u: number }[] = [];
+  private bumpLift = 0;
 
   /** Згладжений нахил кузова king (рад): у бік праворуч і вперед (lean). */
   private leanSide = 0;

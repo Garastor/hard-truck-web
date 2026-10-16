@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { KING, rollingForce, steerLimit, wheelForces, yawRate, type KingWheel, type WheelSlip } from '../../src/games/ht2/engine/vehicle/kingModel';
+import { KING, roadBump, rollingForce, steerLimit, wheelForces, yawRate, type KingWheel, type WheelSlip } from '../../src/games/ht2/engine/vehicle/kingModel';
 
 /** Чотири колеса по 10 кН, ведучі задні (μ = 0,7: межа колеса 7 кН). */
 const wheels = (mu = 0.7): KingWheel[] =>
@@ -48,5 +48,23 @@ describe('рух king.exe (G10 В3)', () => {
     expect(wheelForces(w, 10_000, 0, 5)).toBe(0);
     expect(rollingForce(10_000, 0)).toBe(0);
     expect(rollingForce(10_000, 20)).toBeCloseTo(100, 6);
+  });
+});
+
+describe('нерівність дороги king.exe (0x502780)', () => {
+  it('на місці не рухається, на ходу блукає в межах ±2 см', () => {
+    const s = { h: 0, u: 0 };
+    for (let i = 0; i < 600; i++) roadBump(s, 1 / 60, 0, 0.3, Math.random());
+    expect(s.h).toBe(0);
+    let max = 0;
+    let moved = 0;
+    for (let i = 0; i < 6000; i++) {
+      const before = s.h;
+      roadBump(s, 1 / 60, 12, 0.3, Math.random());
+      max = Math.max(max, Math.abs(s.h));
+      if (s.h !== before) moved++;
+    }
+    expect(max).toBeLessThanOrEqual(0.02);
+    expect(moved).toBeGreaterThan(3000);
   });
 });

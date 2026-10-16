@@ -50,6 +50,25 @@ export function rollingForce(load: number, v: number, fr = KING.rolling): number
   return fr * load * Math.min(1, Math.abs(v));
 }
 
+/**
+ * Нерівність дороги під колесом (king.exe 0x502780, поле колеса 0xe3c): випадкове блукання висоти h зі швидкістю u.
+ * Щокроку: u ← u·(1 − |h|/H) + A·(ξ − (h + H)/(2H)), ξ ∈ [0, 1), A = 0,1/(dt + 0,01) · w/(w + 10) · (0,9·√(|h|/H) + 0,1);
+ * |u| ≤ w·kU; h ← h + u·dt, |h| ≤ hMax. w — швидкість колеса (≤ 10 м/с), H = хід підвіски × kH. Для асфальту (покриття
+ * 1, 5) hMax = 0,02 м; kH / kU залежать від режиму [0x276c]: 0 — 0,2 / 1, 1 — 0,1 / 0,03, 2 — 0,05 / 0,003.
+ * Кузов оригіналу стає за площиною контактів — звідси дрібне тремтіння на ходу (на місці w = 0 — нерухомо).
+ */
+export function roadBump(state: { h: number; u: number }, dt: number, speed: number, travel: number, rnd: number, mode = { kH: 0.2, kU: 1, hMax: 0.02 }): void {
+  const w = Math.min(10, Math.abs(speed));
+  const H = Math.max(1e-3, travel * mode.kH);
+  const ratio = Math.min(1, Math.abs(state.h) / H);
+  state.u *= 1 - ratio;
+  const amp = ((0.1 / (dt + 0.01)) * w) / (w + 10) * (Math.sqrt(ratio) * 0.9 + 0.1);
+  state.u += amp * (rnd - (state.h + H) / (2 * H));
+  const lim = w * mode.kU;
+  state.u = Math.max(-lim, Math.min(lim, state.u));
+  state.h = Math.max(-mode.hMax, Math.min(mode.hMax, state.h + dt * state.u));
+}
+
 export interface KingWheel {
   /** Колесо торкається ґрунту. */
   ground: boolean;
