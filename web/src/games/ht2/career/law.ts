@@ -27,6 +27,8 @@ export function noFines(): Fines {
 
 /** Штраф за ступінь перевищення на посту (king.exe 0x4d1360). */
 export const SPEEDING_PER_DEGREE = 250;
+/** Нелегальний товар: 15000 × коефіцієнт товару (0x430760). */
+export const ILLEGAL_FINE = 15000;
 /** Проїзд на червоне за міліції в радіусі 200 м (0x64ff18). */
 export const RED_LIGHT_FINE = 830;
 

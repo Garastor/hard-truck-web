@@ -30,6 +30,13 @@ export interface Goods {
    */
   trucks: boolean;
   fuel: boolean;
+  /** Легкові вантажі (C_*). */
+  cars: boolean;
+  /**
+   * Коефіцієнт штрафу за нелегальний товар — число після списку класів (АКМ 0,7, рад. відходи 1,2; штраф
+   * 15000 × коеф., king.exe 0x430760); 0 — немає.
+   */
+  guilt: number;
 }
 
 export interface Store {
@@ -56,6 +63,11 @@ export interface Order {
   /** Термін, с ігрового часу. */
   deadline: number;
   urgent: boolean;
+  /**
+   * Прихований нелегальний товар під виглядом `goods` (king.exe fillTownOrder 0x41b3a0): гравець бачить лише
+   * прикриття (без сканера), оплата — за справжнім товаром; міліція конфіскує при затриманні.
+   */
+  hidden?: Goods;
 }
 
 /** Регіони без землі в порту: склади там не використовуємо (aa тепер має процедурний рельєф, terrain.ts). */
@@ -95,6 +107,8 @@ export function parseGoods(sch: SExpr[]): Goods[] {
       forMafia: classes.includes('formafia'),
       trucks: classes.includes('trucks'),
       fuel: classes.includes('fuel'),
+      cars: classes.includes('cars'),
+      guilt: typeof inner[4] === 'number' ? inner[4] : 0,
     });
   }
   return out;
@@ -175,6 +189,23 @@ export function orderValue(g: Goods, units: number): number {
   return Math.sqrt(g.price * units) * 10;
 }
 
+/**
+ * Частка гравця X у king.exe (0x41fcf0: «показник машин» гравця серед усіх гравців; що саме рахує 0x41b830 — не
+ * зʼясовано). Прихований товар — лише при X > 0,25. Гіпотеза порту: X = 1 (порт не веде показників суперників).
+ */
+export const ILLEGAL_SHARE = 1;
+const ILLEGAL_SHARE_MIN = 0.25;
+
+/**
+ * Прихований товар до замовлення (fillTownOrder 0x41b3a0): з імовірністю 1/5 — випадковий товар з класами рівно
+ * `illegal` + `trucks` (рад. і хім. відходи; АКМ, героїн, гексаген — ще й formafia).
+ */
+export function hideIllegal(goods: Goods[], rnd: () => number): Goods | null {
+  if (rnd() >= 0.2) return null;
+  const pool = goods.filter((x) => x.illegal && x.trucks && !x.forMafia && !x.cars && !x.fuel);
+  return pool.length ? pool[Math.floor(rnd() * pool.length)] : null;
+}
+
 /** Оплата доставки (k = 115 — вантажівка; ×3; термінове ×1,5). */
 export function orderPay(g: Goods, units: number, distance: number, urgent: boolean): number {
   const base = (1.2 - g.ratio) * Math.sqrt(g.price * units);
@@ -194,6 +225,7 @@ export function makeOrders(
   rnd = Math.random,
   n = 5,
   tanker = false,
+  illegalShare = ILLEGAL_SHARE,
 ): Order[] {
   // Вантажі для вантажівок; паливо — лише в цистерну.
   const legal0 = goods.filter((g) => !g.illegal && g.price > 0 && g.mass > 0 && g.trucks && (!g.fuel || tanker));
@@ -211,16 +243,18 @@ export function makeOrders(
     const distance = routeLength(from, to);
     const urgent = rnd() < 0.25;
     const speed = (urgent ? 60 : 45) / 3.6;
+    const hidden = illegalShare > ILLEGAL_SHARE_MIN && !g.fuel ? hideIllegal(goods, rnd) : null;
     out.push({
       goods: g,
       units,
       from: from.id,
       to: to.id,
       distance,
-      pay: orderPay(g, units, distance, urgent),
+      pay: orderPay(hidden ?? g, units, distance, urgent),
       value: Math.round(orderValue(g, units)),
       deadline: Math.round(distance / speed + 180),
       urgent,
+      ...(hidden ? { hidden } : {}),
     });
   }
   return out;

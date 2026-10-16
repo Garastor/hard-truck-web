@@ -19,7 +19,7 @@ import { decodeCp1251 } from '@ht2/engine/formats/binary';
 import { HT2_FILES, HT2_REGIONS, HT2_REQUIRED } from '@ht2/files';
 import { detectGame } from '@app/registry';
 import { HT2_DIR } from '../gameDirs';
-import { findStores, orderPay, parseGoods, parseServices, parseTowns } from '@ht2/career/economy';
+import { findStores, hideIllegal, orderPay, parseGoods, parseServices, parseTowns } from '@ht2/career/economy';
 import { HT2_MOD_REGIONS } from '@ht2/files';
 import { install, parseUpgrades, tuning } from '@ht2/career/upgrades';
 import { parseMarkets } from '@ht2/career/market';
@@ -229,9 +229,25 @@ describe.skipIf(!has)('HT2: економіка', () => {
     expect(stores.find((s) => s.id === 3)!.town).toBe('Південний');
   });
   it('оплата росте з відстанню й терміновістю', () => {
-    const g = { id: 'X', name: 'X', mass: 10, volume: 0.1, price: 100, ratio: 0.8, illegal: false, forMafia: false, trucks: true, fuel: false };
+    const g = { id: 'X', name: 'X', mass: 10, volume: 0.1, price: 100, ratio: 0.8, illegal: false, forMafia: false, trucks: true, fuel: false, cars: false, guilt: 0 };
     expect(orderPay(g, 100, 5000, false)).toBe(Math.round((5000 * 0.115 + 0.4 * 100) * 3));
     expect(orderPay(g, 100, 5000, true)).toBeGreaterThan(orderPay(g, 100, 5000, false));
+  });
+  it('прихований нелегальний товар: лише illegal + trucks, коефіцієнт штрафу з merchandise.sch', () => {
+    const goods = parseGoods(readSch(read('merchandise.sch')));
+    const byId = new Map(goods.map((x) => [x.id, x]));
+    expect(byId.get('RWASTE')!.guilt).toBe(1.2);
+    expect(byId.get('AKM')!.guilt).toBe(0.7);
+    expect(byId.get('BREAD')!.guilt).toBe(0);
+    const seen = new Set<string>();
+    let n = 0;
+    for (let i = 0; i < 2000; i++) {
+      const h = hideIllegal(goods, Math.random);
+      if (h) (n++, seen.add(h.id));
+    }
+    expect([...seen].sort()).toEqual(['CHWASTE', 'RWASTE']);
+    expect(n / 2000).toBeGreaterThan(0.15);
+    expect(n / 2000).toBeLessThan(0.25);
   });
 });
 

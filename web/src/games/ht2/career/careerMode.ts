@@ -12,7 +12,7 @@ import type { SidePanel } from '../ui/panel';
 import { active, advance, makeRivals, place, PREMIUM_SHARE } from './competition';
 import { hireOffer, LICENCE_TIME, newDriver, tickCompany } from './company';
 import { ukMessage } from '../ui/uk';
-import { arrestCard, noFines, SPEEDING_PER_DEGREE, type Fines } from './law';
+import { arrestCard, ILLEGAL_FINE, noFines, SPEEDING_PER_DEGREE, type Fines } from './law';
 
 /**
  * Кар'єра в режимі їзди HT2: склади (замовлення й здача вантажу), СТО (ремонт), удари (пошкодження машини й
@@ -111,6 +111,7 @@ export class CareerMode {
       c.damage = Math.min(1, c.damage + dv * 0.004 * this.drive.tuning.damage * (this.drive.arcade ? 0.5 : 1));
       if (c.order) c.order.integrity = Math.max(0, c.order.integrity - dv * 0.01);
       if (c.order && c.order.integrity <= 0) this.orderLost();
+      this.recountGuilt();
     }
     const p = this.drive.truck.visual.position;
     const gx = p.x;
@@ -217,7 +218,7 @@ export class CareerMode {
         art,
         this.drive.overlay,
         {
-          goods: o.goods.name,
+          goods: this.cargoName(o),
           town: to?.town ?? '?',
           pay: o.pay,
           hours: (o.deadline * this.drive.timeScale) / 3600,
@@ -233,6 +234,7 @@ export class CareerMode {
           cached!.orders = cached!.orders.filter((x) => x !== o);
           this.drive.setCargo(o.goods.mass * o.units);
           this.drive.say(`${o.goods.name} → ${to?.town ?? '?'}`);
+          this.recountGuilt();
           this.persist();
           this.closePanel();
         },
@@ -258,12 +260,13 @@ export class CareerMode {
       return this.openPanel(jobPanel(this.drive.escArt!, this.drive.overlay, job, () => this.hire(m, day, near, offer)));
     }
     this.openPanel(
-      salePanel(this.drive.escArt!, this.drive.overlay, { model: near.rec.carNode, price: near.price, power: near.rec.horsePower, load: near.rec.cargoLoad, used: near.used }, () => {
+      salePanel(this.drive.escArt!, this.drive.overlay, { model: near.rec.carNode, price: near.price, power: near.rec.horsePower, load: near.rec.cargoLoad, used: this.scanner && near.used, stolen: this.scanner && !!near.stolen }, () => {
         const cost = near.price - tradeIn;
         if (c.order) return this.drive.say('Спершу доставте вантаж');
         if (c.money < cost) return this.drive.say(this.msg('NOT_ENOUGH_MONEY', 'НЕ ВИСТАЧАЄ ГРОШЕЙ'));
         c.money -= cost;
         c.truck = near.rec.carNode;
+        this.bought(near);
         c.damage = near.used ? USED_DAMAGE : 0;
         c.dents = near.used ? { FC: 0.25, BC: 0.25 } : {};
         c.fuel = null;
@@ -362,6 +365,50 @@ export class CareerMode {
     this.persist();
   }
 
+  /** Сканер вантажу (PR_CARGO_SCANNER): видно прихований товар і крадену чи вживану машину. */
+  get scanner(): boolean {
+    return (this.career.upgrades ?? []).some((u) => u.startsWith('PR_CARGO_SCANNER'));
+  }
+
+  /**
+   * Назва вантажу: без сканера — прикриття; зі сканером прихований товар блимає раз на секунду з прикриттям (king.exe
+   * 0x56bc80, 0x5756f0 — інший колір; у порту — та сама назва з позначкою «!»).
+   */
+  cargoName(o: { goods: Goods; hidden?: Goods }): string {
+    if (!o.hidden || !this.scanner) return o.goods.name;
+    return Math.floor(performance.now() / 1000) % 2 ? `${o.hidden.name}!` : o.goods.name;
+  }
+
+  /**
+   * Перерахунок провини (accountForGuilt 0x442850; при завантаженні, ударі, доставці): прихований товар «попадається»
+   * з імовірністю 80 % — штраф 15000 × коефіцієнт; крадена машина — з імовірністю 50 %, 0,8 ціни моделі.
+   */
+  recountGuilt(): void {
+    const c = this.career;
+    const f = this.fines;
+    const h = c.order?.hidden;
+    f.illegal = h && Math.random() < 0.8 ? ILLEGAL_FINE * h.guilt : 0;
+    f.stolen = c.stolen && Math.random() < 0.5 ? Math.round(0.8 * (c.truckPrice ?? 0)) : 0;
+  }
+
+  /** Купівля машини на ринку: крадена — прапорець (без повідомлення); уживана — king.exe mess 0x77. */
+  private bought(s: ForSale): void {
+    const c = this.career;
+    c.stolen = !!s.stolen;
+    c.truckPrice = s.rec.price;
+    if (s.used) this.drive.say('ВАМ ПРОДАЛИ ВЖИВАНУ МАШИНУ');
+    this.recountGuilt();
+  }
+
+  /** Конфіскація (cancelIllegalOrders 0x444f80): замовлення з прихованим товаром зникає без неустойки. */
+  private confiscate(): void {
+    const c = this.career;
+    if (!c.order?.hidden) return;
+    c.order = null;
+    this.drive.setCargo(0);
+    this.drive.say(this.msg('LOAD_SEIZED', 'ВАНТАЖ КОНФІСКОВАНО'));
+  }
+
   /**
    * Затримання (подія 2 king.exe, 0x430a80): картка (один штраф — своя, кілька — 15 з переліком), сума списується
    * з грошей без перевірки на мінус, усі штрафи обнуляються. Ролик trp.bne і вилучення прихованого вантажу — пізніше.
@@ -374,6 +421,8 @@ export class CareerMode {
     const text = card.lines.map(line).join('\n');
     c.money -= card.amount;
     c.fines = noFines();
+    c.stolen = false;
+    this.confiscate();
     const info = this.speedInfo;
     this.speedInfo = null;
     this.persist();
@@ -441,7 +490,8 @@ export class CareerMode {
       const tradeIn = Math.round((current?.price ?? 0) * 0.5);
       const trailer = this.drive.trucksData.records.find((r) => r.carNode === 'STrailerM');
       const load = (r: ForSale['rec']) => (r.group === 'tractors' ? `тягач, причіп ${Math.round((trailer?.cargoLoad ?? 0) / 1000)} т` : `${Math.round(r.cargoLoad / 1000)} т`);
-      const labels = list.map((s) => `${s.rec.carNode}${s.used ? ' (вживана)' : ''} — ${s.rec.horsePower} к.с., ${load(s.rec)}: ${formatMoney(s.price - tradeIn)}`);
+      const tag = (s: ForSale) => (!this.scanner ? '' : s.stolen ? ' (крадена)' : s.used ? ' (вживана)' : '');
+      const labels = list.map((s) => `${s.rec.carNode}${tag(s)} — ${s.rec.horsePower} к.с., ${load(s.rec)}: ${formatMoney(s.price - tradeIn)}`);
       const title = `${m.name || 'Ринок'}${m.town ? ` «${m.town}»` : ''}`;
       const i = await modal(this.drive.overlay, title, `Ваша ${current?.carNode ?? c.truck} — у залік ${formatMoney(tradeIn)}. Гроші: ${formatMoney(c.money)}.`, [...labels, 'Поїхали']);
       const s = list[i];
@@ -457,6 +507,7 @@ export class CareerMode {
       }
       c.money -= cost;
       c.truck = s.rec.carNode;
+      this.bought(s);
       c.damage = s.used ? USED_DAMAGE : 0;
       // Нова машина — без вмʼятин; вживана — трохи побита спереду й ззаду (гіпотеза).
       c.dents = s.used ? { FC: 0.25, BC: 0.25 } : {};
@@ -653,7 +704,7 @@ export class CareerMode {
         const buttons = orders.map((o) => {
           const to = this.stores.find((s) => s.id === o.to)!;
           const h = (o.deadline * this.drive.timeScale) / 3600;
-          return `${o.goods.name} ×${o.units} → ${to.town}: ${formatMoney(o.pay)}, ${h < 1 ? `${Math.round(h * 60)} хв` : `${h.toFixed(1)} год`}${o.urgent ? ' (терміново)' : ''}${o.goods.forMafia ? ' ⚠ мафія' : ''}`;
+          return `${this.cargoName(o)} ×${o.units} → ${to.town}: ${formatMoney(o.pay)}, ${h < 1 ? `${Math.round(h * 60)} хв` : `${h.toFixed(1)} год`}${o.urgent ? ' (терміново)' : ''}${o.goods.forMafia ? ' ⚠ мафія' : ''}`;
         });
         const i = await modal(this.drive.overlay, `Склад «${store.town}»`, box, [...buttons, 'Не брати']);
         const o = orders[i];
@@ -661,6 +712,7 @@ export class CareerMode {
           c.order = { ...o, deadline: o.deadline * this.drive.timeScale, taken: c.time, integrity: 1 };
           this.attachRivals(c.order);
           this.drive.setCargo(o.goods.mass * o.units);
+          this.recountGuilt();
         }
       }
       this.persist();
@@ -753,7 +805,7 @@ export class CareerMode {
       const o = c.order;
       const to = this.stores.find((s) => s.id === o.to);
       order = {
-        goods: o.goods.name,
+        goods: this.cargoName(o),
         units: o.units,
         town: to?.town ?? '?',
         arrow: to ? arrowTo(fwd, toThree(...to.center).sub(p)) : '',
