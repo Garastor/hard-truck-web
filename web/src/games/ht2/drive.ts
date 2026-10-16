@@ -64,6 +64,14 @@ const CHASE_BACK = 13.3;
 const CHASE_UP = 4.2;
 const CHASE_PITCH = Math.asin(0.3);
 const CHASE_FOV = THREE.MathUtils.radToDeg(2 * Math.atan(0.45 * (4 / 3)));
+/**
+ * Кут огляду з кабіни — як у грі (king.exe 0x5972d0): ширина піраміди xpyramid з TRUCK.INI [EFFECTS] (за
+ * замовчуванням 1,6, клавішами 1,2…2,0), висота — за пропорцією екрана; у порту — як на екрані 4:3 (вертикаль
+ * 2·atan(0,8·3/4) ≈ 62°), ширші екрани бачать більше з боків. Було 48,5° (ypyramid [RENDER]) — кермо й прилади
+ * опинялися під краєм кадру.
+ */
+const XPYRAMID = 1.6;
+const COCKPIT_FOV = THREE.MathUtils.radToDeg(2 * Math.atan((XPYRAMID / 2) * (3 / 4)));
 /** Запізнення камери за машиною, с (оригінал: відстань позаду = 8,8 м + 0,58 с × швидкість, повертається за ≈ 1,5 с). */
 const CHASE_LAG = 0.6;
 /** Точка погляду — на цій відстані від місця камери в спокої під нахилом CHASE_PITCH (біля машини), м. */
@@ -209,6 +217,8 @@ export class Ht2Drive {
   /** Фари: два прожектори на місцях Fara_FL/FR з vehicle.tech; вмикаються в сутінках і вночі або клавішею L. */
   private readonly lamps: THREE.SpotLight[] = [];
   private lightsManual: boolean | null = null;
+  /** Двірники вручну (W); null — самі в дощ. */
+  private wipersManual: boolean | null = null;
   /** Маса вантажу в кузові, кг (фізика: центр мас і загальна маса). */
   private cargoMass = 0;
   /** Бак, л, і витрата (vehicle.tech: × 10 = л/100 км) вантажівки гравця. */
@@ -348,6 +358,8 @@ export class Ht2Drive {
       if (cmd === 'map' && this.tabMap) this.tabMap.cycle();
       else if (cmd === 'map' && this.map) this.map.el.hidden = !this.map.el.hidden;
       if (cmd === 'lights') this.lightsManual = !this.lamps[0]?.visible;
+      // Двірники — окрема дія гри («Wipers», W); у порту без натискання вмикаються в дощ.
+      if (cmd === 'wipers') this.wipersManual = !(this.glassRain?.wipersOn ?? this.raining);
       if (cmd === 'reset') this.recover();
       if (cmd === 'menu') this.toggleEsc();
       if (cmd === 'f1' || cmd === 'f2' || cmd === 'f3' || cmd === 'f4') this.toggleF(Number(cmd[1]) as FPanel);
@@ -1107,6 +1119,8 @@ export class Ht2Drive {
       this.cabParts = { rule: bySpace('rulespace'), speed: bySpace('speedspace'), tacho: bySpace('tachospace') };
       // Скло (GlassKey, група 1) — завжди: його текстуру (краплі) малює GlassRain, суха — прозора.
       dyn.setSwitch('GlassKey', 1);
+      this.cabSwitch = dyn.setSwitch;
+      this.cabRadar = null;
       const rmp = this.cabRmp!;
       const mask = (n: string) => {
         const b = rmp.masks.get(n);
@@ -1119,11 +1133,15 @@ export class Ht2Drive {
     }
   }
 
+  /** Перемикачі кабіни; показаний антирадар (null — ще не задано). */
+  private cabSwitch: ((name: string, group: number) => void) | null = null;
+  private cabRadar: boolean | null = null;
+
   /** Префікс кабіни (prefixCab з vehicle.tech: ZilR → Zil, RenaultR → Reno). */
   private cabPrefix = '';
 
   /** Кабіна: на місці ока, орієнтація машини з нахилом погляду; кермо й стрілки — за станом. */
-  private updateCab(steer: number): void {
+  private updateCab(dt: number): void {
     const inside = this.camMode === 'cockpit';
     if (inside && !this.cab) void this.loadCab();
     // Ховаємо лише модель (перший нащадок), не саму машину: її прожектори-фари мають світити й з кабіни.
@@ -1132,14 +1150,23 @@ export class Ht2Drive {
     this.cab.visible = inside;
     if (this.glassRain) {
       // Під дахом (тунель, міст — промінь угору влучає в геометрію) нових крапель немає.
-      if ((this.shelterTimer -= 1 / 30) <= 0) {
+      if ((this.shelterTimer -= dt) <= 0) {
         this.shelterTimer = 0.5;
         const t = this.truck.body.translation();
         this.sheltered = this.raining && !!this.rapier.castRay(new RAPIER.Ray({ x: t.x, y: t.y + 3, z: t.z }, { x: 0, y: 1, z: 0 }), 60, true);
       }
       this.glassRain.raining = this.raining && !this.sheltered;
-      this.glassRain.wipersOn = this.raining;
-      this.glassRain.update(1 / 30, this.truck.speedKmh);
+      this.glassRain.wipersOn = this.wipersManual ?? this.raining;
+      this.input.setToggle('wipers', this.glassRain.wipersOn);
+      // Крок — справжній час кадру: з 1/30 на кадр двірники на 60 Гц ходили вдвічі, на 120 Гц — учетверо швидше.
+      this.glassRain.update(dt, this.truck.speedKmh);
+    }
+    // Антирадар на панелі (RD_Key: 1 — є) — лише куплений (king.exe 0x538370, поле машини 0x5400); лампи RD_LampKey — 0.
+    const radar = !!this.tuning.antiRadar;
+    if (this.cabSwitch && radar !== this.cabRadar) {
+      this.cabRadar = radar;
+      this.cabSwitch('RD_Key', radar ? 1 : 0);
+      this.cabSwitch('RD_LampKey', 0);
     }
     if (!inside) return;
     const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (this.def.tech.viewerTilt * Math.PI) / 180);
@@ -1151,7 +1178,10 @@ export class Ht2Drive {
     };
     const deg = Math.PI / 180;
     const needle = (v: number, [max, angle]: [number, number]) => (Math.min(Math.max(v, 0), max * 1.05) / max) * angle * deg;
-    rot(this.cabParts.rule, new THREE.Vector3(0, 1, 0), -steer * 2.4);
+    // Кермо в кабіні — π/2 × положення керма s (king.exe 0x4decc0, поле 0x29e0; δ коліс = π/4·s): удвічі більше за
+    // кут коліс, уже з межею й формою керма (а не натискання клавіші).
+    // Вісь — z простору керма (0x5ac0c0); навколо y кермо ставало ребром і зникало в панелі.
+    rot(this.cabParts.rule, new THREE.Vector3(0, 0, 1), 2 * this.truck.steerAngle);
     rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), needle(this.truck.speedKmh, this.def.speedScale));
     rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle(this.truck.rpm / 60, this.def.tachScale));
   }
@@ -1219,7 +1249,7 @@ export class Ht2Drive {
     this.trackSafe(dt);
     this.updateDayTime(dt);
     this.updateCamera(dt);
-    this.updateCab(state.steer);
+    this.updateCab(dt);
     this.world.update(this.camera, this.truck.visual.position);
     this.careerMode?.update(dt, state.throttle);
     const fine = this.police?.update(dt, this.truck.visual.position, this.truck.speedKmh);
@@ -1353,7 +1383,7 @@ export class Ht2Drive {
       this.camera.position.copy(this.cockpit).applyQuaternion(v.quaternion).add(v.position);
       this.camera.quaternion.copy(v.quaternion).multiply(tilt);
       this.camera.near = 0.2;
-      this.camera.fov = FOV;
+      this.camera.fov = COCKPIT_FOV;
       this.camera.updateProjectionMatrix();
       return;
     }

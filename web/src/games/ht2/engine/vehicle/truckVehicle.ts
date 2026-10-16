@@ -221,7 +221,8 @@ export class TruckVehicle {
   private readonly suspRest = SUSPENSION.rest;
   /** Висота кріплення підвіски над центром колеса моделі, м (незмінна: від неї — посадка кузова й колеса). */
   private readonly suspAnchor = 0.175;
-  private steerAngle = 0;
+  /** Кут керованих коліс, рад (+ — ліворуч). */
+  steerAngle = 0;
   /** Задній хід: гравець утримує гальмо на місці (тоді «гальмо» — це газ назад). */
   private reverseMode = false;
   /** Педаль гальма з урахуванням заднього ходу (на R «гальмо» везе назад, а гальмує «газ»). */

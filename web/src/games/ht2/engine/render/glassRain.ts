@@ -14,9 +14,20 @@ import { SceneCopy, WATER_FRAGMENT, WATER_LOOK, WATER_VERTEX, WaterBuffer, toLev
  * площину й UV скла, напрям «униз» по склу) беремо з моделі кабіни.
  */
 
-/** Помах (рад від положення спокою) і швидкість, рад/с: −(π/2 + π/10), 3π/4 (оригінал). */
-const SWEEP = Math.PI / 2 + Math.PI / 10;
+/**
+ * Двірники Дальнобойщиків 2 (king.exe 0x5a58e0, поля обʼєкта скла 0x70/0xb0): кут від спокою −0,12217 рад (−7°) до
+ * π/2 і назад зі швидкістю 3π/4 рад/с (0x651540). У порту кут відлічується від положення моделі (там двірник лежить
+ * під склом) у протилежний бік: спокій — +0,12217, межа — −π/2.
+ */
+const REST = 0.12217304555555557;
+const SWEEP = Math.PI / 2;
 const SPEED = 2.35619445;
+/**
+ * Краплі й сліди залежать від швидкості (0x5a58e0, поле 0xb8 — гіпотеза: м/с): краплі × (1 − 0,05·v), сліди ×
+ * (1 + 0,05·v); понад 20 — крапель немає, слідів удвічі більше.
+ */
+const SPEED_K = 0.05;
+const SPEED_MAX = 20;
 /** Нових крапель і слідів за секунду (оригінал: 20 і 20 / 10). */
 const DROPS_PER_SEC = 20;
 const RUNNERS_PER_SEC = DROPS_PER_SEC / 10;
@@ -57,7 +68,9 @@ export class GlassRain {
   private down = new THREE.Vector2(0, 1);
   private side = new THREE.Vector2(1, 0);
   private range = { a0: 0, a1: SIZE, b0: 0, b1: SIZE };
-  private angle = 0;
+  private angle = REST;
+  /** Швидкість машини, м/с (краплі й сліди). */
+  private speed = 0;
   /** Хід від спокою до межі помаху; інакше — назад, до спокою. */
   private out = false;
   private moving = false;
@@ -161,8 +174,9 @@ export class GlassRain {
     this.uniforms.kMax.value = WATER_LOOK.refractMax * dev;
   }
 
-  update(dt: number, _speedKmh = 0): void {
+  update(dt: number, speedKmh = 0): void {
     dt = Math.min(dt, MAX_DT);
+    this.speed = speedKmh / 3.6;
     const prev = this.angle;
     this.updateWipers(dt);
     for (const w of this.wipers) w.obj.matrix.copy(w.base).multiply(new THREE.Matrix4().makeRotationY(this.angle));
@@ -193,8 +207,8 @@ export class GlassRain {
       }
     } else {
       this.angle += SPEED * dt;
-      if (this.angle > 0) {
-        this.angle = 0;
+      if (this.angle > REST) {
+        this.angle = REST;
         if (this.wipersOn) {
           this.out = true;
           this.onStroke?.();
@@ -204,12 +218,13 @@ export class GlassRain {
   }
 
   private spawn(dt: number): void {
+    const v = this.speed;
     if (this.drop) {
-      this.dropAcc += DROPS_PER_SEC * dt;
+      this.dropAcc += DROPS_PER_SEC * (v > SPEED_MAX ? 0 : 1 - SPEED_K * v) * dt;
       for (; this.dropAcc >= 1; this.dropAcc--) this.water.stamp(this.drop, rand(SIZE), rand(SIZE));
     }
     if (this.runner) {
-      this.runAcc += RUNNERS_PER_SEC * dt;
+      this.runAcc += RUNNERS_PER_SEC * (v > SPEED_MAX ? 2 : 1 + SPEED_K * v) * dt;
       const { a0, a1, b0, b1 } = this.range;
       // Початок сліду ближче до верху скла (a = a0 + довжина·r²) — як у 2D-кабіні.
       for (; this.runAcc >= 1; this.runAcc--) {
