@@ -1,13 +1,14 @@
 /**
  * «Мережева гра» — екрани мережевої гри оригіналу з LOAD.RES: «Способи з'єднання» (c/back_con) і сесія
- * (s/back_net). Сама мережа — власна (net/): гра вдвох через Wi-Fi, коди з'єднання — QR чи текстом.
+ * (s/back_net). Сама мережа — власна (net/): гра на 2–4 гравців через Wi-Fi, коди з'єднання — QR чи текстом.
  * Рамки кнопок (зіставлення масок із фоном, як для інших екранів): c/change (21,326), c/client (327,326),
  * c/2main (21,389), c/server (327,389); s/cancel і s/start — одна рамка (489,17). Панелі: c — x 21…439,
  * y 113…311 (заголовок праворуч угорі, y 120…128); s — x 19…456, y 17…454.
  */
 import type { MenuArt } from '../engine/ui/menuArt';
 import { TRACKS } from '../career/career';
-import { NetPeer, type CloseReason, type NetMessage } from '../net/peer';
+import { NetPeer, type CloseReason, type NetPlayer } from '../net/peer';
+import { NetSession } from '../net/session';
 import { QrScanner, cameraAvailable, qrCanvas } from '../net/qr';
 import { maskButton, Screen } from './menuScreens';
 
@@ -31,83 +32,67 @@ export interface NetTruck {
   name: string;
 }
 
-/** Домовленість у сесії; живе, поки живе з'єднання (повернення із заїзду — до неї ж). */
-export interface NetLobby {
-  peer: NetPeer;
-  level: string;
-  rain: boolean;
-  /** Кількість суперників з автопілотом (їх рахує господар). */
-  rivals: number;
-  truck: number;
-  friendTruck: number | null;
-  /** Друг зараз на трасі (почав заїзд і ще не повернувся до сесії). */
-  friendDriving: boolean;
-  /** Друг завантажив трасу поточного заїзду (для господаря — можна давати старт). */
-  friendReady: boolean;
-}
-
-/** Початок заїзду: траса, погода, вантажівки й місця на старті (господар — 0). */
+/** Початок заїзду: сесія, траса, погода, гравці з вантажівками (на момент старту), вантажівки суперників. */
 export interface NetStart {
-  lobby: NetLobby;
+  session: NetSession;
   level: string;
   rain: boolean;
+  players: NetPlayer[];
   /** Вантажівки суперників (номери в TRUCK.TCH), по порядку — номери машин від FIRST_RIVAL. */
   rivals: number[];
-  truck: number;
-  friendTruck: number;
-  grid: number;
-}
-
-/**
- * Повідомлення сесії, що приходять і поза екраном сесії (на трасі): вибір друга, «друг повернувся», — оновлюють
- * домовленість. Повертає true, якщо повідомлення про сесію.
- */
-export function lobbyMessage(lobby: NetLobby, m: NetMessage): boolean {
-  if (m.t === 'setup' && !lobby.peer.host) {
-    lobby.level = m.level;
-    lobby.rain = m.rain;
-    lobby.rivals = m.rivals;
-  } else if (m.t === 'pick') lobby.friendTruck = m.truck;
-  else if (m.t === 'lobby') lobby.friendDriving = false;
-  else if (m.t === 'start') lobby.friendDriving = true;
-  else if (m.t === 'ready') lobby.friendReady = true;
-  else return false;
-  return true;
-}
-
-export function startOf(lobby: NetLobby, level: string, rain: boolean, rivals: number[]): NetStart {
-  return { lobby, level, rain, rivals, truck: lobby.truck, friendTruck: lobby.friendTruck ?? lobby.truck, grid: lobby.peer.host ? 0 : 1 };
 }
 
 /**
  * Вантажівки суперників (господар, перед стартом): інші моделі, ніж у гравців, по колу; Полігон — без суперників
  * (заїзд поодинці, як у тестовому режимі).
  */
-function pickRivals(lobby: NetLobby, trucks: NetTruck[]): number[] {
-  if (lobby.level === 'TRIAL') return [];
-  const taken = new Set([lobby.truck, lobby.friendTruck]);
+function pickRivals(session: NetSession, trucks: NetTruck[]): number[] {
+  if (session.level === 'TRIAL') return [];
+  const taken = new Set([...session.players.values()].map((p) => p.truck));
   const pool = trucks.filter((t) => !taken.has(t.index));
   const from = pool.length ? pool : trucks;
-  return Array.from({ length: lobby.rivals }, (_, i) => from[i % from.length].index);
+  return Array.from({ length: session.rivals }, (_, i) => from[i % from.length].index);
 }
 
 /**
- * Розділ «Мережева гра»: з'єднання → сесія. Результат — початок заїзду (null — головне меню). from — повернення
- * із заїзду до сесії з тим самим з'єднанням.
+ * Розділ «Мережева гра»: з'єднання → сесія (господар додає гостей по одному, до MAX_PLAYERS). Результат — початок
+ * заїзду (null — головне меню). from — повернення із заїзду до тієї ж сесії.
  */
-export async function netMenu(art: MenuArt, driver: string, trucks: NetTruck[], from: NetLobby | null = null): Promise<NetStart | null> {
+export async function netMenu(art: MenuArt, driver: string, trucks: NetTruck[], from: NetSession | null = null): Promise<NetStart | null> {
   let note: string | null = null;
-  let lobby = from;
+  let session = from;
+  let truck = from?.me.truck ?? (trucks.some((t) => t.index === 1) ? 1 : (trucks[0]?.index ?? 1));
   for (;;) {
-    if (!lobby) {
-      const peer = await connectScreen(art, driver, note);
-      if (!peer) return null;
-      lobby = { peer, level: 'CIRCUIT', rain: false, truck: trucks.some((t) => t.index === 1) ? 1 : (trucks[0]?.index ?? 1), rivals: 0, friendTruck: null, friendDriving: false, friendReady: false };
+    if (!session || session.closed) {
+      const c = await connectScreen(art, driver, note, false);
+      if (!c) return null;
+      note = null;
+      if (c.host) {
+        session = NetSession.hostFor(driver, truck);
+        session.addGuest(c.peer);
+      } else {
+        try {
+          session = await NetSession.join(c.peer, driver, truck);
+        } catch (e) {
+          note = e instanceof Error ? e.message : String(e);
+          session = null;
+          continue;
+        }
+      }
     }
-    const r = await sessionScreen(art, driver, lobby, trucks);
-    if (typeof r !== 'string' && r) return r;
+    const r = await sessionScreen(art, driver, session, trucks);
+    truck = session.me.truck;
+    if (r === 'add') {
+      // Господар додає гравця: гості чекають у сесії (її веде сама сесія).
+      session.events = {};
+      const c = await connectScreen(art, driver, null, true);
+      if (c && !session.closed) session.addGuest(c.peer);
+      else c?.peer.close();
+      continue;
+    }
+    if (r && typeof r === 'object') return r;
     note = r;
-    lobby = null;
+    session = null;
   }
 }
 
@@ -120,9 +105,10 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string): HTMLEle
 /**
  * «Способи з'єднання»: СТВОРИТИ ГРУ — QR-код запрошення ліворуч, камера праворуч чекає відповідь друга;
  * ПРИЄДНАТИСЯ — камера сканує запрошення, далі QR-код відповіді. КОД ТЕКСТОМ — ті самі коди текстом (без камери:
- * dev-сервер без HTTPS, ПК; або надіслати месенджером). Результат — з'єднаний друг (null — головне меню).
+ * dev-сервер без HTTPS, ПК; або надіслати месенджером). Результат — з'єднаний друг і чи ми господар (null —
+ * головне меню). adding — господар додає ще одного гравця до сесії: одразу запрошення, «Головне меню» — назад до сесії.
  */
-function connectScreen(art: MenuArt, driver: string, note: string | null): Promise<NetPeer | null> {
+function connectScreen(art: MenuArt, driver: string, note: string | null, adding: boolean): Promise<{ peer: NetPeer; host: boolean } | null> {
   return new Promise((resolve) => {
     const scr = new Screen(art, 'c/back_con.txr');
     const info = scr.place(el('div', 'net-text'), 28, 134, 404, 172);
@@ -217,7 +203,7 @@ function connectScreen(art: MenuArt, driver: string, note: string | null): Promi
       scanner = null;
       if (!v) peer?.close();
       scr.close();
-      resolve(v);
+      resolve(v ? { peer: v, host: mode === 'host' } : null);
     };
     const watch = (p: NetPeer) => {
       p.events = {
@@ -297,13 +283,13 @@ function connectScreen(art: MenuArt, driver: string, note: string | null): Promi
 
     const sel = [
       maskButton(scr, art, 'c/server', 327, 389, () => void startHost(), { selected: () => mode === 'host' }),
-      maskButton(scr, art, 'c/client', 327, 326, startJoin, { selected: () => mode === 'join' }),
+      maskButton(scr, art, 'c/client', 327, 326, startJoin, { selected: () => mode === 'join', disabled: adding }),
       maskButton(scr, art, 'c/change', 21, 326, () => ((textMode = camera ? !textMode : true), layout()), { selected: () => textMode }),
     ];
     maskButton(scr, art, 'c/2main', 21, 389, () => done(null));
     scr.keys(null, () => done(null));
 
-    info.innerHTML = `<p>Гра вдвох по Wi-Fi — телефони мають бути в одній мережі.</p>
+    info.innerHTML = `<p>Гра вдвох, утрьох чи вчотирьох по Wi-Fi — телефони мають бути в одній мережі. Кожен гість обмінюється кодами з тим, хто створив гру.</p>
       <p><b>СТВОРИТИ ГРУ</b> — покажіть QR-код другу (дотик — на весь екран) і відскануйте його відповідь.</p>
       <p><b>ПРИЄДНАТИСЯ</b> — відскануйте QR-код друга й покажіть йому свій.</p>
       <p><b>КОД ТЕКСТОМ</b> — ті самі коди текстом: надіслати месенджером${camera ? '' : ' (камера тут недоступна — потрібен HTTPS)'}.</p>`;
@@ -313,20 +299,23 @@ function connectScreen(art: MenuArt, driver: string, note: string | null): Promi
       info.prepend(p);
     }
     layout();
+    // Ще один гравець до сесії — одразу запрошення.
+    if (adding) void startHost();
   });
 }
 
 /**
- * Сесія (s/back_net): хто в грі, затримка, тип зв'язку; господар обирає трасу й погоду, кожен — свою вантажівку.
- * СТАРТ (господар) — обидва вантажать трасу; ВИЙТИ — закрити з'єднання. Результат — початок заїзду або причина
- * закриття для екрана з'єднання (null — вийшли самі).
+ * Сесія (s/back_net): гравці (до MAX_PLAYERS) з вантажівками й затримкою; господар обирає трасу, погоду й
+ * суперників і додає гравців («+ Додати гравця» — обмін кодами з наступним гостем), кожен — свою вантажівку.
+ * СТАРТ (господар) — усі вантажать трасу; ВИЙТИ — закрити з'єднання. Результат — початок заїзду, 'add' (додати
+ * гравця) або причина закриття для екрана з'єднання (null — вийшли самі).
  */
-function sessionScreen(art: MenuArt, driver: string, lobby: NetLobby, trucks: NetTruck[]): Promise<NetStart | string | null> {
+function sessionScreen(art: MenuArt, driver: string, session: NetSession, trucks: NetTruck[]): Promise<NetStart | 'add' | string | null> {
   return new Promise((resolve) => {
-    const { peer } = lobby;
     const scr = new Screen(art, 's/back_net.txr');
     const box = scr.place(el('div', 'net-text net-session'), 34, 30, 408, 410);
     const head = el('div', '');
+    const addRow = el('div', 'net-chips');
     const levelRow = el('div', 'net-chips');
     const weatherRow = el('div', 'net-chips');
     const truckRow = el('div', 'net-chips net-trucks');
@@ -336,9 +325,9 @@ function sessionScreen(art: MenuArt, driver: string, lobby: NetLobby, trucks: Ne
       p.textContent = text;
       return p;
     };
-    box.append(head, label('ТРАСА'), levelRow, label('ПОГОДА · СУПЕРНИКИ'), weatherRow, label('ВАША ВАНТАЖІВКА'), truckRow, foot);
-    let route: string | null = null;
-    const nameOf = (i: number | null) => (i === null ? '…' : (trucks.find((t) => t.index === i)?.name ?? `№${i}`));
+    box.append(head, addRow, label('ТРАСА'), levelRow, label('ПОГОДА · СУПЕРНИКИ'), weatherRow, label('ВАША ВАНТАЖІВКА'), truckRow, foot);
+    const host = session.host;
+    const nameOf = (i: number) => trucks.find((t) => t.index === i)?.name ?? `№${i}`;
     const chip = (row: HTMLElement, text: string, on: boolean, enabled: boolean, click: () => void) => {
       const b = el('button', `net-chip${on ? ' on' : ''}`);
       b.textContent = text;
@@ -346,91 +335,71 @@ function sessionScreen(art: MenuArt, driver: string, lobby: NetLobby, trucks: Ne
       b.addEventListener('click', click);
       row.append(b);
     };
-    const sendSetup = () => peer.send({ t: 'setup', level: lobby.level, rain: lobby.rain, rivals: lobby.rivals });
     const renderHead = () => {
-      const me = `${driver}${peer.host ? ' (створив гру)' : ''} — ${nameOf(lobby.truck)}`;
-      const him = `${peer.peerName ?? '…'}${peer.host ? '' : ' (створив гру)'} — ${nameOf(lobby.friendTruck)}${lobby.friendDriving ? ' (на трасі)' : ''}`;
-      const ms = peer.rtt === null ? '…' : `${Math.round(peer.rtt)} мс`;
-      const how = route === 'host' ? 'напряму в мережі' : route === 'srflx' ? 'напряму через інтернет' : '…';
-      head.innerHTML = `<h3>МЕРЕЖЕВА ГРА</h3>
-        <p class="net-player">1. ${escapeHtml(me)}</p><p class="net-player">2. ${escapeHtml(him)}</p>
-        <p>Затримка: ${ms} · ${how}</p>`;
+      const rows = [...session.players.values()]
+        .sort((a, b) => a.id - b.id)
+        .map((p) => {
+          const who = `${p.id === session.myId ? driver : p.name}${p.id === 0 ? ' (створив гру)' : ''}${p.id === session.myId ? ' — ви' : ''}`;
+          // Затримка: у господаря — до кожного гостя, у гостя — до господаря.
+          const ms = p.id === session.myId || (!host && p.id !== 0) ? null : session.rtt(p.id);
+          const extra = `${p.driving && p.id !== session.myId ? ' (на трасі)' : ''}${ms !== null ? ` · ${Math.round(ms)} мс` : ''}`;
+          return `<p class="net-player">${p.id + 1}. ${escapeHtml(who)} — ${escapeHtml(nameOf(p.truck))}${extra}</p>`;
+        });
+      head.innerHTML = `<h3>МЕРЕЖЕВА ГРА</h3>${rows.join('')}`;
     };
     const render = () => {
       renderHead();
+      addRow.replaceChildren();
+      if (host && !session.full) chip(addRow, '+ Додати гравця', false, true, () => done('add'));
       levelRow.replaceChildren();
-      for (const [id, title] of NET_TRACKS)
-        chip(levelRow, title, lobby.level === id, peer.host, () => {
-          lobby.level = id;
-          sendSetup();
-          render();
-        });
+      for (const [id, title] of NET_TRACKS) chip(levelRow, title, session.level === id, host, () => session.setSetup(id, session.rain, session.rivals));
       weatherRow.replaceChildren();
-      for (const [rain, title] of [[false, 'Сухо'], [true, 'Дощ']] as const)
-        chip(weatherRow, title, lobby.rain === rain, peer.host, () => {
-          lobby.rain = rain;
-          sendSetup();
-          render();
-        });
+      for (const [rain, title] of [[false, 'Сухо'], [true, 'Дощ']] as const) chip(weatherRow, title, session.rain === rain, host, () => session.setSetup(session.level, rain, session.rivals));
       // Суперники (0…7, як у новій грі оригіналу) — у тому ж рядку, після відступу.
-      const gap = el('span', 'net-gap');
-      weatherRow.append(gap);
-      for (let n = 0; n <= 7; n++)
-        chip(weatherRow, String(n), lobby.rivals === n, peer.host, () => {
-          lobby.rivals = n;
-          sendSetup();
-          render();
-        });
+      weatherRow.append(el('span', 'net-gap'));
+      for (let n = 0; n <= 7; n++) chip(weatherRow, String(n), session.rivals === n, host, () => session.setSetup(session.level, session.rain, n));
       truckRow.replaceChildren();
-      for (const t of trucks)
-        chip(truckRow, t.name, lobby.truck === t.index, true, () => {
-          lobby.truck = t.index;
-          peer.send({ t: 'pick', truck: t.index });
-          render();
-        });
-      foot.textContent = peer.host ? 'Оберіть трасу й натисніть СТАРТ — друг завантажить її разом з вами.' : 'Трасу й погоду обирає той, хто створив гру. Чекаємо, поки він натисне СТАРТ.';
+      for (const t of trucks) chip(truckRow, t.name, session.me.truck === t.index, true, () => session.pickTruck(t.index));
+      foot.textContent = host
+        ? session.players.size > 1
+          ? 'Оберіть трасу й натисніть СТАРТ — усі завантажать її разом з вами.'
+          : 'Додайте гравця, щоб почати гру.'
+        : 'Трасу й погоду обирає той, хто створив гру. Чекаємо, поки він натисне СТАРТ.';
     };
-    // Раз на секунду — лише рядки гравців (кнопки вибору не перебудовуємо — не збивати натискання).
-    const timer = window.setInterval(() => {
-      renderHead();
-      void peer.route().then((r) => (route = r));
-    }, 1000);
-    const done = (v: NetStart | string | null) => {
+    const timer = window.setInterval(renderHead, 1000);
+    const done = (v: NetStart | 'add' | string | null) => {
       clearInterval(timer);
+      session.events = {};
       scr.close();
       resolve(v);
     };
-    peer.events = {
+    session.events = {
+      onChange: render,
       onMessage: (m) => {
-        if (m.t === 'start') {
-          lobby.friendDriving = true;
-          return done(startOf(lobby, m.level, m.rain, m.rivals));
-        }
-        if (lobbyMessage(lobby, m)) render();
+        if (m.t === 'start') done({ session, level: m.level, rain: m.rain, players: m.players, rivals: m.rivals });
+        else render();
       },
-      onClose: (reason) => done(CLOSE_TEXT[reason] || null),
+      onLeave: (id, reason) => {
+        if (id === 0) return done(reason === 'bye' ? 'Той, хто створив гру, вийшов.' : CLOSE_TEXT[reason] || null);
+        render();
+      },
     };
     const leave = () => {
-      peer.close();
+      session.close();
       done(null);
     };
-    if (peer.host) {
+    if (host) {
       maskButton(scr, art, 's/start', 489, 17, () => {
-        lobby.friendReady = false;
-        const rivals = pickRivals(lobby, trucks);
-        peer.send({ t: 'start', level: lobby.level, rain: lobby.rain, rivals });
-        lobby.friendDriving = true;
-        done(startOf(lobby, lobby.level, lobby.rain, rivals));
+        if (session.players.size < 2) return;
+        const m = session.start(pickRivals(session, trucks));
+        done({ session, level: m.level, rain: m.rain, players: m.players, rivals: m.rivals });
       });
       maskButton(scr, art, 's/cancel', 489, 77, leave);
     } else maskButton(scr, art, 's/cancel', 489, 17, leave);
     scr.keys(null, leave);
-    // Друзі мають знати вибір одне одного (і після повернення із заїзду).
-    peer.send({ t: 'pick', truck: lobby.truck });
-    if (peer.host) sendSetup();
-    peer.send({ t: 'lobby' });
+    // Повернення із заїзду — інші мають знати (у них машина зникає, у сесії — не «на трасі»).
+    if (session.me.driving) session.backToLobby();
     render();
-    void peer.route().then((r) => (route = r));
   });
 }
 

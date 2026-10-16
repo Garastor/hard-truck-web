@@ -329,6 +329,8 @@ function startLamp(t: number): StartLamp {
 
 /** Мережева гра: зсув місць старту вбік від точки старту траси, м (машини поруч у сусідніх смугах). */
 const GRID_SIDE = 2.5;
+/** Мережева гра: другий ряд старту (гравці 3 і 4) — стільки метрів позаду першого. */
+const GRID_ROW = 12;
 
 /** Скільки суперник лежить перекинутим, перш ніж повернутися на дорогу, с (гіпотеза). */
 const OPPONENT_RECOVER = 3;
@@ -1546,11 +1548,18 @@ export class DriveSession {
   /** Точка старту траси до зсуву на місце в мережевій грі. */
   private startSpawn: { position: THREE.Vector3; forward: THREE.Vector3 } | null = null;
 
-  /** Місце на старті мережевої гри: господар — ліва смуга, гість — права (±GRID_SIDE від точки старту). */
+  /**
+   * Місце на старті мережевої гри: парні номери — ліва смуга, непарні — права (±GRID_SIDE від точки старту); 2 і 3 —
+   * другий ряд, на GRID_ROW позаду.
+   */
   private gridSpawn(slot: number): { position: THREE.Vector3; forward: THREE.Vector3 } {
     const base = this.startSpawn ?? this.spawn;
     const right = new THREE.Vector3().crossVectors(base.forward, new THREE.Vector3(0, 1, 0)).normalize();
-    const at = base.position.clone().addScaledVector(right, slot === 0 ? -GRID_SIDE : GRID_SIDE).setY(base.position.y - 2.5);
+    const at = base.position
+      .clone()
+      .addScaledVector(right, slot % 2 === 0 ? -GRID_SIDE : GRID_SIDE)
+      .addScaledVector(base.forward, -GRID_ROW * Math.floor(slot / 2))
+      .setY(base.position.y - 2.5);
     return { position: this.groundAt(at), forward: base.forward.clone() };
   }
 

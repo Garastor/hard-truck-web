@@ -8,7 +8,7 @@
 import { decodeSignal, encodeSignal, sdpFromSignal, sdpMid, signalFromSdp, SignalError } from './signal';
 
 /** Версія протоколу: різні версії порту не з'єднуються (повідомлення гравцям). */
-export const NET_VERSION = 2;
+export const NET_VERSION = 3;
 /** Скільки чекати збору адрес (у локальній мережі — частки секунди), мс. */
 const GATHER_TIMEOUT = 4000;
 /** Пінг і обрив: без жодного повідомлення довше за LOST_AFTER — зв'язок втрачено, мс. */
@@ -22,18 +22,30 @@ export type NetMessage =
   | { t: 'bye' }
   /** Вибір господаря в сесії: траса, погода, кількість суперників. */
   | { t: 'setup'; level: string; rain: boolean; rivals: number }
-  /** Вантажівка гравця (номер у TRUCK.TCH). */
-  | { t: 'pick'; truck: number }
-  /** Господар почав заїзд: траса, погода, вантажівки суперників (номери в TRUCK.TCH; обидва вантажать трасу). */
-  | { t: 'start'; level: string; rain: boolean; rivals: number[] }
-  /** Гравець повернувся із заїзду до сесії. */
-  | { t: 'lobby' }
-  /** Трасу завантажено — готовий до старту. */
-  | { t: 'ready' }
+  /** Господар — новому гостю: його номер у сесії (місце на старті). */
+  | { t: 'welcome'; id: number }
+  /** Господар — усім: гравці сесії. */
+  | { t: 'roster'; players: NetPlayer[] }
+  /** Вантажівка гравця id (номер у TRUCK.TCH). */
+  | { t: 'pick'; truck: number; id: number }
+  /** Господар почав заїзд: траса, погода, гравці з вантажівками, вантажівки суперників (усі вантажать трасу). */
+  | { t: 'start'; level: string; rain: boolean; players: NetPlayer[]; rivals: number[] }
+  /** Гравець id повернувся із заїзду до сесії. */
+  | { t: 'lobby'; id: number }
+  /** Гравець id завантажив трасу — готовий до старту. */
+  | { t: 'ready'; id: number }
   /** Господар: обидва готові — відлік (світлофор) почався. */
   | { t: 'go' }
-  /** Гравець фінішував: час заїзду від зеленого, с; місце серед усіх (з суперниками). */
-  | { t: 'finish'; time: number; place: number };
+  /** Гравець id фінішував: час заїзду від зеленого, с; місце серед усіх (з суперниками). */
+  | { t: 'finish'; time: number; place: number; id: number };
+
+/** Гравець сесії: номер (0 — господар; місце на старті), ім'я, вантажівка, чи зараз на трасі. */
+export interface NetPlayer {
+  id: number;
+  name: string;
+  truck: number;
+  driving: boolean;
+}
 
 export type CloseReason = 'bye' | 'lost' | 'failed' | 'version' | 'local';
 
@@ -54,7 +66,16 @@ export class NetPeer {
   peerName: string | null = null;
   /** Час туди й назад, мс (згладжений). */
   rtt: number | null = null;
-  events: NetPeerEvents = {};
+  private ev: NetPeerEvents = {};
+  /** Повідомлення, що прийшли, поки ніхто не слухав (екран з'єднання вже закрито, сесія ще не підписалась). */
+  private readonly pending: NetMessage[] = [];
+  get events(): NetPeerEvents {
+    return this.ev;
+  }
+  set events(e: NetPeerEvents) {
+    this.ev = e;
+    if (e.onMessage) for (const m of this.pending.splice(0)) e.onMessage(m);
+  }
   private closed = false;
   /** З'єднання ще живе. */
   get open(): boolean {
@@ -77,7 +98,7 @@ export class NetPeer {
     this.fast.onmessage = (e) => {
       if (!(e.data instanceof ArrayBuffer)) return;
       this.lastHeard = performance.now();
-      this.events.onFast?.(e.data);
+      this.ev.onFast?.(e.data);
     };
     this.ctrl.onclose = () => this.finish('lost');
     this.pc.onconnectionstatechange = () => {
@@ -178,7 +199,7 @@ export class NetPeer {
           return;
         }
         this.peerName = String(m.name).slice(0, 24) || 'Водій';
-        this.events.onReady?.(this.peerName);
+        this.ev.onReady?.(this.peerName);
         return;
       case 'ping':
         this.send({ t: 'pong', at: m.at });
@@ -192,7 +213,8 @@ export class NetPeer {
         this.finish('bye');
         return;
     }
-    this.events.onMessage?.(m);
+    if (this.ev.onMessage) this.ev.onMessage(m);
+    else if (this.pending.length < 64) this.pending.push(m);
   }
 
   private tick(): void {
@@ -209,6 +231,6 @@ export class NetPeer {
     clearInterval(this.timer);
     // Дати «bye» піти перед закриттям каналу.
     setTimeout(() => this.pc.close(), reason === 'local' ? 200 : 0);
-    this.events.onClose?.(reason);
+    this.ev.onClose?.(reason);
   }
 }
