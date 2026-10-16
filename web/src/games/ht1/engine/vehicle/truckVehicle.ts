@@ -151,8 +151,8 @@ export interface TruckSetup {
   tractionControl?: boolean;
   /** Регульоване сидіння (РС): очі водія вище на стільки метрів. */
   seatRaise?: number;
-  /** Покриття дороги впливає на зчеплення й опір (симулятор; в аркаді — ні). */
-  surfaceEffects?: boolean;
+  /** Режим «аркада»: дощ і пошкодження не впливають на машину (покриття — так само, як у «симуляторі»). */
+  arcade?: boolean;
   /** Відмінності двигуна й коробки гри (Дальнобойщики 2). */
   engine?: EngineProfile;
   /** Висота прикладання бічної сили шин (частка висоти центру мас, див. TIRE.roll_lift) — замість налаштувань першої гри. */
@@ -244,14 +244,13 @@ export class TruckVehicle {
   lightGeometry: LightGeometry = { groundY: -1, frontZ: -4, backZ: 4, width: 2.5 };
   /**
    * Покриття під колесами: множники зчеплення, опору кочення й межі керма (1 — асфальт), найбільша швидкість,
-   * м/с, і уповільнення понад неї, м/с². Аркада — без впливу.
+   * м/с, і уповільнення понад неї, м/с². Однаково в аркаді й «симуляторі».
    */
   private surfaceGrip = 1;
   private surfaceRoll = 1;
   private surfaceSteer = 1;
   private surfaceMaxSpeed = Infinity;
   private surfaceDrag = SOFT_DRAG;
-  private readonly surfaceEffects: boolean;
   private readonly rollLift: number | undefined;
   private readonly steerLimit: ((speed: number) => number) | undefined;
   private readonly steerPower: number;
@@ -259,7 +258,6 @@ export class TruckVehicle {
   /** Тестовий режим: дощ (у кар'єрі він уже в setup.grip). */
   weatherGrip = 1;
   setSurface(grip: number, roll: number, steer = 1, maxSpeed = Infinity, drag = SOFT_DRAG): void {
-    if (!this.surfaceEffects) return;
     this.surfaceGrip = grip;
     this.surfaceRoll = roll;
     this.surfaceSteer = steer;
@@ -288,7 +286,6 @@ export class TruckVehicle {
     this.steerPower = setup.steerPower ?? 1;
     this.brakeProfile = setup.brake;
     this.tractionControl = setup.tractionControl ?? false;
-    this.surfaceEffects = setup.surfaceEffects ?? true;
     this.wheelRadius = tech.wheelRadius;
     this.wheels = model.wheels.length;
     this.driven = Array.from({ length: this.wheels }, (_, i) => (tech.drivingWheels[i] ?? 1) !== 0);

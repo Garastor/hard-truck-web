@@ -59,9 +59,9 @@ const SURFACE_SAND = /beach|sand/i;
 const SURFACE_DIRT = /grass|grnd|ground|dirt|mud|field|forest/i;
 const SURFACE_WATER = /water|river|stream[1-9]/i;
 /**
- * Вплив покриття (лише «симулятор»; аркада — без впливу) — налаштування порту, не дані оригіналу: зчеплення й опір
- * кочення відносно асфальту, межа кермування (частка), найбільша швидкість, км/год, і уповільнення понад неї,
- * м/с². Від твердого до найм'якшого; помірно, щоб машина їхала скрізь. Болото — до 25 км/год і гальмує різко
+ * Вплив покриття (однаково в аркаді й «симуляторі» — на прохання користувача) — налаштування порту, не дані
+ * оригіналу: зчеплення й опір кочення відносно асфальту, межа кермування (частка), найбільша швидкість, км/год, і
+ * уповільнення понад неї, м/с². Від твердого до найм'якшого; помірно, щоб машина їхала скрізь. Болото — до 25 км/год і гальмує різко
  * (≈ 0,6 g; обидва — на прохання користувача: з 45 км/год і 2 м/с² його пролітали на великій швидкості).
  */
 const SURFACE_FX: Record<Surface, { grip: number; roll: number; steer: number; maxKmh: number; drag: number }> = {
@@ -431,7 +431,7 @@ export class DriveSession {
     this.setRain(rain);
     this.truck.weatherGrip = rain && !this.arcade ? 0.8 : 1;
   }
-  /** Режим «аркада»: покриття й погода не впливають на машину. */
+  /** Режим «аркада»: погода не впливає на машину (покриття — так само, як у «симуляторі»). */
   private arcade = false;
   /** Оригінальні маски води на склі 3D-кабіни: краплі txr/glass_1.msk і сліди glass_2.msk (архів траси). */
   private glassMasks: { drop: RgbaImage | null; runner: RgbaImage | null } = { drop: null, runner: null };
@@ -781,7 +781,7 @@ export class DriveSession {
     await initRapier();
     const s = new DriveSession(scene, camera, built, def);
     s.raceKind = raceKind;
-    s.arcade = setup.surfaceEffects === false;
+    s.arcade = setup.arcade === true;
     s.lapsToFinish = raceKind === 'laps' ? 3 : raceKind === 'route' ? 1 : 0;
     if (raceKind === 'free') s.countdown = 0;
     s.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });

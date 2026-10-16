@@ -215,7 +215,7 @@ async function startDrive(): Promise<void> {
     const kind = cfg?.kind ?? (id === 'CIRCUIT' ? 'laps' : id === 'MENU3D' ? 'free' : 'route');
     const others = trucks.filter((t) => t !== def);
     const rivals = cfg?.rivals ?? (id === 'TRIAL' || id === 'MENU3D' || !others.length ? [] : Array.from({ length: nAi }, (_, i) => others[i % others.length]));
-    drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup ?? { surfaceEffects: difficultySel.value !== 'arcade' });
+    drive = await DriveSession.start(scene, camera, built, def, overlay, level?.rmp, rivals, kind, cfg?.setup ?? { arcade: difficultySel.value === 'arcade' });
     drive.onSettingsCommand = (cmd) => {
       if (cmd === 'swap') return setSwap(!loadSwap());
       const style = drive?.cabStyleCurrent === '2d' ? '3d' : '2d';

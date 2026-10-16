@@ -376,7 +376,7 @@ export function truckSetup(c: Career, spec: TruckSpec, track: TrackId) {
   const torque = c.parts.includes('ФД') ? 1.2 : 1;
   // РС — сидіння вище на 12 см (гіпотеза); АПС — обмеження буксування (лише «симулятор»).
   const seatRaise = c.parts.includes('РС') ? 0.12 : 0;
-  if (c.difficulty === 'arcade') return { torque, seatRaise, surfaceEffects: false };
+  if (c.difficulty === 'arcade') return { torque, seatRaise, arcade: true };
   const rain = c.weather[track] === 'rain' ? 0.8 : 1;
   const tires = 0.75 + 0.25 * c.condition.tires;
   const fill = spec.volume > 0 ? Math.min(1, cargoVolume(c) / spec.volume) : 0;
