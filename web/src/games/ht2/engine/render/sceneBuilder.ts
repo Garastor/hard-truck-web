@@ -875,6 +875,7 @@ function buildSky(asm: SceneAssembler): THREE.Group | null {
   // Черга малювання (без глибини — хто пізніше, той зверху). У sky_max шари записано від ближнього до дальнього (сонце,
   // хмари sky5…sky1, купол col_sky_b) — малюємо навпаки, інакше купол закривав хмари (гіпотеза: порядку обходу в
   // king.exe не розібрано). Решта (земля col_grass, панорами обрію fon_*) — у порядку файлу, після sky_max.
+  const skySp = asm.space('sky_sp');
   const meshes: THREE.Mesh[] = [];
   inner.traverse((o) => {
     if (o instanceof THREE.Mesh) meshes.push(o);
@@ -890,6 +891,14 @@ function buildSky(asm: SceneAssembler): THREE.Group | null {
     m.depthWrite = false;
     m.depthTest = false;
     const kind = skyKind(src.name);
+    // Плитки хмар (sky_tex) задано відносно центру сфери неба — простору sky_sp (SkyDomeSpace, z −136,26), купол
+    // col_sky_b — відносно камери (шапка тієї ж сфери, ≈ 9 м над камерою, до обрію на 50 м). Без зсуву хмари висіли
+    // на 88…145 м і було видно їх лише вище 37°; зі зсувом вони, як в оригіналі, сягають обрію (гіпотеза: у B3D
+    // sky_tex посилається на SkyDomeSpace, звʼязку з sky_sp у коді king.exe не знайдено — висновок із геометрії).
+    if (kind === 2 && skySp) {
+      o.applyMatrix4(skySp);
+      o.matrixAutoUpdate = true;
+    }
     // Рух текстури (move u v): UV зсуваються на move·dt щосекунди (king.exe 0x005b22f0) — хмари пливуть.
     const move = (src.userData.def as { params?: Record<string, number[]> } | undefined)?.params?.move;
     if (move && m.map) {
