@@ -226,7 +226,7 @@ async function boot(): Promise<void> {
     else if ((await showImport(FILE_SETS[pick], true)) === pick) game = pick;
   }
   setLastGame(game);
-  // Технічна панель першої гри (index.html: #bar, #menu, #fps, #stats) — лише для неї: до запуску не показуємо
+  // Технічна панель першої гри (index.html: #bar, #menu, #stats) — лише для неї: до запуску не показуємо
   // (body.booting), щоб не блимала, поки шукаємо файли й готуємо екран вибору; друга гра її не використовує — інакше
   // вона видна, поки вантажиться код другої гри.
   const id = game;

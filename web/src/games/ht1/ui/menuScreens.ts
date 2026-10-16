@@ -259,7 +259,6 @@ export interface OptionsState {
   quality: QualityLevel;
   fullscreen: boolean;
   swap: boolean;
-  fps: boolean;
   /** Кабіна: 3D-модель чи 2D-растр (як у програмному режимі оригіналу). */
   cab: '3d' | '2d';
 }
@@ -270,7 +269,6 @@ export interface OptionsActions {
   setQuality(q: QualityLevel): void;
   setFullscreen(on: boolean): Promise<boolean>;
   setSwap(on: boolean): void;
-  setFps(on: boolean): void;
   setCab(style: '3d' | '2d'): void;
   /** Стан файлів гри на пристрої (рядки «Файли гри», «Сховище»). */
   storage(): Promise<StorageInfo>;
@@ -350,8 +348,6 @@ export function optionsScreen(art: MenuArt, st: OptionsState, act: OptionsAction
       act.setQuality(st.quality);
       st.swap = defaults.swap;
       act.setSwap(st.swap);
-      st.fps = defaults.fps;
-      act.setFps(st.fps);
       st.cab = defaults.cab;
       act.setCab(st.cab);
       refresh();
@@ -381,7 +377,6 @@ export function optionsScreen(art: MenuArt, st: OptionsState, act: OptionsAction
         table.append(r);
       };
       add('Кермо й педалі', st.swap ? 'навпаки' : 'звичайно', () => ((st.swap = !st.swap), act.setSwap(st.swap), renderRows()));
-      add('Лічильник кадрів', st.fps ? 'так' : 'ні', () => ((st.fps = !st.fps), act.setFps(st.fps), renderRows()));
       add('Кабіна', st.cab === '2d' ? '2D' : '3D', () => ((st.cab = st.cab === '2d' ? '3d' : '2d'), act.setCab(st.cab), renderRows()));
       add('Кермування нахилом', st.control === 'tilt' ? 'так' : 'ні');
       // Файли гри — тап: імпортувати знову; сховище — чи не очистить браузер дані сам.

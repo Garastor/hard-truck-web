@@ -166,40 +166,6 @@ button.active {
   text-align: center;
 }
 
-#fps {
-  position: fixed;
-  left: var(--sl);
-  top: calc(max(8px, env(safe-area-inset-top)) + 52px);
-  z-index: 3;
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: var(--panel);
-  color: var(--accent);
-  font: 12px/1.4 ui-monospace, monospace;
-  pointer-events: none;
-}
-
-#fps[hidden] {
-  display: none;
-}
-
-/* Табличка в стилі оригіналу (canvas) — без власного фону. */
-#fps.pixel-hud {
-  padding: 0;
-  background: none;
-  border-radius: 0;
-  line-height: 0;
-}
-
-/* Частота кадрів — лише в тестовому режимі. */
-body.career #fps {
-  display: none;
-}
-
-body.bar-open #fps {
-  visibility: hidden;
-}
-
 #toast {
   position: fixed;
   left: 50%;
@@ -421,7 +387,7 @@ body.driving #bar {
   display: none;
 }
 
-/* Панель ☰ (режим, локація, вкладки, якість, fps, опції…) — у стилі табличок табло й сенсорних кнопок. */
+/* Панель ☰ (режим, локація, вкладки, якість, опції…) — у стилі табличок табло й сенсорних кнопок. */
 #bar select,
 #bar button {
   /* Висота — як у кнопки меню й сенсорних кнопок (44 px). */
@@ -839,6 +805,12 @@ body.career #stats {
   font-weight: 700;
 }
 
+/* Мережева гра: у панелі ☰ лише опції, кермо/педалі й «додому» (до сесії) — тестові інструменти не потрібні. */
+body.net #bar > :not(#options, #swapToggle, #toMenu),
+body.net #stats {
+  display: none;
+}
+
 .career-check {
   display: flex;
   align-items: center;
@@ -1190,10 +1162,8 @@ body.career #stats {
 
 body.in-menu #bar,
 body.in-menu #menu,
-body.in-menu #fps,
 body.booting #bar,
 body.booting #menu,
-body.booting #fps,
 body.booting #stats {
   display: none;
 }
@@ -1346,11 +1316,6 @@ body.driving.bar-open .nav-map {
 
 
 
-/* Лічильник кадрів у кар'єрі — праворуч від ☰, щоб не перекривав табло. */
-body.career #fps {
-  left: calc(var(--sl) + 52px);
-  top: calc(max(8px, env(safe-area-inset-top)) + 10px);
-}
 
 body.driving.bar-open .career-hud,
 body.driving.bar-open .hud-player {

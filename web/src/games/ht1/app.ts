@@ -8,7 +8,7 @@ import type { GameContext } from '@shared/gameContext';
 import { isStandalone } from './engine/ui/pwa';
 import { setSoftFont, soften } from './engine/ui/softUi';
 import { WIPER_TXR, loadCab2d, loadCab2dTexture } from './cab2d/cab2dFiles';
-import { FpsMeter, FrameLimiter, QUALITY, loadQuality, loadShowFps, saveQuality, saveShowFps, type QualityId } from './engine/ui/quality';
+import { FrameLimiter, QUALITY, loadQuality, saveQuality, type QualityId } from './engine/ui/quality';
 import { blockPageZoom, enterFullscreen, exitFullscreen, fullscreenSupported, isFullscreen, toast, IOS_FULLSCREEN_HINT } from './engine/ui/mobile';
 import { buildScene, type BuiltScene } from './engine/render/sceneBuilder';
 import { parseTxr } from './engine/formats/txr';
@@ -26,7 +26,7 @@ import {
   driverScreen, helpScreen, mainMenu, newGameScreen, optionsScreen,
   type ControlMode, type OptionsState, type QualityLevel,
 } from './ui/menuScreens';
-import { HUD_CYAN, PixelFont, box, pixelCanvas, uiScale } from './engine/ui/pixelFont';
+import { PixelFont, uiScale } from './engine/ui/pixelFont';
 import { MenuArt } from './engine/ui/menuArt';
 import { netMenu, type NetStart } from './ui/netScreens';
 import type { NetSession } from './net/session';
@@ -55,10 +55,6 @@ let qualityId = loadQuality();
 let renderer!: THREE.WebGLRenderer;
 let ctx!: GameContext;
 const limiter = new FrameLimiter(QUALITY[qualityId].fps);
-const fpsMeter = new FpsMeter();
-const fpsEl = $('fps');
-let showFps = loadShowFps();
-fpsEl.hidden = !showFps;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8fb4d8);
 scene.fog = new THREE.Fog(0x8fb4d8, 400, 2500);
@@ -370,6 +366,7 @@ $('toMenu').addEventListener('click', () => {
   if (netRun) {
     const { session } = netRun;
     netRun = null;
+    document.body.classList.remove('net');
     session.events = {};
     void netLoop(session.closed ? null : session);
     return;
@@ -462,28 +459,6 @@ $('options').addEventListener('click', () => {
   void optionsDialog();
 });
 
-$('fpsToggle').addEventListener('click', () => {
-  showFps = !showFps;
-  saveShowFps(showFps);
-  fpsEl.hidden = !showFps;
-  showFpsValue('…');
-});
-
-/** Частота кадрів — тонкою табличкою, як кнопки табло (MENU.FON); поки шрифт не завантажено — текстом. */
-function showFpsValue(text: string): void {
-  if (!hudFont) {
-    fpsEl.textContent = text;
-    if (hudFont === undefined) void hudFonts();
-    return;
-  }
-  const w = hudFont.measure(text) + 10;
-  const h = hudFont.height + 8;
-  const { canvas, ctx } = pixelCanvas(w, h);
-  box(ctx, 0, 0, w, h);
-  hudFont.draw(ctx, text, 5, 4, HUD_CYAN);
-  fpsEl.classList.add('pixel-hud');
-  fpsEl.replaceChildren(canvas);
-}
 async function toggleFullscreen(): Promise<void> {
   if (isFullscreen()) return exitFullscreen();
   if (!(await enterFullscreen())) toast(IOS_FULLSCREEN_HINT, 15000);
@@ -515,7 +490,6 @@ document.addEventListener('visibilitychange', () => {
 let pausedFrame = '';
 function loop(now: number): void {
   if (!limiter.ready(now)) return;
-  if (showFps && fpsMeter.tick(now)) showFpsValue(`${fpsMeter.value} fps`);
   const dt = clock.getDelta();
   if (tab === 'drive') {
     // Пауза: світ стоїть, кадр не змінюється — не перемальовуємо (полотно зберігає зображення; раніше — 60 разів на
@@ -680,7 +654,7 @@ function saveControl(c: ControlMode): void {
   }
 }
 
-const OPTION_DEFAULTS: OptionsState = { control: 'buttons', quality: 'balance', fullscreen: false, swap: false, fps: false, cab: '3d' };
+const OPTION_DEFAULTS: OptionsState = { control: 'buttons', quality: 'balance', fullscreen: false, swap: false, cab: '3d' };
 
 /** Налаштування (ОПЦИИ) — екран оригіналу з LOAD.RES; без нього — простий діалог. */
 async function optionsDialog(): Promise<void> {
@@ -692,7 +666,6 @@ async function optionsDialog(): Promise<void> {
       quality: qualitySel.value as QualityLevel,
       fullscreen: isFullscreen(),
       swap: loadSwap(),
-      fps: showFps,
       cab: cabStyle(),
     };
     await optionsScreen(
@@ -722,9 +695,6 @@ async function optionsDialog(): Promise<void> {
           return isFullscreen();
         },
         setSwap: setSwap,
-        setFps(on) {
-          if (on !== showFps) $('fpsToggle').click();
-        },
         setCab(style) {
           setCabStyle(style);
           drive?.setCabStyle(style);
@@ -804,6 +774,7 @@ async function netLoop(from: NetSession | null): Promise<void> {
 async function netPlay(start: NetStart): Promise<void> {
   netRun = start;
   careerCfg = null;
+  document.body.classList.add('net');
   levelSel.value = start.level;
   selectTab('drive');
   await open();

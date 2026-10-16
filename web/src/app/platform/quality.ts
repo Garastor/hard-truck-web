@@ -21,7 +21,6 @@ export const QUALITY: Record<QualityId, Quality> = {
 };
 
 const KEY = 'ht.quality';
-const FPS_KEY = 'ht.showFps';
 
 export function loadQuality(): QualityId {
   try {
@@ -41,22 +40,6 @@ export function saveQuality(id: QualityId): void {
   }
 }
 
-export function loadShowFps(): boolean {
-  try {
-    return localStorage.getItem(FPS_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-export function saveShowFps(on: boolean): void {
-  try {
-    localStorage.setItem(FPS_KEY, on ? '1' : '0');
-  } catch {
-    /* не критично */
-  }
-}
-
 /** Обмежувач кадрів: пропускає виклик, якщо з попереднього кадру минуло замало часу. */
 export class FrameLimiter {
   private last = -Infinity;
@@ -66,23 +49,6 @@ export class FrameLimiter {
   ready(now: number): boolean {
     if (now - this.last < 1000 / this.fps - 2) return false;
     this.last = now;
-    return true;
-  }
-}
-
-/** Лічильник кадрів: середнє за останню секунду. */
-export class FpsMeter {
-  private frames = 0;
-  private since = performance.now();
-  value = 0;
-
-  /** Повертає true, коли значення оновилось (раз на секунду). */
-  tick(now: number): boolean {
-    this.frames++;
-    if (now - this.since < 1000) return false;
-    this.value = Math.round((this.frames * 1000) / (now - this.since));
-    this.frames = 0;
-    this.since = now;
     return true;
   }
 }
