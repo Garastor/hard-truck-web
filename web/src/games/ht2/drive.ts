@@ -1603,6 +1603,9 @@ export class Ht2Drive {
     this.syncSidePanel();
     // Кнопка карти світиться, поки карта на екрані (огляд чи мінікарта).
     this.input.setToggle('map', this.tabMap ? this.tabMap.state !== 0 : !!this.worldMap && !this.worldMap.el.hidden);
+    // Фари й двигун у групі «•••» — світяться, поки ввімкнені.
+    this.input.setToggle('lights', !!this.lamps[0]?.visible);
+    this.input.setToggle('engine', this.truck.engineOn);
     this.updateNavigator(dt);
     this.tabMap?.draw(dt, {
       me: this.truck.visual.position,

@@ -369,8 +369,8 @@ export class Input {
         b.classList.toggle('on', this.sharpLatched);
       });
     }
-    // Група «ще» (згорнута): фари, дзеркало, двірники, двигун (клавіші L, M, W, пробіл) і сигнал; кабіни 2D у другій
-    // грі немає — кнопку прибрано.
+    // Група «ще» (згорнута): фари, двірники, двигун (клавіші L, W, пробіл) і сигнал; кабіни 2D і заднього дзеркала у
+    // другій грі немає — їхні кнопки прибрано.
     const more = document.createElement('div');
     more.className = 'touch-more';
     more.hidden = true;
@@ -385,7 +385,6 @@ export class Input {
     const items: [string, Command, string][] = [
       ['map', 'map', ICONS.map],
       ['lights', 'lights', ICONS.lights],
-      ['mirror', 'mirror', ICONS.mirror],
       ['wipers', 'wipers', ICONS.wipers],
       ['engine', 'engine', ICONS.engine],
       ['horn', 'horn', HORN_SVG],
