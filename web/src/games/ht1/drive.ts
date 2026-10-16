@@ -91,9 +91,9 @@ const SURFACE_FX: Record<Surface, { grip: number; roll: number; steer: number; m
 const SURFACE_ROUGH: Record<Surface, number> = { asphalt: 0, dirt: 0.6, gravel: 0.5, swamp: 0.3, sand: 0.4, water: 1 };
 /**
  * Трясіння кузова ззовні за покриттям (частка BODY_SHAKE_*; окремо від кабіни): брід — 1,5 (на прохання
- * користувача: з часткою 0,3 його майже не було видно), трава — повне, пісок 0,7, гравій — половина, болото 0,3.
+ * користувача: з часткою 0,3 його майже не було видно), трава — повне, гравій — половина, пісок 0,4, болото 0,3.
  */
-const BODY_ROUGH: Record<Surface, number> = { asphalt: 0, dirt: 1, gravel: 0.5, swamp: 0.3, sand: 0.7, water: 1.5 };
+const BODY_ROUGH: Record<Surface, number> = { asphalt: 0, dirt: 1, gravel: 0.5, swamp: 0.3, sand: 0.4, water: 1.5 };
 
 /**
  * Трясіння кабіни на нерівному покритті (власне налаштування порту, на прохання користувача; камера нерухома —
