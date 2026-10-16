@@ -1179,7 +1179,64 @@ export class Ht2Drive {
       stealth: this.tuning.stealth,
       glass: this.tuning.glass,
     });
-    for (const e of events) this.policeEvent(e);
+    for (const e of events) {
+      if (e.kind === 'shot' && e.hit) this.ignite(0.1);
+      this.policeEvent(e);
+    }
+  }
+
+  /** Горить: секунд від займання; −1 — ні (king.exe 0x54e180). */
+  private burning = -1;
+
+  /**
+   * Займання від влучання кулі (0x567440): імовірність g·P·0,03/(P + 0,3) — P сила кулі (міліція й мафія 0,1,
+   * гелікоптер 2,0), g — скло (броньоване 0,2).
+   */
+  private ignite(force: number): void {
+    if (this.burning >= 0 || !this.careerMode) return;
+    if (Math.random() < (this.tuning.glass * force * 0.03) / (force + 0.3)) this.burning = 0;
+  }
+
+  /** Погасити (ремонт на СТО). */
+  extinguish(): void {
+    this.burning = -1;
+    this.blasts?.carFire(null);
+  }
+
+  /**
+   * Горіння (0x54e180, 0x5494c0): двигун −1/60 стану за секунду (у порту — стан машини), бак −0,2/60 за секунду;
+   * протипожежна система через 5 с гасить і витрачає заряд, після четвертого — пейджер mess 100 і системи більше
+   * немає. Гіпотези порту: витрата бака — частка ємності; стан 0 — двигун глухне й полумʼя гасне (що далі в
+   * оригіналі, не розібрано).
+   */
+  private updateFire(dt: number): void {
+    const cm = this.careerMode;
+    if (this.burning < 0 || !cm || this.paused) return;
+    const c = cm.career;
+    this.burning += dt;
+    c.damage = Math.min(1, c.damage + dt / 60);
+    c.fuel = Math.max(0, (c.fuel ?? this.tank) - (0.2 * this.tank * dt) / 60);
+    const upgrades = c.upgrades ?? [];
+    if (this.burning > 5 && upgrades.includes('PR_FIRE_PROTECTION:1')) {
+      c.fireUsed = (c.fireUsed ?? 0) + 1;
+      if (c.fireUsed >= 4) {
+        c.upgrades = upgrades.filter((k) => k !== 'PR_FIRE_PROTECTION:1');
+        c.fireUsed = 0;
+        this.say('СИСТЕМА ПОЖЕЖОГАСІННЯ', 5);
+      }
+      this.extinguish();
+      cm.persist();
+      return;
+    }
+    if (c.damage >= 1) {
+      this.truck.engineOn = false;
+      this.extinguish();
+      cm.persist();
+      return;
+    }
+    // Двигун — у передній третині машини, 1,5 м над її центром (гіпотеза).
+    const p = this.truck.visual.position.clone().addScaledVector(this.truck.forward(), 2).setY(this.truck.visual.position.y + 1.5);
+    this.blastFx().carFire(new THREE.Vector3(p.x, -p.z, p.y));
   }
 
   /** Гелікоптери Ка-50 (Б11) і заборонена зона db (traffic/helicopters.ts). */
@@ -1203,8 +1260,10 @@ export class Ht2Drive {
       glass: this.tuning.glass,
     }, this.camera.position);
     for (const e of events) {
-      if (e.kind === 'shot') this.policeEvent(e);
-      else this.audio?.play('hitgrnd', Math.max(0.05, 1 - e.dist / 150));
+      if (e.kind === 'shot') {
+        if (e.hit) this.ignite(2);
+        this.policeEvent(e);
+      } else this.audio?.play('hitgrnd', Math.max(0.05, 1 - e.dist / 150));
     }
   }
 
@@ -1227,7 +1286,10 @@ export class Ht2Drive {
       if (e.kind === 'warn') this.say('ЗУПИНИ МАШИНУ! ТРЕБА ПОГОВОРИТИ', 6);
       else if (e.kind === 'shot') {
         this.audio?.play('shoot', Math.max(0.1, 1 - e.dist / 150));
-        if (e.hit) this.audio?.play('hit_bullet');
+        if (e.hit) {
+          this.audio?.play('hit_bullet');
+          this.ignite(0.1);
+        }
       } else if (e.kind === 'attack') void cm.robbed();
       else if (e.kind === 'mine') {
         // Вибух міни (mineExplose, 0x56f240): поштовх угору в точці міни [Г: сила], звук mineSound.
@@ -1819,6 +1881,7 @@ export class Ht2Drive {
     this.careerMode?.update(dt, state.throttle);
     this.updatePolice(dt);
     this.updateCopters(dt);
+    this.updateFire(dt);
     this.updateMafia(dt);
     if (this.markets && this.careerMode) this.markets.update(this.truck.visual.position, Math.floor(this.careerMode.career.time / 86400));
     const sign = this.signs?.update(this.truck.visual.position, this.truck.forward());

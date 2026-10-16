@@ -36,6 +36,7 @@ const KNOWN: Record<string, { name: string; effect: string }> = {
   'PR_EXTRA_TANK:1': { name: 'Додатковий бак', effect: 'бак ×2' },
   'PR_ANTI_RADAR:1': { name: 'Антирадар', effect: 'попереджає про пост з радаром' },
   'PR_HEADLIGHT_PROTECTION:1': { name: 'Захист фар', effect: 'вмʼятини переду ×0,2' },
+  'PR_FIRE_PROTECTION:1': { name: 'Протипожежна система', effect: 'гасить пожежу через 5 с, 4 рази' },
 };
 
 /**

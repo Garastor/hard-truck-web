@@ -318,7 +318,10 @@ export class CareerMode {
             c.money -= total;
             if (share > 0) {
               c.damage = Math.max(0, c.damage * (1 - share));
-              if (share >= 1) this.drive.dents?.repair();
+              if (share >= 1) {
+                this.drive.dents?.repair();
+                this.drive.extinguish();
+              }
             }
             const tank = this.tank;
             for (const u of buy) c.upgrades = install(c.upgrades ?? [], u);
@@ -775,6 +778,7 @@ export class CareerMode {
             c.money -= cost;
             c.damage = 0;
             this.drive.dents?.repair();
+            this.drive.extinguish();
             this.persist();
           }
         } else if (pick === 'Покращення') await this.shopUpgrades(node);

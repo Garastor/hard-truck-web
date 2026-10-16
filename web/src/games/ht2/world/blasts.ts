@@ -90,6 +90,8 @@ export class Blasts {
   private readonly flicker = flickerTable();
   private lampAge = 0;
   private acc = 0;
+  /** Машина, що горить (точка гри; null — немає): дим як mnFire машини (режим 0) і світло FlameLamp. */
+  private fire: THREE.Vector3 | null = null;
 
   constructor(asm: SceneAssembler) {
     this.group.name = 'blasts';
@@ -113,6 +115,15 @@ export class Blasts {
   blow3(m: THREE.Matrix4, column: number): void {
     const x = [-9, 0, 8][column] ?? 0;
     this.blows.push({ m: m.clone(), rot: new THREE.Matrix3().setFromMatrix4(m), P: new THREE.Vector3(x, 1, 1), age: 0, fired: false });
+  }
+
+  /**
+   * Горіння машини (0x54e180; objects.md «Горіння машини»): точка в координатах гри чи null. Щокадру клуб диму
+   * msmoke/mvapor (1 → 5 м, 1,5 с) з тремтінням язика mnFire (δ = 0,15, d = (0, 0, 5) — гіпотеза), світло — лампа
+   * кольору FlameLamp (1, 0,941, 0,745) з тим самим мерехтінням.
+   */
+  carFire(p: THREE.Vector3 | null): void {
+    this.fire = p ? p.clone() : null;
   }
 
   update(dt: number, wind: number): void {
@@ -182,6 +193,14 @@ export class Blasts {
       if (rnd() < 0.5) this.spawnWorld(f.p.clone(), u.clone().setZ(u.z * 0.8), 'burn', 0.5, 2.5, 3, 0.75);
       else this.spawnWorld(f.p.clone(), u, 'smoke', 1, 5, 3, 1.5);
     }
+    this.emitCarFire();
+  }
+
+  private emitCarFire(): void {
+    if (!this.fire) return;
+    const c = 1 + 0.5 * rnd();
+    const u = new THREE.Vector3(2 * sym(), 2 * sym(), 5).multiplyScalar(0.9 * c);
+    this.spawnWorld(this.fire.clone(), u, rnd() < 0.5 ? 'smoke' : 'vapor', 1, 5, 3, 1.5);
   }
 
   /** Клуб у координатах станції. */
@@ -239,9 +258,16 @@ export class Blasts {
   private updateLamp(dt: number): void {
     const f = this.flames[0];
     if (!f) {
-      this.lamp.intensity = 0;
+      // Горить машина — лампа FlameLamp у її точці.
+      if (this.fire) {
+        this.lampAge += dt;
+        this.lamp.color.setRGB(1, 0.941, 0.745);
+        toThree(this.fire.x, this.fire.y, this.fire.z + 1, this.lamp.position);
+        this.lamp.intensity = Math.PI * this.flicker[Math.floor(this.lampAge / 0.1) % 31];
+      } else this.lamp.intensity = 0;
       return;
     }
+    this.lamp.color.setRGB(1, 0.6, 0.3);
     this.lampAge += dt;
     const k = 1 - f.age / f.life;
     const level = k > 0.5 ? k : k > 0.25 ? 0.5 : k + 0.25;

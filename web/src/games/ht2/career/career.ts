@@ -47,6 +47,8 @@ export interface Ht2Career {
   company?: HiredDriver[];
   /** Встановлені покращення (`PR_ID:варіант`, див. upgrades.ts); переходять на нову вантажівку (гіпотеза). */
   upgrades?: string[];
+  /** Протипожежна система: скільки зарядів витрачено (з 4; king.exe 0x5494c0). */
+  fireUsed?: number;
   /** Вмʼятини за зонами кузова (0…1, dents.ts); ремонт на СТО скидає. */
   dents?: Partial<Record<string, number>>;
   /** Штрафи, що висять на гравці (law.ts): розшук міліцією до затримання чи хабара. */
