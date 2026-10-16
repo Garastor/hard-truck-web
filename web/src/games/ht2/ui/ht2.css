@@ -616,3 +616,15 @@ body.ht2-orig-ui .touch-btn.brake,
 body.ht2-orig-ui .touch-btn.gas {
   clip-path: inset(0 round 4.5px);
 }
+
+/* Дзеркало заднього огляду (drive.ts renderMirror): рамка mirrT?.msk поверх вікна з видом назад; без графіки — лінія. */
+.ht2-mirror {
+  position: fixed;
+  z-index: 3;
+  pointer-events: none;
+}
+
+div.ht2-mirror {
+  box-sizing: border-box;
+  border: 2px solid #8c8c8c;
+}

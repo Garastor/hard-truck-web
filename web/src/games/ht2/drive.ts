@@ -71,6 +71,17 @@ const NOTE_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentC
  * меншою в кадрі.
  */
 const CHASE_BACK = 8.8;
+/**
+ * Дзеркало заднього огляду (M) — лише з кабіни, посередині під табло, у рамці `m16\mirrT?.msk` з esc16.RES
+ * (S/M/L/H — 170…480 px: розмір за роздільністю, гіпотеза; ≈ 30 % ширини екрана — тут найдетальніша H, масштабована).
+ * Вікно рамки H — x 10…469, y 10…159. Кут огляду — підібраний (у king.exe не знайдено).
+ */
+const MIRROR_MASK = 'm16\\mirrth.msk';
+const MIRROR_W = 480;
+const MIRROR_H = 170;
+const MIRROR_IN = [10, 10, 469, 159] as const;
+const MIRROR_SHARE = 0.3;
+const MIRROR_FOV = 20;
 const CHASE_UP = 4.2;
 const CHASE_PITCH = Math.asin(0.437);
 /**
@@ -157,6 +168,15 @@ export class Ht2Drive {
   private readonly input = new Input(HT2_INPUT);
   private audio: EngineAudio | null = null;
   private camMode: CamMode = 'chase';
+  /** Дзеркало заднього огляду ввімкнене (видно лише з кабіни). */
+  private mirrorOn = false;
+  private mirror: {
+    rt: THREE.WebGLRenderTarget;
+    cam: THREE.PerspectiveCamera;
+    scene: THREE.Scene;
+    ortho: THREE.OrthographicCamera;
+    frame: HTMLElement;
+  } | null = null;
   private readonly camPos = new THREE.Vector3();
   private readonly camLook = new THREE.Vector3();
   private cockpit = new THREE.Vector3();
@@ -459,7 +479,8 @@ export class Ht2Drive {
       }
       if (cmd === 'lights') this.lightsManual = !this.lamps[0]?.visible;
       // Двірники — окрема дія гри («Wipers», W); у порту без натискання вмикаються в дощ.
-      if (cmd === 'wipers') this.wipersManual = !(this.glassRain?.wipersOn ?? this.raining);
+      if (cmd === 'wipers') this.wipersManual = !(this.glassRain?.wipersOn ?? this.wipersManual ?? this.raining);
+      if (cmd === 'mirror') this.mirrorOn = !this.mirrorOn;
       // «Відновитися» — те саме, що 911 у меню Esc (на прохання користувача).
       if (cmd === 'reset') this.call911();
       if (cmd === 'menu') this.toggleEsc();
@@ -1416,6 +1437,61 @@ export class Ht2Drive {
       this.camera.near = near;
       this.camera.updateProjectionMatrix();
     }
+    if (this.mirrorOn && this.camMode === 'cockpit') this.renderMirror(r);
+    else if (this.mirror) this.mirror.frame.hidden = true;
+  }
+
+  /** Дзеркало: вид назад з місця водія, віддзеркалений зліва направо, у вікні рамки оригіналу під табло. */
+  private renderMirror(r: THREE.WebGLRenderer): void {
+    const size = r.getSize(new THREE.Vector2());
+    const k = Math.round(size.x * MIRROR_SHARE) / MIRROR_W;
+    const fw = Math.round(MIRROR_W * k);
+    const fh = Math.round(MIRROR_H * k);
+    const fx = Math.round((size.x - fw) / 2);
+    const fy = Math.round(parseFloat(getComputedStyle(document.body).getPropertyValue('--ht2-tablo-h')) || 0);
+    const x = Math.round(fx + MIRROR_IN[0] * k);
+    const y = Math.round(fy + MIRROR_IN[1] * k);
+    const w = Math.round((MIRROR_IN[2] - MIRROR_IN[0] + 1) * k);
+    const h = Math.round((MIRROR_IN[3] - MIRROR_IN[1] + 1) * k);
+    if (!this.mirror) {
+      const rt = new THREE.WebGLRenderTarget(1, 1);
+      const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: rt.texture, depthTest: false, depthWrite: false }));
+      // Дзеркало: ліве й праве міняються місцями.
+      quad.scale.x = -1;
+      const scene = new THREE.Scene();
+      scene.add(quad);
+      const url = this.escArt?.url(MIRROR_MASK);
+      const frame = document.createElement(url ? 'img' : 'div');
+      frame.className = 'ht2-mirror';
+      if (url) (frame as HTMLImageElement).src = url;
+      this.opts.overlay.append(frame);
+      this.mirror = { rt, cam: new THREE.PerspectiveCamera(MIRROR_FOV, w / h, 0.5, this.camera.far), scene, ortho: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), frame };
+    }
+    const m = this.mirror;
+    const ratio = r.getPixelRatio();
+    if (m.rt.width !== Math.round(w * ratio) || m.rt.height !== Math.round(h * ratio)) m.rt.setSize(Math.round(w * ratio), Math.round(h * ratio));
+    m.cam.aspect = w / h;
+    m.cam.far = this.camera.far;
+    m.cam.updateProjectionMatrix();
+    // Погляд назад з місця водія: орієнтація машини, розвернута на 180° навколо вертикалі.
+    m.cam.position.copy(this.camera.position);
+    m.cam.quaternion.copy(this.truck.visual.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI));
+    m.cam.updateMatrixWorld();
+    r.setRenderTarget(m.rt);
+    r.clear();
+    r.render(this.world.scene, m.cam);
+    r.setRenderTarget(null);
+    const auto = r.autoClear;
+    r.autoClear = false;
+    r.setScissorTest(true);
+    r.setScissor(x, size.y - y - h, w, h);
+    r.setViewport(x, size.y - y - h, w, h);
+    r.render(m.scene, m.ortho);
+    r.setScissorTest(false);
+    r.setViewport(0, 0, size.x, size.y);
+    r.autoClear = auto;
+    m.frame.hidden = false;
+    Object.assign(m.frame.style, { left: `${fx}px`, top: `${fy}px`, width: `${fw}px`, height: `${fh}px` });
   }
 
   /** Інтер'єр кабіни `<prefixCab>Cab` (CABINES.B3D, текстури CABINES.RES) — вантажиться при першому вигляді з кабіни. */
@@ -1607,6 +1683,9 @@ export class Ht2Drive {
     // Фари й двигун у групі «•••» — світяться, поки ввімкнені.
     this.input.setToggle('lights', !!this.lamps[0]?.visible);
     this.input.setToggle('engine', this.truck.engineOn);
+    // Двірники — два стани (увімкнені / вимкнені): світяться, поки ввімкнені (і без скла кабіни — за вибором чи дощем).
+    this.input.setToggle('wipers', this.glassRain?.wipersOn ?? this.wipersManual ?? this.raining);
+    this.input.setToggle('mirror', this.mirrorOn);
     this.updateNavigator(dt);
     this.tabMap?.draw(dt, {
       me: this.truck.visual.position,
@@ -1787,6 +1866,8 @@ export class Ht2Drive {
     document.removeEventListener('pointerdown', this.onOutsideTap, true);
     document.body.classList.remove('ht2-side-open');
     this.tabMap?.dispose();
+    this.mirror?.rt.dispose();
+    this.mirror?.frame.remove();
     this.radio?.close();
     this.rainSound?.stop();
     this.windSound?.stop();
