@@ -494,9 +494,10 @@ body.ht2-orig-ui .touch-top .touch-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 5px solid transparent;
+  /* Рамка — обідок клітинки табло: зріз 5 (менше внутрішнього світіння), товщина 3,5 px (на 30% тонша за 5). */
+  border: 3.5px solid transparent;
   border-radius: 0;
-  border-image: var(--ht2-lcd) 7 fill / 5px stretch;
+  border-image: var(--ht2-lcd) 5 fill / 3.5px stretch;
   box-shadow: none;
   background: none;
   color: rgb(24, 40, 22);
