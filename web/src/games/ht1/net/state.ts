@@ -74,6 +74,13 @@ const KIND_FLEET = 2;
 const CAR = 1 + 12 * 4 + 1;
 export const FIRST_RIVAL = 16;
 
+/**
+ * Кольори гравців за номером (місцем на старті): список праворуч, маркер над машиною, точка на мінікарті. Не червоний
+ * (суперники з автопілотом на мінікарті) і не жовтий (своя стрілка мінікарти). Власний елемент порту (на прохання
+ * користувача) — в оригіналі мережевої гри такого немає.
+ */
+export const PLAYER_COLORS = ['#3ea0ff', '#40e040', '#ff5ae0', '#ff9a20'];
+
 export function packFleet(time: number, cars: { id: number; s: TruckState }[]): ArrayBuffer {
   const buf = new ArrayBuffer(10 + cars.length * CAR);
   const v = new DataView(buf);

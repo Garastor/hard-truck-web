@@ -29,7 +29,7 @@ import { AutoPilot, WayNet } from './engine/vehicle/autopilot';
 import { RoomVisibility } from './track/roomVisibility';
 import { ModelBatch } from './engine/render/modelBatch';
 import { toast } from './engine/ui/mobile';
-import { FIRST_RIVAL, FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, RemoteTrack, STATE_RATE, emptyState, packFleet, readFleet, type TruckState } from './net/state';
+import { FIRST_RIVAL, FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, PLAYER_COLORS, RemoteTrack, STATE_RATE, emptyState, packFleet, readFleet, type TruckState } from './net/state';
 
 /** Камера (C): з кабіни, від першої особи (лише прилади Panel), позаду, здалеку. */
 export type CamMode = 'chase' | 'cockpit' | 'first' | 'far';
@@ -334,6 +334,48 @@ const GRID_ROW = 12;
 
 /** Скільки суперник лежить перекинутим, перш ніж повернутися на дорогу, с (гіпотеза). */
 const OPPONENT_RECOVER = 3;
+
+/** Висота маркера гравця над дахом машини, м, і його розмір (частка висоти екрана — не залежить від відстані). */
+const MARKER_LIFT = 1.2;
+const MARKER_SIZE = 0.06;
+
+/**
+ * Маркер гравця над машиною: трикутник вершиною вниз його кольору з темним контуром; спрайт сталого розміру на
+ * екрані (видно й здалеку), без туману. Дочірній до моделі — ховається разом із нею.
+ */
+function playerMarker(color: string, visual: THREE.Object3D): THREE.Sprite {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  g.beginPath();
+  g.moveTo(8, 10);
+  g.lineTo(56, 10);
+  g.lineTo(32, 54);
+  g.closePath();
+  g.fillStyle = color;
+  g.fill();
+  g.lineWidth = 5;
+  g.strokeStyle = 'rgba(0,0,0,0.8)';
+  g.stroke();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, fog: false, sizeAttenuation: false, depthWrite: false }));
+  sprite.name = 'net-marker';
+  sprite.scale.setScalar(MARKER_SIZE);
+  sprite.renderOrder = 5;
+  // Над найвищою точкою моделі (у системі моделі, без повороту машини).
+  const box = new THREE.Box3();
+  visual.updateMatrixWorld(true);
+  const inv = visual.matrixWorld.clone().invert();
+  visual.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !m.geometry) return;
+    m.geometry.computeBoundingBox();
+    box.union(m.geometry.boundingBox!.clone().applyMatrix4(m.matrixWorld.clone().premultiply(inv)));
+  });
+  sprite.position.set(0, (box.isEmpty() ? 3 : box.max.y) + MARKER_LIFT, 0);
+  return sprite;
+}
 
 /** Машина на трасі: суперник або машина з мережі, що не схована (гравець не вийшов, стан уже приходив). */
 function carActive(o: { remote?: { gone: boolean; waiting: boolean } }): boolean {
@@ -1726,6 +1768,38 @@ export class DriveSession {
       if (!o.remote || o.remote.gone || !which(o.remote.id)) continue;
       o.remote.gone = true;
       this.hideRemote(o.truck, true);
+      this.roster?.querySelector(`[data-id="${o.remote.id}"]`)?.classList.add('gone');
+    }
+  }
+
+  /** Список гравців мережевої гри праворуч (ім'я й колір). */
+  private roster: HTMLElement | null = null;
+
+  /**
+   * Мережева гра: гравці (номер, ім'я) — список праворуч «ім'я ■», над машинами інших гравців — маркер їхнього
+   * кольору, на мінікарті — точки тих самих кольорів (PLAYER_COLORS за номером).
+   */
+  setNetPlayers(players: { id: number; name: string }[]): void {
+    this.roster?.remove();
+    const list = document.createElement('div');
+    list.className = 'net-roster';
+    for (const p of [...players].sort((a, b) => a.id - b.id)) {
+      const row = document.createElement('div');
+      row.dataset.id = String(p.id);
+      row.className = p.id === this.localId ? 'me' : '';
+      const name = document.createElement('span');
+      name.textContent = p.name;
+      const sq = document.createElement('i');
+      sq.style.background = PLAYER_COLORS[p.id] ?? '#fff';
+      row.append(name, sq);
+      list.append(row);
+    }
+    this.overlayEl?.append(list);
+    this.roster = list;
+    for (const o of this.opponents) {
+      const id = o.remote?.id;
+      if (id === undefined || id >= FIRST_RIVAL || o.truck.visual.getObjectByName('net-marker')) continue;
+      o.truck.visual.add(playerMarker(PLAYER_COLORS[id] ?? '#fff', o.truck.visual));
     }
   }
 
@@ -1910,7 +1984,9 @@ export class DriveSession {
     if (this.navMap) {
       // Позиції — моделей (згладжені між кроками фізики), не тіл: інакше точки на карті смикались би.
       const p = (t: TruckVehicle) => t.visual.position.clone();
-      this.navMap.update(dt, p(this.truck), this.truck.forward(), this.opponents.filter(carActive).map((o) => p(o.truck)));
+      const shown = this.opponents.filter(carActive);
+      const colors = shown.map((o) => (o.remote && o.remote.id < FIRST_RIVAL ? (PLAYER_COLORS[o.remote.id] ?? null) : null));
+      this.navMap.update(dt, p(this.truck), this.truck.forward(), shown.map((o) => p(o.truck)), undefined, colors);
     }
     // Під дахом (кімнати з подією 4 «tunnel_rain» — тунелі) дощу немає: ні струменів, ні нових крапель.
     // Режим 2D-кабіни — як програмний набір оригіналу: тривимірного дощу там немає; у кабіні дощ видно краплями на
@@ -2245,6 +2321,7 @@ export class DriveSession {
   }
 
   dispose(): void {
+    this.roster?.remove();
     for (const b of this.batches) b.dispose();
     this.drop2dCab();
     this.streaks?.el.remove();

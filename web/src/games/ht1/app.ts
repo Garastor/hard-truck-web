@@ -829,6 +829,7 @@ function joinNetDrive(d: DriveSession, net: NetStart): void {
   d.shareRivals = session.host;
   if (!session.host) net.rivals.forEach((i, k) => d.addRemote(defOf(i), FIRST_RIVAL + k));
   d.onLocalState = (data) => session.sendFast(data);
+  d.setNetPlayers(net.players.map((p) => ({ id: p.id, name: nameOf(p.id) })));
   // Спільний старт: світлофор чекає на червоному, доки всі не завантажать трасу; старт дає господар.
   d.holdStart = true;
   if (!session.host) session.send({ t: 'ready', id: me });

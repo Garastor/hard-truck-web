@@ -69,7 +69,8 @@ export class NavMap {
    * Перемальовуємо щокадру (раніше — 10 разів на секунду, карта рухалась ривками). target — куди їхати (зелена
    * точка; далі за край карти — на краю).
    */
-  update(dt: number, me: THREE.Vector3, heading: THREE.Vector3, rivals: THREE.Vector3[], target?: THREE.Vector3 | null): void {
+  /** colors — колір точки кожного суперника (null — червоний; мережева гра — кольори гравців). */
+  update(dt: number, me: THREE.Vector3, heading: THREE.Vector3, rivals: THREE.Vector3[], target?: THREE.Vector3 | null, colors?: (string | null)[]): void {
     const ctx = this.ctx;
     frame(ctx, 0, 0, SIZE, SIZE);
     const c = SIZE / 2;
@@ -101,8 +102,10 @@ export class NavMap {
       ctx.stroke(p);
     }
     ctx.globalAlpha = 1;
-    ctx.fillStyle = '#e00000';
-    for (const r of rivals) ctx.fillRect(r.x - 2.5 / k, r.z - 2.5 / k, 5 / k, 5 / k);
+    rivals.forEach((r, i) => {
+      ctx.fillStyle = colors?.[i] ?? '#e00000';
+      ctx.fillRect(r.x - 2.5 / k, r.z - 2.5 / k, 5 / k, 5 / k);
+    });
     if (target) {
       const dx = target.x - me.x;
       const dz = target.z - me.z;

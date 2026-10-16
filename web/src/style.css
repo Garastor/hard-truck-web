@@ -1152,6 +1152,42 @@ body.career #stats {
   display: none;
 }
 
+/* Мережева гра: список гравців праворуч під верхніми кнопками — «ім'я ■» кольором гравця. */
+.net-roster {
+  position: absolute;
+  top: calc(max(8px, env(safe-area-inset-top)) + 52px * var(--ui, 1));
+  right: var(--sr);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  pointer-events: none;
+  font: 700 13px/16px Tahoma, Arial, sans-serif;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000, 0 0 3px #000;
+}
+
+.net-roster > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.net-roster > div.me span {
+  color: #fce488;
+}
+
+.net-roster > div.gone {
+  opacity: 0.4;
+}
+
+.net-roster i {
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.8);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5);
+}
+
 body.in-menu #bar,
 body.in-menu #menu,
 body.in-menu #fps,
