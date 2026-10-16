@@ -31,11 +31,16 @@ export function dayFactor(hour: number): number {
   return p > 1 ? 2 - p : p;
 }
 
-/** Напрям на сонце в координатах гри (z угору): азимут −2π·фаза, підйом s·π/5. */
+/**
+ * Напрям на сонце в координатах гри (z угору): азимут −2π·фаза, підйом s·π/5 (вектор погоди +0x22c king.exe), x —
+ * дзеркально: на знімках оригіналу біля старту о 10:00 зад машини (дивиться на схід, +x) у тіні, а південні грані
+ * (фасад бази, правий борт) освітлені — сонце на південному сході; з x без знака виходило на південному заході
+ * (гіпотеза: інша орієнтація осей світла в exe).
+ */
 export function sunDirection(hour: number): [number, number, number] {
   const a = -TAU * dayPhase(hour);
   const e = sunHeight(hour) * (Math.PI / 5);
-  return [Math.cos(a) * Math.cos(e), Math.sin(a) * Math.cos(e), Math.sin(e)];
+  return [-Math.cos(a) * Math.cos(e), Math.sin(a) * Math.cos(e), Math.sin(e)];
 }
 
 /**

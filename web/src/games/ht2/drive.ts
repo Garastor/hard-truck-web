@@ -279,6 +279,9 @@ export class Ht2Drive {
     if (saved) await this.world.ready(saved[0], saved[1]);
     if (saved) this.rapier.step();
     const spawn = this.spawnAt(saved ?? start);
+    // Старт гри (GAME.CNF): king.exe ставить машину курсом +x гри (на схід) — у чотирьох записах телеметрії з
+    // початку гри вектор «уперед» рівно (1, 0); уздовж дороги порт ставив її навпаки, носом на захід.
+    if (!saved && !o.race) spawn.forward.copy(toThree(1, 0, 0)).normalize();
     if (!saved && rec.group === 'tractors' && !o.race && o.trailer !== 'none') {
       // Старт бази (GAME.CNF) — упритул до будівлі позаду: причіп (до 14 м) зʼявлявся б у ній. Тягач — на 10 м
       // далі дорогою.
@@ -452,14 +455,18 @@ export class Ht2Drive {
         for (const s of room.segments) {
           const p = s.points;
           for (let i = 0; i + 5 < p.length; i += 3) {
-            const d = Math.hypot(p[i] - x, p[i + 1] - y, p[i + 2] - z);
-            if (d >= best) continue;
             const dx = p[i + 3] - p[i];
             const dy = p[i + 4] - p[i + 1];
             const l = Math.hypot(dx, dy);
             if (l < 0.1) continue;
+            // Проєкція на відрізок (не найближча вершина): старт GAME.CNF у записі king.exe — (−3020,7; −4616,75),
+            // тобто x старту на лінії дороги; за вершиною порт ставив машину на 14 м далі, до воріт 1 замість 0.
+            const t = Math.min(1, Math.max(0, ((x - p[i]) * dx + (y - p[i + 1]) * dy) / (l * l)));
+            const q: [number, number, number] = [p[i] + dx * t, p[i + 1] + dy * t, p[i + 2] + (p[i + 5] - p[i + 2]) * t];
+            const d = Math.hypot(q[0] - x, q[1] - y, q[2] - z);
+            if (d >= best) continue;
             best = d;
-            pos = [p[i], p[i + 1], p[i + 2]];
+            pos = q;
             dir = [dx / l, dy / l];
           }
         }
