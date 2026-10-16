@@ -16,6 +16,7 @@ import { Ht2World, toThree, type LoadedRegion } from './world/world';
 import { AutoPilot } from './engine/vehicle/autopilot';
 import { Ht2Roads } from './world/roads';
 import { Traffic, recolor, trafficKinds } from './traffic/traffic';
+import { Accidents } from './traffic/accidents';
 import { CareerMode } from './career/careerMode';
 import { Police, parseAmbushes, type PoliceEvent } from './traffic/police';
 import { bribeSum, copsTakeBribes, totalFine, wanted } from './career/law';
@@ -193,6 +194,8 @@ export class Ht2Drive {
   traffic: Traffic | null = null;
   careerMode: CareerMode | null = null;
   police: Police | null = null;
+  /** ДТП гравця (штраф за порушення ПДР при зіткненні, king.exe 0x4cfe70) — лише в кар'єрі. */
+  accidents: Accidents | null = null;
   /** Хто з інспекторів COP1…COP15 бере хабар (names.sch). */
   private copBribes: boolean[] = [];
   /** Радар-детектор: фаза блимання лампи RD_LampKey і чи світить. */
@@ -397,6 +400,7 @@ export class Ht2Drive {
         people: this.copBribes.length || 15,
       });
       this.mafia = new Mafia(this.world.scene, this.rapier, this.trucks, this.world.regions.values(), (p) => this.groundAtPublic(p).y - 2.5);
+      this.accidents = this.makeAccidents();
     }
     if (o.race) {
       const ms = await o.source.read('Ms.sch').then(readSch).catch(() => []);
@@ -666,6 +670,64 @@ export class Ht2Drive {
     }
     if (dv.length() < 2) return;
     this.dents?.hit(dv.applyQuaternion(this.truck.visual.quaternion.clone().invert()));
+  }
+
+  /**
+   * Облік ДТП (traffic/accidents.ts): партнери — динамічні тіла поблизу (машини трафіку у фізичному режимі,
+   * міліція, суперники); кути кузова — ±1,25 м убік і ±3,5 м уздовж від центру тягача (гіпотеза: у king.exe —
+   * точки тіла +0xEF8).
+   */
+  private makeAccidents(): Accidents {
+    const fines = () => this.careerMode!.fines;
+    return new Accidents({
+      world: this.rapier,
+      roads: this.roads,
+      player: () => {
+        const pos = this.truck.visual.position;
+        const fwd = this.truck.forward().setY(0).normalize();
+        const side = new THREE.Vector3(-fwd.z, 0, fwd.x);
+        const lv = this.truck.body.linvel();
+        const corners = [
+          [1, 1],
+          [1, -1],
+          [-1, 1],
+          [-1, -1],
+        ].map(([a, b]) => pos.clone().addScaledVector(fwd, 3.5 * a).addScaledVector(side, 1.25 * b));
+        return { bodies: [this.truck.body, ...(this.trailer ? [this.trailer.body] : [])], pos, forward: fwd, vel: new THREE.Vector3(lv.x, lv.y, lv.z), corners };
+      },
+      candidates: () => {
+        const out: RAPIER.RigidBody[] = [];
+        const p = this.truck.visual.position;
+        this.rapier.bodies.forEach((b) => {
+          if (!b.isDynamic() || b === this.truck.body || b === this.trailer?.body) return;
+          const t = b.translation();
+          if (Math.hypot(t.x - p.x, t.z - p.z) < 150) out.push(b);
+        });
+        return out;
+      },
+      partner: (b) => ({ kind: this.police?.isCop(b) ? 'police' : 'car', mass: b.mass() }),
+      queueAhead: () => {
+        const p = this.truck.visual.position;
+        const f = this.truck.forward();
+        return (this.traffic?.cars ?? []).some((c) => {
+          const rel = c.pos.clone().sub(p);
+          const along = rel.x * f.x + rel.z * f.z;
+          return c.speed < 1 && along > 0 && along < 15 && Math.abs(rel.x * f.z - rel.z * f.x) < 2;
+        });
+      },
+      policeNear: (p) => this.police?.near(p, 200) ?? false,
+      fine: (amount, bits) => {
+        fines().accident += amount;
+        fines().violations |= bits;
+        this.careerMode!.persist();
+      },
+      forget: () => {
+        if (!fines().accident && !fines().violations) return;
+        fines().accident = 0;
+        fines().violations = 0;
+        this.careerMode!.persist();
+      },
+    });
   }
 
   /** Ігрових секунд за реальну (повзунок «тривалість доби»). */
@@ -1497,6 +1559,7 @@ export class Ht2Drive {
     const alpha = this.acc / step;
     this.race?.after(dt, alpha);
     this.detectHits();
+    if (this.careerMode && !this.paused) this.accidents?.update(dt);
     this.truckers?.after(dt, this.truck.visual.position, alpha);
     this.traffic?.after(alpha);
     this.police?.after(alpha);
