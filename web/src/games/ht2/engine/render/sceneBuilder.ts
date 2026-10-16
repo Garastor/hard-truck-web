@@ -112,7 +112,13 @@ export class MaterialLibrary {
       const tex = this.texture(def.tex, def.flags.has('notile'), key);
       if (tex) {
         params.map = tex;
-        if (def.transparentTex || (tex.userData.hasAlpha as boolean)) {
+        if (tex.userData.softAlpha) {
+          // Direct3D змішує текстури з альфою (king.exe): тінь store_sh 16×16 — м'який перехід, а не поріг 0,5
+          // (з порогом вздовж рампи бази лягала темна смуга). Кольоровий ключ (ttx) і майже двоколірні альфи (ліс,
+          // наліпки) — з порогом, як було.
+          params.transparent = true;
+          params.depthWrite = false;
+        } else if (def.transparentTex || (tex.userData.hasAlpha as boolean)) {
           params.alphaTest = 0.5;
           params.transparent = false;
         }
@@ -193,6 +199,12 @@ export class MaterialLibrary {
         t.anisotropy = 4;
         t.name = file;
         t.userData.hasAlpha = img.hasAlpha;
+        // Плавна альфа (тіні будівель store_sh, вода, річки, габарити): понад 15 % пікселів напівпрозорі.
+        if (img.hasAlpha && !keyBlack) {
+          let mid = 0;
+          for (let i = 3; i < img.data.length; i += 4) if (img.data[i] > 8 && img.data[i] < 247) mid++;
+          t.userData.softAlpha = mid / (img.data.length / 4) >= 0.15;
+        }
         t.needsUpdate = true;
         tex = t;
       } catch {
