@@ -178,14 +178,15 @@ export class Ht2Drive {
   private sidePanelOpen = false;
   /** Дотик поза бічною панеллю F1–F4 (не по кнопці) — закрити її; дотик проходить далі (кермо, педалі працюють). */
   private readonly onOutsideTap = (e: PointerEvent) => {
-    if (this.fPanels?.open == null) return;
+    if (this.fPanels?.open == null && !this.radio?.open) return;
     // Панель пропускає дотики крізь себе (pointer-events: none) — тож попадання в неї — за прямокутником.
     if ((e.target as Element | null)?.closest('button')) return;
     for (const p of document.querySelectorAll('.ht2-panel')) {
       const r = p.getBoundingClientRect();
       if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return;
     }
-    this.fPanels.close();
+    this.fPanels?.close();
+    this.radio?.close();
   };
   private readonly bar = document.createElement('div');
   private touch: HTMLElement | null = null;
@@ -458,7 +459,8 @@ export class Ht2Drive {
       if (cmd === 'lights') this.lightsManual = !this.lamps[0]?.visible;
       // Двірники — окрема дія гри («Wipers», W); у порту без натискання вмикаються в дощ.
       if (cmd === 'wipers') this.wipersManual = !(this.glassRain?.wipersOn ?? this.raining);
-      if (cmd === 'reset') this.recover();
+      // «Відновитися» — те саме, що 911 у меню Esc (на прохання користувача).
+      if (cmd === 'reset') this.call911();
       if (cmd === 'menu') this.toggleEsc();
       if (cmd === 'f1' || cmd === 'f2' || cmd === 'f3' || cmd === 'f4') this.toggleF(Number(cmd[1]) as FPanel);
       if (cmd === 'f5') this.radio?.toggle();
@@ -511,6 +513,12 @@ export class Ht2Drive {
     burger.addEventListener('click', () => {
       group.hidden = !group.hidden;
       burger.classList.toggle('on', !group.hidden);
+    });
+    // Кнопка групи, що відкриває панель (Меню, Інфо, Рейтинг, Компанія, Рація), згортає групу; музика — ні.
+    group.addEventListener('click', (e) => {
+      if ((e.target as Element).closest('button') === music) return;
+      group.hidden = true;
+      burger.classList.remove('on');
     });
     this.hud.append(burger, group);
     this.hudGroup = group;
@@ -1006,7 +1014,7 @@ export class Ht2Drive {
    * перекривати; закрита — «☰» знову над сценою.
    */
   private syncSidePanel(): void {
-    const open = this.fPanels?.open != null;
+    const open = this.fPanels?.open != null || !!this.radio?.open || !!this.escMenu;
     if (open === this.sidePanelOpen) return;
     this.sidePanelOpen = open;
     document.body.classList.toggle('ht2-side-open', open);

@@ -379,11 +379,11 @@ export class Input {
       more.hidden = !more.hidden;
       toggle.classList.toggle('on', !more.hidden);
     });
-    // Карта (Tab) — окремою кнопкою поруч із групою (на прохання користувача), значком, як решта ряду.
-    btn('map', '', undefined, 'map', ICONS.map, row).dataset.cmd = 'map';
     btn('reset', '', undefined, 'reset', ICONS.reset, row);
     btn('cam', '', undefined, 'camera', ICONS.cam, row);
+    // Карта (Tab) — першою в групі «ще» (на прохання користувача).
     const items: [string, Command, string][] = [
+      ['map', 'map', ICONS.map],
       ['lights', 'lights', ICONS.lights],
       ['mirror', 'mirror', ICONS.mirror],
       ['wipers', 'wipers', ICONS.wipers],

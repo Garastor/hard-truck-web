@@ -29,8 +29,31 @@ export function applyTabloSkin(art: EscArt): void {
   };
   const st = document.documentElement.style;
   st.setProperty('--ht2-metal', url(METAL));
-  st.setProperty('--ht2-lcd', url(LCD));
+  st.setProperty('--ht2-lcd', lcdDimmed(tablo));
   st.setProperty('--ht2-lcd-flat', url(LCD_FLAT));
+}
+
+/**
+ * LCD-клітинка з приглушеним хромовим обідком (на прохання користувача — на 30 % менш хромований): пікселі обідка
+ * (не зелене скло) на 30 % наближено до середнього кольору металу смуги.
+ */
+function lcdDimmed(tablo: HTMLCanvasElement): string {
+  const g = tablo.getContext('2d')!;
+  const m = g.getImageData(...METAL).data;
+  const mean = [0, 0, 0];
+  for (let i = 0; i < m.length; i += 4) for (let k = 0; k < 3; k++) mean[k] += m[i + k];
+  for (let k = 0; k < 3; k++) mean[k] /= m.length / 4;
+  const img = g.getImageData(...LCD);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const glass = d[i + 1] > d[i] + 15 && d[i + 1] > d[i + 2];
+    if (!glass) for (let k = 0; k < 3; k++) d[i + k] = d[i + k] * 0.7 + mean[k] * 0.3;
+  }
+  const c = document.createElement('canvas');
+  c.width = LCD[2];
+  c.height = LCD[3];
+  c.getContext('2d')!.putImageData(img, 0, 0);
+  return `url(${c.toDataURL()})`;
 }
 
 /** Напис шрифтом табло (піксельний, 1:1 у CSS-пікселях); без шрифту — null. */
