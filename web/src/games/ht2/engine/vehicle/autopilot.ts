@@ -85,6 +85,8 @@ export class AutoPilot {
    * переслідування цілі по дузі: кут коліс δ = atan(2·L·sin α / d), кермо = δ / 45°.
    */
   kinematicBase = 0;
+  /** Кермо для потрібного кута коліс δ (кінематичний рух; без нього — δ / 45°). */
+  steerFor: ((delta: number) => number) | null = null;
   private stuck = 0;
   private reversing = 0;
   /** Бічний зсув для обгону (м), плавно змінюється. */
@@ -145,7 +147,7 @@ export class AutoPilot {
     const angle = Math.atan2(to.dot(rightV), to.dot(forward));
     if (this.kinematicBase > 0) {
       const delta = Math.atan((2 * this.kinematicBase * Math.sin(angle)) / Math.max(4, to.length()));
-      s.steer = THREE.MathUtils.clamp(delta / (Math.PI / 4), -1, 1);
+      s.steer = THREE.MathUtils.clamp(this.steerFor ? this.steerFor(delta) : delta / (Math.PI / 4), -1, 1);
     } else s.steer = THREE.MathUtils.clamp(angle * 2.2, -1, 1);
     // Кривизна попереду → зниження швидкості.
     const toFar = far.clone().sub(pos).setY(0).normalize();

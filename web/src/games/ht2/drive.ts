@@ -1283,7 +1283,12 @@ export class Ht2Drive {
   /** Автопілот для поточної вантажівки: у кінематичному русі king.exe — переслідування цілі по дузі з її базою. */
   private pilot(): AutoPilot {
     const ap = new AutoPilot(this.roads);
-    if (this.truck.kinematic) ap.kinematicBase = this.truck.base;
+    if (this.truck.kinematic) {
+      ap.kinematicBase = this.truck.base;
+      // Обернене до δ = 45°·a·|s|^p (HT2_KING).
+      const k = HT2_KING;
+      ap.steerFor = (delta) => Math.sign(delta) * (Math.abs(delta) / (Math.PI / 4) / k.steerScale) ** (1 / k.steerPower);
+    }
     return ap;
   }
 

@@ -151,6 +151,12 @@ export interface KingSetup {
   rain: number;
   /** Множник межі керма k (1,5·atan(μ·k·L/v²)). */
   steerK: number;
+  /** Кермо → частка повного кута 45°: a·|s|^p (запис king.exe, див. HT2_KING). */
+  steerScale: number;
+  steerPower: number;
+  /** Крен кузова, рад на м/с² бічного прискорення, і межа (запис king.exe). */
+  rollK: number;
+  rollMax: number;
 }
 
 /** Тінь над дорогою, м — щоб не мерехтіла з дорогою (гіпотеза порту). */
@@ -575,7 +581,8 @@ export class TruckVehicle {
     const lv0 = this.body.linvel();
     // Кермо: δ = 45°·s, |s| — не більше межі зчеплення на цій швидкості.
     const lim = steerLimit(lv0.x * fwd.x + lv0.y * fwd.y + lv0.z * fwd.z, mu, this.base, K.steerK);
-    const delta = KING.steerMax * Math.max(-lim, Math.min(lim, steer));
+    const shaped = Math.sign(steer) * K.steerScale * Math.abs(steer) ** K.steerPower;
+    const delta = KING.steerMax * Math.max(-lim, Math.min(lim, shaped));
     // Колеса на моделі: + — ліворуч; внутрішнє повертається більше (Аккерман — лише вигляд).
     this.steerAngle = -delta;
     const inner = Math.abs(delta);
@@ -668,9 +675,10 @@ export class TruckVehicle {
 
   /**
    * Нахил кузова від прискорення (king.exe 0x4fca10): вектор (g − a) у площині ґрунту (a — сили коліс і доцентрова,
-   * поділені на масу), θ = 0,0109·|вектор|, не більше 0,0435 рад (2,5°); кузов хилиться в його бік — крен θ·(напрям·бік),
-   * клювання θ·(напрям·курс)·0,2; згладжування стан = f·стан + (1 − f)·ціль, f = 0,5^(10·dt). Нахил косметичний
-   * (лише модель, не тіло), як в оригіналі. lateral — доцентрове прискорення v·ω (+ — ліворуч), along — уздовж курсу.
+   * поділені на масу), θ = 0,0109·|вектор|, не більше 0,0435 рад (2,5°); кузов хилиться в його бік — клювання
+   * θ·(напрям·курс)·0,2 (збігається із записом), згладжування стан = f·стан + (1 − f)·ціль, f = 0,5^(10·dt). Крен —
+   * за записом оригіналу (KingSetup.rollK/rollMax): у записі він лінійний і більший за межу 2,5° — ще одну складову
+   * в exe не дорозібрано. Нахил косметичний (лише модель, не тіло), як в оригіналі. lateral — доцентрове прискорення v·ω (+ — ліворуч), along — уздовж курсу.
    */
   private lean(dt: number, n: THREE.Vector3, ft: THREE.Vector3, gt: THREE.Vector3, lateral: number, along: number): void {
     const left = new THREE.Vector3().crossVectors(n, ft);
@@ -679,8 +687,11 @@ export class TruckVehicle {
     const theta = Math.min(LEAN_MAX, LEAN_K * len);
     if (len > 0.01) d.divideScalar(len);
     const f = 0.5 ** (10 * dt);
+    // Крен — за записом оригіналу (лінійний, без межі 2,5°): напрям і згладжування ті самі.
+    const K = this.king!;
+    const roll = Math.min(K.rollMax, K.rollK * len);
     // У системі кузова: x — праворуч, z — уперед.
-    this.leanSide = f * this.leanSide + (1 - f) * theta * -d.dot(left);
+    this.leanSide = f * this.leanSide + (1 - f) * roll * -d.dot(left);
     this.leanFwd = f * this.leanFwd + (1 - f) * theta * d.dot(ft) * LEAN_PITCH;
   }
 
