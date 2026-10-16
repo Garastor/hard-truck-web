@@ -123,6 +123,8 @@ export function distToBounds(b: [number, number, number, number], x: number, y: 
   return Math.hypot(dx, dy);
 }
 
+const WHITE = new THREE.Color(1, 1, 1);
+
 export class Ht2World {
   readonly scene = new THREE.Scene();
   readonly regions = new Map<string, RegionInfo>();
@@ -139,7 +141,7 @@ export class Ht2World {
   private tintSky(): void {
     this.sky?.traverse((o) => {
       const m = (o as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
-      if (m?.color) m.color.copy(this.skyTint);
+      if (m?.color) m.color.copy((m.userData.baseColor as THREE.Color | undefined) ?? WHITE).multiply(this.skyTint);
     });
   }
   private loading: string | null = null;
@@ -205,8 +207,9 @@ export class Ht2World {
     // Купол неба (текстура денного неба) — у кольорі skyamb відносно ясного дня (204): уночі темний.
     this.skyTint.copy(l.sky).multiplyScalar(255 / 204);
     this.tintSky();
-    this.sun.intensity = Math.PI * 0.8;
-    this.moon.intensity = Math.PI * 0.8;
+    // Інтенсивність π — у three.js множник рівно 1 (Lambert ділить на π): колір = текстура × (envamb + sunenv·cos).
+    this.sun.intensity = Math.PI;
+    this.moon.intensity = Math.PI;
     this.ambient.intensity = Math.PI;
     // Дерева (0x005ca660): без освітлення за нормалями — колір = розсіяне + 0,7 · (сонце + місяць), до 1.
     const sr = { r: 0, g: 0, b: 0 };

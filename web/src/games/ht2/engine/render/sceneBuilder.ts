@@ -178,7 +178,7 @@ export class MaterialLibrary {
           img.hasAlpha = true;
         }
         const t = new THREE.DataTexture(img.data, img.width, img.height, THREE.RGBAFormat);
-        t.colorSpace = THREE.SRGBColorSpace;
+        // Без перетворення кольорового простору: світло — у кольорах екрана, як у Direct3D (app.ts runHt2).
         t.wrapS = t.wrapT = clamp ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
         t.magFilter = THREE.LinearFilter;
         t.minFilter = THREE.LinearMipmapLinearFilter;
@@ -834,13 +834,35 @@ function buildSky(asm: SceneAssembler): THREE.Group | null {
   const sky = new THREE.Group();
   sky.name = 'sky';
   sky.add(inner);
+  // Черга малювання (без глибини — хто пізніше, той зверху). У sky_max шари записано від ближнього до дальнього (сонце,
+  // хмари sky5…sky1, купол col_sky_b) — малюємо навпаки, інакше купол закривав хмари (гіпотеза: порядку обходу в
+  // king.exe не розібрано). Решта (земля col_grass, панорами обрію fon_*) — у порядку файлу, після sky_max.
+  const meshes: THREE.Mesh[] = [];
   inner.traverse((o) => {
-    if (!(o instanceof THREE.Mesh)) return;
+    if (o instanceof THREE.Mesh) meshes.push(o);
+  });
+  const inMax = (o: THREE.Object3D): boolean => (o.name === 'sky_max' ? true : o.parent ? inMax(o.parent) : false);
+  const maxIdx = meshes.map((_, i) => i).filter((i) => inMax(meshes[i]));
+  const order = meshes.map((_, i) => i);
+  maxIdx.forEach((i, k) => (order[i] = maxIdx[maxIdx.length - 1 - k]));
+  meshes.forEach((o, i) => {
     const src = o.material as THREE.MeshBasicMaterial;
     // Небо не освітлюється (у режимі lit матеріали — Lambert).
     const m = src.isMeshBasicMaterial ? src.clone() : new THREE.MeshBasicMaterial({ map: src.map, color: src.color, alphaTest: src.alphaTest, transparent: src.transparent, opacity: src.opacity });
     m.depthWrite = false;
     m.depthTest = false;
+    // Власний колір (купол col_sky_b — синій із палітри): тон неба пори доби множить його, а не замінює.
+    m.userData.baseColor = m.color.clone();
+    // Хмари (sky4, sky5) — з плавною альфою: змішування, а не поріг 0,5 (з порогом лишалися клапті, небо — біле).
+    // Шари лишаються в списку непрозорих (прозорі three.js малює після світу — без глибини небо лягло б поверх
+    // нього), змішування — власне (CustomBlending діє й без transparent), по черзі файлу.
+    if (m.map?.userData.hasAlpha) {
+      m.alphaTest = 0;
+      m.transparent = false;
+      m.blending = THREE.CustomBlending;
+      m.blendSrc = THREE.SrcAlphaFactor;
+      m.blendDst = THREE.OneMinusSrcAlphaFactor;
+    }
     // Купол поруч із камерою (≈ 46 м) — туман за відстанню його б не зачепив: частка туману — за висотою над
     // обрієм (SKY_FOG), щоб небо зливалося з далечінню.
     m.fog = true;
@@ -864,7 +886,7 @@ function buildSky(asm: SceneAssembler): THREE.Group | null {
     // Купол видно зсередини.
     m.side = THREE.DoubleSide;
     o.material = m;
-    o.renderOrder = -1000;
+    o.renderOrder = -1000 + order[i];
     o.frustumCulled = false;
   });
   return sky;

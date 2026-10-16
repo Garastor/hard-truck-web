@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { cachedSource, idbSourceFor, missingFiles, prefetchMissing, removeFiles, storedFiles } from '@shared/gameStore';
 import type { FileSource } from '@shared/source';
 import { setSoftFont } from './engine/ui/softUi';
@@ -75,6 +76,12 @@ async function manageFiles(ctx: Ht2Context): Promise<void> {
 export async function runHt2(ctx: Ht2Context): Promise<void> {
   document.body.classList.add('game-ht2');
   document.title = 'Дальнобойщики 2';
+  // Світло king.exe (Direct3D) рахується просто в кольорах екрана: текстура × (розсіяне + сонце·cos), до 1. Лінійний
+  // простір three.js (sRGB → лінійне → sRGB) робив розсіяне 80/255 вчетверо слабшим, а суму — темнішою: асфальт 66
+  // замість 106 (текстура 112). Тож у другій грі — без керування кольором: текстури й кольори як є, вихід без
+  // перетворення (вихід до вибору гри перезавантажує сторінку, першу гру це не зачіпає).
+  THREE.ColorManagement.enabled = false;
+  ctx.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
   ctx.setStatus('Завантаження «Дальнобійників 2»…');
   const source = await pickSource(ctx);
   const font = (name: string) => source.read(name).then((b) => new PixelFont(parseFon(b))).catch(() => null);

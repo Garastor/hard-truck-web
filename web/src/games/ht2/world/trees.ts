@@ -49,7 +49,6 @@ function atlasTexture(rmp: RmpArchive, pattern: RegExp, palette: Uint8Array | nu
     for (let i = 0; i < d.length; i += 4) if (d[i] >> 3 === kr && d[i + 1] >> 2 === kg && d[i + 2] >> 3 === kb) d[i + 3] = 0;
   }
   const t = new THREE.DataTexture(d, img.width, img.height, THREE.RGBAFormat);
-  t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
   t.magFilter = THREE.LinearFilter;
   // Без міпмапів: з ними дерева здалеку розмиті й «худнуть» (відсікання прозорих пікселів на зменшених рівнях);
@@ -302,7 +301,6 @@ export function buildGlows(b3d: B3d, rmp: RmpArchive): THREE.Group {
   if (!bytes) return group;
   const img = parseTxr(bytes);
   const tex = new THREE.DataTexture(img.data, img.width, img.height, THREE.RGBAFormat);
-  tex.colorSpace = THREE.SRGBColorSpace;
   tex.magFilter = THREE.LinearFilter;
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   tex.generateMipmaps = true;
