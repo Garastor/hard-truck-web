@@ -104,8 +104,10 @@ const ROLLING_RESISTANCE = 0.015;
  */
 const SOFT_DRAG = 2;
 const SOFT_DRAG_SPAN = 3;
-/** Частка моменту сили інерції, що кренить кузов у русі king.exe (leanBody; гіпотеза, підбір). */
-const KING_LEAN = 0.5;
+/** Нахил кузова від прискорення king.exe (0x4fca10): рад на м/с², межа, частка поздовжнього. */
+const LEAN_K = 0.0109;
+const LEAN_MAX = 0.0435;
+const LEAN_PITCH = 0.2;
 /** Бампери: висота низу над дорогою й товщина, м (гіпотеза). */
 const BUMPER_CLEARANCE = 0.35;
 const BUMPER_DEPTH = 0.5;
@@ -453,6 +455,15 @@ export class TruckVehicle {
       this.visual.position.lerpVectors(this.prevPos, this.visual.position, alpha);
       this.visual.quaternion.slerpQuaternions(this.prevQuat, this.visual.quaternion.clone(), alpha);
     }
+    // Нахил кузова king (косметичний): верх кузова хилиться праворуч на leanSide і вперед на leanFwd.
+    if (this.king && (this.leanSide || this.leanFwd)) {
+      const q = this.visual.quaternion;
+      const tilt = new THREE.Vector3(this.leanSide, 0, -this.leanFwd).applyQuaternion(q);
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+      const angle = tilt.length();
+      const axis = new THREE.Vector3().crossVectors(up, tilt).normalize();
+      if (angle > 1e-5) q.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, angle));
+    }
   }
 
   /** Крок фізики керування (до world.step). */
@@ -652,35 +663,30 @@ export class TruckVehicle {
     const w = new THREE.Vector3(av.x, av.y, av.z);
     w.addScaledVector(n, omega - w.dot(n));
     this.body.setAngvel(w, true);
-    this.leanBody(dt, n, ft, vFwd, omega, force / mass);
+    this.lean(dt, n, ft, gt, vFwd * omega, force / mass);
   }
 
   /**
-   * Крен і клювання кузова: бічної сили шин у кінематичному русі немає, тож пружини Rapier нічим не нахилялися. Сила
-   * інерції −M·a (доцентрове v·ω і поздовжнє прискорення), прикладена в центрі мас над площиною контактів, дає момент
-   * на кузов — підвіска кренить його в поворотах і нахиляє під час гальмування й розгону, з погойдуванням. В оригіналі
-   * кузов стає за площиною контактів плюс крен θ = 0,0109·|a − g| (≤ 2,5°); тут — через підвіску, з множником
-   * KING_LEAN (відгук користувача: «немає кренів»; величина — гіпотеза).
+   * Нахил кузова від прискорення (king.exe 0x4fca10): вектор (g − a) у площині ґрунту (a — сили коліс і доцентрова,
+   * поділені на масу), θ = 0,0109·|вектор|, не більше 0,0435 рад (2,5°); кузов хилиться в його бік — крен θ·(напрям·бік),
+   * клювання θ·(напрям·курс)·0,2; згладжування стан = f·стан + (1 − f)·ціль, f = 0,5^(10·dt). Нахил косметичний
+   * (лише модель, не тіло), як в оригіналі. lateral — доцентрове прискорення v·ω (+ — ліворуч), along — уздовж курсу.
    */
-  private leanBody(dt: number, n: THREE.Vector3, ft: THREE.Vector3, vFwd: number, omega: number, along: number): void {
-    const ground = new THREE.Vector3();
-    let k = 0;
-    for (let i = 0; i < this.wheels; i++) {
-      const p = this.ctrl.wheelIsInContact(i) ? this.ctrl.wheelContactPoint(i) : null;
-      if (!p) continue;
-      ground.add(p as THREE.Vector3Like);
-      k++;
-    }
-    if (!k) return;
-    ground.divideScalar(k);
-    const c = this.body.worldCom();
-    const h = new THREE.Vector3(c.x, c.y, c.z).sub(ground).dot(n);
-    if (h <= 0) return;
-    // Прискорення: доцентрове ω·n × v і поздовжнє вздовж курсу.
-    const a = new THREE.Vector3().crossVectors(n, ft).multiplyScalar(omega * vFwd).addScaledVector(ft, along);
-    const torque = new THREE.Vector3().crossVectors(n.clone().multiplyScalar(h), a.multiplyScalar(-this.mass * KING_LEAN));
-    this.body.applyTorqueImpulse({ x: torque.x * dt, y: torque.y * dt, z: torque.z * dt }, true);
+  private lean(dt: number, n: THREE.Vector3, ft: THREE.Vector3, gt: THREE.Vector3, lateral: number, along: number): void {
+    const left = new THREE.Vector3().crossVectors(n, ft);
+    const d = gt.clone().addScaledVector(ft, -along).addScaledVector(left, -lateral);
+    const len = d.length();
+    const theta = Math.min(LEAN_MAX, LEAN_K * len);
+    if (len > 0.01) d.divideScalar(len);
+    const f = 0.5 ** (10 * dt);
+    // У системі кузова: x — праворуч, z — уперед.
+    this.leanSide = f * this.leanSide + (1 - f) * theta * -d.dot(left);
+    this.leanFwd = f * this.leanFwd + (1 - f) * theta * d.dot(ft) * LEAN_PITCH;
   }
+
+  /** Згладжений нахил кузова king (рад): у бік праворуч і вперед (lean). */
+  private leanSide = 0;
+  private leanFwd = 0;
 
   /** Колія передньої осі, м (для кута зовнішнього колеса). */
   private get track(): number {
