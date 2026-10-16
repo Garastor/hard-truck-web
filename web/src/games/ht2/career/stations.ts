@@ -37,8 +37,9 @@ export function orderPanel(art: EscArt, parent: HTMLElement, o: OrderView, take:
     `${Math.round(o.fragility)}%`,
   ];
   rows.forEach((t, i) => p.write(125, 572 + i * 20, t.slice(0, 16), VALUE));
-  p.write(25, 732, `СКЛАД ЗАВАНТАЖЕННЯ ${o.dock}`, VALUE);
-  p.action(20, 745, 185, 'Взяти (+)', take);
+  // Підпис і кнопка — біля правого краю вікна (x = 205), кнопка завширшки з колонку значень.
+  p.write(205, 732, `СКЛАД ЗАВАНТАЖЕННЯ ${o.dock}`, VALUE, undefined, 'right');
+  p.action(115, 745, 90, 'Взяти', take);
   return p;
 }
 
