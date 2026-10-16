@@ -121,6 +121,17 @@ export function turnAngle(a: RoadLine, b: RoadLine): number {
   return Math.atan2(din.x * dout.z - din.z * dout.x, din.dot(dout));
 }
 
+/** Перебудувати маршрут (king.exe seeIfMustBeRetraced): машину відкинуло від лінії — на найближчу. */
+export function retrace(m: Mover, line: RoadLine, seg: number, t: number): void {
+  m.line = line;
+  m.seg = Math.min(seg, line.pts.length - 2);
+  m.t = t;
+  m.from = null;
+  m.latGoal = 0;
+  m.bypass = null;
+  planNext(m);
+}
+
 /** Вибір дороги після стику й бажаної смуги (у king.exe — маршрут і changeLanes). */
 function planNext(m: Mover): void {
   const roads = [...new Set((m.line.next as RoadLine[]).map((l) => l.road))];
@@ -278,9 +289,21 @@ function changeLane(m: Mover, to: number): void {
   m.line = sib;
 }
 
-/** Крок водія: швидкість, перестроювання, рух уздовж ліній. */
+/** Крок водія кінематичної машини: рішення (decide) і рух уздовж ліній. */
 export function step(m: Mover, dt: number, obstacles: readonly Obstacle[]): void {
   if (m.gone) return;
+  const want = decide(m, dt, obstacles);
+  const dv = want - m.speed;
+  const acc = dv > 0 ? Math.min(ACCEL, 0.3 + 0.6 * dv) : want === 0 ? -BRAKE : -Math.min(BRAKE, Math.max(1.5, 0.8 * -dv));
+  m.speed = Math.max(0, dv > 0 ? Math.min(want, m.speed + acc * dt) : Math.max(want, m.speed + acc * dt));
+  advance(m, m.speed * dt);
+  m.lat = m.latGoal + (m.lat - m.latGoal) * Math.exp(-dt / LANE_TAU);
+  if (Math.abs(m.lat - m.latGoal) < 1e-3) m.lat = m.latGoal;
+  place(m, dt);
+}
+
+/** Рішення водія (і кінематичного, і фізичного): перестроювання, обʼїзд, цільова швидкість, м/с. */
+export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[]): number {
   const path = pathAhead(m, LEADER_RANGE);
   const leader = leaderOn(m, path, obstacles);
 
@@ -326,15 +349,81 @@ export function step(m: Mover, dt: number, obstacles: readonly Obstacle[]): void
     }
   }
 
-  let want = followLimit(m, leader, roadLimit(m, path));
-  if (want < 0.1) want = 0;
-  const dv = want - m.speed;
-  const acc = dv > 0 ? Math.min(ACCEL, 0.3 + 0.6 * dv) : want === 0 ? -BRAKE : -Math.min(BRAKE, Math.max(1.5, 0.8 * -dv));
-  m.speed = Math.max(0, dv > 0 ? Math.min(want, m.speed + acc * dt) : Math.max(want, m.speed + acc * dt));
-  advance(m, m.speed * dt);
-  m.lat = m.latGoal + (m.lat - m.latGoal) * Math.exp(-dt / LANE_TAU);
-  if (Math.abs(m.lat - m.latGoal) < 1e-3) m.lat = m.latGoal;
-  place(m, dt);
+  const want = followLimit(m, leader, roadLimit(m, path));
+  return want < 0.1 ? 0 : want;
+}
+
+/**
+ * Фізична машина → логічна позиція (king.exe setPlayerPosition / findPositionOnATrajectory: проєкція на маршрут):
+ * найближча точка поточної лінії від m.seg уперед (за кінцем — запланована наступна), бічний зсув, курс, швидкість.
+ * Повертає відстань до лінії по горизонталі (далеко — маршрут треба перебудувати).
+ */
+export function sync(m: Mover, p: THREE.Vector3, fwd: THREE.Vector3, speed: number): number {
+  for (let guard = 0; guard < 4; guard++) {
+    let best = -1;
+    let bestT = 0;
+    let bestD = Infinity;
+    for (let i = m.seg; i + 1 < m.line.pts.length; i++) {
+      const a = i === m.seg ? segStart(m) : m.line.pts[i];
+      const b = m.line.pts[i + 1];
+      const ab = b.clone().sub(a).setY(0);
+      const len2 = ab.lengthSq();
+      if (!len2) continue;
+      const t = THREE.MathUtils.clamp(((p.x - a.x) * ab.x + (p.z - a.z) * ab.z) / len2, 0, 1);
+      const d = Math.hypot(a.x + ab.x * t - p.x, a.z + ab.z * t - p.z);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+        bestT = t;
+      }
+    }
+    if (best < 0) break;
+    if (best !== m.seg) m.from = null;
+    m.seg = best;
+    m.t = bestT;
+    // За кінцем лінії — на заплановану наступну.
+    if (best === m.line.pts.length - 2 && bestT >= 1) {
+      const nx = nextLine(m.line, m.plan, m.line.lane);
+      if (!nx) {
+        m.gone = true;
+        break;
+      }
+      m.from = m.line.pts[m.line.pts.length - 1].clone();
+      m.line = nx;
+      m.seg = 0;
+      m.t = 0;
+      planNext(m);
+      continue;
+    }
+    break;
+  }
+  const a = segStart(m);
+  const dir = m.line.pts[m.seg + 1].clone().sub(a).setY(0).normalize();
+  const on = linePoint(m);
+  m.lat = (p.x - on.x) * -dir.z + (p.z - on.z) * dir.x;
+  m.pos.copy(p);
+  m.heading.copy(fwd).setY(0).normalize();
+  m.speed = speed;
+  return Math.hypot(p.x - on.x, p.z - on.z);
+}
+
+/** Точка, за якою кермує фізична машина: шлях уперед на dist м, зсунутий на бажаний бічний зсув (обʼїзд). */
+export function carrot(m: Mover, dist: number): THREE.Vector3 {
+  const path = pathAhead(m, dist + 5);
+  const { pts, s } = path;
+  let i = 1;
+  while (i < pts.length - 1 && s[i] < dist) i++;
+  const a = pts[i - 1];
+  const b = pts[Math.min(i, pts.length - 1)];
+  const seg = (s[i] ?? dist) - s[i - 1];
+  const k = seg > 0 ? THREE.MathUtils.clamp((dist - s[i - 1]) / seg, 0, 1) : 0;
+  const out = a.clone().lerp(b, k);
+  const d = b.clone().sub(a).setY(0);
+  if (d.lengthSq() > 1e-6 && m.latGoal) {
+    d.normalize();
+    out.add(new THREE.Vector3(-d.z, 0, d.x).multiplyScalar(m.latGoal));
+  }
+  return out;
 }
 
 /** До кінця поточної лінії, м. */

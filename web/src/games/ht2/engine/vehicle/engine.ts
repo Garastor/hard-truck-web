@@ -253,6 +253,20 @@ export class Engine {
     }
   }
 
+  /**
+   * Передача для руху з ходу (машина трафіку стає фізичною на швидкості): з першої вгору, доки вища дає силу,
+   * більшу за поточну × UPSHIFT_GAIN, — як autoShift кілька разів поспіль, але без пауз на зчеплення.
+   */
+  engageFor(wheelSpeed: number): void {
+    const top = Math.max(2, Math.min(this.topGear, this.gearLimit));
+    let g = 2;
+    while (g < top && this.wheelForce(g + 1, this.lockedN(g + 1, wheelSpeed), 1) > this.wheelForce(g, this.lockedN(g, wheelSpeed), 1) * UPSHIFT_GAIN) g++;
+    this.gear = g;
+    this.shift = null;
+    this.sinceShift = 0;
+    this.n = this.lockedN(g, wheelSpeed);
+  }
+
   /** Автомат: вгору, якщо на вищій передачі сила більша за поточну × 1,1 (0x4aa76c). */
   private autoShift(wheelSpeed: number): void {
     const current = this.wheelForce(this.gear, this.lockedN(this.gear, wheelSpeed), 1);

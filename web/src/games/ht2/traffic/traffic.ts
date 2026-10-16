@@ -4,7 +4,9 @@ import { visibleBox } from '../engine/vehicle/trucks';
 import { GROUP_WORLD, groups } from '../engine/physics/world';
 import { isList, num, str, type SExpr } from '../formats/sexpr';
 import type { Ht2Roads, RoadLine } from '../world/roads';
-import { coast, newMover, step, type Mover, type Obstacle } from './driver';
+import { coast, decide, newMover, pathAhead, retrace, roadLimit, step, sync, type Mover, type Obstacle } from './driver';
+import { control, newPhysState, type PhysState } from './physical';
+import type { TruckVehicle } from '../engine/vehicle/truckVehicle';
 import type { Ht2Trucks } from '../vehicles/trucks';
 
 /**
@@ -41,6 +43,18 @@ const GHOST_AGE = 72;
 const GHOST_FAR = 700;
 /** Період detectJams (king.exe 0x434780), с. */
 const JAM_PERIOD = 9.2;
+/**
+ * Фізичний режим (king.exe 0x4cf620): ближче PHYS_ON до гравця машина фізична (`_Car_V`) зі швидкістю ≤ PHYS_SPEED
+ * уздовж курсу; назад — далі PHYS_OFF, або далі PHYS_BACK, якщо вона в межах 0,5 м від центру смуги й не обʼїжджає.
+ */
+const PHYS_ON = 80;
+const PHYS_BACK = 100;
+const PHYS_OFF = 300;
+const PHYS_SPEED = 18;
+/** Відкинуло далі за це від лінії — маршрут перебудовується (king.exe: ≥ 50 м; порт — менше, лінії смуг), м. */
+const RETRACE = 8;
+/** Перекинута (вгору < 0,5) довше за це — прибрати, щойно не видно, с. */
+const FLIP_TIME = 3;
 /** Крейсерська швидкість обережних водіїв dumb (king.exe 0x4d4700: межа 20 м/с; розкид — порту), м/с. */
 const CRUISE_MIN = 17;
 const CRUISE_MAX = 20;
@@ -75,6 +89,19 @@ interface Car extends Mover {
   /** Модель і тіло — лише поблизу гравця в завантаженому регіоні (інакше машина абстрактна). */
   root: THREE.Group | null;
   body: RAPIER.RigidBody | null;
+  /** Фізична машина (ближче PHYS_ON до гравця) і її керування. */
+  vehicle: TruckVehicle | null;
+  phys: PhysState;
+  /** Цільова швидкість водія фізичної машини, м/с. */
+  want: number;
+  /** Скільки лежить перекинута, с. */
+  flipped: number;
+}
+
+/** Фізичні машини трафіку (будує гра: модель, параметри king.exe з vehicle.tech, сцена). */
+export interface TrafficPhysics {
+  make(kind: TrafficKind, pos: THREE.Vector3, forward: THREE.Vector3, speed: number): TruckVehicle | null;
+  remove(v: TruckVehicle): void;
 }
 
 /** Кількості з ENV/GAME.CNF (`playertypes`) і повзунок «насиченість трас». */
@@ -123,6 +150,9 @@ export class Traffic {
 
   /** Що бачить гравець: дальність (кінець туману, м) і чи видно точку з камери. Без нього — без перевірок. */
   view: { range(): number; sees(p: THREE.Vector3): boolean } | null = null;
+
+  /** Фізичні машини поруч з гравцем; без цього — усі кінематичні. */
+  physics: TrafficPhysics | null = null;
 
   private sees(p: THREE.Vector3): boolean {
     return this.view?.sees(p) ?? false;
@@ -173,12 +203,21 @@ export class Traffic {
     for (const c of this.all) {
       const d = c.pos.distanceTo(player);
       const loaded = this.loaded(c.line.region);
+      c.age += dt;
+      if (c.vehicle) {
+        // Фізична → кінематична (0x4cee70).
+        if (!loaded || d > PHYS_OFF || (d > PHYS_BACK && Math.abs(c.lat) <= 0.5 && !c.bypass && c.flipped === 0)) this.unphysical(c);
+        continue;
+      }
+      if (c.root && this.physics && d < PHYS_ON && loaded) {
+        this.makePhysical(c);
+        if (c.vehicle) continue;
+      }
       if (!c.root) {
         if (loaded && (d < R - 100 || (d < R && !this.sees(c.pos)))) this.activate(c);
       } else if (!loaded || d > R + VISIBLE_DROP || (d > R + 50 && !this.sees(c.pos))) this.deactivate(c);
-      c.age += dt;
     }
-    this.cars = this.all.filter((c) => c.root);
+    this.cars = this.all.filter((c) => c.root || c.vehicle);
 
     const avoid = [player, ...extra];
     const obstacles: Obstacle[] = this.cars.map((c) => ({ pos: c.pos, vel: c.heading.clone().multiplyScalar(c.speed), half: c.halfLen, mover: c }));
@@ -189,17 +228,75 @@ export class Traffic {
     });
     this.avoidPrev = avoid.map((p) => p.clone());
     for (const c of this.all) {
-      if (c.root) this.drive(c, dt, avoid, obstacles);
+      if (c.vehicle) this.think(c, dt, obstacles);
+      else if (c.root) this.drive(c, dt, avoid, obstacles);
       else coast(c, dt);
     }
     // Тупик: привид зникає, постійна машина — заново далеко від гравця (на виду — стоїть, доки не сховається).
     for (let i = this.all.length - 1; i >= 0; i--) {
       const c = this.all[i];
-      if (!c.gone || (c.root && this.sees(c.pos))) continue;
+      const wreck = c.flipped > FLIP_TIME;
+      if (!(c.gone || wreck) || ((c.root || c.vehicle) && this.sees(c.pos))) continue;
       this.remove(i);
       if (!c.ghost) this.addDumb(player, R + 50);
     }
-    this.cars = this.all.filter((c) => c.root);
+    this.cars = this.all.filter((c) => c.root || c.vehicle);
+  }
+
+  /** Перед кожним кроком фізики: педалі й кермо фізичних машин. */
+  control(dt: number): void {
+    for (const c of this.all) if (c.vehicle) c.vehicle.update(dt, control(c, c.vehicle, c.phys, c.want, false, dt));
+  }
+
+  /** Після кроків фізики: модель фізичних машин між станами кроків. */
+  after(alpha: number): void {
+    for (const c of this.all) c.vehicle?.syncVisual(alpha);
+  }
+
+  /** Фізична машина: логічна позиція з тіла, перебудова маршруту, рішення водія. */
+  private think(c: Car, dt: number, obstacles: readonly Obstacle[]): void {
+    const v = c.vehicle!;
+    // Позиція — з тіла (модель оновлюється лише після кроку фізики).
+    const t = v.body.translation();
+    const p = new THREE.Vector3(t.x, t.y, t.z);
+    const fwd = v.forward();
+    const off = sync(c, p, fwd, v.speedKmh / 3.6);
+    if (off > RETRACE) {
+      const n = this.roads.nearest(p, fwd);
+      if (n) retrace(c, n.line, n.seg, n.t);
+    }
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(v.visual.quaternion).y;
+    c.flipped = up < 0.5 ? c.flipped + dt : 0;
+    c.want = c.gone ? 0 : decide(c, dt, obstacles);
+  }
+
+  /** Кінематична → фізична (0x4cf080): та сама модель на колесах з параметрами vehicle.tech, швидкість ≤ 18 м/с. */
+  private makePhysical(c: Car): void {
+    if (!this.physics) return;
+    // Порт: не на в'їзді в поворот — машина, швидша за дозволене дорогою попереду, у фізиці не встигає загальмувати.
+    if (c.speed > roadLimit(c, pathAhead(c, 150)) + 1) return;
+    // Спершу прибрати кінематичне тіло: інакше промінь до землі при створенні влучає в дах самої машини.
+    this.deactivate(c);
+    const v = this.physics.make(c.kind, c.pos, c.heading, Math.min(PHYS_SPEED, c.speed));
+    if (!v) {
+      this.activate(c);
+      return;
+    }
+    v.syncVisual(1);
+    c.vehicle = v;
+    c.phys = newPhysState();
+    c.want = c.speed;
+    c.flipped = 0;
+  }
+
+  /** Фізична → кінематична: модель знову котиться лінією (зсув від лінії згасає). */
+  private unphysical(c: Car): void {
+    if (!c.vehicle) return;
+    c.heading.copy(c.vehicle.forward()).setY(0).normalize();
+    this.physics?.remove(c.vehicle);
+    c.vehicle = null;
+    c.latGoal = 0;
+    this.activate(c);
   }
 
   /** Постійна машина на випадковій лінії (пропорційно довжині), не ближче за minDist до гравця. */
@@ -221,7 +318,7 @@ export class Traffic {
   private newCar(line: RoadLine, seg: number, ghost: boolean): Car {
     const kind = this.kinds[Math.floor(Math.random() * this.kinds.length)];
     const cruise = CRUISE_MIN + Math.random() * (CRUISE_MAX - CRUISE_MIN);
-    return Object.assign(newMover(line, seg, Math.random(), cruise, 2.2), { kind, ghost, age: 0, root: null, body: null });
+    return Object.assign(newMover(line, seg, Math.random(), cruise, 2.2), { kind, ghost, age: 0, root: null, body: null, vehicle: null, phys: newPhysState(), want: 0, flipped: 0 });
   }
 
   /**
@@ -303,6 +400,10 @@ export class Traffic {
   }
 
   private deactivate(c: Car): void {
+    if (c.vehicle) {
+      this.physics?.remove(c.vehicle);
+      c.vehicle = null;
+    }
     if (c.root) this.scene.remove(c.root);
     if (c.body) this.rapier.removeRigidBody(c.body);
     c.root = null;
