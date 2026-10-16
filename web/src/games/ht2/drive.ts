@@ -5,6 +5,7 @@ import type { FileSource } from '@shared/source';
 import { EngineAudio } from './engine/audio/engineAudio';
 import { levelCollision } from './engine/physics/collision';
 import { TruckVehicle } from './engine/vehicle/truckVehicle';
+import { ROUGH_ASPHALT, ROUGH_GROUND } from './engine/vehicle/kingModel';
 import { buildTruckModel, type TruckDef } from './engine/vehicle/trucks';
 import { Input } from './engine/input/input';
 import { GROUP_WORLD, addCollisionPolys, g2t, groups, initRapier } from './engine/physics/world';
@@ -1203,6 +1204,8 @@ export class Ht2Drive {
     const off = Math.hypot(qx, qz) > n.line.width / 4 + 0.5;
     this.offRoad = off;
     this.truck.setSurface(1, off ? OFFROAD_ROLL : 1);
+    // Узбіччя трусить як ґрунт (покриття 2 у 0x502780; що узбіччя — ґрунт, гіпотеза: покриття за матеріалом не знайдено).
+    this.truck.roughness = off ? ROUGH_GROUND : ROUGH_ASPHALT;
   }
 
   /** Машина поза дорогою (для тестів). */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { KING, roadBump, rollingForce, steerLimit, wheelForces, yawRate, type KingWheel, type WheelSlip } from '../../src/games/ht2/engine/vehicle/kingModel';
+import { KING, ROUGH_GROUND, roadBump, rollingForce, steerLimit, wheelForces, yawRate, type KingWheel, type WheelSlip } from '../../src/games/ht2/engine/vehicle/kingModel';
 
 /** Чотири колеса по 10 кН, ведучі задні (μ = 0,7: межа колеса 7 кН). */
 const wheels = (mu = 0.7): KingWheel[] =>
@@ -66,5 +66,16 @@ describe('нерівність дороги king.exe (0x502780)', () => {
     }
     expect(max).toBeLessThanOrEqual(0.02);
     expect(moved).toBeGreaterThan(3000);
+  });
+
+  it('ґрунт трусить сильніше — до ±10 см', () => {
+    const s = { h: 0, u: 0 };
+    let max = 0;
+    for (let i = 0; i < 6000; i++) {
+      roadBump(s, 1 / 60, 12, 0.3, Math.random(), ROUGH_GROUND);
+      max = Math.max(max, Math.abs(s.h));
+    }
+    expect(max).toBeGreaterThan(0.03);
+    expect(max).toBeLessThanOrEqual(0.1);
   });
 });

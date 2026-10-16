@@ -56,13 +56,24 @@ export function rollingForce(load: number, v: number, fr = KING.rolling): number
  * |u| ≤ w·kU; h ← h + u·dt, |h| ≤ hMax. w — швидкість колеса (≤ 10 м/с), H = хід підвіски × kH. Для асфальту (покриття
  * 1, 5) hMax = 0,02 м; kH / kU залежать від режиму [0x276c]: 0 — 0,2 / 1, 1 — 0,1 / 0,03, 2 — 0,05 / 0,003.
  * Кузов оригіналу стає за площиною контактів — звідси дрібне тремтіння на ходу (на місці w = 0 — нерухомо).
+ * Ґрунт (покриття 2 — та сама гілка): A удвічі більша, H = хід × 0,5, |u| ≤ w·0,5, |h| ≤ 0,1 м (режим 0).
  */
-export function roadBump(state: { h: number; u: number }, dt: number, speed: number, travel: number, rnd: number, mode = { kH: 0.2, kU: 1, hMax: 0.02 }): void {
+export interface Roughness {
+  kH: number;
+  kU: number;
+  hMax: number;
+  amp: number;
+}
+
+export const ROUGH_ASPHALT: Roughness = { kH: 0.2, kU: 1, hMax: 0.02, amp: 1 };
+export const ROUGH_GROUND: Roughness = { kH: 0.5, kU: 0.5, hMax: 0.1, amp: 2 };
+
+export function roadBump(state: { h: number; u: number }, dt: number, speed: number, travel: number, rnd: number, mode: Roughness = ROUGH_ASPHALT): void {
   const w = Math.min(10, Math.abs(speed));
   const H = Math.max(1e-3, travel * mode.kH);
   const ratio = Math.min(1, Math.abs(state.h) / H);
   state.u *= 1 - ratio;
-  const amp = ((0.1 / (dt + 0.01)) * w) / (w + 10) * (Math.sqrt(ratio) * 0.9 + 0.1);
+  const amp = (((0.1 / (dt + 0.01)) * w) / (w + 10)) * mode.amp * (Math.sqrt(ratio) * 0.9 + 0.1);
   state.u += amp * (rnd - (state.h + H) / (2 * H));
   const lim = w * mode.kU;
   state.u = Math.max(-lim, Math.min(lim, state.u));

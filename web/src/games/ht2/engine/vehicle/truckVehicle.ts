@@ -4,7 +4,7 @@ import { GROUP_BUMPER, GROUP_MOVABLE, g2t, groups } from '../physics/world';
 import type { ControlState } from '../input/input';
 import { visibleBox, type TruckDef, type TruckModel } from './trucks';
 import { Engine, GEAR_R, type EngineProfile } from './engine';
-import { KING, roadBump, rollingForce, steerLimit, wheelForces, yawRate, type KingWheel, type WheelSlip } from './kingModel';
+import { KING, ROUGH_ASPHALT, roadBump, type Roughness, rollingForce, steerLimit, wheelForces, yawRate, type KingWheel, type WheelSlip } from './kingModel';
 
 /**
  * Вантажівка на DynamicRayCastVehicleController (Rapier).
@@ -264,12 +264,18 @@ export class TruckVehicle {
   get kinematic(): boolean {
     return this.king !== null;
   }
-  /** Колісна база, м: від передньої осі до середини задніх (для кількох задніх осей — гіпотеза). */
+  /**
+   * Колісна база, м: від передньої осі до найближчої задньої (ZilR — 6,54 м; з нею радіуси повороту збігаються із
+   * записом king.exe на всіх швидкостях; до середини задніх, 7,22 м, — повертала ширше; гіпотеза за записом).
+   */
   readonly base: number;
   /** Стан коліс king: 1 — пробуксовка, −1 — заблоковане. */
   readonly slip: WheelSlip[];
   /** Тестовий режим: дощ (у кар'єрі він уже в setup.grip). */
   weatherGrip = 1;
+  /** Нерівність покриття під колесами (king: roadBump) — асфальт чи ґрунт. */
+  roughness: Roughness = ROUGH_ASPHALT;
+
   setSurface(grip: number, roll: number, steer = 1, maxSpeed = Infinity): void {
     if (!this.surfaceEffects) return;
     this.surfaceGrip = grip;
@@ -322,11 +328,11 @@ export class TruckVehicle {
     this.wheelVisual = model.wheels.map((obj, i) => ({ obj, base: model.wheelBase[i] }));
     this.slip = model.wheels.map(() => 0);
     for (let i = 0; i < model.wheels.length; i++) this.bumps.push({ h: 0, u: 0 });
-    // Колісна база: z передніх (0, 1) і середнє z решти коліс (у системі Three.js уперед — −z).
+    // Колісна база: z передніх (0, 1) і найближчої до них задньої осі.
     const wz = model.wheelBase.map((m) => g2t(new THREE.Vector3().setFromMatrixPosition(m)).z);
     const front = (wz[0] + wz[1]) / 2;
-    const rear = wz.slice(2).reduce((a, b) => a + b, 0) / Math.max(1, wz.length - 2);
-    this.base = Math.max(1, Math.abs(rear - front));
+    const rear = wz.slice(2).map((z) => Math.abs(z - front));
+    this.base = Math.max(1, rear.length ? Math.min(...rear) : 1);
 
     // Габарити кузова в локальних координатах Three.js.
     gameFrame.updateMatrixWorld(true);
@@ -692,7 +698,7 @@ export class TruckVehicle {
     const w = new THREE.Vector3(av.x, av.y, av.z);
     w.addScaledVector(n, omega - w.dot(n));
     this.body.setAngvel(w, true);
-    for (let i = 0; i < this.wheels; i++) if (wheels[i].ground) roadBump(this.bumps[i], dt, vFwd, this.king!.travel?.[i] ?? 0.3, Math.random());
+    for (let i = 0; i < this.wheels; i++) if (wheels[i].ground) roadBump(this.bumps[i], dt, vFwd, this.king!.travel?.[i] ?? 0.3, Math.random(), this.roughness);
     this.lean(dt, n, ft, gt, vFwd * omega, force / mass);
   }
 
