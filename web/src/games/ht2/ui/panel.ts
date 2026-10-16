@@ -22,7 +22,6 @@ export class SidePanel {
   private readonly text: CanvasRenderingContext2D;
   private readonly onResize = () => this.fit();
   readonly width: number;
-  private readonly background: string;
 
   constructor(
     readonly art: EscArt,
@@ -41,7 +40,6 @@ export class SidePanel {
     this.el.className = `ht2-panel ${side}`;
     this.stage = document.createElement('div');
     this.stage.className = 'ht2-panel-stage';
-    this.background = background;
     const bg = art.canvas(background);
     this.width = bg?.width ?? 225;
     const img = document.createElement('img');
@@ -115,8 +113,7 @@ export class SidePanel {
     const paint = () => {
       const fixed = state?.();
       const st = fixed === 'n' || fixed === 'ok' || fixed === 'f' ? fixed : fixed === 'pp' ? (hover ? 'ap' : 'pp') : down ? 'ap' : hover ? 'a' : 'p';
-      const under = { background: this.background, x, y };
-      img.src = this.art.buttonUrl(base, st, under) ?? this.art.buttonUrl(base, 'p', under) ?? '';
+      img.src = this.art.buttonUrl(base, st) ?? this.art.buttonUrl(base, 'p') ?? '';
       b.disabled = fixed === 'n' || fixed === 'f';
     };
     b.addEventListener('pointerenter', () => ((hover = true), paint()));

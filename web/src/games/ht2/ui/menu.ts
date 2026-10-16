@@ -5,8 +5,6 @@ import { parsePlm } from '../engine/formats/plm';
 import type { RgbaImage } from '../engine/formats/binary';
 import type { PixelFont } from '../engine/ui/pixelFont';
 import type { Ht2Settings } from './settings';
-import { localizePill, localizeRound } from './menuLocale';
-import { localizeBackground } from './escLocale';
 import './ht2.css';
 
 /**
@@ -32,15 +30,7 @@ export class Ht2MenuArt {
     }
   }
 
-  /** Фон чи кнопка LOAD.RES; російські підписи фонів замінено українськими (escLocale.ts). */
   background(name: string): HTMLCanvasElement | null {
-    const c = this.raw(name);
-    if (c) localizeBackground(name, c);
-    return c;
-  }
-
-  /** Картинка LOAD.RES як є. */
-  private raw(name: string): HTMLCanvasElement | null {
     const b = this.res.textures.get(name);
     return b ? toCanvas(parseTxr(b)) : null;
   }
@@ -58,9 +48,6 @@ export class Ht2MenuArt {
   image(name: string): string | null {
     if (!this.cache.has(name)) {
       const c = name.endsWith('.msk') ? this.mask(name) : this.background(name);
-      // Круглі кнопки головного меню й пігулки екранів «Гра» / «Вихід» — з українськими написами (menuLocale.ts).
-      if (c && name.startsWith('m/')) localizeRound(name, c, (n) => this.mask(n));
-      if (c && /^[se]\//.test(name)) localizePill(name, c, (n) => this.raw(n));
       this.cache.set(name, c ? c.toDataURL() : null);
     }
     return this.cache.get(name)!;
@@ -77,6 +64,16 @@ function toCanvas(img: RgbaImage): HTMLCanvasElement {
 
 const W = 800;
 const H = 600;
+/** Яку частку порожніх полів з боків лишити (сцена розтягується по ширині, щоб поля були на 40% вужчі). */
+const SIDE_KEEP = 0.6;
+
+/** Вписує сцену 800×600 у вікно: висота — як є, ширина розтягнута на частину порожніх полів з боків. */
+function fitStage(stage: HTMLElement): void {
+  const k = Math.min(window.innerWidth / W, window.innerHeight / H);
+  const side = (window.innerWidth - W * k) / 2;
+  const kx = (window.innerWidth - 2 * side * SIDE_KEEP) / W;
+  stage.style.transform = `translate(-50%, -50%) scale(${kx}, ${k})`;
+}
 
 export interface MenuItem {
   label: string;
@@ -132,10 +129,7 @@ export function ht2MenuScreen(art: Ht2MenuArt | null, font: PixelFont | null, it
     n.textContent = note;
     stage.append(n);
   }
-  const fit = () => {
-    const s = Math.min(window.innerWidth / W, window.innerHeight / H);
-    stage.style.transform = `translate(-50%, -50%) scale(${s})`;
-  };
+  const fit = () => fitStage(stage);
   window.addEventListener('resize', fit);
   fit();
   document.body.append(root);
@@ -391,10 +385,7 @@ function screen(art: Ht2MenuArt, background: string, onRound?: (key: RoundKey) =
     }
     for (const [key, x, y, label] of ROUND) texButton(art, stage, `m/${key}`, x, y, label, { ext: '.msk', action: () => onRound(key) });
   }
-  const fit = () => {
-    const k = Math.min(window.innerWidth / W, window.innerHeight / H);
-    stage.style.transform = `translate(-50%, -50%) scale(${k})`;
-  };
+  const fit = () => fitStage(stage);
   window.addEventListener('resize', fit);
   fit();
   document.body.append(root);
