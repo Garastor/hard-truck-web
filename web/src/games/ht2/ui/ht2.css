@@ -613,3 +613,8 @@ body.ht2-orig-ui .touch-btn.brake,
 body.ht2-orig-ui .touch-btn.gas {
   clip-path: inset(0 round 4.5px);
 }
+
+/* Нижній ряд групи «•••» (дзеркало, сигнал) візуально сидів низько — вище на 2 px (на прохання користувача). */
+body.ht2-orig-ui .touch-more .touch-btn:nth-child(3n) {
+  transform: translateY(-2px);
+}
