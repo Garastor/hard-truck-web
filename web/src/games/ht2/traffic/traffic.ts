@@ -267,7 +267,7 @@ export class Traffic {
     }
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(v.visual.quaternion).y;
     c.flipped = up < 0.5 ? c.flipped + dt : 0;
-    c.want = c.gone ? 0 : decide(c, dt, obstacles);
+    c.want = c.gone ? 0 : decide(c, dt, obstacles, this.roads);
   }
 
   /** Кінематична → фізична (0x4cf080): та сама модель на колесах з параметрами vehicle.tech, швидкість ≤ 18 м/с. */
@@ -417,7 +417,7 @@ export class Traffic {
 
   /** Рух водія; гравець (тягач чи причіп) упритул спереду — стоп одразу. */
   private drive(c: Car, dt: number, avoid: readonly THREE.Vector3[], obstacles: readonly Obstacle[]): void {
-    step(c, dt, obstacles);
+    step(c, dt, obstacles, this.roads);
     // Кінематична машина інакше штовхає гравця з «нескінченною» масою (на перехресті вантажівка з причепом
     // виїжджає збоку, гальмувати пізно).
     for (const o of avoid) {

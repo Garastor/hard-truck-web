@@ -41,6 +41,24 @@ const PATH_HALF = 2.2;
 const BYPASS_WAIT = 3;
 /** Зустрічна має бути вільна на стільки вперед, м. */
 const BYPASS_CLEAR = 120;
+/**
+ * Обгін рухомих (порт, на прохання користувача): лідер повільніший за крейсерську на OVERTAKE_DV — обгін лівою
+ * смугою свого напрямку, на дорозі з однією смугою — по зустрічній; під час обгону — швидше на OVERTAKE_BOOST;
+ * зустрічний ближче OVERTAKE_ABORT, поки не порівнялися, — повернутися.
+ */
+const OVERTAKE_DV = 3;
+const OVERTAKE_BOOST = 4;
+const OVERTAKE_ABORT = 70;
+/**
+ * Пропуск на перехрестях (порт, на прохання користувача): перехрестя — вузол трьох і більше доріг ближче
+ * JUNCTION_LOOK; «на перехресті» — перші INSIDE м лінії за вузлом; шляхи перетинаються, якщо точки ближче
+ * CONFLICT_DIST; зупинка за JUNCTION_STOP до вузла; хто чекає довше YIELD_MAX — їде першим.
+ */
+const JUNCTION_LOOK = 60;
+const INSIDE = 15;
+const CONFLICT_DIST = 3.5;
+const JUNCTION_STOP = 7;
+const YIELD_MAX = 6;
 
 export interface Mover {
   line: RoadLine;
@@ -62,6 +80,12 @@ export interface Mover {
   bypass: THREE.Vector3 | null;
   /** Скільки стоїть за перешкодою, с. */
   waited: number;
+  /** Обганяє по зустрічній (bypass — машина, яку обганяє). */
+  overtaking: boolean;
+  /** Смуга, у яку повернутися після обгону сусідньою смугою (−1 — немає). */
+  backLane: number;
+  /** Скільки чекає, пропускаючи на перехресті, с. */
+  waitJ: number;
   /** Дорога після кінця лінії (null — тупик). */
   plan: number | null;
   /** Бажана смуга. */
@@ -95,6 +119,9 @@ export function newMover(line: RoadLine, seg: number, t: number, cruise: number,
     latGoal: 0,
     bypass: null,
     waited: 0,
+    overtaking: false,
+    backLane: -1,
+    waitJ: 0,
     plan: null,
     wantLane: line.lane,
     gone: false,
@@ -129,6 +156,8 @@ export function retrace(m: Mover, line: RoadLine, seg: number, t: number): void 
   m.from = null;
   m.latGoal = 0;
   m.bypass = null;
+  m.overtaking = false;
+  m.backLane = -1;
   planNext(m);
 }
 
@@ -230,10 +259,12 @@ export function leaderOn(
   lat = m.lat,
 ): { gap: number; speed: number; obstacle: Obstacle } | null {
   let best: { gap: number; speed: number; obstacle: Obstacle } | null = null;
+  // Далі кінця шляху (з запасом) перешкода не на шляху.
+  const reach = (path.s[path.s.length - 1] ?? 0) + 10;
   const ab = new THREE.Vector3();
   for (const o of obstacles) {
     if (o.mover === m) continue;
-    if (o.pos.distanceTo(m.pos) > LEADER_RANGE + 10) continue;
+    if (o.pos.distanceTo(m.pos) > reach) continue;
     for (let i = 0; i + 1 < path.pts.length; i++) {
       const a = path.pts[i];
       ab.subVectors(path.pts[i + 1], a).setY(0);
@@ -290,9 +321,9 @@ function changeLane(m: Mover, to: number): void {
 }
 
 /** Крок водія кінематичної машини: рішення (decide) і рух уздовж ліній. */
-export function step(m: Mover, dt: number, obstacles: readonly Obstacle[]): void {
+export function step(m: Mover, dt: number, obstacles: readonly Obstacle[], net: Net | null = null): void {
   if (m.gone) return;
-  const want = decide(m, dt, obstacles);
+  const want = decide(m, dt, obstacles, net);
   const dv = want - m.speed;
   const acc = dv > 0 ? Math.min(ACCEL, 0.3 + 0.6 * dv) : want === 0 ? -BRAKE : -Math.min(BRAKE, Math.max(1.5, 0.8 * -dv));
   m.speed = Math.max(0, dv > 0 ? Math.min(want, m.speed + acc * dt) : Math.max(want, m.speed + acc * dt));
@@ -302,10 +333,13 @@ export function step(m: Mover, dt: number, obstacles: readonly Obstacle[]): void
   place(m, dt);
 }
 
-/** Рішення водія (і кінематичного, і фізичного): перестроювання, обʼїзд, цільова швидкість, м/с. */
-export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[]): number {
+/** Рішення водія (і кінематичного, і фізичного): перестроювання, обʼїзд, обгін, пропуск, цільова швидкість, м/с. */
+export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net: Net | null = null): number {
   const path = pathAhead(m, LEADER_RANGE);
-  const leader = leaderOn(m, path, obstacles);
+  // Машину, яку обганяємо, лідером не вважаємо (вона збоку чи позаду).
+  const others = m.overtaking && m.bypass ? obstacles.filter((o) => o.pos !== m.bypass) : obstacles;
+  const leader = leaderOn(m, path, others);
+  const junction = net ? junctionAhead(m, net) : null;
 
   // Перестроювання: перед поворотом (ближче LANE_PLAN до стику) чи обʼїзд повільної перешкоди.
   const lane = m.line.lane;
@@ -313,15 +347,20 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[]): nu
   if (m.bypass) {
     // Перешкоду минули — назад у смугу.
     const rel = m.bypass.clone().sub(m.pos);
-    if (rel.x * m.heading.x + rel.z * m.heading.z < -(m.halfLen + 8) || rel.lengthSq() > 900) {
-      m.bypass = null;
-      m.latGoal = 0;
+    if (rel.x * m.heading.x + rel.z * m.heading.z < -(m.halfLen + 8) || rel.lengthSq() > 2500) endBypass(m);
+    else if (m.overtaking) {
+      // Порт: на зустрічній хтось зʼявився, а ми ще не порівнялися — повернутися за лідера.
+      const ahead = rel.x * m.heading.x + rel.z * m.heading.z;
+      const oncoming = leaderOn(m, path, others, m.latGoal);
+      if (oncoming && oncoming.gap < OVERTAKE_ABORT && ahead > 0) endBypass(m);
     }
   }
   m.waited = leader && leader.speed <= SLOW_OBSTACLE && m.speed < 1 ? m.waited + dt : 0;
   // Зсув (обʼїзд) — будь-де; перехід на сусідню лінію — не на «містку» між лініями (там інша геометрія).
   const settled = m.latGoal === 0 && Math.abs(m.lat) < 0.3 * m.line.laneWidth;
   const canShift = settled && !(m.seg === 0 && m.from);
+  // Лідер повільніший за нас (порт: обгін рухомих; king.exe обʼїжджає лише тих, хто стоїть).
+  const slow = !!leader && leader.gap < LEADER_GAP + FOLLOW_ZONE && (leader.speed <= SLOW_OBSTACLE || (!!leader.obstacle.mover && leader.speed < m.cruise - OVERTAKE_DV));
   if (settled && leader && !leader.obstacle.mover && m.waited > BYPASS_WAIT) {
     // Своя смуга заблокована гравцем чи суперником: сусідня смуга, інакше зустрічна, інакше узбіччя.
     const w = m.line.laneWidth;
@@ -331,26 +370,163 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[]): nu
       const block = leaderOn(m, path, obstacles.filter((o) => o !== leader.obstacle), g);
       if (block && block.gap < BYPASS_CLEAR) continue;
       m.latGoal = g;
-      m.bypass = leader.obstacle.pos.clone();
+      m.bypass = leader.obstacle.pos;
       m.waited = 0;
       break;
     }
+  } else if (canShift && slow && leader) {
+    // Обгін сусідньою смугою свого напрямку: рухомого — лише ліворуч (ближче до осі), того, хто стоїть, — будь-якою.
+    const sides = leader.speed <= SLOW_OBSTACLE ? [lane - 1, lane + 1] : [lane - 1];
+    let done = false;
+    for (const to of sides)
+      if (to >= 0 && to < m.line.lanes && laneFree(m, m.line.siblings[to], obstacles)) {
+        if (leader.speed > SLOW_OBSTACLE && m.backLane < 0) m.backLane = lane;
+        changeLane(m, to);
+        m.wantLane = to;
+        done = true;
+        break;
+      }
+    if (!done && leader.obstacle.mover && leader.speed > SLOW_OBSTACLE && lane === 0 && !junction) tryOncoming(m, leader, others);
   } else if (canShift) {
-    if (leader && leader.speed <= SLOW_OBSTACLE && leader.gap < LEADER_GAP + FOLLOW_ZONE) {
-      for (const to of [lane - 1, lane + 1])
-        if (to >= 0 && to < m.line.lanes && laneFree(m, m.line.siblings[to], obstacles)) {
-          changeLane(m, to);
-          m.wantLane = to;
-          break;
-        }
+    if (m.backLane >= 0 && m.backLane !== lane && !(leader && leader.gap < LEADER_GAP + FOLLOW_ZONE + 20)) {
+      // Після обгону — назад праворуч, щойно смуга вільна.
+      const to = lane + Math.sign(m.backLane - lane);
+      if (laneFree(m, m.line.siblings[to], obstacles)) {
+        changeLane(m, to);
+        m.wantLane = to;
+        if (to === m.backLane) m.backLane = -1;
+      }
     } else if (m.wantLane !== lane && (toEnd < LANE_PLAN || m.line.next.length === 0 || Math.random() < dt * 0.2)) {
       const to = lane + Math.sign(m.wantLane - lane);
       if (laneFree(m, m.line.siblings[to], obstacles)) changeLane(m, to);
     }
   }
 
-  const want = followLimit(m, leader, roadLimit(m, path));
+  const base = roadLimit(m, path);
+  let want = followLimit(m, leader, m.overtaking ? Math.min(base + OVERTAKE_BOOST, m.cruise + OVERTAKE_BOOST) : base);
+  // Пропуск на перехресті: зупинитися перед вузлом, доки той, кому поступаємося, не проїде.
+  if (junction && net && mustYield(m, junction, obstacles, net)) {
+    want = Math.min(want, followLimit(m, { gap: junction.dist - JUNCTION_STOP - m.halfLen, speed: 0 }, want));
+    m.waitJ = m.speed < 1 ? m.waitJ + dt : m.waitJ;
+  } else m.waitJ = 0;
   return want < 0.1 ? 0 : want;
+}
+
+function endBypass(m: Mover): void {
+  m.bypass = null;
+  m.latGoal = 0;
+  m.overtaking = false;
+}
+
+/**
+ * Обгін по зустрічній (порт): лише без бітів 4/8 (суцільна), коли зустрічна вільна на весь маневр із запасом,
+ * дорога попереду пряма (обмеження за кривизною не нижче крейсерської) і до кінця лінії вистачає місця.
+ */
+function tryOncoming(m: Mover, leader: { gap: number; speed: number; obstacle: Obstacle }, obstacles: readonly Obstacle[]): void {
+  if (m.line.flags & 12) return;
+  const goal = -(m.line.lane + 1) * m.line.laneWidth;
+  const rel = Math.max(2, m.cruise + OVERTAKE_BOOST - leader.speed);
+  const need = leader.gap + 2 * m.halfLen + 2 * leader.obstacle.half + 16;
+  const time = need / rel;
+  if (remaining(m) < need + time * leader.speed + 30) return;
+  const clear = Math.min(400, time * (m.cruise + OVERTAKE_BOOST + 20) + 40);
+  const path = pathAhead(m, clear);
+  if (roadLimit(m, path) < m.cruise * 0.95) return;
+  if (leaderOn(m, path, obstacles.filter((o) => o !== leader.obstacle), goal)) return;
+  m.latGoal = goal;
+  m.bypass = leader.obstacle.pos;
+  m.overtaking = true;
+}
+
+/** Мережа для пропуску на перехрестях (вузли). */
+export interface Net {
+  isJunction(node: number): boolean;
+}
+
+/** Відстань від початку поточної лінії до машини, м. */
+function fromStart(m: Mover): number {
+  let d = 0;
+  for (let i = 0; i < m.seg; i++) d += m.line.pts[i].distanceTo(m.line.pts[i + 1]);
+  return d + segStart(m).distanceTo(m.line.pts[m.seg + 1]) * m.t;
+}
+
+/** Перехрестя в кінці поточної лінії ближче JUNCTION_LOOK. */
+function junctionAhead(m: Mover, net: Net): { node: number; dist: number } | null {
+  if (!net.isJunction(m.line.endNode)) return null;
+  const dist = remaining(m);
+  return dist < JUNCTION_LOOK ? { node: m.line.endNode, dist } : null;
+}
+
+/** Точки шляху через перехрестя (від from до to м уздовж шляху, крок 2 м). */
+function through(m: Mover, from: number, to: number): THREE.Vector3[] {
+  const { pts, s } = pathAhead(m, to + 2);
+  const out: THREE.Vector3[] = [];
+  for (let d = Math.max(0, from); d <= to; d += 2) {
+    let i = 1;
+    while (i < pts.length - 1 && s[i] < d) i++;
+    const a = pts[i - 1];
+    const b = pts[Math.min(i, pts.length - 1)];
+    const len = (s[i] ?? d) - s[i - 1];
+    out.push(a.clone().lerp(b, len > 0 ? THREE.MathUtils.clamp((d - s[i - 1]) / len, 0, 1) : 0));
+  }
+  return out;
+}
+
+function crosses(a: THREE.Vector3[], b: THREE.Vector3[]): boolean {
+  for (const p of a) for (const q of b) if (Math.hypot(p.x - q.x, p.z - q.z) < CONFLICT_DIST) return true;
+  return false;
+}
+
+/** Запланований поворот на стику (праворуч — додатний), рад. */
+function plannedTurn(m: Mover): number {
+  const to = m.plan === null ? null : nextLine(m.line, m.plan, m.line.lane);
+  return to ? turnAngle(m.line, to) : 0;
+}
+
+/**
+ * Чи поступитися на перехресті (порт; у king.exe пропуску немає): тим, хто вже на перехресті й чий шлях перетинає
+ * наш; серед тих, хто підʼїжджає (за ETA не пізніше нас + 4 с чи ближче 25 м) і перетинається: хто не встигає
+ * загальмувати — їде; хто чекає довше YIELD_MAX — їде; головна дорога (ширша на 3 м) — їде; поворот ліворуч
+ * пропускає зустрічного; на рівних — перешкода праворуч.
+ */
+function mustYield(m: Mover, j: { node: number; dist: number }, obstacles: readonly Obstacle[], net: Net): boolean {
+  const canStop = (o: Mover, dist: number) => !(o.speed > 3 && dist < (o.speed * o.speed) / (2 * 4) + 3);
+  if (!canStop(m, j.dist)) return false;
+  let mine: THREE.Vector3[] | null = null;
+  const myEta = j.dist / Math.max(m.speed, 0.5);
+  for (const o of obstacles) {
+    const om = o.mover;
+    if (!om || om === m || om.gone || om.line.siblings === m.line.siblings) continue;
+    let inside = false;
+    let oDist: number;
+    if (om.line.endNode === j.node && net.isJunction(om.line.endNode)) {
+      oDist = remaining(om);
+      if (oDist > JUNCTION_LOOK) continue;
+      if (oDist > 25 && oDist / Math.max(om.speed, 0.5) > myEta + 4) continue;
+    } else if (om.line.startNode === j.node && fromStart(om) < INSIDE) {
+      inside = true;
+      oDist = 0;
+    } else continue;
+    mine ??= through(m, j.dist - 4, j.dist + 25);
+    const theirs = inside ? through(om, 0, 20) : through(om, oDist - 4, oDist + 25);
+    if (!crosses(mine, theirs)) continue;
+    if (inside) return true;
+    if (!canStop(om, oDist)) return true;
+    if (m.waitJ > YIELD_MAX && m.waitJ >= om.waitJ) continue;
+    if (om.waitJ > YIELD_MAX && om.waitJ > m.waitJ) return true;
+    if (om.line.width >= m.line.width + 3) return true;
+    if (m.line.width >= om.line.width + 3) continue;
+    const dot = m.heading.dot(om.heading);
+    if (dot < -0.7) {
+      if (plannedTurn(m) < -0.35 && plannedTurn(om) >= -0.35) return true;
+      continue;
+    }
+    // Перешкода праворуч (вектор праворуч — (−z, x)).
+    const rx = om.pos.x - m.pos.x;
+    const rz = om.pos.z - m.pos.z;
+    if (rx * -m.heading.z + rz * m.heading.x > 0) return true;
+  }
+  return false;
 }
 
 /**
@@ -486,7 +662,10 @@ export function coast(m: Mover, dt: number): void {
   m.speed = m.cruise;
   m.lat = m.latGoal = 0;
   m.bypass = null;
+  m.overtaking = false;
+  m.backLane = -1;
   m.waited = 0;
+  m.waitJ = 0;
   advance(m, m.cruise * dt);
   place(m, dt);
 }

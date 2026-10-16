@@ -50,6 +50,7 @@ import { TabMap } from './ui/tabMap';
 import { Radio, type RadioAsk, type RadioContact } from './ui/radio';
 import type { RivalRun } from './career/competition';
 import { Navigator, type NavTurn } from './world/navigator';
+import { WindDebris } from './world/windDebris';
 import { Tablo } from './ui/tablo';
 import { Cards } from './ui/cards';
 
@@ -234,6 +235,9 @@ export class Ht2Drive {
   /** Блискавка: час до наступної (с), час спалаху, спрайт `flash`. */
   private boltTimer = 0;
   private flashTime = 0;
+  /** Листя на вітрі (CWindDebris king.exe). */
+  private debris: WindDebris | null = null;
+  private readonly debrisLook = new THREE.Vector3();
   private bolt: THREE.Sprite | null = null;
   private rainSound: ReturnType<EngineAudio['loopSound']> = null;
   private windSound: ReturnType<EngineAudio['loopSound']> = null;
@@ -720,6 +724,19 @@ export class Ht2Drive {
     }
   }
 
+  /** Листя на вітрі: точка землі під вантажівкою (променем униз) і напрям погляду камери. */
+  private updateDebris(dt: number, wind: number, w: number): void {
+    if (!this.debris) {
+      this.debris = new WindDebris(this.world.common);
+      this.world.scene.add(this.debris.group);
+    }
+    const p = this.truck.visual.position;
+    const anchor = wind > 5 ? this.groundAt(p.clone()) : null;
+    if (anchor) anchor.y -= 2.5;
+    this.camera.getWorldDirection(this.debrisLook);
+    this.debris.update(dt, anchor, this.debrisLook, wind, w, this.world.regionAt(p.x, -p.z));
+  }
+
   /** Година доби гри (0…24). */
   get hour(): number {
     const t = this.careerMode ? this.careerMode.career.time : this.freeTime;
@@ -746,6 +763,7 @@ export class Ht2Drive {
     // Спалах: розсіяне світло (0,9, 1, 1) через кадр протягом 1 с (king.exe 0x005a9540).
     this.world.setClimate(hour, c.bad, this.flashTime > 0 && this.tick % 2 === 1, c.w());
     this.world.updateTrees(dt, c.wind);
+    this.updateDebris(dt, c.wind, c.w());
     const dusk = sunHeight(hour) < 0.2;
     this.world.setNight(dusk);
     this.cabLight?.color.copy(this.world.ambientColor).multiplyScalar(1.4);
@@ -1557,6 +1575,7 @@ export class Ht2Drive {
     this.cabAsm?.dispose();
     this.music?.dispose();
     this.traffic?.dispose();
+    this.debris?.dispose();
     this.police?.dispose();
     this.mafia?.dispose();
     this.markets?.dispose();
