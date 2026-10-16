@@ -2,23 +2,48 @@ import * as THREE from 'three';
 import type { EscArt } from './escArt';
 import type { RoadLine } from '../world/roads';
 import type { MapPoint } from '../world/worldMap';
+import { hudScale } from '../engine/ui/pixelFont';
 
 /**
- * Карта на Tab, як у king.exe (0x529890, re/notes/ht2/ui.md §5): малюється поверх їзди (гра не зупиняється).
- * Перше натискання — увесь світ, вписаний в екран з полями 80 по x і 130 по y; друге — удвічі більший масштаб з
- * центром на гравці й рамкою по кутах; третє — сховати. Значки `m_16\I_*.msk`: склад-місто `I_city0` з назвою,
- * заправка `I_fuel0`, у збільшеному масштабі ще СТО `I_repair` і стоянки-ринки `I_park`; гравець `I_tr_myc`,
- * далекобійники `I_tr_opp`. Ціль блимає (`I_city1…3` чи `I_fuel1…3` по колу — гіпотеза: так виглядають ці стани).
- * Колір доріг у king.exe не розібрано — світло-бірюзовий табла (гіпотеза).
+ * Карта king.exe (0x529890, re/notes/ht2/ui.md §5) — і огляд світу, і мінікарта; малюється поверх їзди (гра не
+ * зупиняється). Tab (кнопка «Карта») перемикає стани по колу: сховано → огляд → мінікарта → сховано.
+ * - Огляд: світ вписано в екран — масштаб min((W − 80) / ширина світу, (H − 130) / висота), відступ 40 зліва й
+ *   згори.
+ * - Мінікарта: масштаб удвічі більший, гравець — у точці (W/6, H/2), карта обрізана прямокутником
+ *   x ∈ [W/20, W/3 − W/20], y ∈ [H/4, 3H/4] із синьою рамкою (0, 120, 255).
+ * Дороги — лінії кольору (0, 255, 120). Значки `m_16\I_*.msk` — лівим верхнім кутом у (x − 5, y − 5), як в
+ * оригіналі: склад-місто `I_city0` з назвою (MENU.FON, базова лінія y − 5 від x − 20), заправка `I_fuel0`, стоянки
+ * `I_park`, СТО `I_repair` — лише на мінікарті; ціль блимає `I_city0…3…1` (`I_fuel…`) — кадр змінюється кожні
+ * 0,125 с; гравець — `I_tr_myNN_K`: NN — напрям (24 сектори по 15° за годинниковою стрілкою від півночі карти),
+ * K — кадр анімації 0…5 (той самий лічильник); далекобійники й суперники гонки — `I_tr_opp`; фініш гонки —
+ * `I_race` з написом.
+ * Гіпотези: колір підписів (палітра екрана, індекс 5, не розібрано); оригінал показує суперників лише з певним
+ * прапорцем гравця (0x80, імовірно покращення) чи в мережевій грі — у порту завжди; дороги з прапорцем 0x20
+ * оригінал ховає, доки їх не «відкриє» подія (0x529850) — у порту видно всі.
  */
 export type TabMapState = 0 | 1 | 2;
 
-const ROAD = 'rgba(123, 255, 255, 0.75)';
-const ROAD_EDGE = 'rgba(0, 0, 0, 0.55)';
+const ROAD = 'rgb(0, 255, 120)';
+const FRAME = 'rgb(0, 120, 255)';
 const LABEL = 'rgb(240, 232, 150)';
-/** Поля огляду, CSS px (king.exe: ширина − 80, висота − 130). */
+/** Поля огляду, CSS px (king.exe: ширина − 80, висота − 130, відступ 40). */
 const MARGIN_X = 80;
 const MARGIN_Y = 130;
+const OFFSET = 40;
+/** Кадр анімації значків, с (king.exe: 0,125 с; 6 кадрів). */
+const FRAME_TIME = 0.125;
+
+export interface TabMapScene {
+  me: THREE.Vector3;
+  /** Напрям руху гравця (Three.js). */
+  heading: THREE.Vector3;
+  rivals: readonly THREE.Vector3[];
+  /** Ціль (склад чи заправка) — її значок блимає. */
+  target: THREE.Vector3 | null;
+  /** Фініш гонки. */
+  finish?: THREE.Vector3 | null;
+  finishLabel?: string;
+}
 
 export class TabMap {
   readonly canvas = document.createElement('canvas');
@@ -26,7 +51,7 @@ export class TabMap {
   private readonly roads = new Path2D();
   private readonly bounds = new THREE.Box2();
   state: TabMapState = 0;
-  private blink = 0;
+  private time = 0;
 
   constructor(
     private readonly art: EscArt,
@@ -46,22 +71,25 @@ export class TabMap {
     parent.append(this.canvas);
   }
 
-  /** Наступний стан: огляд → збільшено → сховано. */
+  /** Наступний стан: сховано → огляд → мінікарта → сховано. */
   cycle(): TabMapState {
-    this.state = ((this.state + 1) % 3) as TabMapState;
-    this.canvas.hidden = this.state === 0;
-    return this.state;
+    return this.show(((this.state + 1) % 3) as TabMapState);
+  }
+
+  show(state: TabMapState): TabMapState {
+    this.state = state;
+    this.canvas.hidden = state === 0;
+    return state;
   }
 
   hide(): void {
-    this.state = 0;
-    this.canvas.hidden = true;
+    this.show(0);
   }
 
-  /** Кадр: me — гравець, rivals — далекобійники, target — ціль (склад чи заправка). */
-  draw(dt: number, me: THREE.Vector3, rivals: readonly THREE.Vector3[], target: THREE.Vector3 | null): void {
+  draw(dt: number, s: TabMapScene): void {
+    this.time += dt;
     if (this.state === 0) return;
-    this.blink = (this.blink + dt * 4) % 3;
+    const zoom = this.state === 2;
     const dpr = window.devicePixelRatio || 1;
     const W = window.innerWidth;
     const H = window.innerHeight;
@@ -72,76 +100,77 @@ export class TabMap {
     const ctx = this.ctx;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
+    ctx.imageSmoothingEnabled = false;
+    // Огляд — під табло порту (у king.exe табло 50 px перекриває відступ 40).
     const top = parseFloat(getComputedStyle(document.body).getPropertyValue('--ht2-tablo-h')) || 0;
     const size = this.bounds.getSize(new THREE.Vector2());
     let k = Math.min((W - MARGIN_X) / size.x, (H - top - MARGIN_Y) / size.y);
-    let cx = (this.bounds.min.x + this.bounds.max.x) / 2;
-    let cz = (this.bounds.min.y + this.bounds.max.y) / 2;
-    if (this.state === 2) {
+    let ox = OFFSET - this.bounds.min.x * k;
+    let oy = top + OFFSET - this.bounds.min.y * k;
+    // Прямокутник мінікарти.
+    const box = { x0: Math.floor(W / 20), x1: Math.floor(W / 3 - W / 20), y0: Math.floor(H / 4), y1: Math.floor(H - H / 4) };
+    if (zoom) {
       k *= 2;
-      cx = me.x;
-      cz = me.z;
+      ox = W / 6 - s.me.x * k;
+      oy = H / 2 - s.me.z * k;
     }
-    const ox = W / 2 - cx * k;
-    const oy = top + (H - top) / 2 - cz * k;
     const at = (p: THREE.Vector3) => [ox + p.x * k, oy + p.z * k] as const;
-    // Дороги: темна облямівка й лінія (видно на будь-якому тлі).
+    const inside = (x: number, y: number) => !zoom || (x >= box.x0 && x <= box.x1 && y >= box.y0 && y <= box.y1);
+    if (zoom) {
+      ctx.strokeStyle = FRAME;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(box.x0 + 0.5, box.y0 + 0.5, box.x1 - box.x0, box.y1 - box.y0);
+    }
     ctx.save();
+    if (zoom) {
+      ctx.beginPath();
+      ctx.rect(box.x0 + 1, box.y0 + 1, box.x1 - box.x0 - 1, box.y1 - box.y0 - 1);
+      ctx.clip();
+    }
     ctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * ox, dpr * oy);
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = ROAD_EDGE;
-    ctx.lineWidth = 3 / k;
-    ctx.stroke(this.roads);
     ctx.strokeStyle = ROAD;
-    ctx.lineWidth = 1.2 / k;
+    ctx.lineWidth = 1 / k;
     ctx.stroke(this.roads);
     ctx.restore();
-    if (this.state === 2) this.frame(W, H, top);
-    const icon = (name: string, p: THREE.Vector3) => {
-      const img = this.art.canvas(`m_16\\${name}.msk`);
-      if (!img) return;
-      const [x, y] = at(p);
-      ctx.drawImage(img, Math.round(x - img.width / 2), Math.round(y - img.height / 2));
-    };
-    const step = Math.floor(this.blink) + 1;
-    const isTarget = (p: THREE.Vector3) => !!target && p.distanceTo(target) < 30;
-    for (const pt of this.points) {
-      if (pt.kind === 'town') {
-        icon(isTarget(pt.pos) ? `I_city${step}` : 'I_city0', pt.pos);
-        if (pt.label && this.art.matrix) {
-          const [x, y] = at(pt.pos);
-          const t = pt.label.toUpperCase();
-          this.art.matrix.draw(ctx, t, Math.round(x - this.art.matrix.measure(t) / 2), Math.round(y + 8), LABEL);
-        }
-      } else if (pt.kind === 'fuel') icon(isTarget(pt.pos) ? `I_fuel${step}` : 'I_fuel0', pt.pos);
-      else if (this.state === 2) icon(pt.kind === 'sto' ? 'I_repair' : 'I_park', pt.pos);
-    }
-    for (const r of rivals) icon('I_tr_opp', r);
-    icon('I_tr_myc', me);
-  }
 
-  /** Рамка збільшеного масштабу — кутики (king.exe малює чотири відрізки). */
-  private frame(W: number, H: number, top: number): void {
-    const ctx = this.ctx;
-    const x0 = W / 20;
-    const x1 = W - W / 20;
-    const y0 = top + (H - top) / 8;
-    const y1 = H - (H - top) / 8;
-    const l = Math.min(W, H) / 8;
-    ctx.strokeStyle = ROAD;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (const [x, y, dx, dy] of [
-      [x0, y0, 1, 1],
-      [x1, y0, -1, 1],
-      [x0, y1, 1, -1],
-      [x1, y1, -1, -1],
-    ]) {
-      ctx.moveTo(x + dx * l, y + 0.5);
-      ctx.lineTo(x + 0.5, y + 0.5);
-      ctx.lineTo(x + 0.5, y + dy * l);
+    // Значки: масштаб інтерфейсу (на телефоні 1:1), лівий верхній кут — (x − 5, y − 5).
+    const u = hudScale();
+    const icon = (name: string, p: THREE.Vector3) => {
+      const [x, y] = at(p);
+      if (!inside(x, y)) return;
+      const img = this.art.canvas(`m_16\\${name}.msk`);
+      if (img) ctx.drawImage(img, Math.round(x - 5 * u), Math.round(y - 5 * u), img.width * u, img.height * u);
+    };
+    const label = (text: string, p: THREE.Vector3) => {
+      const font = this.art.menu;
+      const [x, y] = at(p);
+      if (!font || !inside(x, y)) return;
+      ctx.save();
+      ctx.translate(Math.round(x - 20 * u), Math.round(y - 5 * u));
+      ctx.scale(u, u);
+      font.draw(ctx, text, 0, -font.height, LABEL);
+      ctx.restore();
+    };
+    const phase = Math.floor(this.time / FRAME_TIME) % 6;
+    const blink = phase <= 3 ? phase : 6 - phase;
+    const isTarget = (p: THREE.Vector3) => !!s.target && p.distanceTo(s.target) < 30;
+    for (const pt of this.points) {
+      if (pt.kind === 'town') icon(`I_city${isTarget(pt.pos) ? blink : 0}`, pt.pos);
+      else if (pt.kind === 'fuel') icon(`I_fuel${isTarget(pt.pos) ? blink : 0}`, pt.pos);
+      else if (pt.kind === 'market') icon('I_park', pt.pos);
+      else if (zoom) icon('I_repair', pt.pos);
     }
-    ctx.stroke();
+    for (const pt of this.points) if (pt.kind === 'town' && pt.label) label(pt.label.toUpperCase(), pt.pos);
+    if (s.finish) {
+      icon('I_race', s.finish);
+      if (s.finishLabel) label(s.finishLabel, s.finish);
+    }
+    for (const r of s.rivals) icon('I_tr_opp', r);
+    // Напрям: сектор 15° від півночі карти (−z) за годинниковою стрілкою, з відкиданням дробу, як у king.exe.
+    const len = Math.hypot(s.heading.x, s.heading.z) || 1;
+    let sector = Math.floor((Math.acos(Math.max(-1, Math.min(1, -s.heading.z / len))) * 12) / Math.PI);
+    if (s.heading.x < 0) sector = 24 - sector;
+    icon(`I_tr_my${String(sector % 24).padStart(2, '0')}_${phase}`, s.me);
   }
 
   dispose(): void {

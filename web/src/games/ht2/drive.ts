@@ -35,7 +35,6 @@ import { Trailer } from './vehicles/trailer';
 import { Truckers, truckerKinds, truckerNames } from './traffic/truckers';
 import { parseUpgrades, tuning, type Tuning } from './career/upgrades';
 import { parseServices, parseTowns } from './career/economy';
-import { NavMap } from './engine/ui/navMap';
 import { Music } from './ui/music';
 import { SceneAssembler } from './engine/render/sceneBuilder';
 import { parseB3d } from './engine/formats/b3d';
@@ -164,7 +163,6 @@ export class Ht2Drive {
   race: RaceMode | null = null;
   truckers: Truckers | null = null;
   private raceMessages = new Map<string, string>();
-  private map: NavMap | null = null;
   private music: Music | null = null;
   /** Кабіна (вид з кабіни): інтер'єр з CABINES.B3D окремою сценою поверх світу, як у першій грі. */
   private readonly overlayScene = new THREE.Scene();
@@ -355,9 +353,11 @@ export class Ht2Drive {
         // З напівпричепом — повільніше в поворотах (кермо на швидкості обмежене).
         if (this.autopilot && this.trailer) Object.assign(this.autopilot, { cruise: 45, bendGain: 5, bendFloor: 0.25 });
       }
-      // Tab: з графікою оригіналу — карта king.exe (три стани), інакше — мінікарта порту.
-      if (cmd === 'map' && this.tabMap) this.tabMap.cycle();
-      else if (cmd === 'map' && this.map) this.map.el.hidden = !this.map.el.hidden;
+      // Tab: карта king.exe (огляд → мінікарта → сховано); без графіки оригіналу — карта світу порту.
+      if (cmd === 'map') {
+        if (this.tabMap) this.tabMap.cycle();
+        else this.openMap();
+      }
       if (cmd === 'lights') this.lightsManual = !this.lamps[0]?.visible;
       // Двірники — окрема дія гри («Wipers», W); у порту без натискання вмикаються в дощ.
       if (cmd === 'wipers') this.wipersManual = !(this.glassRain?.wipersOn ?? this.raining);
@@ -373,8 +373,6 @@ export class Ht2Drive {
     };
     document.body.classList.add('driving');
     this.touch = this.input.mountTouch(o.overlay);
-    // Мінікарта: осьові лінії доріг (без зворотних смуг), машини трафіку, ціль кар'єри.
-    this.map = new NavMap(o.overlay, { lines: this.roads.lines.filter((l) => !l.name.endsWith('r')) });
     this.hud.className = 'ht2-hud';
     const back = document.createElement('button');
     back.textContent = '← Меню';
@@ -433,6 +431,8 @@ export class Ht2Drive {
         say: (t) => this.say(t),
       });
       this.tabMap = new TabMap(art, o.overlay, this.roads.lines.filter((l) => !l.name.endsWith('r')), this.mapPoints);
+      // Одразу — мінікарта (стан 2): у порту її видно з початку їзди (king.exe починає зі схованої карти).
+      this.tabMap.show(2);
       document.body.classList.add('ht2-orig-ui');
       this.resize();
     });
@@ -1264,11 +1264,17 @@ export class Ht2Drive {
     if (this.markets && this.careerMode) this.markets.update(this.truck.visual.position, Math.floor(this.careerMode.career.time / 86400));
     const sign = this.signs?.update(this.truck.visual.position, this.truck.forward());
     if (sign) this.say(sign, 6);
-    const chaser = this.mafia?.chaser;
     this.fPanels?.update(dt);
     this.updateNavigator(dt);
-    this.tabMap?.draw(dt, this.truck.visual.position, this.truckers?.positions ?? [], this.careerMode?.target() ?? null);
-    this.map?.update(dt, this.truck.visual.position, this.truck.forward(), [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? []), ...(chaser ? [chaser] : [])], this.careerMode?.target() ?? null);
+    this.tabMap?.draw(dt, {
+      me: this.truck.visual.position,
+      heading: this.truck.forward(),
+      rivals: this.race ? this.race.racers.slice(1).map((r) => r.truck.visual.position) : (this.truckers?.positions ?? []),
+      target: this.careerMode?.target() ?? null,
+      // Фініш гонки — значок I_race з написом mess.txt 88 «Кольцо».
+      finish: this.race?.finishPos ?? null,
+      finishLabel: 'КІЛЬЦЕ',
+    });
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
     // Поруч далекобійник — його імʼя й машина (names.sch, vehicle.tech).
     const near = this.truckers?.nearest(this.truck.visual.position);
@@ -1437,7 +1443,6 @@ export class Ht2Drive {
     document.body.classList.remove('driving');
     this.input.dispose();
     this.touch?.remove();
-    this.map?.dispose();
     this.hud.remove();
     this.bar.remove();
     this.disposed = true;

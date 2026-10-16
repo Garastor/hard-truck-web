@@ -295,10 +295,6 @@ body.ht2-orig-ui .touch-btn.more {
   top: calc(env(safe-area-inset-top, 0px) + max(64px, var(--ht2-tablo-h, 0px) + 8px));
 }
 
-body.ht2-orig-ui .nav-map {
-  top: calc(max(8px, env(safe-area-inset-top)) + max(60px, var(--ht2-tablo-h, 0px) + 60px));
-}
-
 /* Картка події (mess<N>.msk) — праворуч під табло; дотик ховає. */
 .ht2-card {
   position: fixed;

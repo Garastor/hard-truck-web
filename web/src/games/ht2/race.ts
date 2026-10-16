@@ -194,6 +194,11 @@ export class RaceMode {
     return this.route.length;
   }
 
+  /** Старт і фініш кола (start1_1) — для значка на карті. */
+  get finishPos(): THREE.Vector3 {
+    return this.route.pts[0];
+  }
+
   /** Перед кроком фізики: керування суперників (до відліку — стоять). */
   control(dt: number): void {
     const others = this.racers.map((r) => r.truck.visual.position);
