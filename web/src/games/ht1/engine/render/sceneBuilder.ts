@@ -867,7 +867,123 @@ function buildSky(asm: SceneAssembler): THREE.Group | null {
     o.renderOrder = -1000;
     o.frustumCulled = false;
   });
+  packSky(inner);
   return sky;
+}
+
+/**
+ * Купол неба — одним викликом малювання (було 32: кожен шматок — своя текстура 32×32…64×64; оптимізація для
+ * телефона). Текстури складаємо в атлас (з рамкою SKY_BORDER пікселів — повторення краю, щоб лінійна фільтрація й
+ * мип-рівні не підмішували сусідів), колір матеріалу запікаємо в пікселі, шматки без текстури — однотонною плиткою.
+ * Порядок шматків (небо малюється без глибини) — той самий. Матеріали шматків однакові, крім текстури й кольору;
+ * якщо ні — нічого не змінюємо.
+ */
+const SKY_BORDER = 4;
+const SKY_ATLAS_WIDTH = 512;
+function packSky(root: THREE.Object3D): void {
+  const meshes: THREE.Mesh[] = [];
+  root.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh);
+  });
+  if (meshes.length < 2) return;
+  const mats = meshes.map((m) => m.material as THREE.MeshBasicMaterial);
+  const same = (a: THREE.MeshBasicMaterial, b: THREE.MeshBasicMaterial) =>
+    a.alphaTest === b.alphaTest && a.transparent === b.transparent && a.opacity === b.opacity && a.side === b.side && a.vertexColors === b.vertexColors;
+  if (mats.some((m) => !same(m, mats[0]) || Array.isArray(m)) || meshes.some((m) => !!m.geometry.index || !m.geometry.attributes.uv)) return;
+  // Плитки: розмір і пікселі (sRGB, колір матеріалу вже множено).
+  type Img = { data: ArrayLike<number>; width: number; height: number };
+  const c = new THREE.Color();
+  const tiles = mats.map((m) => {
+    const img = m.map?.image as Img | undefined;
+    const tint = m.color;
+    if (!img?.data) {
+      const hex = tint.getHex(THREE.SRGBColorSpace);
+      const px = new Uint8Array(4 * 4 * 4);
+      for (let i = 0; i < 16; i++) px.set([(hex >> 16) & 255, (hex >> 8) & 255, hex & 255, 255], i * 4);
+      return { data: px, width: 4, height: 4 };
+    }
+    if (tint.equals(new THREE.Color(1, 1, 1))) return img;
+    const px = new Uint8Array(img.width * img.height * 4);
+    for (let i = 0; i < img.width * img.height; i++) {
+      c.setRGB(img.data[i * 4] / 255, img.data[i * 4 + 1] / 255, img.data[i * 4 + 2] / 255, THREE.SRGBColorSpace).multiply(tint);
+      const hex = c.getHex(THREE.SRGBColorSpace);
+      px.set([(hex >> 16) & 255, (hex >> 8) & 255, hex & 255, img.data[i * 4 + 3]], i * 4);
+    }
+    return { data: px, width: img.width, height: img.height };
+  });
+  // Полиці: зліва направо, рядками.
+  const B = SKY_BORDER;
+  const W = SKY_ATLAS_WIDTH;
+  let x = 0;
+  let y = 0;
+  let rowH = 0;
+  const rects = tiles.map((t) => {
+    const w = t.width + 2 * B;
+    const h = t.height + 2 * B;
+    if (x + w > W) {
+      x = 0;
+      y += rowH;
+      rowH = 0;
+    }
+    const r = { x: x + B, y: y + B };
+    x += w;
+    rowH = Math.max(rowH, h);
+    return r;
+  });
+  const H = THREE.MathUtils.ceilPowerOfTwo(y + rowH);
+  const atlas = new Uint8Array(W * H * 4);
+  tiles.forEach((t, k) => {
+    const { x: x0, y: y0 } = rects[k];
+    for (let yy = -B; yy < t.height + B; yy++) {
+      const sy = Math.min(t.height - 1, Math.max(0, yy));
+      for (let xx = -B; xx < t.width + B; xx++) {
+        const sx = Math.min(t.width - 1, Math.max(0, xx));
+        const si = (sy * t.width + sx) * 4;
+        const di = ((y0 + yy) * W + x0 + xx) * 4;
+        for (let ch = 0; ch < 4; ch++) atlas[di + ch] = t.data[si + ch];
+      }
+    }
+  });
+  // Геометрія: шматки в системі кореня, UV — у плитку атласу.
+  root.updateMatrixWorld(true);
+  const inv = root.matrixWorld.clone().invert();
+  const rel = new THREE.Matrix4();
+  const v = new THREE.Vector3();
+  const pos: number[] = [];
+  const uv: number[] = [];
+  meshes.forEach((m, k) => {
+    rel.multiplyMatrices(inv, m.matrixWorld);
+    const p = m.geometry.attributes.position;
+    const t = m.geometry.attributes.uv;
+    const { x: x0, y: y0 } = rects[k];
+    const { width: tw, height: th } = tiles[k];
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i).applyMatrix4(rel);
+      pos.push(v.x, v.y, v.z);
+      uv.push((x0 + t.getX(i) * tw) / W, (y0 + t.getY(i) * th) / H);
+    }
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  const tex = new THREE.DataTexture(atlas, W, H, THREE.RGBAFormat);
+  const src = mats.find((m) => m.map)?.map;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = src?.magFilter ?? THREE.LinearFilter;
+  tex.minFilter = src?.minFilter ?? THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = src?.generateMipmaps ?? true;
+  tex.needsUpdate = true;
+  const mat = mats[0].clone();
+  mat.map = tex;
+  mat.color.set(0xffffff);
+  mat.onBeforeCompile = mats[0].onBeforeCompile;
+  mat.customProgramCacheKey = mats[0].customProgramCacheKey;
+  const out = new THREE.Mesh(geo, mat);
+  out.name = 'sky';
+  out.renderOrder = meshes[0].renderOrder;
+  out.frustumCulled = false;
+  for (const m of meshes) m.removeFromParent();
+  root.add(out);
 }
 
 /** Матриця з блоку 24: три осі + позиція (у системі гри). */
