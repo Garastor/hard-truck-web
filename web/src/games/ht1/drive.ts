@@ -47,22 +47,32 @@ const SURFACE_RAY_UP = 6;
 const FALL_DEATH_TIME = 3;
 /**
  * Покриття під колесами — за матеріалом поверхні (розібрано за текстурами трас; у файлах гри типу покриття
- * немає, тож це класифікація порту): гравій COUNT (road_20/28/29, cobble — щебінь), MOUNT (roadsd0, stones0,
- * stream0 — камʼянисте русло); ґрунт — трава, ліс, ґрунт полігону; пісок — пляжі COUNT; болото — темно-зелена
- * трава COUNT (grass7, лише там); вода. Змішані текстури (асфальт із травою по краях) — за кольором текселя під
- * колесами: зелений — трава.
+ * немає, тож це класифікація порту): гравій COUNT (road_20/28/29, cobble — щебінь), MOUNT (roadsd0, stones0);
+ * ґрунт — трава, ліс, ґрунт полігону; пісок — пляжі COUNT; болото — темно-зелена трава COUNT (grass7, лише там);
+ * вода (stream0…3 MOUNT — кадри анімації однієї поверхні броду; stream0 — з камінням на дні, не окреме русло).
+ * Змішані текстури (асфальт чи гравій із травою по краях: road0, roadsd0) — за текселями під колесами: трава, якщо
+ * зелених у вікні 15×15 не менше GRASS_SHARE.
  */
 type Surface = 'asphalt' | 'gravel' | 'dirt' | 'sand' | 'swamp' | 'water';
-const SURFACE_GRAVEL = /^(road_2[089]|cobble|roadsd\d*|stones\d*|stream0)$/i;
+const SURFACE_GRAVEL = /^(road_2[089]|cobble|roadsd\d*|stones\d*)$/i;
 const SURFACE_SWAMP = /^grass7$/i;
 const SURFACE_SAND = /beach|sand/i;
 const SURFACE_DIRT = /grass|grnd|ground|dirt|mud|field|forest/i;
-const SURFACE_WATER = /water|river|stream[1-9]/i;
+const SURFACE_WATER = /water|river|stream\d/i;
+/**
+ * Частка зелених текселів (вікно 15×15), з якої змішана текстура під колесами — трава. Заміри MOUNT: трав'яні краї
+ * road0/roadsd0 — не менше 28…32 % (у 95 % точок), зеленкувата смужка посередині road0 — не більше 14 %. Раніше брався
+ * середній колір хреста з 5 текселів: на краях трава впізнавалась лише в 35…40 % випадків — покриття блимало, межа
+ * швидкості майже не діяла; вікно 7×7 плутало зі смужкою посередині (до 20 %).
+ */
+const GRASS_SHARE = 0.2;
+const GRASS_WINDOW = 7;
 /**
  * Вплив покриття (однаково в аркаді й «симуляторі» — на прохання користувача) — налаштування порту, не дані
  * оригіналу: зчеплення й опір кочення відносно асфальту, межа кермування (частка), найбільша швидкість, км/год, і
  * уповільнення понад неї, м/с². Від твердого до найм'якшого; помірно, щоб машина їхала скрізь. Болото — до 25 км/год і гальмує різко
- * (≈ 0,6 g; обидва — на прохання користувача: з 45 км/год і 2 м/с² його пролітали на великій швидкості).
+ * (≈ 0,6 g; обидва — на прохання користувача: з 45 км/год і 2 м/с² його пролітали на великій швидкості); брід —
+ * так само різко (з 2 м/с² і газом його проїжджали на 70+ км/год).
  */
 const SURFACE_FX: Record<Surface, { grip: number; roll: number; steer: number; maxKmh: number; drag: number }> = {
   asphalt: { grip: 1, roll: 1, steer: 1, maxKmh: Infinity, drag: 2 },
@@ -70,7 +80,7 @@ const SURFACE_FX: Record<Surface, { grip: number; roll: number; steer: number; m
   dirt: { grip: 0.8, roll: 2.5, steer: 0.9, maxKmh: 75, drag: 2 },
   sand: { grip: 0.7, roll: 3.5, steer: 0.85, maxKmh: 60, drag: 2 },
   swamp: { grip: 0.6, roll: 4.5, steer: 0.8, maxKmh: 25, drag: 6 },
-  water: { grip: 0.5, roll: 4, steer: 0.8, maxKmh: 40, drag: 2 },
+  water: { grip: 0.5, roll: 4, steer: 0.8, maxKmh: 40, drag: 6 },
 };
 /**
  * Трясіння кабіни за покриттям (частка SHAKE_*; градація — на прохання користувача): тверді (асфальт, бетон,
@@ -154,16 +164,14 @@ const MAP_ROAD_COLOR: Record<Surface, string> = {
   water: '#e04040',
 };
 
-function classifySurface(name: string, texel: [number, number, number] | null): Surface {
+function classifySurface(name: string, green: number | null): Surface {
   if (SURFACE_WATER.test(name)) return 'water';
-  if (SURFACE_GRAVEL.test(name)) return 'gravel';
   if (SURFACE_SWAMP.test(name)) return 'swamp';
   if (SURFACE_SAND.test(name)) return 'sand';
   if (SURFACE_DIRT.test(name)) return 'dirt';
-  if (texel) {
-    const [r, g, b] = texel;
-    if (g > 50 && g > r * 1.15 && g > b * 1.15) return 'dirt';
-  }
+  // Трав'яні краї доріг (асфальтових і гравійних) — трава.
+  if (green !== null && green >= GRASS_SHARE) return 'dirt';
+  if (SURFACE_GRAVEL.test(name)) return 'gravel';
   return 'asphalt';
 }
 
@@ -205,21 +213,27 @@ function surfaceGloss(mat: THREE.MeshBasicMaterial | undefined): number {
   return g;
 }
 
-/** Колір текстури в точці UV (текстури оригіналу — RGBA у памʼяті, рядок 0 — v = 0). */
-function texelAt(map: THREE.Texture | null | undefined, uv: THREE.Vector2 | undefined): [number, number, number] | null {
+/**
+ * Частка зелених текселів у вікні (2·GRASS_WINDOW + 1)² навколо точки UV (текстури оригіналу — RGBA у памʼяті,
+ * рядок 0 — v = 0); без даних текстури — null. Зелений — G > 50 і на 15 % більший за R і B.
+ */
+function greenShare(map: THREE.Texture | null | undefined, uv: THREE.Vector2 | undefined): number | null {
   const img = map?.image as { data?: Uint8Array | Uint8ClampedArray; width: number; height: number } | undefined;
   if (!img?.data || !uv) return null;
-  // Середнє по хресту 5 текселів (±3) — окремий темний піксель трави не робить її «асфальтом».
   const cx = Math.floor((((uv.x % 1) + 1) % 1) * img.width);
   const cy = Math.floor((((uv.y % 1) + 1) % 1) * img.height);
-  const sum = [0, 0, 0];
-  for (const [dx, dy] of [[0, 0], [3, 0], [-3, 0], [0, 3], [0, -3]]) {
-    const x = (cx + dx + img.width) % img.width;
-    const y = (cy + dy + img.height) % img.height;
-    const i = (y * img.width + x) * 4;
-    for (let k = 0; k < 3; k++) sum[k] += img.data[i + k];
+  const R = GRASS_WINDOW;
+  let green = 0;
+  for (let dy = -R; dy <= R; dy++) {
+    for (let dx = -R; dx <= R; dx++) {
+      const x = (cx + dx + img.width) % img.width;
+      const y = (cy + dy + img.height) % img.height;
+      const i = (y * img.width + x) * 4;
+      const [r, g, b] = [img.data[i], img.data[i + 1], img.data[i + 2]];
+      if (g > 50 && g > r * 1.15 && g > b * 1.15) green++;
+    }
   }
-  return [sum[0] / 5, sum[1] / 5, sum[2] / 5];
+  return green / (2 * R + 1) ** 2;
 }
 /** Звуки ударів: тихіші за IMPACT_SOUND_MIN (м/с за крок) не чути; від IMPACT_CRASH — аварія (гіпотеза). */
 const IMPACT_SOUND_MIN = 1.5;
@@ -531,11 +545,11 @@ export class DriveSession {
     // може опинитися машина, що пірнула).
     const hit = this.ray
       .intersectObject(room, true)
-      .find((h) => (h.object as THREE.Mesh).isMesh && (h.distance > SURFACE_RAY_UP - 3 || /water|river/i.test(name(h))));
+      .find((h) => (h.object as THREE.Mesh).isMesh && (h.distance > SURFACE_RAY_UP - 3 || SURFACE_WATER.test(name(h))));
     if (!hit) return { height: Infinity, surface: null };
     const mesh = hit.object as THREE.Mesh;
     const mat = (Array.isArray(mesh.material) ? mesh.material[hit.face?.materialIndex ?? 0] : mesh.material) as THREE.MeshBasicMaterial;
-    return { height: hit.distance - SURFACE_RAY_UP, surface: classifySurface(mat?.name ?? '', texelAt(mat?.map, hit.uv)) };
+    return { height: hit.distance - SURFACE_RAY_UP, surface: classifySurface(mat?.name ?? '', greenShare(mat?.map, hit.uv)) };
   }
   /** Покриття під машиною (за матеріалом і кольором текстури). */
   surface: Surface = 'asphalt';
@@ -661,7 +675,7 @@ export class DriveSession {
       if (!best) return null;
       const mesh = best.object as THREE.Mesh;
       const mat = (Array.isArray(mesh.material) ? mesh.material[best.face?.materialIndex ?? 0] : mesh.material) as THREE.MeshBasicMaterial;
-      const surface = classifySurface(mat?.name ?? '', texelAt(mat?.map, best.uv));
+      const surface = classifySurface(mat?.name ?? '', greenShare(mat?.map, best.uv));
       return MAP_ROAD_COLOR[surface];
     };
   }
@@ -1771,7 +1785,7 @@ export class DriveSession {
     if (hit) {
       const mesh = hit.object as THREE.Mesh;
       const mat = (Array.isArray(mesh.material) ? mesh.material[hit.face?.materialIndex ?? 0] : mesh.material) as THREE.MeshBasicMaterial;
-      v = classifySurface(mat?.name ?? '', texelAt(mat?.map, hit.uv)) === 'asphalt' ? surfaceGloss(mat) : 0;
+      v = classifySurface(mat?.name ?? '', greenShare(mat?.map, hit.uv)) === 'asphalt' ? surfaceGloss(mat) : 0;
     }
     if (this.glossCache.size > 50000) this.glossCache.clear();
     this.glossCache.set(key, v);
