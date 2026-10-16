@@ -15,7 +15,7 @@ import { FOV } from './ui/viewer';
 import { Ht2World, toThree, type LoadedRegion } from './world/world';
 import { AutoPilot } from './engine/vehicle/autopilot';
 import { Ht2Roads } from './world/roads';
-import { Traffic, recolor, trafficKinds } from './traffic/traffic';
+import { Traffic, trafficKinds } from './traffic/traffic';
 import { CareerMode } from './career/careerMode';
 import { Police, SPEED_LIMIT } from './traffic/police';
 import { Mafia } from './traffic/mafia';
@@ -384,30 +384,6 @@ export class Ht2Drive {
     this.traffic.view = {
       range: () => (this.world.scene.fog as THREE.Fog | null)?.far ?? VIEW_FALLBACK,
       sees: (p) => this.canSee(p),
-    };
-    // Фізичні машини трафіку поруч з гравцем — та сама модель руху king.exe, що й у гравця, з їхнім vehicle.tech.
-    this.traffic.physics = {
-      make: (kind, pos, forward, speed) => {
-        const rec = this.trucks.records.find((r) => r.carNode === kind.model);
-        const def = rec && truckDef(this.trucks, rec);
-        const model = def && buildTruckModel(this.trucks.asm, def, false);
-        if (!rec || !def || !model) return null;
-        if (kind.variant > 0) recolor(model.root, this.trucks, kind.variant + 1);
-        const v = new TruckVehicle(this.rapier, def, model, { position: this.groundAt(pos), forward: forward.clone() }, {
-          cargoMass: 0,
-          surfaceEffects: !this.arcade,
-          engine: HT2_KING_ENGINE,
-          brake: HT2_KING_BRAKE,
-          king: { ...HT2_KING, travel: rec.suspension },
-        });
-        v.body.setLinvel({ x: forward.x * speed, y: 0, z: forward.z * speed }, true);
-        this.world.scene.add(v.visual);
-        return v;
-      },
-      remove: (v) => {
-        this.world.scene.remove(v.visual);
-        v.dispose();
-      },
     };
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);
     this.input.onCommand = (cmd) => {
@@ -1325,7 +1301,6 @@ export class Ht2Drive {
       this.trailer?.update(step, this.truck.brakePedal(state), this.def.tech.brakePower, this.truck.kinematic);
       this.race?.control(step);
       this.truckers?.control(step, obstacles);
-      this.traffic?.control(step);
       this.rapier.step();
       this.acc -= step;
     }
@@ -1334,7 +1309,6 @@ export class Ht2Drive {
     this.race?.after(dt, alpha);
     this.detectHits();
     this.truckers?.after(dt, this.truck.visual.position, alpha);
-    this.traffic?.after(alpha);
     this.truck.syncVisual(alpha);
     this.trailer?.syncVisual(alpha);
     this.audio?.update(this.truck.rpm, state.throttle, this.truck.engineOn);
