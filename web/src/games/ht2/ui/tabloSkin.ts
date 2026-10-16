@@ -10,10 +10,11 @@ import type { EscArt } from './escArt';
 /** Колір літер і значків на LCD-склі (як цифри табло). */
 export const LCD_INK = 'rgb(24, 40, 22)';
 
-// Табло: метал без гнізд x 2…95; LCD-скло з обідком x 503…707, рядки 9…45; скло без обідка — всередині.
+// Табло: метал без гнізд x 2…95; LCD-клітинка цілком — x 486…695 (хромовий обідок 486…488 і 694…695; далі — чорна
+// щілина й обідок сусідньої клітинки, які не мають потрапляти в кнопку), рядки 9…45; скло без обідка — всередині.
 const METAL: Crop = [2, 0, 93, 50];
-const LCD: Crop = [503, 9, 204, 36];
-const LCD_FLAT: Crop = [516, 15, 178, 24];
+const LCD: Crop = [486, 9, 210, 36];
+const LCD_FLAT: Crop = [500, 15, 178, 24];
 type Crop = [number, number, number, number];
 
 export function applyTabloSkin(art: EscArt): void {
