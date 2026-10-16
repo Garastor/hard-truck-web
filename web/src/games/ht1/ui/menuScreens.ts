@@ -12,7 +12,7 @@ import type { MenuArt } from '../engine/ui/menuArt';
 import type { StorageInfo } from '@shared/gameStore';
 
 /** Екран 640×480, вписаний у вікно. */
-class Screen {
+export class Screen {
   readonly root = document.createElement('div');
   readonly stage = document.createElement('div');
   /** Фон екрана до заміни підписів — підкладка для перекладених кнопок (localizeButton). */
@@ -89,16 +89,17 @@ const LABELS: Record<string, string> = {
   new: 'Нова гра', load: 'Завантажити гру', cancel: 'Скасувати', ok: 'Гаразд', defaul: 'За замовчуванням',
   joyst: 'Геймпад', mouse: 'Нахил телефона', keyb: 'Кнопки', big: 'Висока якість', med: 'Середня якість', small: 'Низька якість',
   rs320: 'Вікно', rs640: 'Повний екран', rs800: 'Прискорювач',
+  server: 'Створити гру', client: 'Приєднатися', change: 'Код текстом', '2main': 'Головне меню', start: 'Старт',
   but0: '0', but1: '1', but2: '2', but3: '3', but4: '4', but5: '5', but6: '6', but7: '7',
 };
 
-interface ButtonOpts {
+export interface ButtonOpts {
   selected?: () => boolean;
   disabled?: boolean;
 }
 
 /** Кнопка-маска: стани _b/_a/_p/_bp; спрацьовує при відпусканні пальця над нею. */
-function maskButton(screen: Screen, art: MenuArt, base: string, x: number, y: number, onClick: () => void, opts: ButtonOpts = {}) {
+export function maskButton(screen: Screen, art: MenuArt, base: string, x: number, y: number, onClick: () => void, opts: ButtonOpts = {}) {
   const wrap = document.createElement('button');
   wrap.className = 'menu-btn';
   wrap.setAttribute('aria-label', LABELS[base.replace(/^\w+\//, '')] ?? base);
@@ -132,10 +133,10 @@ function maskButton(screen: Screen, art: MenuArt, base: string, x: number, y: nu
 export function mainMenu(
   art: MenuArt,
   opts: { viewer: boolean; driver: string; onDriver: () => Promise<void>; onOptions: () => Promise<void>; onHelp: () => Promise<void> },
-): Promise<'game' | 'quick' | 'viewer'> {
+): Promise<'game' | 'net' | 'quick' | 'viewer'> {
   return new Promise((resolve) => {
     const scr = new Screen(art, 'm/back_mai.txr');
-    const done = (v: 'game' | 'quick' | 'viewer') => {
+    const done = (v: 'game' | 'net' | 'quick' | 'viewer') => {
       scr.close();
       resolve(v);
     };
@@ -147,7 +148,7 @@ export function mainMenu(
     };
     const y = (k: number) => 109 + 40 * k;
     maskButton(scr, art, 'm/game', 0, y(0), () => done('game'));
-    maskButton(scr, art, 'm/connec', 0, y(1), () => {}, { disabled: true });
+    maskButton(scr, art, 'm/connec', 0, y(1), () => done('net'));
     maskButton(scr, art, 'm/quick', 0, y(2), () => done('quick'));
     maskButton(scr, art, 'm/driver', 0, y(3), later(opts.onDriver));
     maskButton(scr, art, 'm/option', 0, y(4), later(opts.onOptions));

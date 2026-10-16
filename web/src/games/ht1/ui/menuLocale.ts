@@ -34,6 +34,12 @@ export const BUTTON_UK: Record<string, string> = {
   'o/rs640': 'ЕКРАН',
   'o/rs800': 'ПРИСКОРЮВАЧ',
   'l/cancel': 'НАЗАД',
+  'c/server': 'СТВОРИТИ ГРУ',
+  'c/client': 'ПРИЄДНАТИСЯ',
+  'c/change': 'КОД ТЕКСТОМ',
+  'c/2main': 'ГОЛОВНЕ МЕНЮ',
+  's/cancel': 'ВИЙТИ',
+  's/start': 'СТАРТ',
 };
 
 /** Кольори тексту оригіналу за станами: заливка й тінь/контур (виміряно з масок). */
@@ -50,7 +56,7 @@ const STYLE: Record<string, { fill: string; edge: string }> = {
 const FONT = '"Arial Narrow", "Roboto Condensed", Arial, sans-serif';
 
 /** Висота великих літер напису, пікселів екрана 640×480 (однакова для всіх кнопок групи). */
-const CAP: Record<string, number> = { m: 11, n: 12, d: 12, o: 9, l: 12 };
+const CAP: Record<string, number> = { m: 11, n: 12, d: 12, o: 9, l: 12, c: 12, s: 12 };
 /** Підписи на фонах — тонкий геометричний шрифт, як в оригіналі. */
 const LABEL_FONT = '"Century Gothic", "Futura", "Trebuchet MS", Arial, sans-serif';
 
@@ -338,6 +344,8 @@ const BACKGROUND_UK: Record<string, Label[]> = {
     [162, 355, 250, 366, 'ЯКІСТЬ', [172, 356, 250, 367], [150, 248]],
     [286, 355, 375, 366, 'ВІДЕОРЕЖИМ', [287, 356, 374, 367], [273, 371]],
   ],
+  // Літери — рядки 120…128, x 289…433.
+  'c/back_con.txr': [[288, 120, 434, 128, 'СПОСОБИ З’ЄДНАННЯ']],
   'd/back_dri.txr': [
     [232, 152, 294, 166, 'ЗА КЕРМОМ'],
     [150, 215, 296, 242, 'ЗАРЕЄСТРОВАНІ\nВОДІЇ'],

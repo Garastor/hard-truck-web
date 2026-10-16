@@ -28,6 +28,7 @@ import {
 } from './ui/menuScreens';
 import { HUD_CYAN, PixelFont, box, pixelCanvas, uiScale } from './engine/ui/pixelFont';
 import { MenuArt } from './engine/ui/menuArt';
+import { netMenu } from './ui/netScreens';
 import { parseFon } from './engine/formats/fon';
 import { installDevTools } from './devTools';
 import { loadSwap, motionOnGesture, requestMotionPermission, setSwap } from './engine/input/input';
@@ -794,6 +795,10 @@ async function menuLoop(): Promise<void> {
       if (i !== 0) return menuLoop();
     }
     return startCareer(newCareer({ name: driver, difficulty: pick.difficulty, rivals: pick.rivals, trucks: trucks.map(truckSpec) }));
+  }
+  if (choice === 'net') {
+    await netMenu(menuArt, currentDriver());
+    return menuLoop();
   }
   if (choice === 'quick') {
     levelSel.value = 'CIRCUIT';

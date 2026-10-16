@@ -985,6 +985,105 @@ body.career #stats {
   font: 700 14px/20px Arial, sans-serif;
 }
 
+/* «Мережева гра»: текст у панелях екранів c/back_con і s/back_net, QR-код, камера, коди текстом. */
+.net-text {
+  font: 500 12px/1.35 Arial, sans-serif;
+  color: #f0e6c8;
+  text-shadow: 1px 1px 0 #000;
+  overflow: hidden;
+}
+
+.net-text p {
+  margin: 0 0 6px;
+}
+
+.net-text b,
+.net-session h3 {
+  color: #fce488;
+}
+
+.net-session {
+  font-size: 15px;
+}
+
+.net-session h3 {
+  margin: 0 0 14px;
+  font-size: 18px;
+}
+
+.net-player {
+  padding-left: 12px;
+}
+
+.net-note {
+  color: #fce488;
+}
+
+.net-status {
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.net-qr {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+}
+
+.net-qr canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.net-video {
+  object-fit: cover;
+  background: #000;
+  border: 1px solid rgba(240, 220, 138, 0.6);
+}
+
+.net-codes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font: 600 11px/1.2 Arial, sans-serif;
+  color: #f0dc8a;
+  text-shadow: 1px 1px 0 #000;
+}
+
+.net-code {
+  min-height: 0;
+  height: 34px;
+  padding: 2px 4px;
+  border: 1px solid rgba(240, 220, 138, 0.5);
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff3c2;
+  font: 500 9px/1.2 monospace;
+  resize: none;
+  word-break: break-all;
+}
+
+.net-link {
+  align-self: flex-end;
+  min-height: 0;
+  padding: 1px 8px;
+  border: 1px solid rgba(240, 220, 138, 0.6);
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fce488;
+  font: 700 11px/16px Arial, sans-serif;
+}
+
+[hidden].net-text,
+[hidden].net-qr,
+[hidden].net-video,
+[hidden].net-codes {
+  display: none;
+}
+
 body.in-menu #bar,
 body.in-menu #menu,
 body.in-menu #fps,
