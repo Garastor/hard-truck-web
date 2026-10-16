@@ -496,8 +496,8 @@ body.ht2-orig-ui .touch-top-row,
 body.ht2-orig-ui .touch-more {
   gap: 2px;
   padding: 0;
-  border: 6px solid transparent;
-  border-image: var(--ht2-metal) 8 fill / 6px stretch;
+  border: 3px solid transparent; /* підкладка виступає на 3 px (було 6 — група на 5 % менша, на прохання користувача) */
+  border-image: var(--ht2-metal) 8 fill / 3px stretch;
 }
 
 body.ht2-orig-ui .touch-more {
