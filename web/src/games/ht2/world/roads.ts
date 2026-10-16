@@ -49,6 +49,16 @@ export interface RoadLine extends WayLine {
   length: number;
   /** Усі смуги того самого напрямку дороги за номером (для перестроювання); в осі — порожньо. */
   siblings: RoadLine[];
+  /** Вузли мережі на початку й кінці лінії (індекси `Ht2Roads.nodes`; в осі — за напрямком точок). */
+  startNode: number;
+  endNode: number;
+}
+
+/** Вузол мережі: точка, де сходяться кінці осей (ближче JOIN); перехрестя — якщо доріг три й більше. */
+export interface RoadNode {
+  pos: THREE.Vector3;
+  /** Скільки доріг (осей) сходиться. */
+  degree: number;
 }
 
 interface Directed {
@@ -64,6 +74,8 @@ export class Ht2Roads {
   readonly lines: RoadLine[] = [];
   /** Осі доріг (по одній на сегмент; для карт і визначення узбіччя). */
   readonly axes: RoadLine[] = [];
+  /** Вузли (стики осей); перехрестя — degree ≥ 3. */
+  readonly nodes: RoadNode[] = [];
   private readonly grid = new Map<string, RoadLine[]>();
   private readonly axisGrid = new Map<string, RoadLine[]>();
   private readonly byRoad = new Map<string, RoadLine[]>();
@@ -82,9 +94,10 @@ export class Ht2Roads {
           const hw = width / 2;
           const lanes = Math.max(1, Math.floor((hw + 1.75) / 3.5));
           const road = this.axes.length;
-          this.axes.push({ name: `${room.name}#${road}`, pts, next: [], width, region: id, road, lane: -1, lanes, laneWidth: hw / lanes, flags: s.type, cls: s.cls, length: polyLength(pts), siblings: [] });
+          this.axes.push({ name: `${room.name}#${road}`, pts, next: [], width, region: id, road, lane: -1, lanes, laneWidth: hw / lanes, flags: s.type, cls: s.cls, length: polyLength(pts), siblings: [], startNode: -1, endNode: -1 });
         }
     for (const a of this.axes) for (const k of cellsOf(a.pts)) push(this.axisGrid, k, a);
+    this.buildNodes();
 
     // Напрямки руху осей.
     const dirs: Directed[] = [];
@@ -108,6 +121,8 @@ export class Ht2Roads {
             cls: a.cls,
             length: a.length,
             siblings: d.lines,
+            startNode: dir === 1 ? a.startNode : a.endNode,
+            endNode: dir === 1 ? a.endNode : a.startNode,
           };
           d.lines.push(line);
           this.lines.push(line);
@@ -143,6 +158,37 @@ export class Ht2Roads {
   /** Лінії руху дороги (усі смуги обох напрямків). */
   linesOf(road: number): RoadLine[] {
     return this.byRoad.get(String(road)) ?? [];
+  }
+
+  /** Вузли: кінці осей ближче JOIN — один вузол (позиція — середня), degree — скільки осей. */
+  private buildNodes(): void {
+    const grid = new Map<string, number[]>();
+    const sums: THREE.Vector3[] = [];
+    const counts: number[] = [];
+    const node = (p: THREE.Vector3): number => {
+      for (const i of nearCells(grid, p)) if (this.nodes[i].pos.distanceTo(p) < JOIN) return i;
+      const i = this.nodes.length;
+      this.nodes.push({ pos: p.clone(), degree: 0 });
+      sums.push(new THREE.Vector3());
+      counts.push(0);
+      push(grid, cellKey(p), i);
+      return i;
+    };
+    for (const a of this.axes) {
+      a.startNode = node(a.pts[0]);
+      a.endNode = node(a.pts[a.pts.length - 1]);
+      for (const i of [a.startNode, a.endNode]) {
+        this.nodes[i].degree++;
+        sums[i].add(i === a.startNode ? a.pts[0] : a.pts[a.pts.length - 1]);
+        counts[i]++;
+      }
+    }
+    this.nodes.forEach((n, i) => n.pos.copy(sums[i]).divideScalar(counts[i] || 1));
+  }
+
+  /** Перехрестя (три дороги й більше). */
+  isJunction(node: number): boolean {
+    return node >= 0 && (this.nodes[node]?.degree ?? 0) >= 3;
   }
 
   /** Напрямки руху осі: розділене шосе — один (сусідня вісь ліворуч), інакше обидва. */

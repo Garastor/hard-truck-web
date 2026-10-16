@@ -2,10 +2,10 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import type { RoadLine } from '@ht2/world/roads';
-import { newMover, step, type Obstacle } from '@ht2/traffic/driver';
+import { newMover, step, type Mover, type Net, type Obstacle } from '@ht2/traffic/driver';
 
 /** Дорога з n смуг одного напрямку за точками осі (смуги — праворуч, по 3 м). */
-function road(axis: THREE.Vector3[], lanes: number, id: number): RoadLine[] {
+function road(axis: THREE.Vector3[], lanes: number, id: number, nodes: [number, number] = [-1, -1]): RoadLine[] {
   const out: RoadLine[] = [];
   for (let k = 0; k < lanes; k++) {
     const pts = axis.map((p, i) => {
@@ -14,7 +14,7 @@ function road(axis: THREE.Vector3[], lanes: number, id: number): RoadLine[] {
       const d = b.clone().sub(a).setY(0).normalize();
       return p.clone().addScaledVector(new THREE.Vector3(-d.z, 0, d.x), (k + 0.5) * 3);
     });
-    out.push({ name: `r${id}:${k}`, pts, next: [], width: lanes * 6, region: 'x', road: id, lane: k, lanes, laneWidth: 3, flags: 0, cls: 1, length: 0, siblings: out });
+    out.push({ name: `r${id}:${k}`, pts, next: [], width: lanes * 6, region: 'x', road: id, lane: k, lanes, laneWidth: 3, flags: 0, cls: 1, length: 0, siblings: out, startNode: nodes[0], endNode: nodes[1] });
   }
   return out;
 }
@@ -27,6 +27,18 @@ function run(m: ReturnType<typeof newMover>, sec: number, obstacles: Obstacle[] 
     each?.();
   }
 }
+
+/** Кілька машин разом: перешкоди — одна для одної (з поточними швидкостями). */
+function runAll(ms: Mover[], sec: number, net: Net | null = null, extra: Obstacle[] = [], each?: () => void): void {
+  for (let i = 0; i < sec * 30; i++) {
+    const obs: Obstacle[] = [...ms.map((x) => ({ pos: x.pos, vel: x.heading.clone().multiplyScalar(x.speed), half: x.halfLen, mover: x })), ...extra];
+    for (const x of ms) step(x, 1 / 30, obs, net);
+    each?.();
+  }
+}
+
+/** Відстань уздовж −Z (напрямок доріг straight). */
+const along = (m: Mover) => -m.pos.z;
 
 describe('HT2: водій трафіку', () => {
   it('на прямій тримає крейсерську', () => {
@@ -119,6 +131,58 @@ describe('HT2: водій трафіку', () => {
     run(m, 20, [player, oncoming]);
     // Узбіччя (праворуч) вільне — обʼїзд туди, на зустрічну не виїжджає.
     expect(m.pos.x).toBeGreaterThan(-0.5);
+  });
+
+  it('повільнішого обганяє лівою смугою й повертається праворуч', () => {
+    const lanes = road(straight(3000), 2, 0);
+    const slow = newMover(lanes[1], 6, 0, 10, 2);
+    const m = newMover(lanes[1], 0, 0, 20, 2);
+    m.wantLane = 1;
+    let left = false;
+    runAll([slow, m], 40, null, [], () => (left ||= m.line.lane === 0));
+    expect(left).toBe(true);
+    expect(along(m)).toBeGreaterThan(along(slow) + 10);
+    expect(m.line.lane).toBe(1);
+  });
+
+  it('на дорозі з однією смугою обганяє по зустрічній; суцільна чи зустрічний — ні', () => {
+    for (const [flags, oncoming, expectPass] of [[0, false, true], [4, false, false], [0, true, false]] as const) {
+      const lanes = road(straight(4000), 1, 0);
+      lanes[0].flags = flags;
+      const slow = newMover(lanes[0], 6, 0, 10, 2);
+      const m = newMover(lanes[0], 0, 0, 20, 2);
+      // Зустрічний стоїть на зустрічній смузі попереду (видно на весь маневр).
+      const extra: Obstacle[] = oncoming ? [{ pos: new THREE.Vector3(-1.5, 0, -180), vel: new THREE.Vector3(), half: 2 }] : [];
+      let minGap = Infinity;
+      runAll([slow, m], 12, null, extra, () => (minGap = Math.min(minGap, m.pos.distanceTo(slow.pos))));
+      expect(along(m) > along(slow), `flags ${flags}, зустрічний ${oncoming}`).toBe(expectPass);
+      expect(minGap).toBeGreaterThan(2.5);
+      if (expectPass) expect(Math.abs(m.lat)).toBeLessThan(0.5);
+    }
+  });
+
+  it('на перехресті пропускає того, хто праворуч', () => {
+    // Схід (+x) і північ (−z) сходяться у вузлі 0 в (0, 0, 0); праворуч від того, хто їде на схід, — +z.
+    const net: Net = { isJunction: (n) => n === 0 };
+    const east = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(-100 + i * 10, 0, 0)), 1, 0, [-1, 0]);
+    const east2 = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(i * 10, 0, 0)), 1, 1, [0, -1]);
+    const north = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(0, 0, 100 - i * 10)), 1, 2, [-1, 0]);
+    const north2 = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(0, 0, -i * 10)), 1, 3, [0, -1]);
+    east[0].next.push(east2[0]);
+    north[0].next.push(north2[0]);
+    const a = newMover(east[0], 0, 0, 15, 2);
+    const b = newMover(north[0], 0, 0, 15, 2);
+    let minGap = Infinity;
+    let firstThrough: string | null = null;
+    runAll([a, b], 25, net, [], () => {
+      minGap = Math.min(minGap, a.pos.distanceTo(b.pos));
+      if (!firstThrough && a.line.road === 1) firstThrough = 'схід';
+      if (!firstThrough && b.line.road === 3) firstThrough = 'північ';
+    });
+    // b підʼїжджає з +z — праворуч від a: першим проїжджає b.
+    expect(firstThrough).toBe('північ');
+    expect(minGap).toBeGreaterThan(4);
+    expect(a.line.road).toBe(1);
   });
 
   it('перед правим поворотом перестроюється в крайню праву смугу', () => {
