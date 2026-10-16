@@ -19,10 +19,16 @@ export interface Fines {
   bribery: number;
   /** Машина в угоні (FINE_STOLEN): 0,8 базової ціни моделі. */
   stolen: number;
+  /**
+   * Мафія (re/notes/ht2/mafia.md): борг `+0xE0` (ДТП з машиною мафії, 2d) і «цікавий мафії» `+0xC9` (вантаж
+   * formafia при частці капіталу > 0,15). Для міліції це не штрафи (у KINDS їх немає).
+   */
+  mafiaDebt?: number;
+  mafiaInterest?: boolean;
 }
 
 export function noFines(): Fines {
-  return { illegal: 0, accident: 0, violations: 0, speeding: 0, redLight: 0, bribery: 0, stolen: 0 };
+  return { illegal: 0, accident: 0, violations: 0, speeding: 0, redLight: 0, bribery: 0, stolen: 0, mafiaDebt: 0, mafiaInterest: false };
 }
 
 /** Штраф за ступінь перевищення на посту (king.exe 0x4d1360). */
@@ -33,7 +39,7 @@ export const ILLEGAL_FINE = 15000;
 export const RED_LIGHT_FINE = 830;
 
 /** Порядок полів, картка затримання з одним штрафом і рядок Ms.sch (0x430a80). */
-const KINDS: [Exclude<keyof Fines, 'violations'>, 9 | 10 | 11 | 12 | 13 | 14, string][] = [
+const KINDS: [Exclude<keyof Fines, 'violations' | 'mafiaDebt' | 'mafiaInterest'>, 9 | 10 | 11 | 12 | 13 | 14, string][] = [
   ['illegal', 9, 'FINE_IM'],
   ['accident', 14, 'FINE_ACCIDENT'],
   ['speeding', 10, 'FINE_SPEEDING'],

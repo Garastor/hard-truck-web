@@ -10,7 +10,8 @@ import type { Ht2Roads, RoadLine } from '../world/roads';
  * 1 зустрічна, 2 перестроювання, 3 задній хід, 4 стоянка, 5 суцільна, 6 «наїхав» (RoadHog); 0 — штрафу немає.
  * Сума d = 5000·f + 1000 (f — накопичене пошкодження партнера; у порту — сила цього удару
  * √((Δv − 3)·маса·2,5e−5), обмежена 1 — гіпотеза: пошкоджень машин трафіку в порту немає); міліція → 2d завжди,
- * інша машина → d, лише якщо міліція ближче 200 м. Порушення (біти) — разом із сумою.
+ * машина мафії → борг мафії += 2d (без біта порушення — гіпотеза), інша машина → d, лише якщо міліція ближче 200 м.
+ * Порушення (біти) — разом із сумою.
  * Після класифікації — пауза 10 с (без коду — 10 + |v|/3 с); через 180 с після останньої ДТП штраф і біти
  * забуваються.
  */
@@ -106,7 +107,7 @@ export function classify(c: ClassifyInput): number {
 
 /** З ким зіткнулися (будує гра): міліція, машина (трафік, суперник) — з масою; інше — null (не ДТП). */
 export interface PartnerInfo {
-  kind: 'police' | 'car';
+  kind: 'police' | 'mafia' | 'car';
   mass: number;
 }
 
@@ -123,6 +124,8 @@ export interface AccidentHooks {
   policeNear(p: THREE.Vector3): boolean;
   /** Нарахувати: відшкодування й біти порушень (без коду не викликається). */
   fine(amount: number, bits: number): void;
+  /** Борг мафії (+0xE0) за ДТП з машиною мафії. */
+  mafiaDebt(amount: number): void;
   /** 180 с без ДТП — забути відшкодування й біти. */
   forget(): void;
 }
@@ -132,7 +135,7 @@ export class Accidents {
   private hold = 0;
   private since = Infinity;
   /** Останній зареєстрований випадок (для перевірок). */
-  last: { code: number; amount: number; partner: 'police' | 'car'; dv: number } | null = null;
+  last: { code: number; amount: number; partner: PartnerInfo['kind']; dv: number } | null = null;
 
   constructor(private readonly h: AccidentHooks) {}
 
@@ -185,6 +188,11 @@ export class Accidents {
       this.since = 0;
       const f = Math.min(1, Math.sqrt(Math.max(0, (dv - 3) * info.mass * 2.5e-5)));
       const d = D_PER_F * f + D_BASE;
+      if (info.kind === 'mafia') {
+        this.last = { code, amount: 2 * d, partner: info.kind, dv };
+        this.h.mafiaDebt(2 * d);
+        continue;
+      }
       const amount = info.kind === 'police' ? 2 * d : this.h.policeNear(pl.pos) ? d : 0;
       this.last = { code, amount, partner: info.kind, dv };
       if (amount > 1) this.h.fine(amount, CODE_BIT[code]);

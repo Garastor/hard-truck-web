@@ -13,6 +13,7 @@ import { active, advance, makeRivals, place, PREMIUM_SHARE } from './competition
 import { hireOffer, LICENCE_TIME, newDriver, tickCompany } from './company';
 import { ukMessage } from '../ui/uk';
 import { arrestCard, ILLEGAL_FINE, noFines, SPEEDING_PER_DEGREE, type Fines } from './law';
+import { capitalShare } from './capital';
 
 /**
  * Кар'єра в режимі їзди HT2: склади (замовлення й здача вантажу), СТО (ремонт), удари (пошкодження машини й
@@ -97,7 +98,16 @@ export class CareerMode {
   }
 
   /** Крок: час, удари, пальне, табло; зупинка біля складу/СТО/заправки — вікно. */
+  /** Відкладена картка «Неустойка» після пограбування мафією (через 8 с, 0x64b698). */
+  private forfeitCard: { left: number; amount: number } | null = null;
+
   update(dt: number, throttle = 0): void {
+    if (this.forfeitCard && (this.forfeitCard.left -= dt) <= 0) {
+      const amount = this.forfeitCard.amount;
+      this.forfeitCard = null;
+      if (this.drive.cards) this.drive.cards.show(6, { amount });
+      else this.drive.say(this.msg('FORFEIT', 'НЕУСТОЙКА $%g', amount));
+    }
     const c = this.career;
     if (this.busy) return;
     c.time += dt * this.drive.timeScale;
@@ -203,7 +213,7 @@ export class CareerMode {
     let cached = this.storeOrders.get(store.id);
     if (!cached || c.time - cached.time > 3600) {
       const n = Math.max(1, store.docks.length);
-      cached = { orders: makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, n, this.drive.trailer?.rec.trailerType === 3), time: c.time };
+      cached = { orders: makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, n, this.drive.trailer?.rec.trailerType === 3, this.capitalShare()), time: c.time };
       this.storeOrders.set(store.id, cached);
     }
     const o = cached.orders[dock % cached.orders.length];
@@ -389,6 +399,23 @@ export class CareerMode {
     const h = c.order?.hidden;
     f.illegal = h && Math.random() < 0.8 ? ILLEGAL_FINE * h.guilt : 0;
     f.stolen = c.stolen && Math.random() < 0.5 ? Math.round(0.8 * (c.truckPrice ?? 0)) : 0;
+    this.recountMafia();
+  }
+
+  /**
+   * «Цікавий мафії» (+0xC9, accountForGuilt 0x442850; re/notes/ht2/mafia.md §1): вантаж класу formafia (видимий чи
+   * прихований) і частка капіталу > 0,15 — з імовірністю 80 % (оплата ≥ 10000) чи 50 %; інакше ні.
+   */
+  private recountMafia(): void {
+    const o = this.career.order;
+    const forMafia = !!o && (o.goods.forMafia || !!o.hidden?.forMafia);
+    this.fines.mafiaInterest = forMafia && this.capitalShare() > 0.15 && Math.random() < (o!.pay >= 10000 ? 0.8 : 0.5);
+  }
+
+  /** Частка капіталу гравця серед усіх (capital.ts; суперники — зі стартовою машиною ZilR, GAME.CNF `live`). */
+  capitalShare(): number {
+    const recs = this.drive.trucksData.records;
+    return capitalShare(this.career, (n) => recs.find((r) => r.carNode === n)?.price ?? 0, 'ZilR');
   }
 
   /** Купівля машини на ринку: крадена — прапорець (без повідомлення); уживана — king.exe mess 0x77. */
@@ -445,34 +472,34 @@ export class CareerMode {
    * Мафія наздогнала: вантаж відібрано, замовнику — неустойка в половину цінності вантажу (гіпотеза, як за
    * прострочення). Тексти — Ms.sch (ATTACKED_BY_MAFIA, FORFEIT).
    */
+  /**
+   * Напад мафії (mafiaAttack 0x445740; mafia.md §4): вартість вантажу V = Σ 10·√(ціна × кількість); V ≤ борг мафії —
+   * з грошей списується борг (картка 20, може піти в мінус); інакше вантаж забирають (картка 21), через 8 с картка 6
+   * «Неустойка» з сумою V — гроші НЕ списуються (метод лише показує картку). Після — борг і інтерес мафії нуль.
+   */
   async robbed(): Promise<void> {
     const c = this.career;
-    if (!c.order) return;
-    if (this.drive.cards) {
-      const forfeit = Math.round(c.order.value * 0.5);
-      this.drive.cards.show(21);
-      this.drive.say(`${this.msg('ATTACKED_BY_MAFIA', 'ВАС ПОГРАБУВАЛА МАФІЯ')}. ${this.msg('FORFEIT', 'НЕУСТОЙКА $%g', forfeit)}`);
-      c.money = Math.max(0, c.money - forfeit);
+    const f = this.fines;
+    const o = c.order;
+    const value = o ? 10 * Math.sqrt(o.goods.price * o.units) : 0;
+    const debt = f.mafiaDebt ?? 0;
+    if (value <= debt) {
+      c.money -= debt;
+      if (this.drive.cards) this.drive.cards.show(20, { amount: Math.round(debt) });
+      else this.drive.say(`МАФІЯ ЗАБРАЛА $${Math.round(debt)}`);
+    } else {
       c.order = null;
       this.drive.setCargo(0);
-      this.persist();
-      return;
+      f.illegal = 0;
+      if (this.drive.cards) this.drive.cards.show(21);
+      else this.drive.say('БАНДИТИ ЗАБРАЛИ ВАШ ВАНТАЖ');
+      this.forfeitCard = { left: 8, amount: Math.round(value) };
     }
-    this.busy = true;
-    this.drive.paused = true;
-    try {
-      const forfeit = Math.round(c.order.value * 0.5);
-      const text = `${this.msg('ATTACKED_BY_MAFIA', 'ВАС ПОГРАБУВАЛА МАФІЯ')}\n${c.order.goods.name} × ${c.order.units}\n${this.msg('FORFEIT', 'НЕУСТОЙКА $%g', forfeit)}`;
-      await modal(this.drive.overlay, 'Мафія', text, ['Гаразд']);
-      c.money = Math.max(0, c.money - forfeit);
-      c.order = null;
-      this.drive.setCargo(0);
-      this.persist();
-    } finally {
-      this.drive.paused = false;
-      this.busy = false;
-    }
+    f.mafiaDebt = 0;
+    f.mafiaInterest = false;
+    this.persist();
   }
+
 
   /**
    * Ринок вантажівок (parking MARKET_* з mod_*.sch): машини, що стоять на місцях ринку сьогодні; стара — у залік за
@@ -697,7 +724,7 @@ export class CareerMode {
         const to = this.stores.find((s) => s.id === c.order!.to);
         await modal(this.drive.overlay, `Склад «${store.town}»`, `У кузові — ${c.order.goods.name}, доставити в «${to?.town ?? '?'}».`, ['Гаразд']);
       } else {
-        const orders = makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, 5, this.drive.trailer?.rec.trailerType === 3);
+        const orders = makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, 5, this.drive.trailer?.rec.trailerType === 3, this.capitalShare());
         const box = document.createElement('div');
         box.className = 'career-form ht2-orders';
         box.textContent = 'Замовлення на доставку:';

@@ -21,7 +21,7 @@ import { TrafficLights } from './world/trafficLights';
 import { CareerMode } from './career/careerMode';
 import { Police, parseAmbushes, type PoliceEvent } from './traffic/police';
 import { RED_LIGHT_FINE, bribeSum, copsTakeBribes, totalFine, wanted } from './career/law';
-import { Mafia } from './traffic/mafia';
+import { Mafia, parseMafiaAmbushes } from './traffic/mafia';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
 import { WorldMap, type MapPoint } from './world/worldMap';
@@ -125,7 +125,6 @@ const RESCUE_SECONDS = 5;
 const RESCUE_COST = 1000;
 /** Рація: радіус зв'язку, м; скільки після штрафу можна домовитися, с; перемирʼя з мафією, с (гіпотези). */
 const RADIO_R = 500;
-const TRUCE_SECONDS = 600;
 
 /**
  * Їзда у світі Дальнобойщиків 2 (G4): вантажівка з vehicle.tech і TRUCKS.B3D на тій самій фізиці, що й у першій
@@ -425,7 +424,18 @@ export class Ht2Drive {
         props: (names, on) => this.world.setAmbushProps(names, on),
         people: this.copBribes.length || 15,
       });
-      this.mafia = new Mafia(this.world.scene, this.rapier, this.trucks, this.world.regions.values(), (p) => this.groundAtPublic(p).y - 2.5);
+      // Мафія (Б10, re/notes/ht2/mafia.md): засідки MAFIA з mod_*.sch, машини Cayman на моделі руху king.exe.
+      this.mafia = new Mafia(parseMafiaAmbushes(regionMods, this.world.regions.values()), {
+        rapier: this.rapier,
+        roads: this.roads,
+        make: (pos, forward) => this.makeCar('Cayman', 0, pos, forward, 0),
+        remove: (v) => this.removeCar(v),
+        sees: (p) => this.canSee(p),
+        obstacles: () => [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? [])],
+        props: (names, on) => this.world.setAmbushProps(names, on),
+        propPositions: (name) => [...this.world.loaded.values()].flatMap((r) => (r.props.get(name) ?? []).map((o) => o.getWorldPosition(new THREE.Vector3()))),
+        policeNear: (p, r) => this.police?.near(p, r) ?? false,
+      });
       this.accidents = this.makeAccidents();
     }
     if (o.race) {
@@ -740,7 +750,11 @@ export class Ht2Drive {
         });
         return out;
       },
-      partner: (b) => ({ kind: this.police?.isCop(b) ? 'police' : 'car', mass: b.mass() }),
+      partner: (b) => ({ kind: this.police?.isCop(b) ? 'police' : this.mafia?.isMafia(b) ? 'mafia' : 'car', mass: b.mass() }),
+      mafiaDebt: (amount) => {
+        fines().mafiaDebt = (fines().mafiaDebt ?? 0) + amount;
+        this.careerMode!.persist();
+      },
       queueAhead: () => {
         const p = this.truck.visual.position;
         const f = this.truck.forward();
@@ -757,9 +771,11 @@ export class Ht2Drive {
         this.careerMode!.persist();
       },
       forget: () => {
-        if (!fines().accident && !fines().violations) return;
+        if (!fines().accident && !fines().violations && !fines().mafiaDebt) return;
+        // 180 с без ДТП (0x4cfe70): відшкодування, порушення й борг мафії забуваються.
         fines().accident = 0;
         fines().violations = 0;
+        fines().mafiaDebt = 0;
         this.careerMode!.persist();
       },
     });
@@ -1116,6 +1132,35 @@ export class Ht2Drive {
     for (const e of events) this.policeEvent(e);
   }
 
+  /** Мафія (Б10): на прицілі — борг мафії чи «цікавий мафії»; попередження, стрілянина, напад, міни. */
+  private updateMafia(dt: number): void {
+    const cm = this.careerMode;
+    if (!this.mafia || !cm || this.paused) return;
+    const lv = this.truck.body.linvel();
+    const f = cm.fines;
+    const events = this.mafia.update(dt, {
+      body: this.truck.body,
+      pos: this.truck.visual.position,
+      forward: this.truck.forward(),
+      vel: new THREE.Vector3(lv.x, 0, lv.z),
+      hunted: (f.mafiaDebt ?? 0) > 0 || !!f.mafiaInterest,
+      share: cm.capitalShare(),
+    });
+    for (const e of events) {
+      if (e.kind === 'warn') this.say('ЗУПИНИ МАШИНУ! ТРЕБА ПОГОВОРИТИ', 6);
+      else if (e.kind === 'shot') {
+        this.audio?.play('shoot', Math.max(0.1, 1 - e.dist / 150));
+        if (e.hit) this.audio?.play('hit_bullet');
+      } else if (e.kind === 'attack') void cm.robbed();
+      else if (e.kind === 'mine') {
+        // Вибух міни (mineExplose, 0x56f240): поштовх угору в точці міни [Г: сила], звук mineSound.
+        const m = this.truck.body.mass();
+        this.truck.body.applyImpulseAtPoint({ x: 0, y: m * 3, z: 0 }, e.pos, true);
+        this.audio?.play('mine');
+      }
+    }
+  }
+
   private policeEvent(e: PoliceEvent): void {
     const cm = this.careerMode!;
     if (e.kind === 'speeding') cm.speeding(e.limit, e.speed, e.degree);
@@ -1187,10 +1232,6 @@ export class Ht2Drive {
         },
       };
     };
-    const truce = (text: string) => () => {
-      this.mafia?.makeTruce(TRUCE_SECONDS);
-      this.say(text);
-    };
     if (c.kind === 'pol') {
       // Хабар (king.exe offerBribe 0x432560): сума — штрафи − 200 (за штраф) чи вартість вантажу − 500 («дах»),
       // округлена; бере лише інспектор з одиницею в names.sch, інакше — штраф за спробу підкупу (+200 / +500).
@@ -1211,8 +1252,8 @@ export class Ht2Drive {
           act: () => {
             if (!cm) return;
             if (!takes) return refused(200);
-            const f = cm.fines;
-            for (const k of Object.keys(f) as (keyof typeof f)[]) f[k] = 0;
+            // Штрафи міліції обнуляються; борг і інтерес мафії — ні (їх скидає «дах»).
+            Object.assign(cm.fines, { illegal: 0, accident: 0, violations: 0, speeding: 0, redLight: 0, bribery: 0, stolen: 0 });
             this.say('ШТРАФИ ЗНЯТО');
             cm.persist();
           },
@@ -1220,20 +1261,31 @@ export class Ht2Drive {
         {
           key: 'ask2',
           price: roofBribe > 0 ? roofBribe : null,
-          act: () => (takes ? truce('ЗАМОВЛЕННЯ ПІД ОХОРОНОЮ МІЛІЦІЇ')() : refused(500)),
+          // «Дах» (0x4725e0): борг і інтерес мафії скидаються — мафія більше не жене.
+          act: () => {
+            if (!takes) return refused(500);
+            if (cm) Object.assign(cm.fines, { mafiaDebt: 0, mafiaInterest: false });
+            cm?.persist();
+            this.say('ЗАМОВЛЕННЯ ПІД ОХОРОНОЮ МІЛІЦІЇ');
+          },
         },
         { key: 'ask3', ...rivalAct(1000, (r) => (r.eta += 120), 'КОНКУРЕНТА ЗАТРИМАНО') },
         { key: 'ask4', bye: true },
       ];
     }
+    const order = cm?.career.order;
+    const mafiaBribe = cm ? Math.round(0.7 * ((order ? 10 * Math.sqrt(order.goods.price * order.units) : 0) + (cm.fines.mafiaDebt ?? 0))) : 0;
     if (c.kind === 'maf')
       return [
         {
+          // Відкуп (offerBribe, прапорець 8): 0,7 × (вартість вантажу + борг); гроші беруть завжди, у 30 % «кидають»,
+          // інакше лише прапорець 0x100000, який king.exe ніде не читає — борг і інтерес мафії лишаються (mafia.md §6).
           key: 'ask1',
-          price: 1500,
-          act: () => (Math.random() < 0.15 ? this.say('БАНДИТИ ВЗЯЛИ ГРОШІ Й ОБДУРИЛИ') : truce('МАФІЯ ВАС НЕ ЧІПАТИМЕ')()),
+          price: mafiaBribe > 0 ? mafiaBribe : null,
+          act: () => this.say(Math.random() < 0.3 ? 'БАНДИТИ ВЗЯЛИ ГРОШІ Й ОБДУРИЛИ' : 'БАНДИТИ ВЗЯЛИ ГРОШІ'),
         },
         { key: 'ask2', ...rivalAct(2000, (r) => (r.out = true), 'КОНКУРЕНТ ЗІЙШОВ З ДИСТАНЦІЇ') },
+        // «Заказ машины» (0x433660): при боргу чи інтересі мафії — відмова; інакше не розібрано.
         { key: 'ask3', off: true },
         { key: 'ask4', bye: true },
       ];
@@ -1642,6 +1694,7 @@ export class Ht2Drive {
       this.truckers?.control(step, obstacles);
       this.traffic?.control(step);
       this.police?.control(step);
+      this.mafia?.control(step);
       this.rapier.step();
       this.acc -= step;
     }
@@ -1659,6 +1712,7 @@ export class Ht2Drive {
     this.truckers?.after(dt, this.truck.visual.position, alpha);
     this.traffic?.after(alpha);
     this.police?.after(alpha);
+    this.mafia?.after(alpha);
     this.truck.syncVisual(alpha);
     this.trailer?.syncVisual(alpha);
     this.audio?.update(this.truck.rpm, state.throttle, this.truck.engineOn);
@@ -1669,10 +1723,7 @@ export class Ht2Drive {
     this.world.update(this.camera, this.truck.visual.position);
     this.careerMode?.update(dt, state.throttle);
     this.updatePolice(dt);
-    // Мафія полює лише на вантажі класу formafia (merchandise.sch: горілка, алмази, Pentium III…).
-    const mafia = this.careerMode && !this.paused ? this.mafia?.update(dt, this.truck.visual.position, !!this.careerMode.career.order?.goods.forMafia) : null;
-    if (mafia === 'robbed') void this.careerMode!.robbed();
-    if (mafia === 'escaped') this.say('Мафія відстала', 4);
+    this.updateMafia(dt);
     if (this.markets && this.careerMode) this.markets.update(this.truck.visual.position, Math.floor(this.careerMode.career.time / 86400));
     const sign = this.signs?.update(this.truck.visual.position, this.truck.forward());
     if (sign) this.say(sign, 6);
