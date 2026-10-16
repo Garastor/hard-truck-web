@@ -85,7 +85,7 @@ export interface Material {
 
 const ARGC: Record<string, number> = {
   reflect: 1, power: 1, col: 1, msk: 1, transp: 1, tex: 1, ttx: 1, itx: 1, rot: 1, att: 1, coord: 1,
-  bumpcoord: 1, alphamirr: 1, specular: 2, RotPoint: 2, move: 2, env: 2,
+  bumpcoord: 1, alphamirr: 1, specular: 1, RotPoint: 2, move: 2, env: 2,
 };
 
 export function parseMaterial(line: string): Material {

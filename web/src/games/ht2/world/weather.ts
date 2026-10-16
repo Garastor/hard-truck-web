@@ -24,7 +24,10 @@ export interface Light {
   sun: THREE.Color;
   moon: THREE.Color;
   ambient: THREE.Color;
+  /** Небо (king.exe 0x005a7b50): skyamb — розсіяне (sky_env), sunsky — купол від сонця (sky_lamp), suncld — хмари (sky_lamp1). */
   sky: THREE.Color;
+  sunsky: THREE.Color;
+  suncld: THREE.Color;
 }
 
 /** Година, що відповідає пові доби (для огляду світу з вибором пори). */
@@ -95,6 +98,8 @@ export class Weather {
       moon: c(this.mix(set, 'moon', s, ph, b)),
       ambient: c(this.mix(set, 'envamb', s, ph, b)),
       sky: c(this.mix(set, 'skyamb', s, ph, b)),
+      sunsky: c(this.mix(set, 'sunsky', s, ph, b)),
+      suncld: c(this.mix(set, 'suncld', s, ph, b)),
     };
   }
 

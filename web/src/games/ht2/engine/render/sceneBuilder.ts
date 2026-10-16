@@ -145,7 +145,14 @@ export class MaterialLibrary {
       params.opacity = 1 - def.params.transp[0];
       params.depthWrite = false;
     }
-    mat = this.lit ? new THREE.MeshLambertMaterial(params as THREE.MeshLambertMaterialParameters) : new THREE.MeshBasicMaterial(params);
+    const spec = def?.params.specular?.[0];
+    if (this.lit && spec) {
+      // Відблиск Direct3D (king.exe 0x005b1020: specular s, power p — кузови TRUCKS.RES «specular 1 power 42»):
+      // + світло·s·(N·H)^p після множення на текстуру. Blinn-Phong three.js нормований (0,5p + 1)/4 — ділимо назад.
+      const power = def.params.power?.[0] ?? 10;
+      const k = (spec * 4) / (0.5 * power + 1);
+      mat = new THREE.MeshPhongMaterial({ ...(params as THREE.MeshPhongMaterialParameters), specular: new THREE.Color(k, k, k), shininess: power });
+    } else mat = this.lit ? new THREE.MeshLambertMaterial(params as THREE.MeshLambertMaterialParameters) : new THREE.MeshBasicMaterial(params);
     mat.name = name;
     // Опис матеріалу з архіву — для ефектів, що читають параметри (move, noz).
     mat.userData.def = def;
@@ -821,8 +828,27 @@ function clampUntiled(root: THREE.Object3D): void {
   }
 }
 
-/** Частка туману на куполі неба: біля обрію й угорі (виставляє режим їзди за погодою). */
-export const SKY_FOG = { horizon: { value: 0 }, top: { value: 0 } };
+/**
+ * Світло неба king.exe (0x005a9540, 0x005a7b50): sky_env — розсіяне skyamb і туман зі згустком у 15 разів (0x005f3da0);
+ * точкові sky_lamp (sunsky — купол col_sky_b) і sky_lamp1 (suncld — хмари sky_mat*) з боку сонця, загасання
+ * 1/(1 + 0,0025·d²). Позиція лампи — `lamp` відносно камери (виставляє Ht2World.setClimate).
+ */
+export const SKY_LIGHT = {
+  amb: { value: new THREE.Color(0.8, 0.8, 0.8) },
+  sky: { value: new THREE.Color(0, 0, 0) },
+  cld: { value: new THREE.Color(0, 0, 0) },
+  lamp: { value: new THREE.Vector3(0, 90, 0) },
+  fogNear: { value: 1e5 },
+  fogFar: { value: 2e5 },
+};
+
+/** Хто освітлює меш неба: 0 — лише skyamb (земля, панорами обрію), 1 — sky_lamp, 2 — sky_lamp1, 3 — не освітлюється. */
+function skyKind(name: string): number {
+  if (/^sky_mat/.test(name)) return 2;
+  if (name === 'col_sky_b') return 1;
+  if (/^(col_sun|sun_mat|moon_mat)$/.test(name)) return 3;
+  return 0;
+}
 
 /** Небо: шаблон Background_object (купол noz_sky) без глибини, малюється першим. */
 function buildSky(asm: SceneAssembler): THREE.Group | null {
@@ -851,8 +877,13 @@ function buildSky(asm: SceneAssembler): THREE.Group | null {
     const m = src.isMeshBasicMaterial ? src.clone() : new THREE.MeshBasicMaterial({ map: src.map, color: src.color, alphaTest: src.alphaTest, transparent: src.transparent, opacity: src.opacity });
     m.depthWrite = false;
     m.depthTest = false;
-    // Власний колір (купол col_sky_b — синій із палітри): тон неба пори доби множить його, а не замінює.
-    m.userData.baseColor = m.color.clone();
+    const kind = skyKind(src.name);
+    // Рух текстури (move u v): UV зсуваються на move·dt щосекунди (king.exe 0x005b22f0) — хмари пливуть.
+    const move = (src.userData.def as { params?: Record<string, number[]> } | undefined)?.params?.move;
+    if (move && m.map) {
+      m.map = m.map.clone();
+      m.userData.move = move;
+    }
     // Хмари (sky4, sky5) — з плавною альфою: змішування, а не поріг 0,5 (з порогом лишалися клапті, небо — біле).
     // Шари лишаються в списку непрозорих (прозорі three.js малює після світу — без глибини небо лягло б поверх
     // нього), змішування — власне (CustomBlending діє й без transparent), по черзі файлу.
@@ -863,26 +894,50 @@ function buildSky(asm: SceneAssembler): THREE.Group | null {
       m.blendSrc = THREE.SrcAlphaFactor;
       m.blendDst = THREE.OneMinusSrcAlphaFactor;
     }
-    // Купол поруч із камерою (≈ 46 м) — туман за відстанню його б не зачепив: частка туману — за висотою над
-    // обрієм (SKY_FOG), щоб небо зливалося з далечінню.
+    // Освітлення (SKY_LIGHT) і туман неба: лінійний за глибиною, відстані туману сцени / 15.
     m.fog = true;
+    m.defines = { SKY_KIND: kind };
     m.onBeforeCompile = (sh) => {
-      sh.uniforms.skyFogHorizon = SKY_FOG.horizon;
-      sh.uniforms.skyFogTop = SKY_FOG.top;
+      sh.uniforms.skyAmb = SKY_LIGHT.amb;
+      sh.uniforms.skySun = SKY_LIGHT.sky;
+      sh.uniforms.skyCld = SKY_LIGHT.cld;
+      sh.uniforms.skyLamp = SKY_LIGHT.lamp;
+      sh.uniforms.skyFogNear = SKY_LIGHT.fogNear;
+      sh.uniforms.skyFogFar = SKY_LIGHT.fogFar;
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying vec3 vSkyDir;')
-        .replace('#include <fog_vertex>', '#include <fog_vertex>\nvSkyDir = (modelMatrix * vec4(transformed, 1.0)).xyz - cameraPosition;');
+        .replace('#include <common>', '#include <common>\nvarying vec3 vSkyPos;\nvarying vec3 vSkyN;')
+        .replace(
+          '#include <fog_vertex>',
+          '#include <fog_vertex>\nvSkyPos = (modelMatrix * vec4(transformed, 1.0)).xyz - cameraPosition;\nvSkyN = mat3(modelMatrix) * normal;',
+        );
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nvarying vec3 vSkyDir;\nuniform float skyFogHorizon;\nuniform float skyFogTop;')
+        .replace(
+          '#include <common>',
+          '#include <common>\nvarying vec3 vSkyPos;\nvarying vec3 vSkyN;\nuniform vec3 skyAmb;\nuniform vec3 skySun;\nuniform vec3 skyCld;\nuniform vec3 skyLamp;\nuniform float skyFogNear;\nuniform float skyFogFar;',
+        )
+        .replace(
+          '#include <map_fragment>',
+          `#include <map_fragment>
+#if SKY_KIND < 3
+  vec3 skyL = skyAmb;
+#if SKY_KIND > 0
+  vec3 toL = skyLamp - vSkyPos;
+  float d = length(toL);
+  float ndl = max(dot(normalize(vSkyN), toL / d), 0.0) / (1.0 + 0.0025 * d * d);
+  skyL += (SKY_KIND == 1 ? skySun : skyCld) * ndl;
+#endif
+  diffuseColor.rgb *= min(skyL, vec3(1.0));
+#endif`,
+        )
         .replace(
           '#include <fog_fragment>',
           `#ifdef USE_FOG
-  float skyFog = mix(skyFogHorizon, skyFogTop, smoothstep(0.0, 0.35, normalize(vSkyDir).y));
+  float skyFog = clamp((vFogDepth - skyFogNear) / max(skyFogFar - skyFogNear, 1.0), 0.0, 1.0);
   gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, skyFog);
 #endif`,
         );
     };
-    m.customProgramCacheKey = () => 'sky-fog';
+    m.customProgramCacheKey = () => `sky-${kind}`;
     // Купол видно зсередини.
     m.side = THREE.DoubleSide;
     o.material = m;

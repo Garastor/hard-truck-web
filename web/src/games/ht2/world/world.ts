@@ -4,7 +4,7 @@ import { parseB3d } from '../engine/formats/b3d';
 import { parseRmp, type RmpArchive } from '../engine/formats/rmp';
 import { decodeCp1251 } from '../engine/formats/binary';
 import { parseWay, type Way } from '../formats/way';
-import { SceneAssembler, buildScene, type BuiltScene } from '../engine/render/sceneBuilder';
+import { SKY_LIGHT, SceneAssembler, buildScene, type BuiltScene } from '../engine/render/sceneBuilder';
 import { HT2_REGIONS, readTextures, regionFiles, type TexLevel } from '../files';
 import { DAY_TIME_HOUR, Weather, type DayTime, type Sky } from './weather';
 import { TREE_LIGHT, buildGlows, buildTrees, type TreeSway } from './trees';
@@ -123,7 +123,8 @@ export function distToBounds(b: [number, number, number, number], x: number, y: 
   return Math.hypot(dx, dy);
 }
 
-const WHITE = new THREE.Color(1, 1, 1);
+/** Відстань ламп неба від камери в бік сонця, м (гіпотеза). */
+const SKY_LAMP_DIST = 90;
 
 export class Ht2World {
   readonly scene = new THREE.Scene();
@@ -136,14 +137,9 @@ export class Ht2World {
   /** Година доби (нічні вікна ILLUM_LEVEL у нових регіонах). */
   private hour = 14;
   private sky: THREE.Group | null = null;
-  private readonly skyTint = new THREE.Color(1, 1, 1);
-
-  private tintSky(): void {
-    this.sky?.traverse((o) => {
-      const m = (o as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
-      if (m?.color) m.color.copy((m.userData.baseColor as THREE.Color | undefined) ?? WHITE).multiply(this.skyTint);
-    });
-  }
+  /** Шари неба з рухом текстури (move): хмари. */
+  private readonly skyMoving: THREE.MeshBasicMaterial[] = [];
+  private lastFrame = 0;
   private loading: string | null = null;
   private lastCheck = 0;
   private readonly waiters: (() => void)[] = [];
@@ -204,9 +200,14 @@ export class Ht2World {
     const [x, y, z] = sunDirection(hour);
     toThree(x, y, z, this.sun.position);
     this.moon.position.set(-this.sun.position.x, 0, -this.sun.position.z).normalize().setY(1).normalize();
-    // Купол неба (текстура денного неба) — у кольорі skyamb відносно ясного дня (204): уночі темний.
-    this.skyTint.copy(l.sky).multiplyScalar(255 / 204);
-    this.tintSky();
+    // Небо: skyamb, sunsky (купол), suncld (хмари); лампи неба — з боку сонця (гіпотеза: 90 м — sun_s0 на 50 м
+    // і ще 40 м у його просторі), туман неба в 15 разів ближчий.
+    SKY_LIGHT.amb.value.copy(l.sky);
+    SKY_LIGHT.sky.value.copy(l.sunsky);
+    SKY_LIGHT.cld.value.copy(l.suncld);
+    SKY_LIGHT.lamp.value.copy(this.sun.position).normalize().multiplyScalar(SKY_LAMP_DIST);
+    SKY_LIGHT.fogNear.value = l.fogNear / 15;
+    SKY_LIGHT.fogFar.value = l.fogFar / 15;
     // Інтенсивність π — у three.js множник рівно 1 (Lambert ділить на π): колір = текстура × (envamb + sunenv·cos).
     this.sun.intensity = Math.PI;
     this.moon.intensity = Math.PI;
@@ -284,6 +285,12 @@ export class Ht2World {
    */
   update(camera: THREE.Camera, focus: THREE.Vector3 = camera.position, now = performance.now()): void {
     if (this.sky) this.sky.position.copy(camera.position);
+    const dt = this.lastFrame ? Math.min(0.1, (now - this.lastFrame) / 1000) : 0;
+    this.lastFrame = now;
+    for (const m of this.skyMoving) {
+      const mv = m.userData.move as number[];
+      m.map!.offset.set((m.map!.offset.x + mv[0] * dt) % 1, (m.map!.offset.y + mv[1] * dt) % 1);
+    }
     if (now - this.lastCheck < 500) return;
     this.lastCheck = now;
     this.stream(focus.x, -focus.z);
@@ -330,8 +337,11 @@ export class Ht2World {
         this.onRegion?.(reg, true);
         if (!this.sky && reg.built.sky) {
           this.sky = reg.built.sky;
+          this.sky.traverse((o) => {
+            const m = (o as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
+            if (m?.userData.move) this.skyMoving.push(m);
+          });
           this.scene.add(this.sky);
-          this.tintSky();
         }
         this.onChange?.();
       })
