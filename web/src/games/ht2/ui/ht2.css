@@ -552,7 +552,10 @@ body.ht2-orig-ui .touch-top .touch-btn.unavailable {
   image-rendering: pixelated;
 }
 
-/* Кермо й педалі — без рамок: саме LCD-скло, що згасає до країв, і темна стрілка. */
+/*
+ * Кермо й педалі — без рамок: LCD-скло, прозоре на 60 % (натиснуто — на 10 % і світліше), темна стрілка. Скло —
+ * окремим шаром ::before, щоб прозорість і яскравість не зачіпали стрілку.
+ */
 body.ht2-orig-ui .touch-btn.left,
 body.ht2-orig-ui .touch-btn.right,
 body.ht2-orig-ui .touch-btn.brake,
@@ -560,19 +563,35 @@ body.ht2-orig-ui .touch-btn.gas {
   border: 0;
   border-radius: 0;
   box-shadow: none;
-  background: var(--ht2-lcd-flat) center / 100% 100% no-repeat;
+  background: none;
   color: rgb(24, 40, 22);
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent), linear-gradient(180deg, transparent, #000 22%, #000 78%, transparent);
-  -webkit-mask-composite: source-in;
-  mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent), linear-gradient(180deg, transparent, #000 22%, #000 78%, transparent);
-  mask-composite: intersect;
+  isolation: isolate;
+}
+
+body.ht2-orig-ui .touch-btn.left::before,
+body.ht2-orig-ui .touch-btn.right::before,
+body.ht2-orig-ui .touch-btn.brake::before,
+body.ht2-orig-ui .touch-btn.gas::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--ht2-lcd-flat) center / 100% 100% no-repeat;
+  opacity: 0.4;
 }
 
 body.ht2-orig-ui .touch-btn.left.pressed,
 body.ht2-orig-ui .touch-btn.right.pressed,
 body.ht2-orig-ui .touch-btn.brake.pressed,
 body.ht2-orig-ui .touch-btn.gas.pressed {
-  background: var(--ht2-lcd-flat) center / 100% 100% no-repeat;
+  background: none;
+}
+
+body.ht2-orig-ui .touch-btn.left.pressed::before,
+body.ht2-orig-ui .touch-btn.right.pressed::before,
+body.ht2-orig-ui .touch-btn.brake.pressed::before,
+body.ht2-orig-ui .touch-btn.gas.pressed::before {
+  opacity: 0.9;
   filter: brightness(1.35) saturate(1.2);
 }
 
