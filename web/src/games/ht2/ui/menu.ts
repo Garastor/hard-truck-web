@@ -64,15 +64,26 @@ function toCanvas(img: RgbaImage): HTMLCanvasElement {
 
 const W = 800;
 const H = 600;
-/** Яку частку порожніх полів з боків лишити (сцена розтягується по ширині, щоб поля були на 40% вужчі). */
+/** Яку частку порожніх полів з боків лишити (сцена більшає, щоб поля були на 40% вужчі). */
 const SIDE_KEEP = 0.6;
+/** Рядки сцени, які мають лишатися видимими: від верху верхніх до низу нижніх круглих кнопок (125×125). */
+const KEEP_Y0 = 82;
+const KEEP_Y1 = 451 + 125;
 
-/** Вписує сцену 800×600 у вікно: висота — як є, ширина розтягнута на частину порожніх полів з боків. */
+/**
+ * Вписує сцену 800×600 у вікно без спотворення: рівномірно більша, ніж уміщається, щоб порожні поля з боків були
+ * вужчі, — верх і низ (логотип рамки) обрізаються, але не глибше за круглі кнопки.
+ */
 function fitStage(stage: HTMLElement): void {
-  const k = Math.min(window.innerWidth / W, window.innerHeight / H);
-  const side = (window.innerWidth - W * k) / 2;
-  const kx = (window.innerWidth - 2 * side * SIDE_KEEP) / W;
-  stage.style.transform = `translate(-50%, -50%) scale(${kx}, ${k})`;
+  const iw = window.innerWidth;
+  const ih = window.innerHeight;
+  const fit = Math.min(iw / W, ih / H);
+  const side = (iw - W * fit) / 2;
+  const k = Math.max(fit, Math.min((iw - 2 * side * SIDE_KEEP) / W, ih / (KEEP_Y1 - KEEP_Y0)));
+  // Видима смуга рядків — довкола середини кнопок, у межах сцени.
+  const half = Math.min(H, ih / k) / 2;
+  const cy = Math.min(H - half, Math.max(half, (KEEP_Y0 + KEEP_Y1) / 2));
+  stage.style.transform = `translate(-50%, -50%) translateY(${(H / 2 - cy) * k}px) scale(${k})`;
 }
 
 export interface MenuItem {
@@ -165,7 +176,7 @@ export function ht2MainScreen(art: Ht2MenuArt, o: { note?: string; onRound(key: 
     const n = document.createElement('div');
     n.className = 'menu-abs menu-note ht2-main-note';
     n.style.left = '0';
-    n.style.top = `${H - 30}px`;
+    n.style.top = `${KEEP_Y1 - 26}px`; // над нижнім краєм видимої смуги (fitStage)
     n.style.width = `${W}px`;
     n.textContent = o.note;
     sc.stage.append(n);

@@ -63,7 +63,10 @@ const ICONS = {
   brake: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M4 7l8 11 8-11z"/></svg>',
 };
 
-type Command = 'f1' | 'f2' | 'f3' | 'f4' | 'f5' | 'menu' | 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror' | 'cab' | 'swap';
+/** Чи показувати сенсорну кнопку «Різко» (поки сховано). */
+const SHARP_TOUCH_BUTTON = false;
+
+type Command = 'f1' |'f2' | 'f3' | 'f4' | 'f5' | 'menu' | 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror' | 'cab' | 'swap';
 
 /**
  * Дозвіл на датчик руху (iOS 13+: DeviceOrientationEvent.requestPermission). Питати можна лише в жесті користувача;
@@ -351,7 +354,8 @@ export class Input {
     btn('right', '', 'right', undefined, ICONS.right);
     btn('brake', '', 'brake', undefined, ICONS.brake);
     btn('gas', '', 'gas', undefined, ICONS.gas);
-    if (this.profile?.sharp) {
+    // Сенсорну «Різко» поки сховано (на прохання користувача; що з нею робити — вирішимо). Ctrl на клавіатурі працює.
+    if (this.profile?.sharp && SHARP_TOUCH_BUTTON) {
       // «Різко» (Ctrl): на дотик — перемикач, підсвічений, поки ввімкнений.
       btn('sharp', 'РІЗКО');
       const b = ui.lastElementChild as HTMLElement;
