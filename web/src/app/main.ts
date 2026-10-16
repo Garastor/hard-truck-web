@@ -161,6 +161,41 @@ function exitToGameSelect(): void {
   location.assign(location.pathname.replace(/ht[12]\/(index\.html)?$/i, ''));
 }
 
+/**
+ * Гра не запустилась (помилка в коді гри чи її файлах): повідомлення з причиною замість технічної панелі першої гри
+ * (вона в index.html спільна й лишалася б на екрані сама). id — null, якщо збій ще до вибору гри.
+ */
+function showStartError(id: GameId | null, e: unknown): void {
+  console.error('Гра не запустилась', e);
+  document.body.classList.add('booting');
+  status.hidden = false;
+  status.innerHTML = '';
+  status.classList.add('over-menu');
+  const box = document.createElement('div');
+  box.className = 'import-box';
+  const h = document.createElement('h2');
+  h.textContent = id ? `Не вдалося запустити «${GAMES[id].title}»` : 'Не вдалося запустити гру';
+  const p = document.createElement('p');
+  p.textContent = 'Гра зупинилась під час запуску. Спробуйте ще раз; якщо не допоможе — поверніться до вибору гри.';
+  // Причина — для звіту про помилку (текст винятку, без стека).
+  const why = document.createElement('p');
+  why.className = 'msg';
+  why.textContent = e instanceof Error ? e.message : String(e);
+  const retry = document.createElement('button');
+  retry.className = 'btn';
+  retry.textContent = 'Спробувати ще';
+  retry.addEventListener('click', () => location.reload());
+  box.append(h, p, why, retry);
+  if (GAME_IDS.length > 1) {
+    const back = document.createElement('button');
+    back.className = 'btn';
+    back.textContent = 'До вибору гри';
+    back.addEventListener('click', exitToGameSelect);
+    box.append(back);
+  }
+  status.append(box);
+}
+
 /** Графіка ігор для екрана вибору (фон меню й шрифти — з файлів самої гри, GameModule.selectArt). */
 async function chooseGame(ids: readonly GameId[], available: GameId[]): Promise<GameId> {
   const arts = new Map<GameId, SelectArt>();
@@ -191,20 +226,25 @@ async function boot(): Promise<void> {
     else if ((await showImport(FILE_SETS[pick], true)) === pick) game = pick;
   }
   setLastGame(game);
-  // До запуску гри технічну панель першої гри не показуємо (index.html: body.booting) — інакше вона блимає,
-  // поки шукаємо файли й готуємо екран вибору.
-  document.body.classList.remove('booting');
+  // Технічна панель першої гри (index.html: #bar, #menu, #fps, #stats) — лише для неї: до запуску не показуємо
+  // (body.booting), щоб не блимала, поки шукаємо файли й готуємо екран вибору; друга гра її не використовує — інакше
+  // вона видна, поки вантажиться код другої гри.
   const id = game;
-  await GAME_MODULES[id].run({
-    renderer,
-    overlay,
-    setStatus,
-    showImport: async (again) => (await showImport(FILE_SETS[id], again)) === id,
-    exit: GAME_IDS.length > 1 ? exitToGameSelect : null,
-  });
+  if (id === 'ht1') document.body.classList.remove('booting');
+  try {
+    await GAME_MODULES[id].run({
+      renderer,
+      overlay,
+      setStatus,
+      showImport: async (again) => (await showImport(FILE_SETS[id], again)) === id,
+      exit: GAME_IDS.length > 1 ? exitToGameSelect : null,
+    });
+  } catch (e) {
+    showStartError(id, e);
+  }
 }
 
 // PWA: офлайн-кеш коду й оновлення (лише у збірці й у захищеному контексті — HTTPS/localhost).
 registerServiceWorker();
 
-void boot();
+boot().catch((e: unknown) => showStartError(null, e));
