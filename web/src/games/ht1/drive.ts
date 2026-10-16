@@ -27,6 +27,7 @@ import { HUD_CYAN, type PixelFont } from './engine/ui/pixelFont';
 import { EVENT_CHECKPOINT, EVENT_DEATH, EVENT_FINISH, EVENT_RAIN, Track, isHorizontalPortal, type Room } from './track/track';
 import { AutoPilot, WayNet } from './engine/vehicle/autopilot';
 import { RoomVisibility } from './track/roomVisibility';
+import { ModelBatch } from './engine/render/modelBatch';
 import { toast } from './engine/ui/mobile';
 
 /** Камера (C): з кабіни, від першої особи (лише прилади Panel), позаду, здалеку. */
@@ -138,6 +139,8 @@ const WHEEL_BUMP = 0.02;
  * променем і перерахунок коліс коштували щокадру (оптимізація для телефона).
  */
 const SHAKE_FAR = 150;
+/** Скільки пакунків моделей (ModelBatch) перескладати за кадр, щоб не було піків. */
+const BATCH_REBUILDS = 2;
 
 /**
  * Погойдування (−1…1 × сила): тангаж, крен, підйом. Суми синусоїд некратних частот 2…4,5 Гц (на прохання
@@ -884,6 +887,7 @@ export class DriveSession {
     s.lights = new TruckLights(model.setSwitch, s.truck.visual, s.truck.lightGeometry);
     hideLampReflections(model.root);
     s.wetReflections.push(new WetReflections(model.root, () => s.truck.groundHeight(), (x, y, z) => s.roadBelow(x, y, z), (x, y, z) => s.glossAt(x, y, z), (f, t) => s.lampSeen(f, t)));
+    s.batches.push(new ModelBatch(s.truck.visual, (o) => model.wheels.includes(o)));
     scene.add(s.truck.visual);
     s.spawnOpponents(rivals);
     s.headlightsFx = new Headlights(s.truck.visual, model.root);
@@ -1152,7 +1156,25 @@ export class DriveSession {
   }
 
   /** Другий прохід кадру: кабіна поверх світу, потім кермо поверх кабіни. */
+  /** Пакунки моделей вантажівок (ModelBatch): гравець і суперники. */
+  private readonly batches: ModelBatch[] = [];
+  private batchNext = 0;
+  /**
+   * Пакунки — одразу після рендеру основної камери (перемикачі деталізації виставлено для неї; дзеркало їх змінює),
+   * перескладання — не більше BATCH_REBUILDS за кадр (решта машин до своєї черги малюється оригіналами).
+   */
+  private updateBatches(): void {
+    const n = this.batches.length;
+    let budget = BATCH_REBUILDS;
+    for (let k = 0; k < n; k++) {
+      const b = this.batches[(this.batchNext + k) % n];
+      if (b.update(budget > 0)) budget--;
+    }
+    this.batchNext = (this.batchNext + 1) % Math.max(1, n);
+  }
+
   renderOverlay(renderer: THREE.WebGLRenderer, camera: THREE.Camera): void {
+    this.updateBatches();
     const autoClear = renderer.autoClear;
     const mask = camera.layers.mask;
     const cam = camera as THREE.PerspectiveCamera;
@@ -1464,6 +1486,7 @@ export class DriveSession {
       const lights = new TruckLights(model.setSwitch, truck.visual, truck.lightGeometry);
       hideLampReflections(model.root);
       this.wetReflections.push(new WetReflections(model.root, () => truck.groundHeight(), (x, y, z) => this.roadBelow(x, y, z), (x, y, z) => this.glossAt(x, y, z), (f, t) => this.lampSeen(f, t)));
+      this.batches.push(new ModelBatch(truck.visual, (o) => model.wheels.includes(o)));
       this.opponents.push({ truck, pilot, odo: new Odometer(), lights, flippedFor: 0, shake: new Shake(1.7 * (i + 1)), surface: 'asphalt', surfaceHeight: Infinity, surfaceTimer: 0.2 * Math.random() });
     });
   }
@@ -1999,6 +2022,7 @@ export class DriveSession {
   }
 
   dispose(): void {
+    for (const b of this.batches) b.dispose();
     this.drop2dCab();
     this.streaks?.el.remove();
     this.streaks = undefined;
