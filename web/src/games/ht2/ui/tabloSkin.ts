@@ -28,9 +28,36 @@ export function applyTabloSkin(art: EscArt): void {
     return `url(${c.toDataURL()})`;
   };
   const st = document.documentElement.style;
-  st.setProperty('--ht2-metal', url(METAL));
+  st.setProperty('--ht2-metal', metalFlat(tablo));
   st.setProperty('--ht2-lcd', lcdDimmed(tablo));
   st.setProperty('--ht2-lcd-flat', url(LCD_FLAT));
+}
+
+/** На скільки приглушити блиск металу підкладки (частка відхилення від середнього кольору, яку прибрати). */
+const METAL_FLATTEN = 0.4;
+
+/** Середній колір металу смуги (без гнізд). */
+function metalMean(tablo: HTMLCanvasElement): number[] {
+  const m = tablo.getContext('2d')!.getImageData(...METAL).data;
+  const mean = [0, 0, 0];
+  for (let i = 0; i < m.length; i += 4) for (let k = 0; k < 3; k++) mean[k] += m[i + k];
+  return mean.map((v) => v / (m.length / 4));
+}
+
+/**
+ * Метал підкладки, менш металевий (на прохання користувача): відблиски й шліфування на METAL_FLATTEN ближчі до
+ * середнього кольору — той самий синій, менше блиску.
+ */
+function metalFlat(tablo: HTMLCanvasElement): string {
+  const mean = metalMean(tablo);
+  const img = tablo.getContext('2d')!.getImageData(...METAL);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) d[i + k] += (mean[k] - d[i + k]) * METAL_FLATTEN;
+  const c = document.createElement('canvas');
+  c.width = METAL[2];
+  c.height = METAL[3];
+  c.getContext('2d')!.putImageData(img, 0, 0);
+  return `url(${c.toDataURL()})`;
 }
 
 /**
@@ -39,10 +66,7 @@ export function applyTabloSkin(art: EscArt): void {
  */
 function lcdDimmed(tablo: HTMLCanvasElement): string {
   const g = tablo.getContext('2d')!;
-  const m = g.getImageData(...METAL).data;
-  const mean = [0, 0, 0];
-  for (let i = 0; i < m.length; i += 4) for (let k = 0; k < 3; k++) mean[k] += m[i + k];
-  for (let k = 0; k < 3; k++) mean[k] /= m.length / 4;
+  const mean = metalMean(tablo);
   const img = g.getImageData(...LCD);
   const d = img.data;
   for (let i = 0; i < d.length; i += 4) {
