@@ -128,6 +128,10 @@ const CHASE_LAG = 0.6;
 const CHASE_LOOK = 10;
 /** Далі за стільки метрів від свого місця камера не «доганяє», а переставляється (телепорт, 911). */
 const CHASE_JUMP = 60;
+/** Займання від удару об нерухоме: сила удару (зміна швидкості з урахуванням рами), м/с (king.exe 0x554c20: x > 35). */
+const IMPACT_FIRE = 35;
+/** Після гасіння машина не займається, с (стан вогню 4 → 0). */
+const FIRE_COOL = 5;
 
 /** Опір кочення поза асфальтом, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
 const OFFROAD_ROLL = 5;
@@ -833,7 +837,21 @@ export class Ht2Drive {
     const t = this.tuning;
     dv.multiplyScalar(t.damage);
     if (dv.length() < 2) return;
+    // Займання від удару об нерухоме (0x554c20 → 0x549900): сила удару (з урахуванням рами) понад IMPACT_FIRE м/с і
+    // поруч немає машини (удар не об машину).
+    if (dv.length() > IMPACT_FIRE && !this.carNear(this.truck.visual.position, 10)) this.ignite(0, true);
     this.dents?.hit(dv.applyQuaternion(this.truck.visual.quaternion.clone().invert()), t.front);
+  }
+
+  /** Чи є машина (трафік, міліція, мафія, далекобійники) ближче r. */
+  private carNear(p: THREE.Vector3, r: number): boolean {
+    const near = (q: THREE.Vector3) => q.distanceTo(p) < r;
+    return (
+      (this.traffic?.cars.some((c) => near(c.pos)) ?? false) ||
+      (this.police?.near(p, r) ?? false) ||
+      (this.mafia?.hoods.some((h) => near(h.v.visual.position)) ?? false) ||
+      (this.truckers?.positions.some(near) ?? false)
+    );
   }
 
   /** Удари в напівпричіп — так само, за зміною його швидкості (рама тягача причіп не захищає). */
@@ -1532,13 +1550,18 @@ export class Ht2Drive {
    * Займання від влучання кулі (0x567440): імовірність g·P·0,03/(P + 0,3) — P сила кулі (міліція й мафія 0,1,
    * гелікоптер 2,0), g — скло (броньоване 0,2).
    */
-  private ignite(force: number): void {
-    if (this.burning >= 0 || !this.careerMode) return;
-    if (Math.random() < (this.tuning.glass * force * 0.03) / (force + 0.3)) this.burning = 0;
+  private ignite(force: number, impact = false): void {
+    // Займається лише машина, що не горить і не щойно погашена (стан 4 → 0 через 5 с, 0x54e180).
+    if (this.burning >= 0 || !this.careerMode || this.fireCool > 0) return;
+    if (impact || Math.random() < (this.tuning.glass * force * 0.03) / (force + 0.3)) this.burning = 0;
   }
 
-  /** Погасити (ремонт на СТО). */
+  /** Після гасіння FIRE_COOL с машина не займається. */
+  private fireCool = 0;
+
+  /** Погасити (ремонт на СТО, протипожежна система). */
   extinguish(): void {
+    if (this.burning >= 0) this.fireCool = FIRE_COOL;
     this.burning = -1;
     this.blasts?.carFire(null);
   }
@@ -1551,6 +1574,7 @@ export class Ht2Drive {
   private updateFire(dt: number): void {
     const cm = this.careerMode;
     if (!cm || this.paused) return;
+    this.fireCool = Math.max(0, this.fireCool - dt);
     const c = cm.career;
     // Утонув (0x4ce300/0x56ffd0: центр машини нижче рівня води; повітрозабірник — на 1 м глибше) чи машину знищено
     // (сума пошкоджень > 0,9, 0x597b00; у порту — стан машини) — кінець гри.
