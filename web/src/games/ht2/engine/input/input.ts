@@ -25,6 +25,11 @@ export interface InputProfile {
   steerReturn: number;
   /** Клавіша Ctrl і сенсорна кнопка «різко». */
   sharp: boolean;
+  /**
+   * Швидкість керма з клавіатури, 1/с, за часом утримання t (с), швидкістю v (м/с) і «різко» — формула king.exe
+   * (0x500850). Є — замість steerRamp/steerPower; межа зчеплення — Input.steerLimit.
+   */
+  steerRate?: (t: number, v: number, sharp: boolean) => number;
 }
 
 type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake' | 'sharp';
@@ -146,6 +151,10 @@ export class Input {
   /** Меню «Керування»: швидкість керма й повернення до центру (множники; 1 — як у телеметрії). */
   steerSpeed = 1;
   steerCenter = 1;
+  /** Межа керма за зчепленням (king.exe 0x500850: |s| ≤ c, понад — назад до c зі швидкістю 1/с); null — без межі. */
+  steerLimit: (() => number) | null = null;
+  /** Час утримання клавіші керма в один бік, с. */
+  private steerT = 0;
   /** Сенсорні кнопки (кнопки керма ховаються, поки кермують нахилом). */
   private touchEl: HTMLElement | null = null;
   /** Нахил вимкнено сам (відмова в дозволі на датчик руху). */
@@ -275,6 +284,7 @@ export class Input {
    * клавіша в інший бік — спершу повернення до нуля, далі наростання; відпустив — експоненційно до нуля.
    */
   private steerProfile(dt: number, target: number, sharp: boolean, p: InputProfile): void {
+    if (p.steerRate) return this.steerExe(dt, target, sharp, p, p.steerRate);
     const s = this.steerSmooth;
     if (target !== 0 && s * target >= -0.02) {
       const ramp = p.steerRamp(this.speedKmh, sharp) / this.steerSpeed;
@@ -286,6 +296,40 @@ export class Input {
       this.steerSmooth *= Math.exp(-p.steerReturn * this.steerCenter * dt);
       if (Math.abs(this.steerSmooth) < 1e-3) this.steerSmooth = 0;
     }
+  }
+
+  /**
+   * Кермо з клавіатури king.exe (0x500850, re/notes/ht2/career-misc.md §5, steering.md): s += rate(t, v)·dt, t — час
+   * утримання; протилежна клавіша — спершу гасіння (s ← p·s − |p·s|·dt), далі та сама формула; без клавіш — s ← p·s
+   * (повернення steerReturn). Межа зчеплення c (крім «різко»): клавіша доводить кермо лише до c; якщо c зменшилась
+   * (розігнався) і |s| > c — назад до c зі швидкістю 1/с.
+   */
+  private steerExe(dt: number, target: number, sharp: boolean, p: InputProfile, rate: NonNullable<InputProfile['steerRate']>): void {
+    let s = this.steerSmooth;
+    const c = sharp ? 1 : (this.steerLimit?.() ?? 1);
+    // Уже понад межею (розігнався) — назад до c зі швидкістю 1/с, клавіша кермо не додає.
+    if (Math.abs(s) > c) {
+      this.steerSmooth = Math.sign(s) * Math.max(c, Math.abs(s) - dt);
+      if (target === 0) this.steerDir = 0;
+      return;
+    }
+    const back = Math.exp(-p.steerReturn * this.steerCenter * dt);
+    if (target !== 0) {
+      if (target !== this.steerDir) this.steerT = 0;
+      this.steerDir = target;
+      if (s * target < 0) {
+        s *= back;
+        s -= s * dt;
+      }
+      s += target * rate(this.steerT, this.speedKmh / 3.6, sharp) * this.steerSpeed * dt;
+      this.steerT += dt;
+    } else {
+      this.steerDir = 0;
+      this.steerT = 0;
+      s *= back;
+      if (Math.abs(s) < 1e-3) s = 0;
+    }
+    this.steerSmooth = Math.max(-c, Math.min(c, s));
   }
 
   /**

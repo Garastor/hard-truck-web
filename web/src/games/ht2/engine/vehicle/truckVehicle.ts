@@ -280,6 +280,20 @@ export class TruckVehicle {
   readonly base: number;
   /** Стан коліс king: 1 — пробуксовка, −1 — заблоковане. */
   readonly slip: WheelSlip[];
+  /**
+   * Межа керма за зчепленням для поточної швидкості (рух king.exe; king.exe 0x500850 обмежує нею саме кермо s):
+   * min(1; 1,5·atan(μ·k·L/v²)); без руху king — 1.
+   */
+  steerLimitNow(): number {
+    const K = this.king;
+    if (!K) return 1;
+    const mu = K.mu * this.grip * this.surfaceGrip * (this.weatherGrip < 1 ? K.rain : 1);
+    const r = this.body.rotation();
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w));
+    const lv = this.body.linvel();
+    return steerLimit(lv.x * fwd.x + lv.y * fwd.y + lv.z * fwd.z, mu, this.base, K.steerK);
+  }
+
   /** Тестовий режим: дощ (у кар'єрі він уже в setup.grip). */
   weatherGrip = 1;
   /** Нерівність покриття під колесами (king: roadBump) — асфальт чи ґрунт. */

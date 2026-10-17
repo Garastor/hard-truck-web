@@ -552,6 +552,8 @@ export class Ht2Drive {
     };
     document.body.classList.add('driving');
     this.touch = this.input.mountTouch(o.overlay);
+    // Межа керма за зчепленням для клавіатури (king.exe 0x500850) — від поточної вантажівки.
+    this.input.steerLimit = () => this.truck.steerLimitNow();
     this.hud.className = 'ht2-hud';
     const back = document.createElement('button');
     back.textContent = '← Меню';

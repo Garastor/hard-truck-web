@@ -91,6 +91,10 @@ export const HT2_INPUT: InputProfile = {
   // Відпущене кермо — ×0,5 за 0,1 с (ln 2 / 0,1).
   steerReturn: 6.93,
   sharp: true,
+  // Наростання з клавіатури за king.exe (0x500850): ds/dt = 20·чутливість·m·(t + 0,2)/(0,25·|v| + 1), чутливість
+  // 0,5 (TRUCK.INI sens 50), m = 0,66, «різко» (Ctrl) — 2,0; до упору на місці ≈ 0,39 с, на 10 м/с ≈ 0,85 с. Межа
+  // зчеплення — на кермі (Input.steerLimit). Відкотити до колишньої підгонки (steerRamp/steerPower) — прибрати рядок.
+  steerRate: (t, v, sharp) => (20 * 0.5 * (sharp ? 2 : 0.66) * (t + 0.2)) / (0.25 * Math.abs(v) + 1),
 };
 
 /**
