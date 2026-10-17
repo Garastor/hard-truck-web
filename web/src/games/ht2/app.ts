@@ -7,12 +7,13 @@ import { PixelFont } from './engine/ui/pixelFont';
 import type { GameContext } from '@shared/gameContext';
 import { HT2_FILES, HT2_MODS, HT2_MUSIC, HT2_REQUIRED, HT2_UI, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2ExitScreen, ht2MainScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem, type RoundKey } from './ui/menu';
+import { ht2ControlsScreen, ht2DriversScreen, ht2GraphicsScreen, ht2RecordsScreen } from './ui/menuScreens';
 import { loadSettings, saveSettings, type Ht2Settings } from './ui/settings';
 import { parseIni } from './engine/formats/ini';
 import { decodeCp1251 } from './engine/formats/binary';
 import { WorldViewer } from './ui/viewer';
 import { Ht2Drive } from './drive';
-import { formatMoney, loadCareer, newCareer, type Ht2Career } from './career/career';
+import { clearCareer, formatMoney, loadCareer, newCareer, saveCareer, type Ht2Career } from './career/career';
 import { modal, setHudFont } from './engine/ui/modal';
 
 type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files' | 'exit';
@@ -120,6 +121,50 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
         ];
         const i = await modal(parent, 'Демо', 'Режими порту без кар\'єри:', [...modes.map((m) => m[0]), 'Назад']);
         return modes[i]?.[1] ?? null;
+      }
+      // Екрани LOAD.RES «Графіка», «Керування», «Водії», «Відеоплеєр» (ui/menuScreens.ts): поверх меню; кругла кнопка
+      // рамки — інший розділ.
+      if (art && (key === 'graph' || key === 'contr' || key === 'chang' || key === 'recor')) {
+        const next = await new Promise<RoundKey | null>((resolve) => {
+          let close = () => {};
+          const done = (k: RoundKey | null) => {
+            close();
+            resolve(k);
+          };
+          const common = { onCancel: () => done(null), onRound: (k: RoundKey) => done(k === key ? null : k) };
+          if (key === 'graph')
+            close = ht2GraphicsScreen(art, {
+              ...common,
+              settings,
+              onChange: (st) => {
+                settings = st;
+                saveSettings(st);
+              },
+            });
+          else if (key === 'contr') close = ht2ControlsScreen(art, { ...common, note: (t, p) => void modal(p, 'Керування', t, ['Гаразд']) });
+          else if (key === 'recor') close = ht2RecordsScreen(art, common);
+          else {
+            const c = loadCareer();
+            close = ht2DriversScreen(art, {
+              ...common,
+              driver: c ? { name: c.driver, logo: c.logo ?? 4, photo: c.photo ?? 0 } : null,
+              onChange: (d) => {
+                const cur = loadCareer();
+                if (!cur) return;
+                Object.assign(cur, { driver: d.name, logo: d.logo, photo: d.photo });
+                saveCareer(cur);
+              },
+              onDelete: () => {
+                void modal(document.querySelector('.ht2-menu') as HTMLElement, 'Видалити водія', 'Стерти збережену кар\'єру цього водія?', ['Видалити', 'Ні']).then((i) => {
+                  if (i !== 0) return;
+                  clearCareer();
+                  done(null);
+                });
+              },
+            });
+          }
+        });
+        return next ? round(next, parent) : null;
       }
       await modal(parent, 'Меню', 'Цей розділ у порті ще недоступний.', ['Гаразд']);
       return null;

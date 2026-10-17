@@ -331,7 +331,7 @@ interface TexButtonOptions {
  * Стани: `_p` — звичайна, `_a` — під пальцем/мишею, `_ap` — натиснута, `_pp` / `_ph` — вибрана (перемикач) і вибрана
  * під пальцем, `_f` — недоступна.
  */
-function texButton(art: Ht2MenuArt, stage: HTMLElement, base: string, x: number, y: number, label: string, opts: TexButtonOptions): () => void {
+export function texButton(art: Ht2MenuArt, stage: HTMLElement, base: string, x: number, y: number, label: string, opts: TexButtonOptions): () => void {
   const ext = opts.ext ?? '.txr';
   const off = () => (typeof opts.disabled === 'function' ? opts.disabled() : !!opts.disabled);
   const b = document.createElement('button');
@@ -380,7 +380,7 @@ function texButton(art: Ht2MenuArt, stage: HTMLElement, base: string, x: number,
  * Сцена 800×600, вписана у вікно: центр — екран LOAD.RES, поверх — рамка `common.msk` і круглі кнопки (onRound;
  * без нього рамки немає). Повертає (stage, root, close).
  */
-function screen(art: Ht2MenuArt, background: string, onRound?: (key: RoundKey) => void): { stage: HTMLElement; root: HTMLElement; close: () => void } {
+export function screen(art: Ht2MenuArt, background: string, onRound?: (key: RoundKey) => void): { stage: HTMLElement; root: HTMLElement; close: () => void } {
   const root = document.createElement('div');
   root.className = 'menu-screen ht2-menu';
   const stage = document.createElement('div');

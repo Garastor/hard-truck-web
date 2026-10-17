@@ -34,6 +34,7 @@ import { Dents, dentGeometry } from './vehicles/dents';
 import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
 import { orderVehicle, vehicleOffers, vehiclePowers, vehiclePrices } from './career/carOrder';
 import { HIRED_MIN_SPEED, HiredOnRoads } from './career/hired';
+import { RESOLUTION_H } from './ui/menuScreens';
 import { driverCosts, hiredLoad, upgradeDriver } from './career/company';
 import { routeLength } from './career/economy';
 import { terrainCollider } from './world/terrain';
@@ -2033,6 +2034,9 @@ export class Ht2Drive {
     this.tablo?.resize();
     const w = window.innerWidth;
     const h = window.innerHeight;
+    // Роздільність з меню «Графіка»: висота кадру 480…1200 (не більше за фізичну).
+    const res = this.opts.settings?.resolution;
+    if (res !== undefined) this.opts.renderer.setPixelRatio(Math.min(window.devicePixelRatio, RESOLUTION_H[res] / h));
     this.opts.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();

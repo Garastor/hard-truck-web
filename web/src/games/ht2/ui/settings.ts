@@ -37,6 +37,11 @@ export interface Ht2Settings {
    * тангенс половини горизонтального кута — xpyramid/2, для всіх камер.
    */
   xpyramid: number;
+  /**
+   * Роздільність з меню «Графіка» (king.exe 0x515ca0: 640×480 / 800×600 / 1024×768 / 1600×1200) — висота кадру
+   * рендерера (ui/menuScreens.ts RESOLUTION_H); не задано — як вирішить оболонка (якість).
+   */
+  resolution?: number;
 }
 
 const KEY = 'ht2.settings.v1';

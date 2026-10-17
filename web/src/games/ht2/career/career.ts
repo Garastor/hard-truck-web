@@ -28,6 +28,9 @@ export interface ActiveOrder extends Order {
 
 export interface Ht2Career {
   driver: string;
+  /** Логотип (0…7, `d/logo1…8`) і фото (0…50, `d/photo01…51`) водія — меню «Водії» (king.exe .pl1). */
+  logo?: number;
+  photo?: number;
   money: number;
   truck: string;
   /** Пошкодження машини 0…1. */
