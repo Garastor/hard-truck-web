@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { iniNum, iniNums, parseIni, type Ini } from '../engine/formats/ini';
+import { iniGet, iniNum, iniNums, parseIni, type Ini } from '../engine/formats/ini';
 import { dayFactor, dayPhase, sunHeight } from './climate';
 
 /**
@@ -11,7 +11,9 @@ import { dayFactor, dayPhase, sunHeight } from './climate';
  *
  * Змішування — як у king.exe (re/notes/ht2/weather.md): пора — за висотою сонця s (ніч до −0,2, сутінки — 0, день від
  * 0,2; сонце `sunenv` — 0…0,05), сутінки до 14:00 — srise, після — sset; good ↔ bad — за «негодою» b 0…1.
- * Яка погода в якому регіоні — подія кімнати `weather_change` (ще не розібрано; гіпотеза: WEATHER1).
+ * Звичайна погода — WEATHER1; спецнабори 5…8 підмішує кімната (подія `weather_change`, world/weatherRooms.ts):
+ * X = (1 − k)·звичайна + k·спецнабір для всіх кольорів і меж туману (king.exe 0x5a8e90, 0x5a9240; k < 0,01 — 0,
+ * > 0,99 — 1). Добової зміни WEATHER1→2→3→4 (0x5a9540) порт ще не робить.
  */
 export type Sky = 'good' | 'bad';
 export type DayTime = 'night' | 'srise' | 'day' | 'sset';
@@ -83,8 +85,38 @@ export class Weather {
     return d * (b * bdy + (1 - b) * gd) + (1 - d) * (b * bn + (1 - b) * gn);
   }
 
-  /** Світло на годину доби (0…24) і негоду b (0…1). */
-  at(hour: number, b: number, set = 1): Light {
+  /**
+   * Прапорці набору (king.exe 0x5a7b50, маска 0x6fca38): rain, sun, thund; немає ключа — on. rain=off гасить краплі
+   * на склі й двірники, thund=off — спалах блискавки.
+   */
+  flags(set: number): { rain: boolean; sun: boolean; thund: boolean } {
+    const on = (k: string) => (iniGet(this.ini, `WEATHER${set}`, k) ?? 'on').trim().toLowerCase() !== 'off';
+    return { rain: on('rain'), sun: on('sun'), thund: on('thund') };
+  }
+
+  /** Світло на годину доби (0…24) і негоду b (0…1); special — спецнабір кімнати з вагою k. */
+  at(hour: number, b: number, set = 1, special?: { set: number; k: number }): Light {
+    const k = special && special.set ? (special.k < 0.01 ? 0 : special.k > 0.99 ? 1 : special.k) : 0;
+    if (k === 0) return this.one(hour, b, set);
+    const sp = this.one(hour, b, special!.set);
+    if (k === 1) return sp;
+    const base = this.one(hour, b, set);
+    const c = (a: THREE.Color, s: THREE.Color) => a.clone().lerp(s, k);
+    const n = (a: number, s: number) => a + (s - a) * k;
+    return {
+      fog: c(base.fog, sp.fog),
+      fogNear: n(base.fogNear, sp.fogNear),
+      fogFar: n(base.fogFar, sp.fogFar),
+      sun: c(base.sun, sp.sun),
+      moon: c(base.moon, sp.moon),
+      ambient: c(base.ambient, sp.ambient),
+      sky: c(base.sky, sp.sky),
+      sunsky: c(base.sunsky, sp.sunsky),
+      suncld: c(base.suncld, sp.suncld),
+    };
+  }
+
+  private one(hour: number, b: number, set: number): Light {
     const s = sunHeight(hour);
     const ph = dayPhase(hour);
     const c = (v: Rgb) => new THREE.Color().setRGB(v[0], v[1], v[2], THREE.SRGBColorSpace);

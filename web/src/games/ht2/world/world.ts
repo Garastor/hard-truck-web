@@ -230,12 +230,21 @@ export class Ht2World {
    * розібрана). Також напрям сонця, колір дерев (розсіяне + 0,7 · (сонце + місяць)) і нічні вікна; w — показник
    * погоди (відблиски сонця — лише при w < 0,2).
    */
+  /** Спецнабір погоди кімнати (world/weatherRooms.ts): WEATHERn з вагою k. */
+  special = { set: 0, k: 0 };
+
+  /** Прапорці набору, що діє (king.exe: маска спецнабору при вазі ≥ 0,05, інакше звичайного). */
+  weatherFlags(): { rain: boolean; sun: boolean; thund: boolean } {
+    const set = this.special.set && this.special.k >= 0.05 ? this.special.set : 1;
+    return this.weather?.flags(set) ?? { rain: true, sun: true, thund: true };
+  }
+
   setClimate(hour: number, b: number, flash = false, w = b > 0 ? 0.5 + b / 2 : 0): void {
     this.hour = hour;
     this.weatherW = w;
     this.applyIllum();
     if (!this.weather) return;
-    const l = this.weather.at(hour, b, 1);
+    const l = this.weather.at(hour, b, 1, this.special);
     const fog = this.scene.fog as THREE.Fog;
     fog.color.copy(l.fog);
     fog.near = l.fogNear;

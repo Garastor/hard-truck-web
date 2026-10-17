@@ -29,6 +29,7 @@ import { showGameOver, showVictory, type LoseScreen } from './ui/gameOver';
 import { playVideo } from './engine/video/player';
 import { sharedContext } from './engine/audio/engineAudio';
 import { glassDrops, precipitation, trafficHeadlights } from './ui/effects';
+import { WeatherRooms } from './world/weatherRooms';
 import { WIN_SHARE } from './career/share';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
@@ -1388,10 +1389,16 @@ export class Ht2Drive {
       this.truck.weatherGrip = this.raining ? 0.8 : 1;
       this.say(this.raining ? 'Дощ: дорога слизька' : 'Дощ скінчився', 4);
     }
+    // Спецнабір погоди кімнати (тунелі, гори; world/weatherRooms.ts) — за позицією машини гравця.
+    const tp = this.truck.visual.position;
+    const near = this.roads.nearestAxis(tp);
+    const room = near && near.dist < 30 ? near.axis.name.split('#')[0] : null;
+    this.world.special = { ...this.weatherRooms.update(this.world.loaded.values(), tp, room, this.world.regionAt(tp.x, -tp.z) ?? null) };
+    this.weatherFlags = this.world.weatherFlags();
     this.updateThunder(dt);
     this.tick++;
-    // Спалах: розсіяне світло (0,9, 1, 1) через кадр протягом 1 с (king.exe 0x005a9540).
-    this.world.setClimate(hour, c.bad, this.flashTime > 0 && this.tick % 2 === 1, c.w());
+    // Спалах: розсіяне світло (0,9, 1, 1) через кадр протягом 1 с (king.exe 0x005a9540); thund=off — без спалаху.
+    this.world.setClimate(hour, c.bad, this.weatherFlags.thund && this.flashTime > 0 && this.tick % 2 === 1, c.w());
     this.world.updateTrees(dt, c.wind);
     this.updateDebris(dt, c.wind, c.w());
     this.updatePrecip(dt, c.wind, c.w());
@@ -1420,7 +1427,7 @@ export class Ht2Drive {
   private updateThunder(dt: number): void {
     this.flashTime = Math.max(0, this.flashTime - dt);
     if (this.bolt) {
-      this.bolt.visible = this.flashTime > 0.6 && this.tick % 3 !== 0;
+      this.bolt.visible = this.weatherFlags.thund && this.flashTime > 0.6 && this.tick % 3 !== 0;
       // Текстура flash — 8 кадрів у ряд (ефект 0x005a4880: 8 кадрів): кадр за часом спалаху.
       const map = this.bolt.material.map;
       if (map) map.offset.x = Math.min(7, Math.floor((1 - this.flashTime) * 20)) / 8;
@@ -1687,6 +1694,9 @@ export class Ht2Drive {
   /** Горить: секунд від займання; −1 — ні (king.exe 0x54e180). */
   private burning = -1;
   /** Вода (тригери 13/16) і кінець гри. */
+  /** Спецнабори погоди кімнат і прапорці набору, що діє (rain/sun/thund). */
+  private readonly weatherRooms = new WeatherRooms();
+  private weatherFlags = { rain: true, sun: true, thund: true };
   private readonly water = new Water((key) => this.worldSwitches.get(key) ?? 0);
   /** Стаціонарні камери-радари (картка 16). */
   private readonly radars = new Radars();
@@ -2458,8 +2468,11 @@ export class Ht2Drive {
         this.sheltered = this.raining && !!this.rapier.castRay(new RAPIER.Ray({ x: t.x, y: t.y + 3, z: t.z }, { x: 0, y: 1, z: 0 }), 60, true);
       }
       // Краплі на склі — ще й за повзунками графіки (g > 0,5 і d > 0,2, ui/effects.ts).
-      this.glassRain.raining = this.raining && !this.sheltered && glassDrops();
-      this.glassRain.wipersOn = this.wipersManual ?? this.raining;
+      // Набір кімнати з rain=off (тунелі WEATHER5/8, king.exe — щокадру гасить біти крапель і двірників): ні крапель,
+      // ні двірників.
+      const rainOn = this.weatherFlags.rain;
+      this.glassRain.raining = this.raining && !this.sheltered && glassDrops() && rainOn;
+      this.glassRain.wipersOn = rainOn && (this.wipersManual ?? this.raining);
       this.input.setToggle('wipers', this.glassRain.wipersOn);
       // Крок — справжній час кадру: з 1/30 на кадр двірники на 60 Гц ходили вдвічі, на 120 Гц — учетверо швидше.
       this.glassRain.update(dt, this.truck.speedKmh);
