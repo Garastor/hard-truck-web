@@ -37,6 +37,18 @@ export function steerLimit(v: number, mu: number, base: number, k: number): numb
   return Math.min(1, 1.5 * Math.atan((mu * k * base) / (s * s)));
 }
 
+/**
+ * Бічна сила шини в динамічному режимі king.exe (0x4f4d60 тип 7, 0x4f4f60), частка μ·N: φ(α, v) =
+ * 7α²/((α + 0,2·s²)²·(α + 6)), s = 5/(|v| + 5); α — кут ковзання колеса, рад. На швидкості дуже жорстка (≈ 1 вже
+ * при α ≈ 0,05 на 20 м/с), найбільша ≈ 1,1 при α ≈ 0,3 — по суті сухе тертя з межею μ·N.
+ */
+export function tireCurve(alpha: number, v: number): number {
+  const a = Math.abs(alpha);
+  const s = 5 / (Math.abs(v) + 5);
+  const d = a + 0.2 * s * s;
+  return d > 0 ? (7 * a * a) / (d * d * (a + 6)) : 0;
+}
+
 /** Кутова швидкість повороту навколо нормалі ґрунту, рад/с: v_fwd·sin δ / L (знак — за напрямом руху й керма). */
 export function yawRate(vFwd: number, delta: number, base: number): number {
   return (vFwd * Math.sin(delta)) / base;

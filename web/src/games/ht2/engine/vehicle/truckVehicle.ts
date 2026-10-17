@@ -5,7 +5,7 @@ import type { ControlState } from '../input/input';
 import { visibleBox, type TruckDef, type TruckModel } from './trucks';
 import { Engine, GEAR_R, type EngineProfile } from './engine';
 import { HitMeter } from './hitMeter';
-import { KING, ROUGH_ASPHALT, roadBump, type Roughness, rollingForce, steerLimit, wheelForces, yawRate, type KingWheel, type WheelSlip } from './kingModel';
+import { KING, ROUGH_ASPHALT, roadBump, type Roughness, rollingForce, steerLimit, tireCurve, wheelForces, yawRate, type KingWheel, type WheelSlip } from './kingModel';
 
 /**
  * Вантажівка на DynamicRayCastVehicleController (Rapier).
@@ -107,6 +107,11 @@ const ROLLING_RESISTANCE = 0.015;
  */
 const SOFT_DRAG = 2;
 const SOFT_DRAG_SPAN = 3;
+/**
+ * Момент інерції навколо вертикалі на кг маси, м² (запис king.exe, ZilR: [0x1f48].z / [0x2640] = 22 849 / 6671; для
+ * інших машин — гіпотеза: tech `I` з ним прямо не повʼязаний).
+ */
+const YAW_GYRATION2 = 3.425;
 /** Нахил кузова від прискорення king.exe (0x4fca10): рад на м/с², межа, частка поздовжнього. */
 const LEAN_K = 0.0109;
 const LEAN_MAX = 0.0435;
@@ -170,6 +175,13 @@ export interface KingSetup {
   rollMax: number;
   /** Хід підвіски коліс, м (vehicle.tech `suspension`) — масштаб нерівності дороги (roadBump). */
   travel?: readonly number[];
+  /**
+   * Динамічний режим king.exe (3): бічні сили шин замість «швидкість уздовж курсу» (TruckVehicle.tireStep). У
+   * оригіналі — машина гравця (телеметрія); трафік і ІІ — кінематичні (режим 0/1).
+   */
+  tires?: boolean;
+  /** Множник μ для бічних сил шин (μ king.exe — 0,83 у записі, поздовжнє в порту підігнано з 0,71). */
+  sideGrip?: number;
 }
 
 /** Тінь над дорогою, м — щоб не мерехтіла з дорогою (гіпотеза порту). */
@@ -283,6 +295,8 @@ export class TruckVehicle {
   readonly base: number;
   /** Задня вісь бази — z у системі кузова (Three.js), м. */
   private readonly rearAxleZ: number;
+  /** Момент інерції навколо вертикалі, кг·м² (YAW_GYRATION2; у колайдера — інший, Rapier ним рахує лише удари). */
+  private readonly yawInertia: number;
   /** Бічна швидкість центру мас від повороту навколо задньої осі (ω·d), додана минулого кроку, м/с. */
   private readonly axleSide = new THREE.Vector3();
   /** Удари king — зміна швидкості від зіткнень, без власного кінематичного кроку (hitMeter.ts). */
@@ -448,6 +462,7 @@ export class TruckVehicle {
         .setRestitution(0.1),
       this.body,
     );
+    this.yawInertia = mass * YAW_GYRATION2;
 
     this.ctrl = world.createVehicleController(this.body);
     for (let i = 0; i < this.wheels; i++) {
@@ -737,8 +752,14 @@ export class TruckVehicle {
     if (hold > 0 && Math.abs(vFwd) < 0.5 && push <= hold) next.set(0, 0, 0);
     // Опір і гальма зупиняють, але не розганяють назад.
     else if (vFwd !== 0 && Math.sign(along) !== Math.sign(vFwd) && Math.sign(force) === -Math.sign(vFwd) && Math.abs(drive) < resist + hold) next.addScaledVector(ft, -along);
+    // Динамічний режим (машина гравця): бічні сили шин і курс з їхнього моменту.
+    let tireOmega: number | null = null;
+    if (K.tires) {
+      const av0 = this.body.angvel();
+      tireOmega = this.tireStep(dt, next, n, ft, delta, wheels, Math.abs(vFwd), av0.x * n.x + av0.y * n.y + av0.z * n.z);
+    }
     // Рівний ґрунт і всі колеса на землі — швидкість уздовж курсу (бічного ковзання немає).
-    if (all && n.y >= KING.flat) {
+    else if (all && n.y >= KING.flat) {
       // Довжина вектора — як в оригіналі, але лише коли бічна складова мала (поворот за крок): після удару збоку
       // (в оригіналі тоді вмикається «динамічний» режим) поштовх не має ставати розгоном уперед.
       const along2 = next.dot(ft);
@@ -767,7 +788,7 @@ export class TruckVehicle {
     this.body.setLinvel(next, true);
     // Поворот: кутова швидкість навколо нормалі — кінематична (обидва передні колеса в повітрі — 0); крен і
     // тангаж від підвіски лишаються.
-    const omega = wheels[0].ground || wheels[1].ground ? -yawRate(vFwd, delta, this.base) : 0;
+    const omega = tireOmega ?? (wheels[0].ground || wheels[1].ground ? -yawRate(vFwd, delta, this.base) : 0);
     this.slip.length = this.wheels;
     const av = this.body.angvel();
     const w = new THREE.Vector3(av.x, av.y, av.z);
@@ -775,6 +796,53 @@ export class TruckVehicle {
     this.body.setAngvel(w, true);
     for (let i = 0; i < this.wheels; i++) if (wheels[i].ground) roadBump(this.bumps[i], dt, vFwd, this.king!.travel?.[i] ?? 0.3, Math.random(), this.roughness);
     this.lean(dt, n, ft, gt, vFwd * omega, force / mass);
+  }
+
+  /**
+   * Бічні сили шин динамічного режиму king.exe (режим 3 — машина гравця, telemetry.md 2026-10-18; 0x4f4f60, 0x4f4110):
+   * кожне колесо на землі тисне поперек себе (передні повернуті на δ) проти бічної швидкості точки контакту з силою μ·N·φ(α, v) (kingModel.tireCurve, v — швидкість машини; на швидкості колеса < 1 м/с — ще
+   * ×швидкість, як в exe). Сили всіх коліс — одночасно, з одного стану; сума й момент навколо нормалі змінюють
+   * швидкість ЦМ і кутову швидкість. Змінює next (швидкість ЦМ), повертає кутову швидкість навколо n. Повне кермо на
+   * швидкості — передні колеса зриваються (α ≈ 0,6–0,7 рад у записі), недоповорот.
+   */
+  private tireStep(dt: number, next: THREE.Vector3, n: THREE.Vector3, ft: THREE.Vector3, delta: number, wheels: readonly KingWheel[], speed: number, omega0: number): number {
+    const c = this.body.worldCom();
+    const com = new THREE.Vector3(c.x, c.y, c.z);
+    const side = new THREE.Vector3().crossVectors(n, ft);
+    // δ > 0 — праворуч (колеса моделі: + — ліворуч, steerAngle = −δ).
+    const fFront = ft.clone().multiplyScalar(Math.cos(delta)).addScaledVector(side, -Math.sin(delta));
+    const sideMu = this.king!.sideGrip ?? 1;
+    const M = this.mass;
+    const I = this.yawInertia;
+    const on: number[] = [];
+    for (let i = 0; i < this.wheels; i++) if (wheels[i].ground && this.ctrl.wheelContactPoint(i)) on.push(i);
+    let w = omega0;
+    const dv = new THREE.Vector3();
+    let dw = 0;
+    for (const i of on) {
+      const p = this.ctrl.wheelContactPoint(i)!;
+      const r = new THREE.Vector3(p.x, p.y, p.z).sub(com);
+      r.addScaledVector(n, -r.dot(n));
+      // Сила — поперек колеса (передні повернуті на δ): її складова вздовж кузова гальмує на повному кермі — у записі
+      // з повним газом опір повороту ≈ 1,7 м/с² на 51 км/год і ≈ 2,5 на 70 (поперек кузова опору не було б).
+      const f = i < 2 ? fFront : ft;
+      const d = new THREE.Vector3().crossVectors(n, f);
+      const u = next.clone().add(new THREE.Vector3().crossVectors(n, r).multiplyScalar(w));
+      const lat = u.dot(d);
+      const lon = u.dot(f);
+      const alpha = Math.atan2(Math.abs(lat), Math.abs(lon));
+      const size = wheels[i].mu * sideMu * wheels[i].load * tireCurve(alpha, speed) * Math.min(1, Math.hypot(lat, lon));
+      // Сухе тертя (як 0x4f4110): імпульс колеса не більший, ніж гасить бічну швидкість його контакту, — з поділом на
+      // число коліс (діють одночасно), щоб разом не перекинути знак.
+      const arm = new THREE.Vector3().crossVectors(r, d).dot(n);
+      const gain = 1 / M + (arm * arm) / I;
+      const j = -Math.sign(lat) * Math.min(size * dt, Math.abs(lat) / (gain * on.length));
+      dv.addScaledVector(d, j / M);
+      dw += (arm * j) / I;
+    }
+    next.add(dv);
+    w += dw;
+    return w;
   }
 
   /**

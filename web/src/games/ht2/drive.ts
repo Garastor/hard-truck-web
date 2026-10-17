@@ -161,6 +161,11 @@ function alongPoints(v: TruckVehicle): THREE.Vector3[] {
 const IMPACT_FIRE = 35;
 /** Вибух машини (_Blow) у кар'єрі: +0,4 пошкодження (0x555550(−0,4)). */
 const BLOW_DAMAGE = 0.4;
+/** μ коліс king.exe у записі ([Car_V+0x2670], ZilR на асфальті, 2026-10-18); у порту поздовжнє підігнано з 0,71. */
+const KING_EXE_MU = 0.83;
+/** Колісна база king.exe [0x1f60] у записі ZilR, м, і база порту для ZilR (до найближчої задньої осі). */
+const KING_EXE_BASE = 7.9;
+const ZILR_BASE = 6.54;
 /** Після гасіння машина не займається, с (стан вогню 4 → 0). */
 const FIRE_COOL = 5;
 
@@ -1171,7 +1176,12 @@ export class Ht2Drive {
     const base = { cargoMass: this.hitched ? 0 : cargo, torque: t.torque, surfaceEffects: !this.arcade, tractionControl: t.antiSpin, engineBrake: t.engineBrake };
     // Рух king.exe (G10 В3); `?physics=rapier` — колишня модель на шинах Rapier (для порівняння).
     if (new URLSearchParams(location.search).get('physics') === 'rapier') return { ...base, engine: HT2_ENGINE, brake: HT2_BRAKE, rollLift: HT2_ROLL_LIFT, steerLimit: HT2_STEER_LIMIT, steerPower: HT2_STEER_POWER };
-    return { ...base, engine: HT2_KING_ENGINE, brake: HT2_KING_BRAKE, king: { ...HT2_KING, travel: this.rec?.suspension } };
+    // Машина гравця в king.exe — у динамічному режимі 3 (телеметрія 2026-10-18): бічні сили шин, μ 0,83 із запису;
+    // межа керма — з величин king.exe: C = μ·k·L = 0,83·9,8·7,9 ≈ 64 (ZilR; підгонка 8,8 була під кінематику — з шинами
+    // радіуси виходили в 1,5–3 рази більші за запис). `?physics=kinematic` — колишній кінематичний рух.
+    if (new URLSearchParams(location.search).get('physics') === 'kinematic') return { ...base, engine: HT2_KING_ENGINE, brake: HT2_KING_BRAKE, king: { ...HT2_KING, travel: this.rec?.suspension } };
+    const king = { ...HT2_KING, travel: this.rec?.suspension, tires: true, sideGrip: KING_EXE_MU / HT2_KING.mu, steerK: (KING_EXE_MU * 9.8 * KING_EXE_BASE) / (HT2_KING.mu * ZILR_BASE) };
+    return { ...base, engine: HT2_KING_ENGINE, brake: HT2_KING_BRAKE, king };
   }
 
   /** Запис vehicle.tech поточної вантажівки. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { KING, ROUGH_GROUND, roadBump, rollingForce, steerLimit, wheelForces, yawRate, type KingWheel, type WheelSlip } from '../../src/games/ht2/engine/vehicle/kingModel';
+import { KING, ROUGH_GROUND, roadBump, rollingForce, steerLimit, tireCurve, wheelForces, yawRate, type KingWheel, type WheelSlip } from '../../src/games/ht2/engine/vehicle/kingModel';
 
 /** Чотири колеса по 10 кН, ведучі задні (μ = 0,7: межа колеса 7 кН). */
 const wheels = (mu = 0.7): KingWheel[] =>
@@ -77,5 +77,16 @@ describe('нерівність дороги king.exe (0x502780)', () => {
     }
     expect(max).toBeGreaterThan(0.03);
     expect(max).toBeLessThanOrEqual(0.1);
+  });
+
+  it('бічна сила шини φ(α, v) — 0x4f4d60 тип 7, як у записі king.exe', () => {
+    expect(tireCurve(0, 10)).toBe(0);
+    // Точки із запису ZilR (2026-10-18): |F|/(μ·N) колеса проти кута ковзання на ≈ 14,5 м/с.
+    expect(tireCurve(0.67, 14.6)).toBeCloseTo(0.98, 1);
+    expect(tireCurve(0.14, 14.6)).toBeGreaterThan(0.8);
+    // На швидкості жорсткіша: той самий малий кут — більша частка.
+    expect(tireCurve(0.03, 20)).toBeGreaterThan(tireCurve(0.03, 2));
+    // Не більше ≈ 1,1 на будь-якому куті.
+    for (let a = 0; a <= Math.PI / 2; a += 0.05) expect(tireCurve(a, 15)).toBeLessThan(1.12);
   });
 });
