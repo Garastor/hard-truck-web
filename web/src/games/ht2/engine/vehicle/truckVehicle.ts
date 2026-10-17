@@ -278,6 +278,8 @@ export class TruckVehicle {
    * записом king.exe на всіх швидкостях; до середини задніх, 7,22 м, — повертала ширше; гіпотеза за записом).
    */
   readonly base: number;
+  /** Задня вісь бази — z у системі кузова (Three.js), м. */
+  private readonly rearAxleZ: number;
   /** Стан коліс king: 1 — пробуксовка, −1 — заблоковане. */
   readonly slip: WheelSlip[];
   /**
@@ -357,6 +359,8 @@ export class TruckVehicle {
     const front = (wz[0] + wz[1]) / 2;
     const rear = wz.slice(2).map((z) => Math.abs(z - front));
     this.base = Math.max(1, rear.length ? Math.min(...rear) : 1);
+    // Задня вісь (та сама, що для бази) — навколо неї машина повертає (moveKing).
+    this.rearAxleZ = rear.length ? front + Math.sign(wz[2 + rear.indexOf(Math.min(...rear))] - front) * this.base : front;
 
     // Габарити кузова в локальних координатах Three.js.
     gameFrame.updateMatrixWorld(true);
@@ -715,6 +719,21 @@ export class TruckVehicle {
       const side = Math.sqrt(Math.max(0, next.lengthSq() - along2 * along2));
       const speed = side < 0.5 ? next.length() * (Math.sign(along2) || 0) : along2;
       next.copy(ft).multiplyScalar(speed);
+      // Поворот навколо задньої осі (порт, на прохання користувача): уздовж курсу рухається задня вісь, а центр мас
+      // попереду неї — ще й убік на ω·d. Інакше машина крутилася навколо центру мас і задні колеса виносило назовні.
+      if (wheels[0].ground || wheels[1].ground) {
+        const d = this.rearAxleZ - this.body.localCom().z;
+        next.addScaledVector(new THREE.Vector3().crossVectors(n, ft), -yawRate(speed, delta, this.base) * d);
+      }
+    } else {
+      // Не всі колеса на землі чи схил (порт; у king.exe тут «динамічний» режим, не розібрано): бічне ковзання гасить
+      // тертя коліс, що на землі, — не більше μ·g·(частка коліс на землі) за секунду; ціль — та сама дуга навколо
+      // задньої осі. Без цього після підскоку (бордюр, клумба) машину несло боком, доки всі колеса не стануть.
+      const left = new THREE.Vector3().crossVectors(n, ft);
+      const target = wheels[0].ground || wheels[1].ground ? -yawRate(vFwd, delta, this.base) * (this.rearAxleZ - this.body.localCom().z) : 0;
+      const excess = next.dot(left) - target;
+      const maxDv = mu * KING.g * (onGround / this.wheels) * dt;
+      next.addScaledVector(left, -Math.sign(excess) * Math.min(Math.abs(excess), maxDv));
     }
     // Rapier за крок додасть усю вагу — її дотичну частину віднімаємо наперед; уздовж нормалі — як є (підвіска).
     next.addScaledVector(gt, -dt).addScaledVector(n, vn);
