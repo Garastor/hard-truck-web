@@ -53,6 +53,12 @@ interface VertexSource {
   positions: Float32Array;
   uvs: Float32Array;
   normals?: Float32Array | null;
+  /**
+   * Вершини формату 3 (блок 36/37): замість нормалі — інтенсивність (у всіх файлах 1,0). king.exe малює такі
+   * меші без освітлення: FVF без нормалі → 0x005b1020 ставить emissive і diffuse з кольору вершини (колір
+   * матеріалу × інтенсивність, 0x005f0b10), ambient 0 — ліхтарі, фари, вікна, тіні машин світять рівно.
+   */
+  prelit?: boolean;
 }
 
 /**
@@ -60,6 +66,7 @@ interface VertexSource {
  * (режим lit; null — у джерелі нормалей немає, рахуємо з геометрії).
  */
 type Batch = { pos: number[]; uv: number[]; ord: number[]; layer?: number[]; nrm?: number[] | null };
+/** Ключ — індекс матеріалу; ~індекс (від'ємний) — той самий матеріал без освітлення (VertexSource.prelit). */
 type Batches = Map<number, Batch>;
 
 /**
@@ -177,6 +184,42 @@ export class MaterialLibrary {
     }
     this.cache.set(index, mat);
     return mat;
+  }
+
+  private readonly unlitCache = new Map<number, THREE.Material>();
+
+  /**
+   * Матеріал без освітлення (меші з вершинами формату 3, див. VertexSource.prelit): колір = текстура × колір
+   * матеріалу, як emissive з кольору вершини в king.exe. Поза режимом lit — звичайний матеріал.
+   */
+  unlit(index: number): THREE.Material {
+    const src = this.material(index) as THREE.MeshLambertMaterial;
+    if (!this.lit) return src;
+    let mat = this.unlitCache.get(index);
+    if (mat) return mat;
+    const m = new THREE.MeshBasicMaterial({
+      map: src.map,
+      color: src.color,
+      side: src.side,
+      transparent: src.transparent,
+      opacity: src.opacity,
+      depthWrite: src.depthWrite,
+      alphaTest: src.alphaTest,
+      polygonOffset: src.polygonOffset,
+      polygonOffsetFactor: src.polygonOffsetFactor,
+      polygonOffsetUnits: src.polygonOffsetUnits,
+    });
+    m.name = src.name;
+    m.userData = { ...src.userData, unlit: true };
+    // Рух текстури: своя копія, щоб світ не зсував спільну текстуру двічі за кадр.
+    if (m.userData.move && m.map) m.map = m.map.clone();
+    this.unlitCache.set(index, (mat = m));
+    return mat;
+  }
+
+  /** Матеріал партії за ключем Batches (від'ємний — без освітлення). */
+  forKey(key: number): THREE.Material {
+    return key < 0 ? this.unlit(~key) : this.material(key);
   }
 
   /**
@@ -495,7 +538,7 @@ export class SceneAssembler {
 
   private layerPass(batches: Batches): void {
     if (this.buildingRooms) this.stats.layered += separateLayers(
-        [...batches].filter(([m]) => !!(this.lib.material(m) as THREE.MeshBasicMaterial).map).map(([, b]) => b),
+        [...batches].filter(([m]) => !!(this.lib.forKey(m) as THREE.MeshBasicMaterial).map).map(([, b]) => b),
       );
   }
 
@@ -517,12 +560,12 @@ export class SceneAssembler {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(part.pos, 3));
       g.setAttribute('uv', new THREE.Float32BufferAttribute(part.uv, 2));
-      if (this.lit) {
+      if (this.lit && matIndex >= 0) {
         if (part.nrm && part.nrm.length === part.pos.length) g.setAttribute('normal', new THREE.Float32BufferAttribute(part.nrm, 3));
         else g.computeVertexNormals();
       }
       g.computeBoundingSphere();
-      const mesh = new THREE.Mesh(g, layer ? this.layerMaterial(matIndex, layer) : this.lib.material(matIndex));
+      const mesh = new THREE.Mesh(g, layer ? this.layerMaterial(matIndex, layer) : this.lib.forKey(matIndex));
       mesh.matrixAutoUpdate = false;
       into.add(mesh);
       this.stats.meshes++;
@@ -537,7 +580,7 @@ export class SceneAssembler {
     const key = `${matIndex}/${layer}`;
     let m = this.layerMaterials.get(key);
     if (!m) {
-      const src = this.lib.material(matIndex) as THREE.Material;
+      const src = this.lib.forKey(matIndex) as THREE.Material;
       m = src.clone();
       m.userData = src.userData; // clone() копіює userData через JSON — Set прапорців матеріалу пропадав би
       m.polygonOffset = true;
@@ -548,15 +591,19 @@ export class SceneAssembler {
     return m;
   }
 
-  private addPolys(polys: Polygon[], vs: VertexSource, batches: Batches): void {
+  private addPolys(polys: Polygon[], vs: VertexSource, batches: Batches, mtype?: number): void {
+    // Блок 35 з mtype 3 — трикутники лише з індексів вершин блоку 37 (king.exe 0x005f08d0); освітлення тоді
+    // вирішує формат вершин (0x005f1620: прапорець — нормаль у FVF). mtype 1/2 мають свої вершини — завжди освітлені.
+    const unlit = this.lit && !!vs.prelit && mtype === 3;
     for (const p of polys) {
-      let b = batches.get(p.material);
-      if (!b) batches.set(p.material, (b = { pos: [], uv: [], ord: [], nrm: this.lit ? [] : null }));
+      const key = unlit ? ~p.material : p.material;
+      let b = batches.get(key);
+      if (!b) batches.set(key, (b = { pos: [], uv: [], ord: [], nrm: this.lit && !unlit ? [] : null }));
       const ord = this.polyOrder++;
       const idx = p.indices;
       // Нормалі (lit): з полігона, інакше з вершин; якщо їх немає хоч в одного полігона партії — рахуємо з геометрії.
-      const nsrc = this.lit ? (p.normals ? 'poly' : vs.normals ? 'verts' : null) : null;
-      if (this.lit && !nsrc) b.nrm = null;
+      const nsrc = this.lit && !unlit ? (p.normals ? 'poly' : vs.normals ? 'verts' : null) : null;
+      if (!nsrc) b.nrm = null;
       // Біт 0x80 формату (лише в HT2: 145, 177, 179…) — смуга трикутників: вершини йдуть «зигзагом» (перевірено
       // на всіх 4-кутниках TRUCKS.B3D і регіонів: з бітом — 1 і 3 по один бік діагоналі 0–2, без — по різні).
       // Віяло на такій смузі лишало діагональні дірки (дах і задня стінка причепа). Без біта — віяло (HT1).
@@ -616,18 +663,18 @@ export class SceneAssembler {
           grp.userData.baseMatrix = m.clone();
           grp.userData.space = d.name1.toLowerCase();
           const b: Batches = new Map();
-          const vsrc = { positions: d.positions, uvs: d.uvs, normals: d.t === 36 ? d.normals : null };
+          const vsrc = { positions: d.positions, uvs: d.uvs, normals: d.t === 36 ? d.normals : null, prelit: d.t === 36 && (d.format & 0xff) === 3 };
           if (block.groups) for (const g of block.groups) for (const child of g) this.visit(child, vsrc, b, grp, depth + 1);
           this.flush(b, grp);
           into.add(grp);
           return;
         }
-        cur = { positions: d.positions, uvs: d.uvs, normals: d.t === 36 ? d.normals : null };
+        cur = { positions: d.positions, uvs: d.uvs, normals: d.t === 36 ? d.normals : null, prelit: d.t === 36 && (d.format & 0xff) === 3 };
         break;
       }
       case 7:
       case 37:
-        cur = { positions: d.positions, uvs: d.uvs, normals: d.t === 37 ? d.normals : null };
+        cur = { positions: d.positions, uvs: d.uvs, normals: d.t === 37 ? d.normals : null, prelit: d.t === 37 && (d.format & 0xff) === 3 };
         break;
       case 4: {
         // HT2: деталь у просторі name1 — окрема група з матрицею простору (кермо, стрілки обертає гра).
@@ -649,7 +696,7 @@ export class SceneAssembler {
       }
       case 8:
       case 35:
-        if (vs) this.addPolys(d.polys, vs, batches);
+        if (vs) this.addPolys(d.polys, vs, batches, d.t === 35 ? d.mtype : undefined);
         return;
       case 18:
         this.addInstance(d.space, d.object, into, block.name);

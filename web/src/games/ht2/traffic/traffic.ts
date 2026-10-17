@@ -618,7 +618,7 @@ export function recolor(root: THREE.Object3D, trucks: Ht2Trucks, n: number): voi
       if (hit) return hit;
       const nm = /^(.*?)1$/.exec(m.name);
       const idx = nm ? names.indexOf(`${nm[1]}${n}`) : -1;
-      const out = idx >= 0 ? trucks.asm.lib.material(idx) : m;
+      const out = idx < 0 ? m : m.userData.unlit ? trucks.asm.lib.unlit(idx) : trucks.asm.lib.material(idx);
       swap.set(m, out);
       return out;
     };
