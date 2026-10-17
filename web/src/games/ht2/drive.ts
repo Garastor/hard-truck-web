@@ -28,7 +28,7 @@ import { Radars } from './traffic/radars';
 import { showGameOver, showVictory, type LoseScreen } from './ui/gameOver';
 import { playVideo } from './engine/video/player';
 import { sharedContext } from './engine/audio/engineAudio';
-import { glassDrops, trafficHeadlights } from './ui/effects';
+import { glassDrops, precipitation, trafficHeadlights } from './ui/effects';
 import { WIN_SHARE } from './career/share';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
@@ -69,6 +69,7 @@ import { Radio, type RadioAsk, type RadioContact } from './ui/radio';
 import type { RivalRun } from './career/competition';
 import { Navigator, type NavTurn } from './world/navigator';
 import { WindDebris } from './world/windDebris';
+import { Precipitation } from './world/precipitation';
 import { WorldObjects } from './world/objects';
 import { Blasts } from './world/blasts';
 import { CarFires, enginePoint } from './traffic/carFires';
@@ -142,6 +143,8 @@ const BLOW_DAMAGE = 0.4;
 /** Після гасіння машина не займається, с (стан вогню 4 → 0). */
 const FIRE_COOL = 5;
 
+/** Колір туману, якщо в сцені його немає (дощ — world/precipitation.ts). */
+const FOG_FALLBACK = new THREE.Color(0.5, 0.5, 0.5);
 /** Опір кочення поза твердим покриттям, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
 const OFFROAD_ROLL = 5;
 /**
@@ -371,6 +374,8 @@ export class Ht2Drive {
   private flashTime = 0;
   /** Листя на вітрі (CWindDebris king.exe). */
   private debris: WindDebris | null = null;
+  /** Дощ і сніг частинками (CRain/CSnow king.exe). */
+  private precip: Precipitation | null = null;
   private readonly debrisLook = new THREE.Vector3();
   private bolt: THREE.Sprite | null = null;
   private rainSound: ReturnType<EngineAudio['loopSound']> = null;
@@ -1352,6 +1357,16 @@ export class Ht2Drive {
     this.debris.update(dt, anchor, this.debrisLook, wind, w, this.world.regionAt(p.x, -p.z));
   }
 
+  /** Дощ і сніг частинками (world/precipitation.ts): що падає — за висотою камери, сила — показник погоди w. */
+  private updatePrecip(dt: number, wind: number, w: number): void {
+    if (!this.precip) {
+      this.precip = new Precipitation(this.world.common);
+      this.world.scene.add(this.precip.group);
+    }
+    const fog = this.world.scene.fog as THREE.Fog | null;
+    this.precip.update(dt, this.camera, Math.abs(this.truck.speedKmh) / 3.6, w, wind, fog?.color ?? FOG_FALLBACK, precipitation());
+  }
+
   /** Година доби гри (0…24). */
   get hour(): number {
     const t = this.careerMode ? this.careerMode.career.time : this.freeTime;
@@ -1379,6 +1394,7 @@ export class Ht2Drive {
     this.world.setClimate(hour, c.bad, this.flashTime > 0 && this.tick % 2 === 1, c.w());
     this.world.updateTrees(dt, c.wind);
     this.updateDebris(dt, c.wind, c.w());
+    this.updatePrecip(dt, c.wind, c.w());
     this.blastFx().update(dt, c.wind);
     const dusk = sunHeight(hour) < 0.2;
     this.world.setNight(dusk);
