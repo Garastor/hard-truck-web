@@ -19,6 +19,11 @@ export interface LevelCollision {
   floors: Poly[];
   /** Кімната кожного полігона підлоги (`hit_road_NNN` → `room_NNN`). */
   floorRoom: string[];
+  /**
+   * Покриття кожного полігона підлоги 1…13 (друге число заголовка колайдера, `i2`; king.exe 0x503e30 → 0x502780 бере
+   * його з запису контакту колеса): μ шин, опір кочення, нерівність. 0 — невідоме.
+   */
+  floorSurface: number[];
   /** Стіни й огорожі. */
   walls: Poly[];
   /** Кімната кожної стіни. */
@@ -42,6 +47,7 @@ type Plane = [number, number, number, number];
 export function levelCollision(b3d: B3d): LevelCollision {
   const floors: Poly[] = [];
   const floorRoom: string[] = [];
+  const floorSurface: number[] = [];
   const walls: Poly[] = [];
   const wallRoom: string[] = [];
   const wallFence: boolean[] = [];
@@ -49,6 +55,7 @@ export function levelCollision(b3d: B3d): LevelCollision {
   const roomBoxes = roomBounds(b3d);
   let room = '';
   let isFence = false;
+  let surface = 0;
   const add = (p: Poly) => {
     if (Math.abs(normalZ(p)) < FLOOR_MIN_NZ) {
       walls.push(p);
@@ -58,6 +65,7 @@ export function levelCollision(b3d: B3d): LevelCollision {
     }
     floors.push(p);
     floorRoom.push(room);
+    floorSurface.push(surface);
   };
 
   for (const top of b3d.blocks) {
@@ -65,21 +73,22 @@ export function levelCollision(b3d: B3d): LevelCollision {
     if (!m) continue;
     room = `room_${m[2]}`;
     const box = roomBoxes.get(room.toLowerCase()) ?? null;
-    shapes(top, [], box, (p, fence, t) => {
+    shapes(top, [], box, (p, fence, t, s) => {
       stats[t] = (stats[t] ?? 0) + 1;
       isFence = fence;
+      surface = s;
       add(p);
       isFence = false;
     });
   }
-  return { floors, floorRoom, walls, wallRoom, wallFence, hasFloor: floors.length > walls.length / 4, stats };
+  return { floors, floorRoom, floorSurface, walls, wallRoom, wallFence, hasFloor: floors.length > walls.length / 4, stats };
 }
 
 /**
  * Колайдери піддерева: 23 полігони, 20 огорожі, 12 площина (у межах box), 16/17 циліндр; 9 — поділ площиною
- * (обрізає нащадків). emit — полігон (координати блоку), чи огорожа, тип блоку.
+ * (обрізає нащадків). emit — полігон (координати блоку), чи огорожа, тип блоку, покриття (`i2` колайдера).
  */
-function shapes(top: Block, clip0: Plane[], box: Box | null, emit: (p: Poly, fence: boolean, t: number) => void): void {
+function shapes(top: Block, clip0: Plane[], box: Box | null, emit: (p: Poly, fence: boolean, t: number, surface: number) => void): void {
   const visit = (b: Block, clip: Plane[]): void => {
     const d = b.data;
     let emitted: Poly[] = [];
@@ -114,9 +123,10 @@ function shapes(top: Block, clip0: Plane[], box: Box | null, emit: (p: Poly, fen
         }
         break;
     }
+    const surface = 'trigger' in d && d.trigger ? d.trigger.i2 : 0;
     for (const p of emitted) {
       const c = clipAll(p, clip);
-      if (c) emit(c, d.t === 20, d.t);
+      if (c) emit(c, d.t === 20, d.t, surface);
     }
     for (const g of b.groups ?? []) for (const c of g) visit(c, clip);
   };
@@ -132,18 +142,23 @@ const INSTANCE_HIT = /hit|^STOS_(walls|floor)$/i;
  * просторі (блок 24) — як і видимі моделі. Полігони (блок 23) шаблону переводимо матрицею простору в координати гри.
  * find — шаблон за імʼям (регіон, далі COMMON), space — матриця простору (стовпці, як THREE.Matrix4.elements).
  */
-export function instanceCollision(b3d: B3d, find: (name: string) => Block | undefined, space: (name: string) => { elements: ArrayLike<number> } | null): { floors: Poly[]; walls: Poly[]; count: number } {
+export function instanceCollision(
+  b3d: B3d,
+  find: (name: string) => Block | undefined,
+  space: (name: string) => { elements: ArrayLike<number> } | null,
+): { floors: Poly[]; floorSurface: number[]; walls: Poly[]; count: number } {
   const floors: Poly[] = [];
+  const floorSurface: number[] = [];
   const walls: Poly[] = [];
   let count = 0;
-  const cache = new Map<string, Poly[]>();
-  const local = (name: string): Poly[] => {
+  const cache = new Map<string, [Poly, number][]>();
+  const local = (name: string): [Poly, number][] => {
     const key = name.toLowerCase();
     const hit = cache.get(key);
     if (hit) return hit;
-    const out: Poly[] = [];
+    const out: [Poly, number][] = [];
     const tpl = find(name);
-    if (tpl) shapes(tpl, [], null, (p) => out.push(p));
+    if (tpl) shapes(tpl, [], null, (p, _f, _t, s) => out.push([p, s]));
     cache.set(key, out);
     return out;
   };
@@ -154,12 +169,16 @@ export function instanceCollision(b3d: B3d, find: (name: string) => Block | unde
     const polys = local(d.object);
     if (!m || !polys.length) continue;
     count++;
-    for (const p of polys) {
+    for (const [p, s] of polys) {
       const q = p.map(([x, y, z]) => [m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]]);
-      (Math.abs(normalZ(q)) < FLOOR_MIN_NZ ? walls : floors).push(q);
+      if (Math.abs(normalZ(q)) < FLOOR_MIN_NZ) walls.push(q);
+      else {
+        floors.push(q);
+        floorSurface.push(s);
+      }
     }
   }
-  return { floors, walls, count };
+  return { floors, floorSurface, walls, count };
 }
 
 /** Наскільки близько до лінії огорожі має лежати портал, щоб вирізати в ній прохід, м. */

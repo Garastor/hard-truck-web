@@ -8,7 +8,7 @@ import { TruckVehicle } from './engine/vehicle/truckVehicle';
 import { ROUGH_ASPHALT, ROUGH_GROUND } from './engine/vehicle/kingModel';
 import { buildTruckModel, visibleBox, type TruckDef, type TruckModel } from './engine/vehicle/trucks';
 import { Input } from './engine/input/input';
-import { GROUP_WORLD, addCollisionPolys, g2t, groups, initRapier } from './engine/physics/world';
+import { GROUP_WORLD, addCollisionPolys, forgetSurfaces, g2t, groups, initRapier, surfaceAt } from './engine/physics/world';
 import { assoc, num, readSch, str, type SExpr } from './formats/sexpr';
 import { drivable, loadTrucks, truckDef, type Ht2Trucks } from './vehicles/trucks';
 import { FOV } from './ui/viewer';
@@ -135,8 +135,15 @@ const IMPACT_FIRE = 35;
 /** Після гасіння машина не займається, с (стан вогню 4 → 0). */
 const FIRE_COOL = 5;
 
-/** Опір кочення поза асфальтом, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
+/** Опір кочення поза твердим покриттям, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
 const OFFROAD_ROLL = 5;
+/**
+ * Тверді покриття (опір кочення king.exe 0x5021c0: B = 0,05 лише на 1, 5, 10; на решті ≥ 0,6). Назви покриттів у
+ * даних не знайдено; за поширеністю 1 — дороги, 2 — ґрунт довкола.
+ */
+const HARD_SURFACE = new Set([1, 5, 10]);
+/** Промінь покриття — лише по світу (не по машинах і предметах). */
+const GROUND_RAY = groups(GROUP_WORLD, GROUP_WORLD);
 /** Дальність видимості трафіку без туману в сцені, м. */
 const VIEW_FALLBACK = 900;
 /** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
@@ -766,11 +773,12 @@ export class Ht2Drive {
     const asm = reg.built.assembler;
     const inst = instanceCollision(asm.b3d, (n) => asm.block(n) ?? this.world.common.block(n), (n) => asm.space(n));
     col.floors.push(...inst.floors);
+    col.floorSurface.push(...inst.floorSurface);
     col.walls.push(...inst.walls);
     const cs: RAPIER.Collider[] = [];
     // Процедурний рельєф (aa) — heightfield.
     if (reg.terrain) cs.push(terrainCollider(this.rapier, reg.terrain));
-    const floor = addCollisionPolys(this.rapier, col.floors, 1.0);
+    const floor = addCollisionPolys(this.rapier, col.floors, 1.0, col.floorSurface);
     const walls = addCollisionPolys(this.rapier, col.walls, 0.4);
     if (floor) cs.push(floor);
     if (walls) cs.push(walls);
@@ -783,7 +791,10 @@ export class Ht2Drive {
   }
 
   private removeRegion(id: string): void {
-    for (const c of this.colliders.get(id) ?? []) this.rapier.removeCollider(c, false);
+    for (const c of this.colliders.get(id) ?? []) {
+      forgetSurfaces(c);
+      this.rapier.removeCollider(c, false);
+    }
     this.colliders.delete(id);
     this.objects.removeRegion(id);
   }
@@ -2271,14 +2282,22 @@ export class Ht2Drive {
   private updateSurface(): void {
     const p = this.truck.visual.position;
     if (!this.roads) return;
-    // Далі від осі дороги WAY, ніж половина ширини W (з запасом 0,5 м) — узбіччя.
-    const off = this.roads.offRoad(p);
-    this.offRoad = off;
-    // Шини (0x502780): μ за поверхнею й варіантом шин відносно звичайних на асфальті; узбіччя — поверхня 2 (гіпотеза).
-    this.truck.setSurface(tireGrip(this.tuning.tires, this.raining, off ? 2 : 1), off ? OFFROAD_ROLL : 1);
-    // Узбіччя трусить як ґрунт (покриття 2 у 0x502780; що узбіччя — ґрунт, гіпотеза: покриття за матеріалом не знайдено).
-    this.truck.roughness = off ? ROUGH_GROUND : ROUGH_ASPHALT;
+    // Покриття під машиною — з колайдера підлоги (i2 блоку 23, king.exe 0x502780); промінь униз від центру кузова
+    // (гіпотеза порту: одне покриття на всю машину, в оригіналі — на кожне колесо).
+    const hit = this.rapier.castRayAndGetNormal(new RAPIER.Ray({ x: p.x, y: p.y + 1, z: p.z }, { x: 0, y: -1, z: 0 }), 6, true, undefined, GROUND_RAY, undefined, this.truck.body);
+    let s = hit ? surfaceAt(hit.collider, hit.featureId) : 0;
+    // Без даних (рельєф aa — heightfield) — за дорогою WAY: далі від осі, ніж половина ширини W, — узбіччя (ґрунт 2).
+    if (!(s >= 1 && s <= 11)) s = this.roads.offRoad(p) ? 2 : 1;
+    this.surface = s;
+    this.offRoad = !HARD_SURFACE.has(s);
+    // μ шин за покриттям і варіантом шин відносно звичайних на асфальті в ту саму погоду (дощ — окремо, K.rain).
+    this.truck.setSurface(tireGrip(this.tuning.tires, this.raining, s), this.offRoad ? OFFROAD_ROLL : 1);
+    // Нерівність (0x502780): тверді 1, 5 — асфальт, решта — як ґрунт (гілки 4/6/7/9/10/11 оригіналу порт не розрізняє).
+    this.truck.roughness = s === 1 || s === 5 ? ROUGH_ASPHALT : ROUGH_GROUND;
   }
+
+  /** Покриття під машиною 1…13 (налагодження). */
+  surface = 1;
 
   /** Машина поза дорогою (для тестів). */
   offRoad = false;

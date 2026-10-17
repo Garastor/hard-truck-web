@@ -60,20 +60,37 @@ export function addStaticMeshes(world: RAPIER.World, root: THREE.Object3D, minUp
   return count;
 }
 
-/** Колізійні полігони (система гри) → один trimesh. */
-export function addCollisionPolys(world: RAPIER.World, polys: number[][][], friction = 0.4): RAPIER.Collider | null {
+/** Покриття трикутників trimesh-колайдерів (за handle): номер трикутника (featureId променя) → покриття 1…13. */
+const triSurfaces = new Map<number, Uint8Array>();
+
+/** Покриття в точці перетину променя з колайдером (0 — невідоме). */
+export function surfaceAt(collider: RAPIER.Collider, featureId: number | undefined): number {
+  return featureId === undefined ? 0 : (triSurfaces.get(collider.handle)?.[featureId] ?? 0);
+}
+
+/** Забути покриття колайдера (перед removeCollider). */
+export function forgetSurfaces(collider: RAPIER.Collider): void {
+  triSurfaces.delete(collider.handle);
+}
+
+/** Колізійні полігони (система гри) → один trimesh; surfaces — покриття кожного полігона (collision.ts). */
+export function addCollisionPolys(world: RAPIER.World, polys: number[][][], friction = 0.4, surfaces?: readonly number[]): RAPIER.Collider | null {
   const out: number[] = [];
-  for (const poly of polys) {
+  const tri: number[] = [];
+  polys.forEach((poly, i) => {
     const pts = poly.map((p) => g2t(p));
     for (let k = 1; k + 1 < pts.length; k++) {
       for (const q of [pts[0], pts[k], pts[k + 1]]) out.push(q.x, q.y, q.z);
+      tri.push(surfaces?.[i] ?? 0);
     }
-  }
+  });
   if (!out.length) return null;
   const verts = new Float32Array(out);
   const idx = new Uint32Array(verts.length / 3);
   for (let i = 0; i < idx.length; i++) idx[i] = i;
-  return world.createCollider(
+  const c = world.createCollider(
     RAPIER.ColliderDesc.trimesh(verts, idx).setFriction(friction).setCollisionGroups(groups(GROUP_WORLD, 0xffff)),
   );
+  if (surfaces) triSurfaces.set(c.handle, Uint8Array.from(tri));
+  return c;
 }
