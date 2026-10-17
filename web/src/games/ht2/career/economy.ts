@@ -206,16 +206,19 @@ export function hideIllegal(goods: Goods[], rnd: () => number): Goods | null {
   return pool.length ? pool[Math.floor(rnd() * pool.length)] : null;
 }
 
-/** Оплата доставки (k = 115 — вантажівка; ×3; термінове ×1,5). */
-export function orderPay(g: Goods, units: number, distance: number, urgent: boolean): number {
+/**
+ * Оплата складського замовлення гравцю (king.exe 0x471200, виклик з loadOrder 0x4436c2 — re/notes/ht2/trailers-bodies.md
+ * §8, company.md §2а): (0,115·L + (1,2 − k)·√(ціна·кількість)) × 3 × 1,2 (гравець) × 4 (складське) = ×14,4, з причепом
+ * ще ×1,5 = ×21,6 (найманий і ІІ — без ×1,2). Термінових замовлень у exe немає.
+ */
+export function orderPay(g: Goods, units: number, distance: number, trailer: boolean): number {
   const base = (1.2 - g.ratio) * Math.sqrt(g.price * units);
-  const pay = (distance * 0.115 + base) * 3;
-  return Math.round(urgent ? pay * 1.5 : pay);
+  return Math.round((distance * 0.115 + base) * 14.4 * (trailer ? 1.5 : 1));
 }
 
 /**
- * Замовлення складу: кілька товарів (легальних) у інші склади, кількість — у межах вантажопідйомності й обʼєму
- * кузова. Термін (гіпотеза): маршрут на 45 км/год + 3 хв, термінові — на 60 км/год.
+ * Замовлення складу: кілька товарів (легальних) у інші склади. Кількість — «скільки влізе»: 0,85·min(M/m, V/v)
+ * (king.exe 0x41ba50); строк — 0,13 с на метр шляху (0x471780); оплата — orderPay (trailer — причіп зчеплено).
  */
 export function makeOrders(
   from: Store,
@@ -226,6 +229,7 @@ export function makeOrders(
   n = 5,
   tanker = false,
   illegalShare = ILLEGAL_SHARE,
+  trailer = false,
 ): Order[] {
   // Вантажі для вантажівок; паливо — лише в цистерну.
   const legal0 = goods.filter((g) => !g.illegal && g.price > 0 && g.mass > 0 && g.trucks && (!g.fuel || tanker));
@@ -239,10 +243,8 @@ export function makeOrders(
     const to = targets[Math.floor(rnd() * targets.length)];
     const maxUnits = Math.floor(Math.min(capacity.mass / g.mass, g.volume > 0 ? capacity.volume / g.volume : Infinity));
     if (maxUnits < 1) continue;
-    const units = Math.max(1, Math.round(maxUnits * (0.4 + rnd() * 0.6)));
+    const units = Math.max(1, Math.floor(maxUnits * 0.85));
     const distance = routeLength(from, to);
-    const urgent = rnd() < 0.25;
-    const speed = (urgent ? 60 : 45) / 3.6;
     const hidden = illegalShare > ILLEGAL_SHARE_MIN && !g.fuel ? hideIllegal(goods, rnd) : null;
     out.push({
       goods: g,
@@ -250,10 +252,10 @@ export function makeOrders(
       from: from.id,
       to: to.id,
       distance,
-      pay: orderPay(hidden ?? g, units, distance, urgent),
+      pay: orderPay(hidden ?? g, units, distance, trailer),
       value: Math.round(orderValue(g, units)),
-      deadline: Math.round(distance / speed + 180),
-      urgent,
+      deadline: Math.round(0.13 * distance),
+      urgent: false,
       ...(hidden ? { hidden } : {}),
     });
   }

@@ -228,10 +228,10 @@ describe.skipIf(!has)('HT2: економіка', () => {
     expect(stores.every((s) => s.docks.length === 5)).toBe(true);
     expect(stores.find((s) => s.id === 3)!.town).toBe('Південний');
   });
-  it('оплата росте з відстанню й терміновістю', () => {
+  it('оплата гравцю за king.exe: ×14,4, з причепом ×21,6', () => {
     const g = { id: 'X', name: 'X', mass: 10, volume: 0.1, price: 100, ratio: 0.8, illegal: false, forMafia: false, trucks: true, fuel: false, cars: false, guilt: 0 };
-    expect(orderPay(g, 100, 5000, false)).toBe(Math.round((5000 * 0.115 + 0.4 * 100) * 3));
-    expect(orderPay(g, 100, 5000, true)).toBeGreaterThan(orderPay(g, 100, 5000, false));
+    expect(orderPay(g, 100, 5000, false)).toBe(Math.round((5000 * 0.115 + 0.4 * 100) * 14.4));
+    expect(orderPay(g, 100, 5000, true)).toBe(Math.round((5000 * 0.115 + 0.4 * 100) * 21.6));
   });
   it('прихований нелегальний товар: лише illegal + trucks, коефіцієнт штрафу з merchandise.sch', () => {
     const goods = parseGoods(readSch(read('merchandise.sch')));

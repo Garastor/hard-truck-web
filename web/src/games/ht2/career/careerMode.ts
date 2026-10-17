@@ -329,7 +329,7 @@ export class CareerMode {
     let cached = this.storeOrders.get(store.id);
     if (!cached || c.time - cached.time > 3600) {
       const n = Math.max(1, store.docks.length);
-      cached = { orders: makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, n, this.drive.trailer?.rec.trailerType === 3, this.capitalShare()), time: c.time };
+      cached = { orders: makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, n, this.drive.trailer?.rec.trailerType === 3, this.capitalShare(), !!this.drive.trailer), time: c.time };
       this.storeOrders.set(store.id, cached);
     }
     const o = cached.orders[dock % cached.orders.length];
@@ -878,7 +878,7 @@ export class CareerMode {
         const to = this.stores.find((s) => s.id === c.order!.to);
         await modal(this.drive.overlay, `Склад «${store.town}»`, `У кузові — ${c.order.goods.name}, доставити в «${to?.town ?? '?'}».`, ['Гаразд']);
       } else {
-        const orders = makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, 5, this.drive.trailer?.rec.trailerType === 3, this.capitalShare());
+        const orders = makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, 5, this.drive.trailer?.rec.trailerType === 3, this.capitalShare(), !!this.drive.trailer);
         const box = document.createElement('div');
         box.className = 'career-form ht2-orders';
         box.textContent = 'Замовлення на доставку:';
