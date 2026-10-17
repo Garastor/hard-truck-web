@@ -152,16 +152,36 @@ export function buildTruckModel(asm: SceneAssembler, def: TruckDef, dynamic = fa
     if (o.name === 'Flame') o.visible = false;
   });
   root.add(body);
+  // Побиті колеса (`refer_DamageWheel<N>Key`, 4 стани — дедалі сильніше пошкоджене колесо): варіанти лежать у
+  // вузлі колеса всередині кузова. У динамічної моделі цей вузол переносимо в групу колеса, що крутиться, —
+  // перемикач показує потрібний варіант; інакше — ціле колесо-шаблон.
+  const inBody = new Map<string, THREE.Object3D>();
+  if (dyn) {
+    for (const c of body.children) {
+      const key = c.name.toLowerCase();
+      if (wheelNames.has(key) && c.children.some((g) => /DamageWheel\d+Key#/.test(g.name))) inBody.set(key, c);
+    }
+  }
+  root.updateMatrixWorld(true);
   const wheels: THREE.Object3D[] = [];
   const wheelBase: THREE.Matrix4[] = [];
   // У TCH wheel_space0..3 = FL, FR, BL, BR; вузли коліс — wheel_node_fl/fr/bl/br.
   for (let i = 0; i < def.wheelSpaces.length; i++) {
     const m = asm.space(def.wheelSpaces[i]) ?? new THREE.Matrix4();
-    const tpl = asm.template(def.wheelNodes[i]);
     const w = new THREE.Group();
     w.matrixAutoUpdate = false;
     w.matrix.copy(m);
-    if (tpl) w.add(tpl.clone());
+    const own = inBody.get(def.wheelNodes[i].toLowerCase());
+    if (own) {
+      // Матриця вузла відносно простору колеса (кузов стоїть у корені без зсуву).
+      own.matrix.copy(m).invert().multiply(own.matrixWorld);
+      own.matrixAutoUpdate = false;
+      own.visible = true;
+      w.add(own);
+    } else {
+      const tpl = asm.template(def.wheelNodes[i]);
+      if (tpl) w.add(tpl.clone());
+    }
     root.add(w);
     wheels.push(w);
     wheelBase.push(m.clone());

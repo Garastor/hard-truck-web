@@ -5,6 +5,7 @@ import { TIRE } from '../engine/vehicle/truckVehicle';
 import { g2t } from '../engine/physics/world';
 import type { TechRecord } from '../formats/tech';
 import type { SceneAssembler } from '../engine/render/sceneBuilder';
+import { dentGeometry, type DentGeometry } from './dents';
 
 /**
  * Напівпричіп Дальнобойщиків 2: модель `STrailer*` з TRUCKS.B3D (колеса — групи `…wheelN`), маса, центр мас і
@@ -43,6 +44,13 @@ export class Trailer {
   private readonly wheels: { obj: THREE.Object3D; base: THREE.Matrix4 }[];
   private readonly kingpin: THREE.Vector3;
   private readonly saddle: THREE.Vector3;
+  /** Перемикачі моделі причепа (вмʼятини, побиті колеса, габарити, стоп-сигнали) і кількість їхніх станів. */
+  readonly setSwitch: ((name: string, state: number) => void) | undefined;
+  readonly switchStates: ((name: string) => number) | undefined;
+  /** Колеса й габарити для пошкоджень (dents.ts). */
+  readonly dentGeom: DentGeometry;
+  /** Горизонтальна швидкість після попереднього виклику velocityChange (удари). */
+  private readonly lastVel = new THREE.Vector3();
 
   constructor(
     private readonly world: RAPIER.World,
@@ -52,8 +60,11 @@ export class Trailer {
     private readonly tractor: { body: RAPIER.RigidBody; saddle: readonly number[] },
     cargoMass = 0,
   ) {
-    const model = buildTruckModel(asm, def, false);
+    // Окремий екземпляр моделі — свої перемикачі (вмʼятини, колеса й вогні цього причепа).
+    const model = buildTruckModel(asm, def, true);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня`);
+    this.setSwitch = model.setSwitch;
+    this.switchStates = model.switchStates;
     const frame = new THREE.Group();
     frame.rotation.x = -Math.PI / 2;
     frame.add(model.root);
@@ -62,6 +73,7 @@ export class Trailer {
     for (const w of this.wheels) w.obj.matrixAutoUpdate = false;
     frame.updateMatrixWorld(true);
     const box = visibleBox(model.body);
+    this.dentGeom = dentGeometry(model, box);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
 
@@ -328,6 +340,19 @@ export class Trailer {
         .multiply(new THREE.Matrix4().makeTranslation(0, 0, SUSP_ANCHOR - len))
         .multiply(new THREE.Matrix4().makeRotationX(-spin));
     }
+  }
+
+  /**
+   * Зміна горизонтальної швидкості причепа від попереднього виклику — у системі причепа (Three.js: уперед — −z),
+   * для зони вмʼятини (dents.ts).
+   */
+  velocityChange(): THREE.Vector3 {
+    const lv = this.body.linvel();
+    const v = new THREE.Vector3(lv.x, 0, lv.z);
+    const dv = v.clone().sub(this.lastVel);
+    this.lastVel.copy(v);
+    const r = this.body.rotation();
+    return dv.applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w).invert());
   }
 
   /** Точки вздовж причепа у світі (перед, середина, зад) — для трафіку. */

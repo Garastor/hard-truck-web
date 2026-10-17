@@ -6,7 +6,7 @@ import { EngineAudio } from './engine/audio/engineAudio';
 import { instanceCollision, levelCollision } from './engine/physics/collision';
 import { TruckVehicle } from './engine/vehicle/truckVehicle';
 import { ROUGH_ASPHALT, ROUGH_GROUND } from './engine/vehicle/kingModel';
-import { buildTruckModel, type TruckDef } from './engine/vehicle/trucks';
+import { buildTruckModel, visibleBox, type TruckDef, type TruckModel } from './engine/vehicle/trucks';
 import { Input } from './engine/input/input';
 import { GROUP_WORLD, addCollisionPolys, g2t, groups, initRapier } from './engine/physics/world';
 import { assoc, num, readSch, str, type SExpr } from './formats/sexpr';
@@ -29,7 +29,7 @@ import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
 import { WorldMap, type MapPoint } from './world/worldMap';
 import { GlassRain } from './engine/render/glassRain';
-import { Dents } from './vehicles/dents';
+import { Dents, dentGeometry } from './vehicles/dents';
 import { terrainCollider } from './world/terrain';
 import { parseMsk } from './engine/formats/msk';
 import { findStores } from './career/economy';
@@ -273,6 +273,11 @@ export class Ht2Drive {
   dents: Dents | null = null;
   private readonly prevVel = new THREE.Vector3();
   private freeDents: Record<string, number> = {};
+  /** Вмʼятини й шини напівпричепа (свої перемикачі моделі; у кар'єрі — career.trailerDents). */
+  trailerDents: Dents | null = null;
+  private freeTrailerDents: Record<string, number> = {};
+  /** Габарити ввімкнені (разом з фарами) — задні ліхтарі горять габаритом. */
+  private sizeLights = false;
   /** Габарити (SizeLightKey моделі). */
   private setTruckSwitch: ((n: string, s: number) => void) | undefined;
   private cabRmp: ReturnType<typeof parseRmp> | null = null;
@@ -766,6 +771,13 @@ export class Ht2Drive {
     this.dents?.hit(dv.applyQuaternion(this.truck.visual.quaternion.clone().invert()), t.front);
   }
 
+  /** Удари в напівпричіп — так само, за зміною його швидкості (рама тягача причіп не захищає). */
+  private detectTrailerHits(): void {
+    const dv = this.trailer?.velocityChange();
+    if (!dv || this.skipHits > 0 || dv.length() < 2) return;
+    this.trailerDents?.hit(dv);
+  }
+
   /**
    * Облік ДТП (traffic/accidents.ts): партнери — динамічні тіла поблизу (машини трафіку у фізичному режимі,
    * міліція, суперники); кути кузова — ±1,25 м убік і ±3,5 м уздовж від центру тягача (гіпотеза: у king.exe —
@@ -871,9 +883,10 @@ export class Ht2Drive {
   private hitch(): void {
     this.skipHits = 3;
     // Нова модель — перемикачі вмʼятин і вогнів (стан пошкоджень — з кар'єри).
-    const m = this.truck.visual.userData.model as { setSwitch?: (n: string, s: number) => void; switchStates?: (n: string) => number } | undefined;
+    const m = this.truck.visual.userData.model as TruckModel | undefined;
     this.setTruckSwitch = m?.setSwitch;
-    this.dents = new Dents(this.opts.career ? (this.opts.career.dents ??= {}) : this.freeDents, m?.setSwitch, m?.switchStates);
+    this.dents = new Dents(this.opts.career ? (this.opts.career.dents ??= {}) : this.freeDents, m?.setSwitch, m?.switchStates, m ? dentGeometry(m, visibleBox(m.body)) : null);
+    this.trailerDents = null;
     // Нова машина — дощ знову робить дорогу слизькою (зчеплення ×0,8, як у першій грі).
     this.truck.weatherGrip = this.raining ? 0.8 : 1;
     if (this.trailer) {
@@ -891,6 +904,8 @@ export class Ht2Drive {
     if (!tr || !def) return;
     this.trailer = new Trailer(this.rapier, this.trucks.asm, def, tr, { body: this.truck.body, saddle: rec.lowSaddle }, this.cargoMass);
     this.world.scene.add(this.trailer.visual);
+    const trl = this.trailer;
+    this.trailerDents = new Dents(this.opts.career ? (this.opts.career.trailerDents ??= {}) : this.freeTrailerDents, trl.setSwitch, trl.switchStates, trl.dentGeom);
     this.truck.towing = true;
     const trailerBody = this.trailer.body.handle;
     this.truck.rayFilter = (c) => c.parent()?.handle !== trailerBody;
@@ -977,6 +992,8 @@ export class Ht2Drive {
     for (const l of this.lamps) l.visible = on;
     // Габарити вантажівки (SizeLightKey: 1 — горять) — разом з фарами.
     this.setTruckSwitch?.('refer_SizeLightKey', on ? 1 : 0);
+    this.trailer?.setSwitch?.('refer_SizeLightKey', on ? 1 : 0);
+    this.sizeLights = on;
   }
 
   /**
@@ -1883,6 +1900,7 @@ export class Ht2Drive {
     }
     this.race?.after(dt, alpha);
     this.detectHits();
+    this.detectTrailerHits();
     if (this.careerMode && !this.paused) this.accidents?.update(dt);
     this.lights.update(dt, this.world.loaded.values());
     // Проїзд стоп-лінії на червоне (0x56ffd0): штраф 830, лише якщо міліція ближче 200 м; раз за перетин.
@@ -1917,6 +1935,11 @@ export class Ht2Drive {
     // Фари й двигун у групі «•••» — світяться, поки ввімкнені.
     this.input.setToggle('lights', !!this.lamps[0]?.visible);
     this.input.setToggle('engine', this.truck.engineOn);
+    // Задні вогні (dents.rearLights): стоп — гальмо, задній хід — передача R; причепу тягач передає лише задній хід
+    // і габарити (0x558990).
+    const reverse = this.truck.gear < 0;
+    this.dents?.rearLights(this.truck.brakePedal(state) > 0, reverse, this.sizeLights);
+    this.trailerDents?.rearLights(false, reverse, this.sizeLights);
     // Двірники — два стани (увімкнені / вимкнені): світяться, поки ввімкнені (і без скла кабіни — за вибором чи дощем).
     this.input.setToggle('wipers', this.glassRain?.wipersOn ?? this.wipersManual ?? this.raining);
     this.input.setToggle('mirror', this.mirrorOn);

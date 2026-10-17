@@ -320,6 +320,7 @@ export class CareerMode {
               c.damage = Math.max(0, c.damage * (1 - share));
               if (share >= 1) {
                 this.drive.dents?.repair();
+                this.drive.trailerDents?.repair();
                 this.drive.extinguish();
               }
             }
