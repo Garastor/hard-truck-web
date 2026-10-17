@@ -30,6 +30,8 @@ const HITCH_DAMP = 6;
 const HITCH_LIMIT = (70 * Math.PI) / 180;
 /** Відновлення за межею: кутова швидкість назад, рад/с на радіан перевищення. */
 const HITCH_RETURN = 3;
+/** Повернення до упору в русі king.exe (follow), рад/с на радіан понад межу. */
+const KING_RETURN = 10;
 /** Повернення до спільного крену, 1/с. */
 const ROLL_RETURN = 5;
 
@@ -201,8 +203,9 @@ export class Trailer {
       const nr = this.ctrl.wheelIsInContact(i) ? this.ctrl.wheelContactNormal(i) : null;
       if (nr) n.add(nr as THREE.Vector3Like);
     }
-    // У повітрі — лише Rapier (шарнір тримає зчіпку).
-    if (n.lengthSq() < 1e-6) return;
+    // У повітрі (чи на перешкоді) — Rapier (шарнір тримає зчіпку) з тертям і упором сідла, як у колишній моделі: без
+    // упору причіп, що повис на перешкоді, тягач розвертав на повні оберти.
+    if (n.lengthSq() < 1e-6) return this.hitchDamper(dt);
     n.normalize();
     const tq = this.tractor.body.rotation();
     const tt = this.tractor.body.translation();
@@ -219,7 +222,16 @@ export class Trailer {
     const len = arm.length();
     if (len < 0.5) return;
     const lat = new THREE.Vector3().crossVectors(n, arm).divideScalar(len);
-    const omega = -vK.dot(lat) / len;
+    let omega = -vK.dot(lat) / len;
+    // Упор зчіпки HITCH_LIMIT (як у колишній моделі, гіпотеза порту): далі причіп не складається, а повертає разом
+    // із тягачем — без нього на повному кермі причіп робив повні оберти навколо тягача.
+    const ta = this.tractor.body.angvel();
+    const wT = ta.x * n.x + ta.y * n.y + ta.z * n.z;
+    const art = this.articulation;
+    const over = Math.abs(art) - HITCH_LIMIT;
+    // За межею — ще й повертається до неї (KING_RETURN рад/с на радіан): інакше кроки Rapier поступово доводили
+    // складання заднім ходом до 135°.
+    if (over >= 0 && Math.sign(omega - wT) !== -Math.sign(art)) omega = wT - Math.sign(art) * KING_RETURN * over;
     const com = this.body.worldCom();
     const toCom = new THREE.Vector3(com.x, com.y, com.z).sub(kp);
     const lv = this.body.linvel();
