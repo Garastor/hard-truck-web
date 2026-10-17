@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { SceneAssembler } from '../engine/render/sceneBuilder';
+import { noFarClip } from '../engine/render/farClip';
 
 /** Відстань `sun_s0` від камери в бік сонця, м (king.exe 0x005a6ad0: 50,0). */
 const SUN_DIST = 50;
@@ -41,6 +42,7 @@ export class LensFlare {
         fog: false,
         side: THREE.DoubleSide,
       });
+      noFarClip(mat);
       const mesh = new THREE.Mesh(src.geometry, mat);
       // Квадрат лінзи лежить у площині xz гри (y гри — від камери): у просторі камери three.js — площина xy.
       mesh.rotation.x = -Math.PI / 2;

@@ -3,6 +3,7 @@ import type { B3d, Block, Polygon } from '../formats/b3d';
 import { parseMaterial, type Material, type RmpArchive } from '../formats/rmp';
 import { parseTxr } from '../formats/txr';
 import { parsePlm } from '../formats/plm';
+import { noFarClip } from './farClip';
 
 /**
  * Перетворює B3D + RMP у граф Three.js.
@@ -1061,6 +1062,7 @@ function buildSky(asm: SceneAssembler): THREE.Group | null {
         );
     };
     m.customProgramCacheKey = () => `sky-${kind}`;
+    noFarClip(m);
     // Купол видно зсередини.
     m.side = THREE.DoubleSide;
     o.material = m;
