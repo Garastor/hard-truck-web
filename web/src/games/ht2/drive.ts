@@ -25,7 +25,8 @@ import { Mafia, parseMafiaAmbushes } from './traffic/mafia';
 import { ForbiddenZone, Helicopters } from './traffic/helicopters';
 import { Water } from './vehicles/water';
 import { Radars } from './traffic/radars';
-import { showGameOver, type LoseScreen } from './ui/gameOver';
+import { showGameOver, showVictory, type LoseScreen } from './ui/gameOver';
+import { WIN_SHARE } from './career/share';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
 import { WorldMap, type MapPoint } from './world/worldMap';
@@ -1029,7 +1030,7 @@ export class Ht2Drive {
     };
     for (const d of [...drivers]) {
       const rec = this.trucks.records.find((r) => r.carNode === d.truck);
-      upgradeDriver(d, this.vehiclePrice(d.truck), cm.capitalShare());
+      upgradeDriver(d, this.vehiclePrice(d.truck), cm.marketShare());
       const phys = this.truckers?.hired.get(d.name);
       const before = hr.at(d)?.pos ?? null;
       let meters = 0;
@@ -1323,6 +1324,16 @@ export class Ht2Drive {
   get trucksData(): Ht2Trucks {
     return this.trucks;
   }
+
+  /**
+   * Вантажопідйомність машини далекобійника ІІ, кг (частка X, career/share.ts): середня за моделями класу trucker з
+   * evehicles.sch (гіпотеза: ІІ їздять ними й не міняють); без них — стартовий ZilR.
+   */
+  get rivalLoad(): number {
+    const recs = this.trucks.records;
+    const loads = (this.truckers?.models ?? []).map((m) => recs.find((r) => r.carNode === m)?.cargoLoad).filter((x): x is number => x != null);
+    return loads.length ? loads.reduce((a, b) => a + b, 0) / loads.length : (recs.find((r) => r.carNode === 'ZilR')?.cargoLoad ?? 6000);
+  }
   get rapierWorld(): RAPIER.World {
     return this.rapier;
   }
@@ -1548,6 +1559,27 @@ export class Ht2Drive {
   }
 
   /**
+   * Перемога «ринок захоплено» (king.exe 0x41fcf0 → подія 0xC → 0x51f380 режим 2; upgrades.md «Вибування гравця»):
+   * частка X ≥ 0,51 — гра на паузі, youwinSound, вікно BackWin «Поздравляем! Вы захватили рынок перевозок региона!»
+   * з кнопками «Главное меню», «Продолжить», «Начать сначала». Це не кінець кар'єри: «Продовжити» — їздити й
+   * наймати далі; перемога лише раз (career.won). Ролик TRw1.bne перед вікном порт не показує.
+   */
+  private victory(): void {
+    const cm = this.careerMode!;
+    cm.career.won = true;
+    cm.persist();
+    this.paused = true;
+    this.audio?.play('youwin');
+    showVictory(this.escArt, this.overlay, {
+      main: () => this.opts.onExit(),
+      resume: () => {
+        this.paused = false;
+      },
+      restart: () => this.opts.onExit('new'),
+    });
+  }
+
+  /**
    * Займання від влучання кулі (0x567440): імовірність g·P·0,03/(P + 0,3) — P сила кулі (міліція й мафія 0,1,
    * гелікоптер 2,0), g — скло (броньоване 0,2).
    */
@@ -1585,6 +1617,8 @@ export class Ht2Drive {
     if ((this.bankTimer -= dt) <= 0) {
       this.bankTimer = 8;
       if (c.money < 0) return this.gameOver('BackLoose5');
+      // Частка X перераховується теж раз на 8 с (updateRating 0x41fcf0).
+      if (!c.won && cm.marketShare() >= WIN_SHARE) return this.victory();
     }
     if (this.burning < 0) return;
     this.burning += dt;
@@ -1670,7 +1704,7 @@ export class Ht2Drive {
       vel: new THREE.Vector3(lv.x, 0, lv.z),
       hunted: (f.mafiaDebt ?? 0) > 0 || !!f.mafiaInterest,
       glass: this.tuning.glass,
-      share: cm.capitalShare(),
+      share: cm.marketShare(),
     });
     for (const e of events) {
       if (e.kind === 'warn') this.say('ЗУПИНИ МАШИНУ! ТРЕБА ПОГОВОРИТИ', 6);
@@ -1918,6 +1952,8 @@ export class Ht2Drive {
         this.careerMode!.persist();
       },
       rivals: [...(this.truckers?.allNames ?? [])],
+      share: this.careerMode?.marketShare() ?? 0,
+      rivalShare: this.careerMode ? this.careerMode.marketShare() * (this.rivalLoad / Math.max(1, this.careerMode.fleetLoad())) : 0,
       keys: [
         ['ГАЗ', '↑'],
         ['ГАЛЬМО, НАЗАД', '↓'],

@@ -111,7 +111,7 @@ export type MafiaEvent = { kind: 'warn' } | { kind: 'shot'; hit: boolean; dist: 
 export interface MafiaPlayer extends Quarry {
   /** На прицілі мафії: борг мафії > 0 чи «цікавий мафії». */
   hunted: boolean;
-  /** Частка капіталу гравця (capitalShare). */
+  /** Частка X гравця — «доля перевезень» (career/share.ts). */
   share: number;
 }
 

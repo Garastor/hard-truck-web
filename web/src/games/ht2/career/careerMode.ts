@@ -15,7 +15,7 @@ import { CareerRaces } from './races';
 import { ukMessage } from '../ui/uk';
 import { StoreZones } from './storeZones';
 import { arrestCard, ILLEGAL_FINE, noFines, SPEEDING_PER_DEGREE, type Fines } from './law';
-import { capitalShare } from './capital';
+import { fleetLoad, marketShare } from './share';
 import type { MissionLot } from '../vehicles/presents';
 import type { TechRecord } from '../formats/tech';
 
@@ -329,7 +329,7 @@ export class CareerMode {
     let cached = this.storeOrders.get(store.id);
     if (!cached || c.time - cached.time > 3600) {
       const n = Math.max(1, store.docks.length);
-      cached = { orders: makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, n, this.drive.trailer?.rec.trailerType === 3, this.capitalShare(), !!this.drive.trailer), time: c.time };
+      cached = { orders: makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, n, this.drive.trailer?.rec.trailerType === 3, this.marketShare(), !!this.drive.trailer), time: c.time };
       this.storeOrders.set(store.id, cached);
     }
     const o = cached.orders[dock % cached.orders.length];
@@ -380,7 +380,7 @@ export class CareerMode {
     const offer = hireOffer(m.id, day, m.spots.length, this.drive.truckers?.allNames ?? []);
     if (offer && offer.spot === near.spot) {
       // Тариф — $/км (BackJob показує за км, 0x477350).
-      const job = { ...offer, tariff: Math.round(hireTariff(this.drive.vehiclePrice(near.rec.carNode), this.capitalShare()) * 10) / 10, model: near.rec.carNode, price: near.price, power: near.rec.horsePower, load: near.rec.cargoLoad };
+      const job = { ...offer, tariff: Math.round(hireTariff(this.drive.vehiclePrice(near.rec.carNode), this.marketShare()) * 10) / 10, model: near.rec.carNode, price: near.price, power: near.rec.horsePower, load: near.rec.cargoLoad };
       return this.openPanel(jobPanel(this.drive.escArt!, this.drive.overlay, job, () => this.hire(m, day, near, offer)));
     }
     this.openPanel(
@@ -530,7 +530,7 @@ export class CareerMode {
   private recountMafia(): void {
     const o = this.career.order;
     const forMafia = !!o && (o.goods.forMafia || !!o.hidden?.forMafia);
-    this.fines.mafiaInterest = forMafia && this.capitalShare() > 0.15 && Math.random() < (o!.pay >= 10000 ? 0.8 : 0.5);
+    this.fines.mafiaInterest = forMafia && this.marketShare() > 0.15 && Math.random() < (o!.pay >= 10000 ? 0.8 : 0.5);
   }
 
   /** Регіон складу призначення поточного замовлення (виняток забороненої зони — Алмазний, aa; king.exe 0x41ef90). */
@@ -539,10 +539,16 @@ export class CareerMode {
     return (o && this.stores.find((s) => s.id === o.to)?.region) ?? null;
   }
 
-  /** Частка капіталу гравця серед усіх (capital.ts; суперники — зі стартовою машиною ZilR, GAME.CNF `live`). */
-  capitalShare(): number {
+  /** Вантажопідйомність флоту гравця, кг (share.ts). */
+  fleetLoad(): number {
     const recs = this.drive.trucksData.records;
-    return capitalShare(this.career, (n) => recs.find((r) => r.carNode === n)?.price ?? 0, 'ZilR');
+    return fleetLoad(this.career, (n) => recs.find((r) => r.carNode === n)?.cargoLoad ?? 0);
+  }
+
+  /** Частка X гравця — «доля перевезень» (share.ts, king.exe 0x41fcf0). */
+  marketShare(): number {
+    const recs = this.drive.trucksData.records;
+    return marketShare(this.career, (n) => recs.find((r) => r.carNode === n)?.cargoLoad ?? 0, this.drive.rivalLoad);
   }
 
   /** Купівля машини на ринку: крадена — прапорець (без повідомлення); уживана — king.exe mess 0x77. */
@@ -731,7 +737,7 @@ export class CareerMode {
    */
   private hire(m: Market, day: number, near: ForSale, offer: { name: string; photo: number }): void {
     const c = this.career;
-    const tariff = hireTariff(this.drive.vehiclePrice(near.rec.carNode), this.capitalShare());
+    const tariff = hireTariff(this.drive.vehiclePrice(near.rec.carNode), this.marketShare());
     if (!c.licences?.length) return this.drive.say(this.msg('NO_LICENCES', 'У ВАС НЕМАЄ ЛІЦЕНЗІЙ НА НАЙМ!'));
     if (!(c.money > 10 * tariff + near.price)) return this.drive.say(this.msg('NO_MONEY_TO_HIRE', 'У ВАС НЕ ВИСТАЧАЄ ГРОШЕЙ НА НАЙМ'));
     c.money -= 10 * tariff + near.price;
@@ -878,7 +884,7 @@ export class CareerMode {
         const to = this.stores.find((s) => s.id === c.order!.to);
         await modal(this.drive.overlay, `Склад «${store.town}»`, `У кузові — ${c.order.goods.name}, доставити в «${to?.town ?? '?'}».`, ['Гаразд']);
       } else {
-        const orders = makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, 5, this.drive.trailer?.rec.trailerType === 3, this.capitalShare(), !!this.drive.trailer);
+        const orders = makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, 5, this.drive.trailer?.rec.trailerType === 3, this.marketShare(), !!this.drive.trailer);
         const box = document.createElement('div');
         box.className = 'career-form ht2-orders';
         box.textContent = 'Замовлення на доставку:';

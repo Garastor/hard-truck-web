@@ -190,8 +190,8 @@ export function orderValue(g: Goods, units: number): number {
 }
 
 /**
- * Частка гравця X у king.exe (0x41fcf0: «показник машин» гравця серед усіх гравців; що саме рахує 0x41b830 — не
- * зʼясовано). Прихований товар — лише при X > 0,25. Гіпотеза порту: X = 1 (порт не веде показників суперників).
+ * Частка гравця X (career/share.ts, king.exe 0x41fcf0). Прихований товар — лише при X > 0,25 (fillTownOrder);
+ * без частки (тести, вільна їзда) — 1.
  */
 export const ILLEGAL_SHARE = 1;
 const ILLEGAL_SHARE_MIN = 0.25;

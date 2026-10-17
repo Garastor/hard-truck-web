@@ -16,6 +16,31 @@ const TEXT: Record<LoseScreen, string> = {
   BackLoose5: 'КІНЕЦЬ ГРИ. ВИ БАНКРУТ',
 };
 
+/**
+ * Вікно перемоги (режим 2): `m_16\BackWin.txr`, кнопки групи «ow» — `ow_main` «Главное меню», `ow_cont`
+ * «Продолжить», `ow_rest` «Начать сначала» у (589, 687) координат фону (розклад трьох кнопок — гіпотеза).
+ */
+export function showVictory(art: EscArt | null, overlay: HTMLElement, on: { main(): void; resume(): void; restart(): void }): void {
+  const text = 'ВІТАЄМО! ВИ ЗАХОПИЛИ РИНОК ПЕРЕВЕЗЕНЬ РЕГІОНУ!';
+  if (!art || !art.has('m_16\\BackWin.txr')) {
+    void modal(overlay, 'Перемога', text, ['Головне меню', 'Продовжити', 'Почати спочатку']).then((i) => (i === 1 ? on.resume() : i === 2 ? on.restart() : on.main()));
+    return;
+  }
+  const p = new SidePanel(art, overlay, 'm_16\\BackWin.txr', 'center');
+  p.el.classList.add('ht2-game-over');
+  const buttons: [string, string, () => void][] = [
+    ['ow_main', 'Головне меню', on.main],
+    ['ow_cont', 'Продовжити', on.resume],
+    ['ow_rest', 'Почати спочатку', on.restart],
+  ];
+  buttons.forEach(([id, label, act], i) =>
+    p.button(`m_16\\${id}`, 589 + i * 146, 687, label, () => {
+      p.close();
+      act();
+    }),
+  );
+}
+
 export function showGameOver(art: EscArt | null, overlay: HTMLElement, screen: LoseScreen, on: { main(): void; restart(): void }): void {
   if (!art || !art.has(`m_16\\${screen}.txr`)) {
     void modal(overlay, 'Кінець гри', TEXT[screen], ['Головне меню', 'Почати спочатку']).then((i) => (i === 1 ? on.restart() : on.main()));

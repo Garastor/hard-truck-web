@@ -1,12 +1,12 @@
-/** Мафія HT2 (Б10, re/notes/ht2/mafia.md): засідки з mod_*.sch, частка капіталу. */
+/** Мафія HT2 (Б10, re/notes/ht2/mafia.md): засідки з mod_*.sch, частка X гравця. */
 import { describe, expect, it } from 'vitest';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readSch } from '@ht2/formats/sexpr';
 import { parseWay } from '@ht2/formats/way';
 import { parseMafiaAmbushes } from '@ht2/traffic/mafia';
-import { capitalOf, capitalShare, RIVALS } from '@ht2/career/capital';
-import { newCareer, START_MONEY } from '@ht2/career/career';
+import { fleetLoad, marketShare, RIVALS, WIN_SHARE } from '@ht2/career/share';
+import { newCareer } from '@ht2/career/career';
 import { HT2_DIR } from '../gameDirs';
 
 const has = existsSync(join(HT2_DIR, 'ENV', 'ap.way'));
@@ -25,16 +25,20 @@ describe('HT2: мафія', () => {
     expect(a.flatMap((x) => x.mines).every((n) => /^anmobj0001\d{3}$/.test(n))).toBe(true);
   });
 
-  it('частка капіталу: гроші + машини (своя, найманих) серед суперників зі стартовим капіталом', () => {
-    const price = (n: string) => ({ ZilR: 20000, Kamaz: 30000 })[n] ?? 0;
+  it('частка X: вантажопідйомність флоту (своя + наймані) серед далекобійників, гроші не важать', () => {
+    const load = (n: string) => ({ ZilR: 6000, Kamaz: 10000 })[n] ?? 0;
     const c = newCareer('Тест', 'ZilR');
-    expect(capitalOf(c, price)).toBe(START_MONEY + 20000);
+    expect(fleetLoad(c, load)).toBe(6000);
     // На старті — як кожен суперник: 1 / (RIVALS + 1).
-    expect(capitalShare(c, price, 'ZilR')).toBeCloseTo(1 / (RIVALS + 1), 6);
-    // Розбагатів: частка > 0,15 (інтерес мафії), > 0,2 (засідки).
-    c.money = 300000;
-    expect(capitalShare(c, price, 'ZilR')).toBeGreaterThan(0.2);
-    c.money = -500;
-    expect(capitalOf(c, price)).toBe(20000);
+    expect(marketShare(c, load, 6000)).toBeCloseTo(1 / (RIVALS + 1), 6);
+    c.money = 10_000_000;
+    expect(marketShare(c, load, 6000)).toBeCloseTo(1 / (RIVALS + 1), 6);
+    // Наймані — з числа далекобійників: 25 найманих на Камазах — перемога (X ≥ 0,51).
+    const d = { name: 'В', truck: 'Kamaz', tariff: 1, photo: 1, km: 0, advance: 0, profit: 0, value: 0, v: 2 as const };
+    c.company = Array.from({ length: 25 }, () => ({ ...d }));
+    expect(fleetLoad(c, load)).toBe(256000);
+    const x = marketShare(c, load, 6000);
+    expect(x).toBeCloseTo(256000 / (256000 + 25 * 6000), 6);
+    expect(x).toBeGreaterThanOrEqual(WIN_SHARE);
   });
 });

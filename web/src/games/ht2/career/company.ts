@@ -53,8 +53,8 @@ const FUEL_R_PER_CONSUMPTION = 3;
 const LOAD_SHARE = 0.85;
 
 /** Тариф найманого, $/км (0x477350). */
-export function hireTariff(price: number, capitalShare: number): number {
-  return ((1 + 4 * capitalShare) * price) / 1024;
+export function hireTariff(price: number, share: number): number {
+  return ((1 + 4 * share) * price) / 1024;
 }
 
 /** Пропозиція найму на місці ринку: одне місце на ринок на день (ймовірність 0,75 — GAME.CNF forhire 20 на 15 ринків). */
@@ -71,9 +71,9 @@ export function newDriver(o: { name: string; photo: number }, truck: string, tar
 }
 
 /** Старий запис (тариф за 10 км, без вартості машини) — на формули king.exe. */
-export function upgradeDriver(d: HiredDriver, price: number, capitalShare: number): void {
+export function upgradeDriver(d: HiredDriver, price: number, share: number): void {
   if (d.v === 2) return;
-  d.tariff = hireTariff(price, capitalShare);
+  d.tariff = hireTariff(price, share);
   d.advance = ADVANCE_KM * d.tariff;
   d.value ??= price;
   delete d.nextPay;

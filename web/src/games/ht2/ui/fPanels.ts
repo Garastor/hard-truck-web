@@ -16,6 +16,9 @@ export interface FPanelData {
   info: CareerInfo | null;
   /** Суперники (names.sch) — у рейтингу після гравця. */
   rivals: string[];
+  /** Частка X гравця й одного далекобійника ІІ, 0…1 (career/share.ts) — «доля перевезень». */
+  share: number;
+  rivalShare: number;
   /** Клавіші порту: назва дії, клавіша. */
   keys: [string, string][];
   /** Наймані водії й ліцензії; дії F4. */
@@ -145,9 +148,9 @@ export class FPanels {
   private rating(p: SidePanel, d: FPanelData): void {
     const me = d.info;
     const rows: [string, number, number, number][] = [];
-    if (me) rows.push([me.driver, me.delivered > 0 ? 100 : 0, d.company.length, me.tons]);
-    // Доставки суперників порт ще не рахує (G9 Б8) — нулі.
-    for (const n of d.rivals) rows.push([n, 0, 0, 0]);
+    if (me) rows.push([me.driver, Math.round(d.share * 100), d.company.length, me.tons]);
+    // Суперники — однакова частка (машин не міняють, share.ts); найнятих і перевезеного порт за них не веде.
+    for (const n of d.rivals) rows.push([n, Math.round(d.rivalShare * 100), 0, 0]);
     rows.slice(0, 10).forEach(([name, share, hired, tons], i) => {
       const y = 491 + i * 33;
       p.write(64, y, name, VALUE, undefined, 'left', 76);

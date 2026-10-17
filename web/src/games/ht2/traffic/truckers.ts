@@ -62,6 +62,11 @@ export class Truckers {
     private readonly max = MAX,
   ) {}
 
+  /** Моделі машин далекобійників (evehicles.sch, клас trucker; за кожен варіант фарбування) — частка X. */
+  get models(): string[] {
+    return this.kinds.map((k) => k.model);
+  }
+
   /** Імена всіх далекобійників (names.sch) — рейтинг F2. */
   get allNames(): readonly string[] {
     return this.names;
