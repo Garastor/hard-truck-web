@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Block } from '../engine/formats/b3d';
 import type { LoadedRegion } from '../world/world';
+import { brokenRadars } from '../world/objects';
 
 /**
  * Стаціонарні камери-радари (king.exe 0x56ffd0, 0x573b70; re/notes/ht2/police.md «Камери»): тригери B3D типу 13 з
@@ -10,8 +11,9 @@ import type { LoadedRegion } from '../world/world';
  * - радар — без фарби Stealth сигнал детектора 0,5; швидкість понад ліміт і радар ще не спрацьовував — спалах і штраф
  *   250 × ступінь (+15 км/год — 2, +35 — 3) одразу з грошей, картка 16 (ліміт на картці — trunc(ліміт) − 5, швидкість —
  *   trunc(v·3,6)); кожна камера — один раз за гру (номер зберігається в кар'єрі). Міліції й погоні немає.
- * Гіпотези порту: кімната — за габаритами геометрії (як заборонена зона), точка — центр машини; збитий радар
- * (+0x128 & 1) і спалах моделі AnmObj0003 не перенесено.
+ * Збитий радар (удар P ≥ 5000, `+0x128 & 1`, world/objects.ts brokenRadars) не фотографує й не штрафує.
+ * Гіпотези порту: кімната — за габаритами геометрії (як заборонена зона), точка — центр машини; спалах моделі
+ * AnmObj0003 не перенесено.
  */
 export interface RadarHit {
   id: number;
@@ -112,7 +114,7 @@ export class Radars {
       if (!stealth) this.signal = SIGNAL;
       const limit = f[0];
       const kmh = speed * 3.6;
-      if (limit >= kmh || fired.has(id)) continue;
+      if (limit >= kmh || fired.has(id) || brokenRadars.has(id)) continue;
       const degree = speed > (limit + 35) / 3.6 ? 3 : speed > (limit + 15) / 3.6 ? 2 : 1;
       return { id, limit, speedKmh: kmh, degree };
     }

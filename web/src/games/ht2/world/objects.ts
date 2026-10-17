@@ -38,6 +38,8 @@ export interface Pole {
   name: string;
   /** Колонка заправки: номер 0…2 і ключ станції (простір екземпляра AnmObj0004). */
   column?: number;
+  /** Радар (вид 5): номер камери AnmObj0003 (3010…), той самий, що в тригері камери (traffic/radars.ts). */
+  radar?: number;
   /** Простір `<X>Space_`: видимі обʼєкти й поворот при падінні. */
   space: string;
   /** Матриця простору (координати гри). */
@@ -71,6 +73,12 @@ const MASS: Record<string, number> = {
 /** Бочки й каністри — циліндри (восьмигранна призма в exe), решта — бруси. */
 const ROUND = /^anmobj020[3-9]$/;
 
+/**
+ * Зламані радари (номери камер): удар P ≥ 5000 ставить радару прапорець `+0x128 |= 1` — він більше не фотографує й
+ * не штрафує (king.exe 0x588090 → перевірка в 0x56ffd0; re/notes/ht2/objects.md). Читає traffic/radars.ts.
+ */
+export const brokenRadars = new Set<number>();
+
 const f32 = new Float32Array(1);
 const u32 = new Uint32Array(f32.buffer);
 const asFloat = (v: number) => ((u32[0] = v), f32[0]);
@@ -98,6 +106,7 @@ export function findPoles(asm: SceneAssembler, find: (name: string) => Block | u
         points: sd.points.map((p) => new THREE.Vector3(...p).applyMatrix4(m)),
         height: h > 0.5 && h < 30 ? h : 3,
         radius: Math.max(0.05, sd.trigger.i2 * 0.01),
+        radar: kind === 5 && sd.trigger.values.length > 2 ? sd.trigger.values[2] | 0 : undefined,
       });
     }
   }
@@ -192,8 +201,12 @@ export class WorldObjects {
   /** Стан заправок (біти) — переживає вивантаження регіону. */
   private readonly stationBits = new Map<string, number>();
   private glows = new Map<string, THREE.Object3D>();
+  /** Зламані стовпи (удар P ≥ 5000, нахилені чи повалені) — переживають вивантаження регіону. */
+  private readonly broken = new Set<string>();
 
-  constructor(private readonly rapier: RAPIER.World) {}
+  constructor(private readonly rapier: RAPIER.World) {
+    brokenRadars.clear();
+  }
 
   addRegion(id: string, root: THREE.Object3D, poles: Pole[], movables: Movable[]): void {
     root.updateMatrixWorld(true);
@@ -223,7 +236,7 @@ export class WorldObjects {
     this.poles.set(id, ps);
     root.getObjectByName('glows')?.children.forEach((g) => g.name && this.glows.set(g.name.toLowerCase(), g));
     for (const s of ps) {
-      if (s.def.kind === 6 && s.down) this.glows.get(s.def.name.replace(/fonar/i, 'glow').toLowerCase())?.removeFromParent();
+      if (this.broken.has(s.key)) this.breakPole(s);
       if (s.def.kind !== 3) continue;
       const key = `${id}:${s.def.space}`;
       let st = this.stations.get(key);
@@ -369,6 +382,7 @@ export class WorldObjects {
     const pmax = s.def.kind === 5 || s.def.kind === 6 ? 40000 : 20000;
     ev.push({ sound: s.def.kind === 5 || s.def.kind === 6 ? 'hit_ironpillar' : 'hit_sign', volume: Math.min(1, P / pmax) });
     if (P < MIN_P) return;
+    this.breakPole(s);
     const phi = Math.min(PHI_MAX, ((P - MIN_P) * 1.5394) / (pmax - MIN_P));
     // Напрям удару в координатах гри (горизонтальний); вісь повороту — угору × напрям.
     const dir = new THREE.Vector3(v.x, -v.z, 0);
@@ -386,7 +400,6 @@ export class WorldObjects {
     const to = 0.98 * PHI_MAX;
     s.fall = { axis, to, t: 0 };
     this.fallen.set(s.key, { axis, to });
-    if (s.def.kind === 6) this.glows.get(s.def.name.replace(/fonar/i, 'glow').toLowerCase())?.removeFromParent();
     if (s.def.kind === 4) this.lightOff(s);
     const A = (pmax - MIN_P) * PHI_MAX * 0.6496;
     if (A < P) {
@@ -394,6 +407,22 @@ export class WorldObjects {
       body.setLinvel({ x: pv.v.x * k, y: pv.v.y * k, z: pv.v.z * k }, true);
       body.setAngvel({ x: pv.w.x * k, y: pv.w.y * k, z: pv.w.z * k }, true);
     }
+  }
+
+  /**
+   * Зламаний радар чи ліхтар (удар P ≥ 5000, king.exe 0x588090): радар більше не штрафує (brokenRadars), ліхтар
+   * гасне — ореол `<РЕГ>Glow<nn>` ховається; перемикач `RadarHeadOn` / `FonarHeadOn` у моделі → 1 ([Г] розбита голова).
+   */
+  private breakPole(s: PoleState): void {
+    if (s.def.kind !== 5 && s.def.kind !== 6) return;
+    this.broken.add(s.key);
+    if (s.def.kind === 5 && s.def.radar !== undefined) brokenRadars.add(s.def.radar);
+    if (s.def.kind === 6) this.glows.get(s.def.name.replace(/fonar/i, 'glow').toLowerCase())?.removeFromParent();
+    for (const v of s.visuals)
+      v.o.traverse((x) => {
+        const m = /^(?:Radar|Fonar)HeadOn#(\d+)$/i.exec(x.name);
+        if (m) x.visible = m[1] === '1';
+      });
   }
 
   /** Повалений світлофор не працює: перемикач TL_operative → 0 (лампи без світла; king.exe 0x588090). */
