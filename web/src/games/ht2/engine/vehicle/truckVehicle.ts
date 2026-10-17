@@ -282,6 +282,8 @@ export class TruckVehicle {
   readonly base: number;
   /** Задня вісь бази — z у системі кузова (Three.js), м. */
   private readonly rearAxleZ: number;
+  /** Бічна швидкість центру мас від повороту навколо задньої осі (ω·d), додана минулого кроку, м/с. */
+  private readonly axleSide = new THREE.Vector3();
   /** Стан коліс king: 1 — пробуксовка, −1 — заблоковане. */
   readonly slip: WheelSlip[];
   /**
@@ -653,7 +655,11 @@ export class TruckVehicle {
     this.applyBumpStops(dt);
     // Швидкість — уже з імпульсами підвіски (їх не затирати: інакше кузов провалюється крізь дорогу).
     const lv = this.body.linvel();
-    const v = new THREE.Vector3(lv.x, lv.y, lv.z);
+    // Далі — швидкість задньої осі: бічну ω·d, додану минулого кроку (нижче), віднімаємо вектором. Інакше за крок
+    // кузов повертався, і ця бічна складова проєктувалась на новий курс як розгін — на повному кермі (Ctrl) машина
+    // сама розганялась до 100+ км/год.
+    const v = new THREE.Vector3(lv.x, lv.y, lv.z).sub(this.axleSide);
+    this.axleSide.set(0, 0, 0);
 
     // Контакти: нормаль ґрунту — середня нормаль коліс на землі; навантаження N_i = M·g/n·|n_i,y| (рівний розподіл).
     const n = new THREE.Vector3();
@@ -734,18 +740,19 @@ export class TruckVehicle {
       // попереду неї — ще й убік на ω·d. Інакше машина крутилася навколо центру мас і задні колеса виносило назовні.
       if (wheels[0].ground || wheels[1].ground) {
         const d = this.rearAxleZ - this.body.localCom().z;
-        next.addScaledVector(new THREE.Vector3().crossVectors(n, ft), -yawRate(speed, delta, this.base) * d);
+        this.axleSide.crossVectors(n, ft).multiplyScalar(-yawRate(speed, delta, this.base) * d);
       }
     } else {
-      // Не всі колеса на землі чи схил (порт; у king.exe тут «динамічний» режим, не розібрано): бічне ковзання гасить
-      // тертя коліс, що на землі, — не більше μ·g·(частка коліс на землі) за секунду; ціль — та сама дуга навколо
-      // задньої осі. Без цього після підскоку (бордюр, клумба) машину несло боком, доки всі колеса не стануть.
+      // Не всі колеса на землі чи схил (порт; у king.exe тут «динамічний» режим, не розібрано): бічне ковзання задньої
+      // осі гасить тертя коліс, що на землі, — не більше μ·g·(частка коліс на землі) за секунду; центр мас — на тій самій
+      // дузі навколо задньої осі. Без цього після підскоку (бордюр, клумба) машину несло боком, доки всі колеса не стануть.
       const left = new THREE.Vector3().crossVectors(n, ft);
-      const target = wheels[0].ground || wheels[1].ground ? -yawRate(vFwd, delta, this.base) * (this.rearAxleZ - this.body.localCom().z) : 0;
-      const excess = next.dot(left) - target;
+      const excess = next.dot(left);
       const maxDv = mu * KING.g * (onGround / this.wheels) * dt;
       next.addScaledVector(left, -Math.sign(excess) * Math.min(Math.abs(excess), maxDv));
+      if (wheels[0].ground || wheels[1].ground) this.axleSide.copy(left).multiplyScalar(-yawRate(vFwd, delta, this.base) * (this.rearAxleZ - this.body.localCom().z));
     }
+    next.add(this.axleSide);
     // Rapier за крок додасть усю вагу — її дотичну частину віднімаємо наперед; уздовж нормалі — як є (підвіска).
     next.addScaledVector(gt, -dt).addScaledVector(n, vn);
     this.body.setLinvel(next, true);
