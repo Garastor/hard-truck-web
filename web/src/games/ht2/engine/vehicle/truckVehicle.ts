@@ -112,6 +112,23 @@ const SOFT_DRAG_SPAN = 3;
  * інших машин — гіпотеза: tech `I` з ним прямо не повʼязаний).
  */
 const YAW_GYRATION2 = 3.425;
+/**
+ * Гойдання кузова для перенесення навантаження (tireLoads): власна частота, Гц, і згасання. У king.exe — пружини
+ * підвіски (0x4f8260); тут підібрано відтворенням запису ZilR з Ctrl-перекладаннями (2026-10-18): СКВ ω 0,212 → 0,166
+ * рад/с, звичайний поворот — 0,046 → 0,055.
+ */
+const SWAY_HZ = 0.8;
+const SWAY_ZETA = 0.15;
+/**
+ * Висота ЦМ над дорогою для перенесення навантаження, м: у king.exe (дамп ZilR) центр колеса на 0,93 м нижче ЦМ плюс
+ * радіус — ≈ 1,43; точки контакту Rapier у порту — лише 0,82 м нижче ЦМ. Для інших машин — гіпотеза.
+ */
+const KING_COM_HEIGHT = 1.43;
+/**
+ * Колія для перенесення навантаження, м (king.exe, дамп ZilR: колеса ±1,13 спереду, ±1,21 ззаду; точки контакту
+ * Rapier у порту — з моделі, вужчі). Гіпотеза для інших машин — та сама.
+ */
+const KING_TRACK = { front: 2.26, rear: 2.42 };
 /** Нахил кузова від прискорення king.exe (0x4fca10): рад на м/с², межа, частка поздовжнього. */
 const LEAN_K = 0.0109;
 const LEAN_MAX = 0.0435;
@@ -719,6 +736,7 @@ export class TruckVehicle {
     const vn = v.dot(n);
     const vt = v.clone().addScaledVector(n, -vn);
     const vFwd = vt.dot(ft);
+    if (K.tires) this.tireLoads(dt, wheels, n, ft);
 
     // Поздовжні сили: двигун і гальма; ручне — задні колеса на повну; кочення; мʼяке покриття понад його швидкість.
     // Без газу двигун лише гальмує (0x4aa320) — проти руху й до зупинки, з наростанням від нуля, як кочення: інакше
@@ -757,6 +775,8 @@ export class TruckVehicle {
     if (K.tires) {
       const av0 = this.body.angvel();
       tireOmega = this.tireStep(dt, next, n, ft, delta, wheels, Math.abs(vFwd), av0.x * n.x + av0.y * n.y + av0.z * n.z);
+      // Прискорення від сил коліс (без ваги) — для перенесення навантаження наступного кроку.
+      this.tireAcc.addScaledVector(ft, force / mass);
     }
     // Рівний ґрунт і всі колеса на землі — швидкість уздовж курсу (бічного ковзання немає).
     else if (all && n.y >= KING.flat) {
@@ -841,8 +861,65 @@ export class TruckVehicle {
       dw += (arm * j) / I;
     }
     next.add(dv);
+    this.tireAcc.copy(dv).divideScalar(dt);
     w += dw;
     return w;
+  }
+
+  /** Прискорення від сил коліс минулого кроку (світ, м/с²) і стан гойдання кузова (tireLoads). */
+  private readonly tireAcc = new THREE.Vector3();
+  private readonly sway = { x: 0, vx: 0, y: 0, vy: 0 };
+
+  /**
+   * Навантаження коліс динамічного режиму (машина гравця). У king.exe — сили пружин (0x4f8260): у записі передня вісь
+   * несе ≈ 41 % ваги (l_r/L), у повороті вага перетікає на зовнішні колеса, при гальмуванні — на передні. Тут: статичні
+   * частки за плечима від центру мас (передні — l_r/L, задні — l_f/L порівну), плюс поздовжнє M·a·h/L і бічне
+   * N_осі·a·h/(g·колія/2) перенесення від прискорення сил коліс; прискорення проходить через згасаючі коливання кузова
+   * (SWAY_HZ, SWAY_ZETA — гіпотеза порту), тож вага «гойдається»: зрив передка, гальмування, вага вперед — передок
+   * чіпляється, різкий поворот, зворотне гойдання — легка задня вісь зривається.
+   */
+  private tireLoads(dt: number, wheels: KingWheel[], n: THREE.Vector3, ft: THREE.Vector3): void {
+    const c = this.body.worldCom();
+    const com = new THREE.Vector3(c.x, c.y, c.z);
+    const side = new THREE.Vector3().crossVectors(n, ft);
+    const w0 = 2 * Math.PI * SWAY_HZ;
+    const sw = this.sway;
+    const ax = this.tireAcc.dot(ft);
+    const ay = this.tireAcc.dot(side);
+    sw.vx += (w0 * w0 * (ax - sw.x) - 2 * SWAY_ZETA * w0 * sw.vx) * dt;
+    sw.x += sw.vx * dt;
+    sw.vy += (w0 * w0 * (ay - sw.y) - 2 * SWAY_ZETA * w0 * sw.vy) * dt;
+    sw.y += sw.vy * dt;
+    const pts: { i: number; s: number; q: number }[] = [];
+    for (let i = 0; i < this.wheels; i++) {
+      const p = wheels[i].ground ? this.ctrl.wheelContactPoint(i) : null;
+      if (!p) continue;
+      const r = com.clone().sub(new THREE.Vector3(p.x, p.y, p.z));
+      pts.push({ i, s: -r.dot(ft), q: -r.dot(side) });
+    }
+    const front = pts.filter((t) => t.i < 2);
+    const rear = pts.filter((t) => t.i >= 2);
+    if (!front.length || !rear.length) return;
+    // Плечі від ЦМ до передньої осі й до середини задніх. (King.exe ділить за останньою віссю — у дампі ZilR передні
+    // несуть ≈ 41–43 %, — але там ЦМ на 0,57 м далі назад, ніж у порту без вантажу; так порожня машина в порту
+    // отримала б 48 % спереду й розверталась у звичайному повороті, бо сили тандема — на обох осях.)
+    const lf = front.reduce((a, t) => a + t.s, 0) / front.length;
+    const lr = -rear.reduce((a, t) => a + t.s, 0) / rear.length;
+    const L = lf + lr;
+    if (!(lf > 0.3 && lr > 0.3)) return;
+    const h = KING_COM_HEIGHT;
+    const Mg = this.mass * KING.g;
+    // Поздовжнє: прискорення вперед розвантажує передок.
+    const dLon = (this.mass * sw.x * h) / L;
+    for (const t of pts) {
+      const isFront = t.i < 2;
+      const axle = isFront ? (Mg * lr) / L - dLon : (Mg * lf) / L + dLon;
+      const pair = axle / (isFront ? front.length : rear.length);
+      // Бічне: прискорення ліворуч (+side) вантажить праві (q < 0) колеса; колія — з king.exe (KING_TRACK).
+      const lat = (pair * sw.y * h) / (KING.g * (isFront ? KING_TRACK.front : KING_TRACK.rear) / 2);
+      const N = Math.max(0, pair - Math.sign(t.q) * lat);
+      wheels[t.i].load = N * Math.abs(this.ctrl.wheelContactNormal(t.i)?.y ?? 1);
+    }
   }
 
   /**
@@ -1077,6 +1154,8 @@ export class TruckVehicle {
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.axleSide.set(0, 0, 0);
+    this.tireAcc.set(0, 0, 0);
+    Object.assign(this.sway, { x: 0, vx: 0, y: 0, vy: 0 });
     this.hits.reset();
     this.reverseMode = false;
     this.brakeTime = 0;
