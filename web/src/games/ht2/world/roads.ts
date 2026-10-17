@@ -299,11 +299,16 @@ export class Ht2Roads {
 
   private readonly dead = new Map<RoadLine, boolean>();
 
-  /** Продовження лінії для автопілота: стала для лінії гілка (без смикання), крім тупикових, якщо є інші. */
+  /**
+   * Продовження лінії для автопілота: стала для лінії гілка (без смикання), крім тупикових і закритих завалом
+   * (world/obstacles.ts; із закритої лінії — можна, машина з неї виїжджає), якщо є інші.
+   */
   pick(line: RoadLine): RoadLine | null {
     if (!line.next.length) return null;
-    const open = (line.next as RoadLine[]).filter((n) => !this.deadEnd(n));
-    const pool = open.length ? open : (line.next as RoadLine[]);
+    const all = line.next as RoadLine[];
+    const passable = all.filter((n) => line.closed || !n.closed);
+    const open = passable.filter((n) => !this.deadEnd(n));
+    const pool = open.length ? open : passable.length ? passable : all;
     return pool[hashPick(line.name, pool.length)];
   }
 

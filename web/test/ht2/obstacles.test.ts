@@ -62,6 +62,20 @@ describe.skipIf(!has)('HT2: обвали й повені', () => {
     expect(nav.distances(target).size).toBe(before);
   });
 
+  it('автопілот (pick) на розвилці обирає відкриту гілку, якщо є', () => {
+    const roads = new Ht2Roads(regions);
+    // Розвилки на різні дороги: закриваємо ту, яку автопілот обрав, — тепер він бере іншу, відкриту.
+    const forks = roads.lines.filter((l) => new Set(l.next.map((n) => (n as typeof l).road)).size > 1).slice(0, 200);
+    expect(forks.length).toBeGreaterThan(0);
+    for (const l of forks) {
+      const first = roads.pick(l)!;
+      roads.setClosed(first.road, true);
+      const next = roads.pick(l)!;
+      if (l.next.some((n) => !(n as typeof l).closed)) expect(next.closed, l.name).toBeFalsy();
+      roads.setClosed(first.road, false);
+    }
+  });
+
   it('трафік не заїжджає на закриту дорогу: перед нею й на ній (до завалу) — розворот', () => {
     const roads = new Ht2Roads(regions);
     const ac1 = list.find((o) => o.id === 'OBST_AC_1')!;
