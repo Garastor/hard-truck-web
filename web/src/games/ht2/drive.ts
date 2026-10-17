@@ -281,6 +281,7 @@ export class Ht2Drive {
   private sizeLights = false;
   /** Напівпричепи на базах (кар'єра, vehicles/presents.ts) і типи з evehicles.sch. */
   presents: Presents | null = null;
+  private presentsSaveTimer = 0;
   /** Відкрито вікно причепа з вантажем (друге натискання T не відкриває ще одне). */
   private offering = false;
   private semiTypes: SemiKind[] = [];
@@ -519,6 +520,8 @@ export class Ht2Drive {
       const missions = cnf ? num(assoc(cnf, 'missions')?.[1], 10) : 10;
       const cm = this.careerMode;
       if (cm) this.presents.missions(roadPlaces(this.world.regions.values()), missions, (pl) => cm.missionLot(pl.pos));
+      // Збережені причепи (king.exe зберігає всі presents, 0x4833a0) — на своїх місцях, з вантажем і строками.
+      if (o.career.presents) this.presents.restore(o.career.presents);
     }
     if (!o.race) {
       const names = await o.source.read('names.sch').then(readSch).catch(() => []);
@@ -975,10 +978,12 @@ export class Ht2Drive {
     if (!c || !this.hitched || this.race || !this.presents) return;
     if (this.trailer) {
       if (this.truck.speedKmh > 5) return this.say('ЗУПИНІТЬСЯ, ЩОБ ВІДЧЕПИТИ ПРИЧІП');
-      if (c.order) return this.say('СПОЧАТКУ ДОСТАВТЕ ВАНТАЖ');
       const kind = this.semiTypes.find((k) => k.id === c.trailer?.id);
       const t = this.trailer.visual;
-      if (kind) this.presents.drop(kind, t.position.clone().setY(t.position.y), new THREE.Vector3(0, 0, -1).applyQuaternion(t.quaternion), c.time);
+      // З вантажем — причіп лишається на місці «місією» з тим самим замовленням і строком (0x41fa00).
+      const order = c.order ?? undefined;
+      if (kind) this.presents.drop(kind, t.position.clone(), new THREE.Vector3(0, 0, -1).applyQuaternion(t.quaternion), c.time, { order, dents: { ...(c.trailerDents ?? {}) } });
+      if (order) c.order = null;
       c.trailer = null;
       c.trailerDents = {};
       this.world.scene.remove(t);
@@ -989,6 +994,9 @@ export class Ht2Drive {
       this.truck.rayFilter = undefined;
       this.truck.setTowLoad(0);
       this.truck.tow = null;
+      if (order) this.setCargo(0);
+      c.presents = this.presents.snapshot();
+      this.careerMode?.persist();
       this.say('ПРИЧІП ВІДЧЕПЛЕНО');
       return;
     }
@@ -1002,10 +1010,22 @@ export class Ht2Drive {
     const take = () => {
       this.presents!.take(present);
       c.trailer = { id: present.kind.id, carNode: present.kind.carNode, cluster: present.kind.cluster } satisfies TrailerChoice;
-      c.trailerDents = {};
+      c.trailerDents = { ...(present.dents ?? {}) };
       this.hitch();
       this.say('ПРИЧІП ПРИЧЕПЛЕНО');
+      c.presents = this.presents!.snapshot();
+      this.careerMode?.persist();
     };
+    // Свій кинутий причіп з вантажем — те саме замовлення далі (строк не скидається, 0x41f0d0).
+    if (present.order) {
+      if (c.order) return this.say('СПОЧАТКУ ДОСТАВТЕ ВАНТАЖ');
+      const o = present.order;
+      take();
+      c.order = o;
+      this.setCargo(o.goods.mass * o.units);
+      this.careerMode?.persist();
+      return;
+    }
     // Причіп з вантажем — спершу вікно замовлення (0x56bc80): взяв — зчіпка й вантаж у причепі.
     const lot = present.lot;
     const trailerRec = this.trucks.records.find((r) => r.carNode.toLowerCase() === present.kind.carNode.toLowerCase());
@@ -2077,7 +2097,17 @@ export class Ht2Drive {
     this.input.setToggle('mirror', this.mirrorOn);
     // Причепити / відчепити — лише тягачем; світиться, поки причіп зчеплений.
     this.input.setToggle('attach', !!this.trailer, !this.hitched || !!this.race);
-    if (this.presents && this.careerMode) this.presents.update(this.truck.visual.position, this.careerMode.career.time, (k) => this.canTow(k), dt);
+    if (this.presents && this.careerMode) {
+      const cm = this.careerMode;
+      this.presents.update(this.truck.visual.position, cm.career.time, (k) => this.canTow(k), dt);
+      const expired = this.presents.expire(cm.career.time);
+      // Причепи — у даних кар'єри раз на секунду (їх зберігає будь-яке збереження кар'єри), прострочення — одразу.
+      if ((this.presentsSaveTimer -= dt) <= 0 || expired) {
+        this.presentsSaveTimer = 1;
+        cm.career.presents = this.presents.snapshot();
+        if (expired) cm.persist();
+      }
+    }
     this.updateNavigator(dt);
     this.tabMap?.draw(dt, {
       me: this.truck.visual.position,

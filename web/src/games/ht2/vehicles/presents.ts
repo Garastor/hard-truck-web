@@ -6,6 +6,7 @@ import { isList, num, str, type SExpr } from '../formats/sexpr';
 import { recolor } from '../traffic/traffic';
 import { toThree } from '../world/world';
 import { truckDef, type Ht2Trucks } from './trucks';
+import type { ActiveOrder } from '../career/career';
 
 /**
  * Напівпричепи-«подарунки» (presents) на базах — за king.exe (re/notes/ht2/trailers-bodies.md):
@@ -113,6 +114,8 @@ const FUEL_REACH = 150;
 /** Дорожні місії: період перевірки (с) і найменша відстань нового місця від гравця (м). */
 const MISSION_PERIOD = 7;
 const MISSION_MIN_DIST = 700;
+/** Місце вважається зайнятим, якщо ближче стоїть причіп, м (гіпотеза порту). */
+const OCCUPIED_R = 20;
 /** Причіп має модель і колізію ближче цієї відстані від гравця, м. */
 const MODEL_RANGE = 350;
 /** Пошук present'а для зчіпки, м (0x56ffd0). */
@@ -129,6 +132,21 @@ const STRAY_FAR = 5000;
 /** Множник ваги типу після кожного вибору (0x64b700). */
 const WEIGHT_DECAY = 0.75;
 
+/**
+ * Причіп-present у збереженні кар'єри (як потік XAI `PRSS/PRNT` king.exe 0x4833a0: усі presents — тип, місце, позиція,
+ * час кидання, вантаж і строки). Час у порту — ігровий годинник кар'єри, тож строки зберігаються як є.
+ */
+export interface SavedPresent {
+  kind: string;
+  place?: string;
+  pos: [number, number, number];
+  forward: [number, number];
+  dropped: number | null;
+  lot?: MissionLot;
+  order?: ActiveOrder;
+  dents?: Partial<Record<string, number>>;
+}
+
 export interface Present {
   kind: SemiKind;
   place: Place | null;
@@ -138,6 +156,12 @@ export interface Present {
   dropped: number | null;
   /** Дорожня місія: лот вантажу (значок I_trailer на карті). */
   lot?: MissionLot;
+  /**
+   * Кинутий гравцем причіп з вантажем (looseSemitrailer 0x41fa00): замовлення лишається в причепі з тим самим строком,
+   * повторний підбір його продовжує; значок I_trailer. Вмʼятини й шини причепа — теж з ним.
+   */
+  order?: ActiveOrder;
+  dents?: Partial<Record<string, number>>;
   model: {
     visual: THREE.Group;
     body: RAPIER.RigidBody;
@@ -181,9 +205,62 @@ export class Presents {
     this.roads = { places, limit, lot };
   }
 
+  /** Знімок для збереження кар'єри. */
+  snapshot(): SavedPresent[] {
+    return this.list.map((p) => ({
+      kind: p.kind.id,
+      ...(p.place ? { place: p.place.name } : {}),
+      pos: [p.pos.x, p.pos.y, p.pos.z],
+      forward: [p.forward.x, p.forward.z],
+      dropped: p.dropped,
+      ...(p.lot ? { lot: p.lot } : {}),
+      ...(p.order ? { order: p.order } : {}),
+      ...(p.dents ? { dents: p.dents } : {}),
+    }));
+  }
+
+  /** Відновити зі збереження (місця — за іменами вузлів); дорожні місії вже є — без стартового заповнення. */
+  restore(saved: SavedPresent[]): void {
+    const places = new Map([...this.places, ...(this.roads?.places ?? [])].map((pl) => [pl.name, pl]));
+    for (const s of saved) {
+      const kind = this.kinds.find((k) => k.id === s.kind);
+      if (!kind) continue;
+      const place = s.place ? (places.get(s.place) ?? null) : null;
+      this.list.push({
+        kind,
+        place,
+        pos: new THREE.Vector3(...s.pos),
+        forward: new THREE.Vector3(s.forward[0], 0, s.forward[1]).normalize(),
+        dropped: s.dropped,
+        model: null,
+        ...(s.lot ? { lot: s.lot } : {}),
+        ...(s.order ? { order: s.order } : {}),
+        ...(s.dents ? { dents: s.dents } : {}),
+      });
+    }
+    if (saved.length) this.missionStart = false;
+  }
+
+  /**
+   * Прострочення в кинутих причепах (expirePresentOrders 0x42a120, раз на 1 с): замовлення зникає без неустойки й
+   * повідомлення (суму 0x429cd0 відкинуто), причіп стає порожнім кинутим — час кидання = зараз, прибирання через
+   * 1200 с далі 5000 м (0x42a1c0); значок I_trailer зникає. Повертає, чи щось змінилось (зберегти).
+   */
+  expire(time: number): boolean {
+    let changed = false;
+    for (const p of this.list) {
+      const o = p.order;
+      if (!o || time - o.taken <= o.deadline) continue;
+      delete p.order;
+      p.dropped = time;
+      changed = true;
+    }
+    return changed;
+  }
+
   /** Причепи з вантажем (дорожні місії) — для значків карти. */
   get withCargo(): Present[] {
-    return this.list.filter((p) => p.lot);
+    return this.list.filter((p) => p.lot || p.order);
   }
 
   /**
@@ -193,13 +270,13 @@ export class Presents {
   update(player: THREE.Vector3, time: number, compatible: (k: SemiKind) => boolean, dt = 1 / 60): void {
     for (let i = this.list.length - 1; i >= 0; i--) {
       const p = this.list[i];
-      if (p.dropped !== null && time - p.dropped > STRAY_AGE && p.pos.distanceTo(player) > STRAY_FAR) this.remove(i);
+      if (p.dropped !== null && !p.order && time - p.dropped > STRAY_AGE && p.pos.distanceTo(player) > STRAY_FAR) this.remove(i);
     }
     const based = this.list.filter((p) => p.place && !p.lot).length;
     if (based < this.limit) {
       const used = new Set(this.list.map((p) => p.place));
       // Нове — лише поза полем зору гравця (поза зоною моделей), щоб причіп не зʼявлявся на очах.
-      const free = this.places.filter((pl) => !used.has(pl) && pl.pos.distanceTo(player) > MODEL_RANGE);
+      const free = this.places.filter((pl) => !used.has(pl) && !this.occupied(pl) && pl.pos.distanceTo(player) > MODEL_RANGE);
       if (free.length) this.spawn(free[Math.floor(this.rnd() * free.length)], compatible);
     }
     // Дорожні місії: раз на 7 с (0x41ed50), не ближче 700 м від гравця; на старті — до ліміту будь-де (0x434780).
@@ -209,7 +286,7 @@ export class Presents {
       const min = this.missionStart ? 0 : MISSION_MIN_DIST;
       for (let n = this.withCargo.length; n < r.limit; n++) {
         const used = new Set(this.list.map((p) => p.place));
-        const free = r.places.filter((pl) => !used.has(pl) && pl.pos.distanceTo(player) >= min);
+        const free = r.places.filter((pl) => !used.has(pl) && !this.occupied(pl) && pl.pos.distanceTo(player) >= min);
         if (!free.length) break;
         const place = free[Math.floor(this.rnd() * free.length)];
         const lot = r.lot(place);
@@ -228,6 +305,11 @@ export class Presents {
       // Колізії регіону зʼявляються лише біля машин — поки ґрунту під причепом немає, висота з вузла WAY.
       if (p.model && !p.model.grounded) this.settle(p);
     }
+  }
+
+  /** Місце зайняте: поруч стоїть причіп (кинутий гравцем на місці, яке звільнилось, — 0x482d20 позначає й такі). */
+  private occupied(pl: Place): boolean {
+    return this.list.some((p) => p.pos.distanceTo(pl.pos) < OCCUPIED_R);
   }
 
   /** Зважений вибір типу для місця (0x41eb80). */
@@ -251,8 +333,10 @@ export class Presents {
   }
 
   /** Кинутий гравцем причіп — present на місці (позиція й курс причепа). */
-  drop(kind: SemiKind, pos: THREE.Vector3, forward: THREE.Vector3, time: number): void {
-    this.list.push({ kind, place: null, pos: pos.clone(), forward: forward.clone().setY(0).normalize(), dropped: time, model: null });
+  drop(kind: SemiKind, pos: THREE.Vector3, forward: THREE.Vector3, time: number, cargo: { order?: ActiveOrder; dents?: Partial<Record<string, number>> } = {}): Present {
+    const p: Present = { kind, place: null, pos: pos.clone(), forward: forward.clone().setY(0).normalize(), dropped: time, model: null, ...cargo };
+    this.list.push(p);
+    return p;
   }
 
   /**
@@ -263,8 +347,8 @@ export class Presents {
     let best: Present | null = null;
     let bestD = Infinity;
     for (const p of this.list) {
-      if (!p.model) continue;
-      const d = p.pos.distanceTo(saddle);
+      if (!p.model || p.pos.distanceTo(saddle) >= PICK_RANGE) continue;
+      const d = p.model.kingpin.distanceTo(saddle);
       if (d < PICK_RANGE && d < bestD) {
         best = p;
         bestD = d;
