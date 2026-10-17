@@ -40,6 +40,8 @@ export interface Quarry {
   vel: THREE.Vector3;
   /** Скло g (0x567440, гравець+0x5308): шкода й займання від куль ×g; броньоване — 0,2. */
   glass?: number;
+  /** Куля влучила в інше тіло (не ціль, не стрілець) — силою power (займання машин ІІ). */
+  stray?: (body: RAPIER.RigidBody, power: number) => void;
 }
 
 /** Машина-переслідувач: фізика й стан керування. */
@@ -294,11 +296,13 @@ export function shoot(world: RAPIER.World, c: Chaser, q: Quarry, spread: number,
  * Промінь кулі (0x567440) з точки from у напрямку dir: влучання в ціль — поштовх force × маса в точці влучання;
  * point — куди влучила куля (null — нікуди). own — тіло стрільця (промінь крізь нього).
  */
-export function fireRay(world: RAPIER.World, from: THREE.Vector3, dir: THREE.Vector3, range: number, q: Quarry, force: number, own?: RAPIER.RigidBody): { hit: boolean; point: THREE.Vector3 | null } {
+export function fireRay(world: RAPIER.World, from: THREE.Vector3, dir: THREE.Vector3, range: number, q: Quarry, force: number, own?: RAPIER.RigidBody, power = force): { hit: boolean; point: THREE.Vector3 | null } {
   const hit = world.castRay(new RAPIER.Ray(from, dir), range, true, undefined, undefined, undefined, undefined, (col) => col.parent() !== own);
   if (!hit) return { hit: false, point: null };
   const point = from.clone().addScaledVector(dir, hit.timeOfImpact);
-  const onTarget = hit.collider.parent() === q.body;
+  const body = hit.collider.parent();
+  const onTarget = body === q.body;
+  if (!onTarget && body && body.isDynamic()) q.stray?.(body, power);
   if (onTarget) {
     const m = q.body.mass() * force * (q.glass ?? 1);
     q.body.applyImpulseAtPoint({ x: dir.x * m, y: dir.y * m, z: dir.z * m }, point, true);

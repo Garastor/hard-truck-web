@@ -146,6 +146,8 @@ export interface PlayerState {
   stealth: boolean;
   /** Скло (броньоване — 0,2): поштовх від куль ×g. */
   glass?: number;
+  /** Куля влучила в інше тіло (Quarry.stray). */
+  stray?: (body: RAPIER.RigidBody, power: number) => void;
 }
 
 export interface PoliceDeps {

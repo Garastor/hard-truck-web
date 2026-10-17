@@ -63,6 +63,8 @@ const SHOT_EVERY = 0.14;
 const SHOT_RANGE = 300;
 /** Поштовх від влучання, частка маси (міліція — 0,1; у exe сила кулі гелікоптера 2,0 проти 0,1, абсолют — Г). */
 const SHOT_FORCE = 0.3;
+/** Сила кулі для займання (P = 2, як у гравця, drive.ts). */
+const SHOT_POWER = 2;
 const FLASH_PHASE = 0.1;
 const BLINK_PERIOD = 1.5;
 const BLINK_ON = 0.2;
@@ -351,7 +353,7 @@ export class Helicopters {
     const sd = to.x * right.x + to.z * right.z;
     const lim = (0.2 + 0.1 * Math.random()) * Math.abs(fw);
     const dir = h.clone().multiplyScalar(fw).addScaledVector(right, THREE.MathUtils.clamp(sd, -lim, lim)).setY(to.y).normalize();
-    const shot = fireRay(this.deps.rapier, from, dir, SHOT_RANGE, q, SHOT_FORCE);
+    const shot = fireRay(this.deps.rapier, from, dir, SHOT_RANGE, q, SHOT_FORCE, undefined, SHOT_POWER);
     const dist = c.pos.distanceTo(q.pos);
     ev.push(shot.hit ? { kind: 'shot', hit: true, dist } : { kind: 'miss', dist: shot.point ? shot.point.distanceTo(q.pos) : dist });
   }

@@ -61,6 +61,8 @@ interface Part {
   trail: boolean;
   /** Шлях, пройдений від останнього клубу сліду, м. */
   acc: number;
+  /** Іскра (0x59df00): гравітація 9,81 і життя 3 с замість «нижче точки народження». */
+  spark?: { age: number };
 }
 
 interface Flame {
@@ -70,6 +72,8 @@ interface Flame {
   rot: THREE.Matrix3;
   age: number;
   life: number;
+  /** Режим mnFire: 1 — заправка (burn чи дим, δ = 0,1), 0 — машина (_Blow: лише дим, δ = 0,15). */
+  mode?: 0 | 1;
   /** Тремтіння: поточні й цільові a, b, c і час до нової цілі. */
   cur: [number, number, number];
   from: [number, number, number];
@@ -113,8 +117,10 @@ export class Blasts {
   private readonly flicker = flickerTable();
   private lampAge = 0;
   private acc = 0;
-  /** Машина, що горить (точка гри; null — немає): дим як mnFire машини (режим 0) і світло FlameLamp. */
-  private fire: THREE.Vector3 | null = null;
+  /** Машини, що горять (ключ — машина, точка гри): дим як mnFire машини (режим 0) і світло FlameLamp. */
+  private readonly fires = new Map<unknown, THREE.Vector3>();
+  /** Вибухи машин (_Blow): точка гри й вік, с. */
+  private readonly carBlows: { p: THREE.Vector3; age: number }[] = [];
 
   constructor(asm: SceneAssembler) {
     this.group.name = 'blasts';
@@ -146,8 +152,47 @@ export class Blasts {
    * msmoke/mvapor (1 → 5 м, 1,5 с) з тремтінням язика mnFire (δ = 0,15, d = (0, 0, 5) — гіпотеза), світло — лампа
    * кольору FlameLamp (1, 0,941, 0,745) з тим самим мерехтінням.
    */
-  carFire(p: THREE.Vector3 | null): void {
-    this.fire = p ? p.clone() : null;
+  carFire(p: THREE.Vector3 | null, key: unknown = 'player'): void {
+    if (p) this.fires.set(key, p.clone());
+    else this.fires.delete(key);
+  }
+
+  /**
+   * Вибух машини `_Blow` (0x4d9460; objects.md «mnBlow2 і _Blow»): 10 струменів mnFire режиму 0 (життя 0,1…0,15 с) у
+   * точці p + u·(0…0,5 м), u = Rz(θ)·Y, напрям u + 5·Z; на кожен з імовірністю 0,3 — 2 іскри crPart (розмір 0,3,
+   * розкид 3 м/с, w = 12·(Z + 5·зміщення)); далі 0,3 с щокадру ще по струменю.
+   */
+  carBlow(p: THREE.Vector3): void {
+    this.carBlows.push({ p: p.clone(), age: 0 });
+    for (let n = 0; n < 10; n++) this.blowJet(p);
+  }
+
+  private blowJet(p: THREE.Vector3): void {
+    const a = rnd() * Math.PI * 2;
+    const u = new THREE.Vector3(-Math.sin(a), Math.cos(a), 0);
+    const o = u.clone().multiplyScalar(0.5 * rnd());
+    const dir = u.clone().add(new THREE.Vector3(0, 0, 5));
+    this.flames.push({ p: p.clone().add(o), dir, rot: new THREE.Matrix3(), age: 0, life: 0.1 + 0.05 * rnd(), mode: 0, cur: [0, 0, 1], from: [0, 0, 1], to: [0, 0, 1], t: 0 });
+    if (rnd() > 0.7) this.sparks(p, dir.normalize(), new THREE.Vector3(0, 0, 1).addScaledVector(o, 5).multiplyScalar(12), 3, 2, 0.3);
+  }
+
+  /**
+   * Сноп іскор (0x4bb4c0): n квадратів crPart розміру (1 + 0,1s)·size, v = (r₁·b + r₂·a)·(1 + 0,1s)·speed + (1 + 0,1s)·w,
+   * a, b ⟂ d; падають з g = 9,81 крізь землю, живуть 3 с.
+   */
+  private sparks(p: THREE.Vector3, d: THREE.Vector3, w: THREE.Vector3, speed: number, n: number, size: number): void {
+    const Z = new THREE.Vector3(0, 0, 1);
+    const a = (Math.abs(d.x) > 0.01 || Math.abs(d.y) > 0.01 ? d.clone().cross(Z) : d.clone().cross(new THREE.Vector3(0, 1, 0))).normalize();
+    const b = d.clone().cross(a).normalize();
+    const parts = this.tex.get('crpart') ?? [];
+    for (let i = 0; i < n; i++) {
+      const v = b.clone().multiplyScalar(rnd()).addScaledVector(a, rnd()).multiplyScalar((1 + 0.1 * sym()) * speed).addScaledVector(w, 1 + 0.1 * sym());
+      const q = this.spawnPart(p, v, parts[Math.floor(rnd() * parts.length)], false, false, (1 + 0.1 * sym()) * size);
+      if (q) {
+        q.spark = { age: 0 };
+        q.omega = Math.PI * (1 + rnd());
+      }
+    }
   }
 
   update(dt: number, wind: number): void {
@@ -216,18 +261,27 @@ export class Blasts {
       f.cur = [0, 1, 2].map((j) => f.from[j] + (f.to[j] - f.from[j]) * w) as [number, number, number];
       const k = 1 - f.age / f.life;
       const [a, bb, c] = f.cur;
-      const u = new THREE.Vector3(bb, a, 0).applyMatrix3(f.rot).add(f.dir).multiplyScalar((Math.max(k, 0.75) + 0.1) * c);
-      if (rnd() < 0.5) this.spawnWorld(f.p.clone(), u.clone().setZ(u.z * 0.8), 'burn', 0.5, 2.5, 3, 0.75);
+      const car = f.mode === 0;
+      const u = new THREE.Vector3(bb, a, 0).applyMatrix3(f.rot).add(f.dir).multiplyScalar((Math.max(k, 0.75) + (car ? 0.15 : 0.1)) * c);
+      if (car) this.spawnWorld(f.p.clone(), u, rnd() < 0.5 ? 'smoke' : 'vapor', 1, 5, 3, 1.5);
+      else if (rnd() < 0.5) this.spawnWorld(f.p.clone(), u.clone().setZ(u.z * 0.8), 'burn', 0.5, 2.5, 3, 0.75);
       else this.spawnWorld(f.p.clone(), u, 'smoke', 1, 5, 3, 1.5);
+    }
+    for (let i = this.carBlows.length - 1; i >= 0; i--) {
+      const b = this.carBlows[i];
+      b.age += TICK;
+      if (b.age > 0.3) this.carBlows.splice(i, 1);
+      else this.blowJet(b.p);
     }
     this.emitCarFire();
   }
 
   private emitCarFire(): void {
-    if (!this.fire) return;
-    const c = 1 + 0.5 * rnd();
-    const u = new THREE.Vector3(2 * sym(), 2 * sym(), 5).multiplyScalar(0.9 * c);
-    this.spawnWorld(this.fire.clone(), u, rnd() < 0.5 ? 'smoke' : 'vapor', 1, 5, 3, 1.5);
+    for (const fire of this.fires.values()) {
+      const c = 1 + 0.5 * rnd();
+      const u = new THREE.Vector3(2 * sym(), 2 * sym(), 5).multiplyScalar(0.9 * c);
+      this.spawnWorld(fire.clone(), u, rnd() < 0.5 ? 'smoke' : 'vapor', 1, 5, 3, 1.5);
+    }
   }
 
   /**
@@ -246,8 +300,8 @@ export class Blasts {
     }
   }
 
-  private spawnPart(p: THREE.Vector3, v: THREE.Vector3, map: THREE.Texture | undefined, trail: boolean, additive: boolean): void {
-    if (!map || this.puffs.length + this.parts.length >= MAX) return;
+  private spawnPart(p: THREE.Vector3, v: THREE.Vector3, map: THREE.Texture | undefined, trail: boolean, additive: boolean, size = PART_SIZE): Part | null {
+    if (!map || this.puffs.length + this.parts.length >= MAX) return null;
     const s = this.free.pop() ?? new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, fog: true }));
     const m = s.material;
     m.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
@@ -255,20 +309,22 @@ export class Blasts {
     m.needsUpdate = true;
     m.rotation = rnd() * Math.PI * 2;
     m.color.setRGB(1, 1, 1);
-    s.scale.setScalar(PART_SIZE);
+    s.scale.setScalar(size);
     s.visible = true;
     this.group.add(s);
-    this.parts.push({ s, p: p.clone(), v: v.clone(), bornZ: p.z, omega: 2 * Math.PI * sym(), trail, acc: 0 });
+    const q: Part = { s, p: p.clone(), v: v.clone(), bornZ: p.z, omega: 2 * Math.PI * sym(), trail, acc: 0 };
+    this.parts.push(q);
+    return q;
   }
 
   /** Політ уламків і їхні сліди (0x59f180, 0x4ba820): клуб msmoke кожні 0,1 м, 0,25 → 2 м за 0,75 с, кадр 0,05 с. */
   private stepParts(dt: number): void {
     for (let i = this.parts.length - 1; i >= 0; i--) {
       const q = this.parts[i];
-      q.v.z -= PART_G * dt;
+      q.v.z -= (q.spark ? 9.81 : PART_G) * dt;
       const old = q.p.clone();
       q.p.addScaledVector(q.v, dt);
-      if (q.p.z < q.bornZ) {
+      if (q.spark ? (q.spark.age += dt) > 3 : q.p.z < q.bornZ) {
         q.s.visible = false;
         this.group.remove(q.s);
         this.free.push(q.s);
@@ -345,11 +401,12 @@ export class Blasts {
   private updateLamp(dt: number): void {
     const f = this.flames[0];
     if (!f) {
-      // Горить машина — лампа FlameLamp у її точці.
-      if (this.fire) {
+      // Горить машина — лампа FlameLamp у її точці (одна на гру: у першої палаючої).
+      const fire = this.fires.values().next().value;
+      if (fire) {
         this.lampAge += dt;
         this.lamp.color.setRGB(1, 0.941, 0.745);
-        toThree(this.fire.x, this.fire.y, this.fire.z + 1, this.lamp.position);
+        toThree(fire.x, fire.y, fire.z + 1, this.lamp.position);
         this.lamp.intensity = Math.PI * this.flicker[Math.floor(this.lampAge / 0.1) % 31];
       } else this.lamp.intensity = 0;
       return;

@@ -68,6 +68,7 @@ import { Navigator, type NavTurn } from './world/navigator';
 import { WindDebris } from './world/windDebris';
 import { WorldObjects } from './world/objects';
 import { Blasts } from './world/blasts';
+import { CarFires, enginePoint } from './traffic/carFires';
 import { Tablo } from './ui/tablo';
 import { applyTabloSkin, lcdLabel } from './ui/tabloSkin';
 import { Cards } from './ui/cards';
@@ -133,6 +134,8 @@ const CHASE_LOOK = 10;
 const CHASE_JUMP = 60;
 /** Займання від удару об нерухоме: сила удару (зміна швидкості з урахуванням рами), м/с (king.exe 0x554c20: x > 35). */
 const IMPACT_FIRE = 35;
+/** Вибух машини (_Blow) у кар'єрі: +0,4 пошкодження (0x555550(−0,4)). */
+const BLOW_DAMAGE = 0.4;
 /** Після гасіння машина не займається, с (стан вогню 4 → 0). */
 const FIRE_COOL = 5;
 
@@ -1652,6 +1655,7 @@ export class Ht2Drive {
       wanted: wanted(cm.fines) || this.zone.hot,
       stealth: this.tuning.stealth,
       glass: this.tuning.glass,
+      stray: this.strayShot,
     });
     for (const e of events) {
       if (e.kind === 'shot' && e.hit) this.ignite(0.1);
@@ -1718,8 +1722,48 @@ export class Ht2Drive {
   private ignite(force: number, impact = false): void {
     // Займається лише машина, що не горить і не щойно погашена (стан 4 → 0 через 5 с, 0x54e180).
     if (this.burning >= 0 || !this.careerMode || this.fireCool > 0) return;
-    if (impact || Math.random() < (this.tuning.glass * force * 0.03) / (force + 0.3)) this.burning = 0;
+    if (!impact && Math.random() >= (this.tuning.glass * force * 0.03) / (force + 0.3)) return;
+    this.burning = 0;
+    // Вибух _Blow — раз за пожежу (0x551970 → 0x549e60): у кар'єрі +0,4 пошкодження (момент вибуху — одразу [Г]).
+    this.blowFx(enginePoint(this.truck));
+    const c = this.careerMode.career;
+    c.damage = Math.min(1, c.damage + BLOW_DAMAGE);
   }
+
+  /** Вибух машини (_Blow) у точці Three.js: ефект і звук blowkapot3, чутно до 50 м. */
+  private blowFx(p: THREE.Vector3): void {
+    this.blastFx().carBlow(new THREE.Vector3(p.x, -p.z, p.y));
+    const d = p.distanceTo(this.truck.visual.position);
+    if (d < 50) this.audio?.play('blowkapot3', 1 - d / 50);
+  }
+
+  /** Вогонь машин ІІ (traffic/carFires.ts). */
+  private carFires: CarFires | null = null;
+
+  private fires(): CarFires {
+    return (this.carFires ??= new CarFires({
+      fire: (v, p) => this.blastFx().carFire(p && new THREE.Vector3(p.x, -p.z, p.y), v),
+      blow: (p) => this.blowFx(p),
+    }));
+  }
+
+  /** Фізичні машини ІІ поруч: трафік, міліція, мафія, далекобійники й наймані, суперники в гонці. */
+  private aiCars(): TruckVehicle[] {
+    const out: TruckVehicle[] = [];
+    for (const c of this.traffic?.cars ?? []) if (c.vehicle) out.push(c.vehicle);
+    for (const c of this.police?.cops ?? []) out.push(c.v);
+    for (const h of this.mafia?.hoods ?? []) out.push(h.v);
+    for (const r of this.truckers?.list ?? []) out.push(r.truck);
+    for (const r of this.truckers?.hired.values() ?? []) out.push(r.truck);
+    for (const r of this.race?.racers.slice(1) ?? []) out.push(r.truck);
+    return out;
+  }
+
+  /** Куля повз гравця влучила в інше тіло: машина ІІ — займання з імовірністю g·P·0,03/(P + 0,3), g = 1 (0x567440). */
+  private readonly strayShot = (body: RAPIER.RigidBody, power: number): void => {
+    const v = this.aiCars().find((c) => c.body === body);
+    if (v && this.careerMode) this.fires().shot(v, power);
+  };
 
   /** Після гасіння FIRE_COOL с машина не займається. */
   private fireCool = 0;
@@ -1745,6 +1789,8 @@ export class Ht2Drive {
     // (сума пошкоджень > 0,9, 0x597b00; у порту — стан машини) — кінець гри.
     const sunk = this.water.update(dt, this.world.loaded.values(), this.truck.visual.position, (c.upgrades ?? []).includes('PR_AIR_FILTER_SNORKEL:1'));
     if (sunk || c.damage > 0.9) return this.gameOver();
+    // Вогонь машин ІІ і поширення між сусідами (зокрема на гравця й від гравця).
+    if (this.fires().update(dt, this.aiCars(), { v: this.truck, burning: this.burning >= 0 })) this.ignite(0, true);
     // Банкрутство (0x427020): раз на 8 с гроші < 0 — кінець гри, BackLoose5 «Вы банкрот».
     if ((this.bankTimer -= dt) <= 0) {
       this.bankTimer = 8;
@@ -1814,6 +1860,7 @@ export class Ht2Drive {
       phase: this.police?.phase ?? 0,
       hour: this.hour,
       glass: this.tuning.glass,
+      stray: this.strayShot,
     }, this.camera.position);
     for (const e of events) {
       if (e.kind === 'shot') {
@@ -1836,6 +1883,7 @@ export class Ht2Drive {
       vel: new THREE.Vector3(lv.x, 0, lv.z),
       hunted: (f.mafiaDebt ?? 0) > 0 || !!f.mafiaInterest,
       glass: this.tuning.glass,
+      stray: this.strayShot,
       share: cm.marketShare(),
     });
     for (const e of events) {
