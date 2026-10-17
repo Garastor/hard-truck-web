@@ -49,6 +49,38 @@ export class WayNet {
     return best;
   }
 
+  /**
+   * Точка на відстані `back` назад уздовж мережі від позиції (line, seg, t) і напрям руху там (на початку лінії —
+   * далі назад лінією, що закінчується біля нього). Розстановка на старті мережевої гри — ряди йдуть за дорогою.
+   */
+  behind(line: WayLine, seg: number, t: number, back: number): { pos: THREE.Vector3; dir: THREE.Vector3 } {
+    let l = line;
+    let i = seg;
+    let cur = l.pts[seg].clone().lerp(l.pts[seg + 1], t);
+    let left = back;
+    const dir = l.pts[seg + 1].clone().sub(l.pts[seg]);
+    for (let guard = 0; guard < 200; guard++) {
+      if (i < 0) {
+        const prev = this.lines.find((p) => p.next.includes(l));
+        if (!prev) break;
+        l = prev;
+        i = l.pts.length - 2;
+        cur = l.pts[l.pts.length - 1].clone();
+        continue;
+      }
+      const d = cur.distanceTo(l.pts[i]);
+      dir.subVectors(l.pts[i + 1], l.pts[i]);
+      if (d >= left) {
+        cur.lerp(l.pts[i], left / d);
+        break;
+      }
+      left -= d;
+      cur = l.pts[i].clone();
+      i--;
+    }
+    return { pos: cur, dir: dir.setY(0).normalize() };
+  }
+
   /** Точка на відстані `ahead` уздовж мережі від позиції (line, seg, t). */
   advance(line: WayLine, seg: number, t: number, ahead: number): THREE.Vector3 {
     let cur = line.pts[seg].clone().lerp(line.pts[seg + 1], t);

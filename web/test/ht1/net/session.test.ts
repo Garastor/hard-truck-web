@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CloseReason, NetMessage, NetPeer, NetPeerEvents } from '../../../src/games/ht1/net/peer';
-import { NetSession } from '../../../src/games/ht1/net/session';
+import { MAX_PLAYERS, NetSession } from '../../../src/games/ht1/net/session';
+import { emptyState, packFleet, unpackFleet } from '../../../src/games/ht1/net/state';
 
 /** Підставне з'єднання в пам'яті: два кінці, повідомлення — одразу іншому кінцю (як канали WebRTC, по порядку). */
 class FakePeer {
@@ -87,20 +88,32 @@ describe('сесія мережевої гри на кількох гравці�
     expect([...host.ready].sort()).toEqual([0, 1, 2]);
   });
 
-  it('стан машини гостя господар пересилає іншим гостям; фініш — теж, з номером', async () => {
+  it('стан машин господар збирає й шле кожному гостю одним пакетом; фініш — пересилає, з номером', async () => {
     const { host, ira, taras } = await threeWay();
-    const fast: ArrayBuffer[] = [];
+    const fast: number[][] = [];
     const msgs: NetMessage[] = [];
-    taras.events = { onFast: (d) => fast.push(d), onMessage: (m) => msgs.push(m) };
+    taras.events = { onFast: (d) => fast.push(unpackFleet(d)!.map((c) => c.id)), onMessage: (m) => msgs.push(m) };
+    const iraFast: number[][] = [];
+    ira.events = { onFast: (d) => iraFast.push(unpackFleet(d)!.map((c) => c.id)) };
     const hostFast: ArrayBuffer[] = [];
     host.events = { onFast: (d) => hostFast.push(d) };
-    const buf = new ArrayBuffer(8);
+    const car = (time: number) => Object.assign(emptyState(), { time });
+    const buf = packFleet([{ id: 1, s: car(1) }]);
     ira.sendFast(buf);
-    expect(fast).toEqual([buf]);
+    // Господар бачить одразу; гостям — з його власним пакетом.
     expect(hostFast).toEqual([buf]);
+    expect(fast).toEqual([]);
+    host.sendFast(packFleet([{ id: 0, s: car(5) }, { id: 16, s: car(5) }]));
+    expect(fast).toEqual([[1, 0, 16]]);
+    expect(iraFast).toEqual([[0, 16]]);
+    // Господар не на трасі — машини гостей розсилає таймер (relay).
+    taras.sendFast(packFleet([{ id: 2, s: car(9) }]));
+    host.relay();
+    expect(iraFast.at(-1)).toEqual([2]);
     ira.send({ t: 'finish', time: 90, place: 2, id: 99 });
     // Номер — того, від кого прийшло (не з повідомлення).
     expect(msgs[0]).toMatchObject({ t: 'finish', time: 90, id: 1 });
+    host.close();
   });
 
   it('гість відключився — зникає зі списку в усіх; господар вийшов — сесію закрито', async () => {
@@ -124,13 +137,17 @@ describe('сесія мережевої гри на кількох гравці�
     expect(taras.closed).toBe(true);
   });
 
-  it('не більше 4 гравців', async () => {
+  it('господар і не більше 10 гостей', async () => {
     const { host } = await threeWay();
-    const [h3, g3] = pair('Олег', 'Ліна');
-    expect(host.addGuest(h3)).toBe(true);
-    await NetSession.join(g3, 'Ліна', 3);
+    expect(MAX_PLAYERS).toBe(11);
+    for (let i = 3; i < MAX_PLAYERS; i++) {
+      const [h, g] = pair('Олег', `Гість ${i}`);
+      expect(host.addGuest(h)).toBe(true);
+      expect((await NetSession.join(g, `Гість ${i}`, 1)).myId).toBe(i);
+    }
     expect(host.full).toBe(true);
-    const [h4] = pair('Олег', 'Зайвий');
-    expect(host.addGuest(h4)).toBe(false);
+    const [hx] = pair('Олег', 'Зайвий');
+    expect(host.addGuest(hx)).toBe(false);
+    host.close();
   });
 });

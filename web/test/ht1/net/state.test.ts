@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { FIRST_RIVAL, FLAG_BRAKE, FLAG_LIGHTS, RemoteTrack, emptyState, packFleet, packState, unpackFleet, unpackState, type TruckState } from '../../../src/games/ht1/net/state';
+import { FIRST_RIVAL, FLAG_BRAKE, FLAG_LIGHTS, FleetMixer, RemoteTrack, emptyState, packFleet, packState, unpackFleet, unpackState, type TruckState } from '../../../src/games/ht1/net/state';
 
 function state(time: number, x: number, vx: number): TruckState {
   const s = emptyState();
@@ -49,18 +49,38 @@ describe('стан машини в мережі', () => {
     expect(out.pos.x).toBeCloseTo(20 * (10 / 30 + 0.3), 3);
   });
 
-  it('пакет кількох машин: номери й стани без втрат, 50 байтів на машину', () => {
+  it('пакет кількох машин: номери, час кожної й стани без втрат, 58 байтів на машину', () => {
     const a = state(3.5, 10, 1);
-    const b = state(3.5, -20, 2);
+    const b = state(1234.25, -20, 2);
     b.flags = FLAG_BRAKE;
-    const buf = packFleet(3.5, [{ id: 1, s: a }, { id: FIRST_RIVAL + 2, s: b }]);
-    expect(buf.byteLength).toBe(10 + 2 * 50);
+    const buf = packFleet([{ id: 1, s: a }, { id: FIRST_RIVAL + 2, s: b }]);
+    expect(buf.byteLength).toBe(2 + 2 * 58);
     const cars = unpackFleet(buf)!;
     expect(cars.map((c) => c.id)).toEqual([1, FIRST_RIVAL + 2]);
     expect(cars[1].s.pos.x).toBeCloseTo(-20, 4);
     expect(cars[1].s.flags).toBe(FLAG_BRAKE);
-    expect(cars[0].s.time).toBe(3.5);
+    expect(cars.map((c) => c.s.time)).toEqual([3.5, 1234.25]);
     expect(unpackFleet(buf.slice(0, 30))).toBeNull();
+  });
+
+  it('змішувач господаря: кожному гостю — один пакет з оновленими машинами, без його власної', () => {
+    const mix = new FleetMixer();
+    mix.add(packFleet([{ id: 0, s: state(1, 0, 0) }, { id: FIRST_RIVAL, s: state(1, 5, 0) }]));
+    mix.add(packFleet([{ id: 1, s: state(70, 10, 0) }]));
+    mix.add(packFleet([{ id: 2, s: state(500, 20, 0) }]));
+    // Запізнілий пакет гостя 1 не перезаписує новіший.
+    mix.add(packFleet([{ id: 1, s: state(69, 99, 0) }]));
+    const got = new Map<number, number[]>();
+    mix.flush([1, 2], (to, d) => got.set(to, unpackFleet(d)!.map((c) => c.id)));
+    expect(got.get(1)).toEqual([0, FIRST_RIVAL, 2]);
+    expect(got.get(2)).toEqual([0, FIRST_RIVAL, 1]);
+    // Нічого нового — нічого не шлемо; оновилася одна машина — лише вона.
+    got.clear();
+    mix.flush([1, 2], (to, d) => got.set(to, unpackFleet(d)!.map((c) => c.id)));
+    expect(got.size).toBe(0);
+    mix.add(packFleet([{ id: 1, s: state(71, 11, 0) }]));
+    mix.flush([1, 2], (to, d) => got.set(to, unpackFleet(d)!.map((c) => c.s.pos.x)));
+    expect([...got]).toEqual([[2, [11]]]);
   });
 
   it('показ зберігає копії станів: розбір пакетів повторно використовує один буфер', () => {

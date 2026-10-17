@@ -1,14 +1,18 @@
 /**
- * Сесія мережевої гри на 2–4 гравців «зіркою»: кожен гість з'єднаний лише з господарем (обмін кодами — з кожним
- * окремо), господар пересилає між гостями стан машин (пакети каналу `fast` — як є) і події гравців (`pick`,
- * `finish`, `lobby`). Гравців і вибір траси знає господар: розсилає `roster` і `setup`, гості їх лише показують.
- * Номер гравця — місце на старті (0 — господар, гості — 1…3 у порядку приєднання).
+ * Сесія мережевої гри на 2–11 гравців «зіркою»: кожен гість з'єднаний лише з господарем (обмін кодами — з кожним
+ * окремо), господар збирає стан машин усіх гравців і шле кожному гостю один пакет з рештою машин (FleetMixer), а
+ * події гравців (`pick`, `finish`, `lobby`) пересилає. Гравців і вибір траси знає господар: розсилає `roster` і
+ * `setup`, гості їх лише показують. Номер гравця — місце на старті (0 — господар, гості — 1…10 у порядку приєднання).
  */
 import type { CloseReason, NetMessage, NetPeer, NetPlayer } from './peer';
+import { FleetMixer, STATE_RATE } from './state';
 
-export const MAX_PLAYERS = 4;
+/** Господар і до 10 гостей. */
+export const MAX_PLAYERS = 11;
 /** Скільки гість чекає свого номера від господаря після з'єднання, мс. */
 const WELCOME_TIMEOUT = 8000;
+/** Без власних пакетів господаря довше за це (мс) — він не на трасі, машини гостей розсилає таймер. */
+const OWN_SILENT = 200;
 
 export interface SessionEvents {
   /** Змінились гравці чи вибір господаря (траса, погода, суперники). */
@@ -32,6 +36,11 @@ export class NetSession {
   closed = false;
   /** З'єднання: у господаря — з кожним гостем за номером, у гостя — одне, з господарем (номер 0). */
   private readonly links = new Map<number, NetPeer>();
+  /** Господар: найновіші стани машин для гостей; розсилка — зі своїм пакетом чи, якщо свого немає, за таймером. */
+  private readonly mixer = new FleetMixer();
+  private relayTimer = 0;
+  /** Коли господар востаннє слав свій пакет (він на трасі — розсилка з ним, таймер мовчить), мс. */
+  private lastOwn = -Infinity;
 
   private constructor(
     readonly host: boolean,
@@ -94,6 +103,10 @@ export class NetSession {
     this.players.set(id, { id, name: peer.peerName ?? `Водій ${id + 1}`, truck: this.me.truck, driving: false });
     this.links.set(id, peer);
     this.listen(id, peer);
+    // Господар не на трасі (власних пакетів немає) — машини гостей однаково розсилаються.
+    this.relayTimer ||= window.setInterval(() => {
+      if (performance.now() - this.lastOwn > OWN_SILENT) this.relay();
+    }, 1000 / STATE_RATE);
     peer.send({ t: 'welcome', id });
     this.sendSetup();
     this.sendRoster();
@@ -106,8 +119,20 @@ export class NetSession {
     for (const p of this.links.values()) p.send(m);
   }
 
+  /** Свій пакет машин: гість — господарю; господар — разом з машинами гостей, кожному гостю один пакет. */
   sendFast(data: ArrayBuffer): void {
-    for (const p of this.links.values()) p.sendFast(data);
+    if (!this.host) {
+      for (const p of this.links.values()) p.sendFast(data);
+      return;
+    }
+    this.lastOwn = performance.now();
+    this.mixer.add(data);
+    this.relay();
+  }
+
+  /** Господар: оновлені машини — гостям (кожному без його власної). */
+  relay(): void {
+    this.mixer.flush(this.links.keys(), (to, d) => this.links.get(to)?.sendFast(d));
   }
 
   pickTruck(truck: number): void {
@@ -147,6 +172,7 @@ export class NetSession {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    clearInterval(this.relayTimer);
     for (const p of this.links.values()) p.close();
     this.links.clear();
   }
@@ -163,8 +189,8 @@ export class NetSession {
   private listen(id: number, peer: NetPeer, first?: (m: NetMessage) => boolean): void {
     peer.events = {
       onFast: (data) => {
-        // Господар пересилає стан машини гостя іншим гостям.
-        if (this.host) for (const [k, p] of this.links) if (k !== id) p.sendFast(data);
+        // Господар запам'ятовує стан машини гостя для інших гостей (relay).
+        if (this.host) this.mixer.add(data);
         this.events.onFast?.(data);
       },
       onMessage: (m) => {
@@ -180,6 +206,7 @@ export class NetSession {
         }
         this.players.delete(id);
         this.ready.delete(id);
+        this.mixer.drop(id);
         this.sendRoster();
         this.events.onLeave?.(id, reason);
         this.events.onChange?.();

@@ -329,8 +329,10 @@ function startLamp(t: number): StartLamp {
 
 /** Мережева гра: зсув місць старту вбік від точки старту траси, м (машини поруч у сусідніх смугах). */
 const GRID_SIDE = 2.5;
-/** Мережева гра: другий ряд старту (гравці 3 і 4) — стільки метрів позаду першого. */
+/** Мережева гра: відстань між рядами старту (по двоє), м. */
 const GRID_ROW = 12;
+/** Лінія дороги для рядів — не далі за стільки від точки старту, м (інакше ряди — прямо назад). */
+const GRID_WAY_NEAR = 12;
 
 /** Скільки суперник лежить перекинутим, перш ніж повернутися на дорогу, с (гіпотеза). */
 const OPPONENT_RECOVER = 3;
@@ -1612,11 +1614,27 @@ export class DriveSession {
    */
   private gridSpawn(slot: number): { position: THREE.Vector3; forward: THREE.Vector3 } {
     const base = this.startSpawn ?? this.spawn;
-    const right = new THREE.Vector3().crossVectors(base.forward, new THREE.Vector3(0, 1, 0)).normalize();
+    const up = new THREE.Vector3(0, 1, 0);
+    const side = slot % 2 === 0 ? -GRID_SIDE : GRID_SIDE;
+    const back = GRID_ROW * Math.floor(slot / 2);
+    // Задні ряди — уздовж лінії дороги назад (за стартом дорога може повертати: прямо назад — на узбіччя), з тим
+    // самим зсувом від лінії, що й у точки старту.
+    this.wayNet ??= new WayNet(this.built.assembler.b3d);
+    const near = back > 0 ? this.wayNet.nearest(base.position, base.forward) : null;
+    if (near && near.dist < GRID_WAY_NEAR) {
+      const onLine = near.line.pts[near.seg].clone().lerp(near.line.pts[near.seg + 1], near.t);
+      const right0 = new THREE.Vector3().crossVectors(base.forward, up).normalize();
+      const lateral = base.position.clone().sub(onLine).setY(0).dot(right0);
+      const b = this.wayNet.behind(near.line, near.seg, near.t, back);
+      const right = new THREE.Vector3().crossVectors(b.dir, up).normalize();
+      const at = b.pos.addScaledVector(right, lateral + side).setY(base.position.y - 2.5);
+      return { position: this.groundAt(at), forward: b.dir };
+    }
+    const right = new THREE.Vector3().crossVectors(base.forward, up).normalize();
     const at = base.position
       .clone()
-      .addScaledVector(right, slot % 2 === 0 ? -GRID_SIDE : GRID_SIDE)
-      .addScaledVector(base.forward, -GRID_ROW * Math.floor(slot / 2))
+      .addScaledVector(right, side)
+      .addScaledVector(base.forward, -back)
       .setY(base.position.y - 2.5);
     return { position: this.groundAt(at), forward: base.forward.clone() };
   }
@@ -1647,6 +1665,7 @@ export class DriveSession {
     let n = 0;
     const add = (id: number, s: TruckState) => {
       const c = (cars[n] ??= { id, s });
+      s.time = time;
       c.id = id;
       c.s = s;
       n++;
@@ -1661,7 +1680,7 @@ export class DriveSession {
       }
     }
     cars.length = n;
-    this.onLocalState(packFleet(time, cars));
+    this.onLocalState(packFleet(cars));
   }
 
   /** Стан машини для пакета (буфер i — без нових об'єктів щокадру). */
@@ -1782,7 +1801,7 @@ export class DriveSession {
   setNetPlayers(players: { id: number; name: string }[]): void {
     this.roster?.remove();
     const list = document.createElement('div');
-    list.className = 'net-roster';
+    list.className = players.length > 6 ? 'net-roster many' : 'net-roster';
     for (const p of [...players].sort((a, b) => a.id - b.id)) {
       const row = document.createElement('div');
       row.dataset.id = String(p.id);

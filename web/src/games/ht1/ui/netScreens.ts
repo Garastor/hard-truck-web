@@ -289,7 +289,7 @@ function connectScreen(art: MenuArt, driver: string, note: string | null, adding
     maskButton(scr, art, 'c/2main', 21, 389, () => done(null));
     scr.keys(null, () => done(null));
 
-    info.innerHTML = `<p>Гра вдвох, утрьох чи вчотирьох по Wi-Fi — телефони мають бути в одній мережі. Кожен гість обмінюється кодами з тим, хто створив гру.</p>
+    info.innerHTML = `<p>Гра від двох до 11 гравців по Wi-Fi — телефони мають бути в одній мережі. Кожен гість обмінюється кодами з тим, хто створив гру.</p>
       <p><b>СТВОРИТИ ГРУ</b> — покажіть QR-код другу (дотик — на весь екран) і відскануйте його відповідь.</p>
       <p><b>ПРИЄДНАТИСЯ</b> — відскануйте QR-код друга й покажіть йому свій.</p>
       <p><b>КОД ТЕКСТОМ</b> — ті самі коди текстом: надіслати месенджером${camera ? '' : ' (камера тут недоступна — потрібен HTTPS)'}.</p>`;
@@ -345,7 +345,8 @@ function sessionScreen(art: MenuArt, driver: string, session: NetSession, trucks
           const extra = `${p.driving && p.id !== session.myId ? ' (на трасі)' : ''}${ms !== null ? ` · ${Math.round(ms)} мс` : ''}`;
           return `<p class="net-player">${p.id + 1}. ${escapeHtml(who)} — ${escapeHtml(nameOf(p.truck))}${extra}</p>`;
         });
-      head.innerHTML = `<h3>МЕРЕЖЕВА ГРА</h3>${rows.join('')}`;
+      // Понад 4 гравці — у два стовпці (рядок обрізається), щоб вибір траси й вантажівки лишався на екрані.
+      head.innerHTML = `<h3>МЕРЕЖЕВА ГРА</h3><div class="net-players${rows.length > 4 ? ' many' : ''}">${rows.join('')}</div>`;
     };
     const render = () => {
       renderHead();

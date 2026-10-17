@@ -1035,6 +1035,23 @@ body.net #stats {
   padding-left: 12px;
 }
 
+.net-players.many {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 8px;
+  margin-bottom: 4px;
+}
+
+.net-text .net-players.many .net-player {
+  margin: 0;
+  padding-left: 4px;
+  font-size: 11px;
+  line-height: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .net-note {
   color: #fce488;
 }
@@ -1143,6 +1160,18 @@ body.net #stats {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* Багато гравців — щільніше, щоб список не сягав педалей. */
+.net-roster.many {
+  gap: 1px;
+  font-size: 12px;
+  line-height: 14px;
+}
+
+.net-roster.many i {
+  width: 10px;
+  height: 10px;
 }
 
 .net-roster > div.me span {

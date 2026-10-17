@@ -65,13 +65,14 @@ export function unpackState(buf: ArrayBuffer): TruckState | null {
 }
 
 /**
- * Пакет кількох машин (своя; у господаря — ще й суперники з автопілотом): тип 2 (1 байт), кількість (1), час
- * відправника (float64), далі для кожної — номер (1 байт), 12 чисел float32 (позиція, поворот, швидкість, кут коліс,
- * оберти) і прапорці (1 байт) — 50 байтів на машину. Номери: 0, 1… — гравці (місце на старті), від FIRST_RIVAL —
- * суперники господаря.
+ * Пакет кількох машин: тип 3 (1 байт), кількість (1), далі для кожної — номер (1 байт), час її відправника (float64),
+ * 12 чисел float32 (позиція, поворот, швидкість, кут коліс, оберти) і прапорці (1 байт) — 58 байтів на машину. Час —
+ * у кожної машини свій: господар збирає в один пакет машини різних телефонів (FleetMixer), у кожного — свій годинник.
+ * Номери: 0, 1… — гравці (місце на старті), від FIRST_RIVAL — суперники господаря.
  */
-const KIND_FLEET = 2;
-const CAR = 1 + 12 * 4 + 1;
+const KIND_FLEET = 3;
+const HEAD = 2;
+const CAR = 1 + 8 + 12 * 4 + 1;
 export const FIRST_RIVAL = 16;
 
 /**
@@ -79,19 +80,20 @@ export const FIRST_RIVAL = 16;
  * (суперники з автопілотом на мінікарті) і не жовтий (своя стрілка мінікарти). Власний елемент порту (на прохання
  * користувача) — в оригіналі мережевої гри такого немає.
  */
-export const PLAYER_COLORS = ['#3ea0ff', '#40e040', '#ff5ae0', '#ff9a20'];
+export const PLAYER_COLORS = ['#3ea0ff', '#40e040', '#ff5ae0', '#ff9a20', '#20e0e0', '#a070ff', '#ffffff', '#b07040', '#909090', '#00a070', '#4050d0'];
 
-export function packFleet(time: number, cars: { id: number; s: TruckState }[]): ArrayBuffer {
-  const buf = new ArrayBuffer(10 + cars.length * CAR);
+/** Пакет машин; час кожної — s.time (час її відправника). */
+export function packFleet(cars: { id: number; s: TruckState }[]): ArrayBuffer {
+  const buf = new ArrayBuffer(HEAD + cars.length * CAR);
   const v = new DataView(buf);
   v.setUint8(0, KIND_FLEET);
   v.setUint8(1, cars.length);
-  v.setFloat64(2, time, true);
   for (let k = 0; k < cars.length; k++) {
     const { id, s } = cars[k];
-    const at = 10 + k * CAR;
+    const at = HEAD + k * CAR;
     v.setUint8(at, id);
-    const f = (i: number, x: number) => v.setFloat32(at + 1 + i * 4, x, true);
+    v.setFloat64(at + 1, s.time, true);
+    const f = (i: number, x: number) => v.setFloat32(at + 9 + i * 4, x, true);
     f(0, s.pos.x);
     f(1, s.pos.y);
     f(2, s.pos.z);
@@ -117,24 +119,22 @@ const READ = emptyState();
  * Повертає false, якщо пакет не такий.
  */
 export function readFleet(buf: ArrayBuffer, each: (id: number, s: TruckState) => void): boolean {
-  if (buf.byteLength < 10) return false;
+  if (buf.byteLength < HEAD) return false;
   const v = new DataView(buf);
   const n = v.getUint8(1);
-  if (v.getUint8(0) !== KIND_FLEET || buf.byteLength !== 10 + n * CAR) return false;
-  const time = v.getFloat64(2, true);
-  if (!Number.isFinite(time)) return false;
+  if (v.getUint8(0) !== KIND_FLEET || buf.byteLength !== HEAD + n * CAR) return false;
   const s = READ;
   for (let k = 0; k < n; k++) {
-    const at = 10 + k * CAR;
-    const f = (i: number) => v.getFloat32(at + 1 + i * 4, true);
-    s.time = time;
+    const at = HEAD + k * CAR;
+    const f = (i: number) => v.getFloat32(at + 9 + i * 4, true);
+    s.time = v.getFloat64(at + 1, true);
     s.pos.set(f(0), f(1), f(2));
     s.quat.set(f(3), f(4), f(5), f(6)).normalize();
     s.vel.set(f(7), f(8), f(9));
     s.steer = f(10);
     s.rpm = f(11);
     s.flags = v.getUint8(at + CAR - 1);
-    if (Number.isFinite(s.pos.x + s.pos.y + s.pos.z + s.quat.w + s.vel.x + s.vel.y + s.vel.z + s.steer + s.rpm)) each(v.getUint8(at), s);
+    if (Number.isFinite(s.time + s.pos.x + s.pos.y + s.pos.z + s.quat.w + s.vel.x + s.vel.y + s.vel.z + s.steer + s.rpm)) each(v.getUint8(at), s);
   }
   return true;
 }
@@ -148,6 +148,48 @@ export function unpackFleet(buf: ArrayBuffer): { id: number; s: TruckState }[] |
     out.push({ id, s: c });
   });
   return ok ? out : null;
+}
+
+/**
+ * Змішувач у господаря: замість пересилати кожен пакет гостя кожному іншому гостю (кількість відправлень — квадрат
+ * кількості гравців) господар запам'ятовує найновіший стан кожної машини (add) і STATE_RATE разів на секунду шле
+ * кожному гостю один пакет з усіма оновленими машинами, крім його власної (flush).
+ */
+export class FleetMixer {
+  private readonly cars = new Map<number, { s: TruckState; fresh: boolean }>();
+  private readonly fresh: { id: number; s: TruckState }[] = [];
+
+  /** Пакет від гравця (чи власний господаря): новіші стани його машин. false — пакет не такий. */
+  add(buf: ArrayBuffer): boolean {
+    return readFleet(buf, (id, s) => {
+      let c = this.cars.get(id);
+      if (!c) this.cars.set(id, (c = { s: emptyState(), fresh: false }));
+      else if (s.time <= c.s.time) return; // запізнілий (канал без порядку)
+      copy(c.s, s);
+      c.fresh = true;
+    });
+  }
+
+  /** Машини гравця, що вийшов (наступний з тим самим номером — з іншим годинником). */
+  drop(id: number): void {
+    this.cars.delete(id);
+  }
+
+  /** Оновлені з минулого разу машини — кожному одержувачу (номер гравця) без його власної. */
+  flush(recipients: Iterable<number>, send: (to: number, data: ArrayBuffer) => void): void {
+    const fresh = this.fresh;
+    fresh.length = 0;
+    for (const [id, c] of this.cars) {
+      if (!c.fresh) continue;
+      fresh.push({ id, s: c.s });
+      c.fresh = false;
+    }
+    if (!fresh.length) return;
+    for (const to of recipients) {
+      const cars = fresh.filter((c) => c.id !== to);
+      if (cars.length) send(to, packFleet(cars));
+    }
+  }
 }
 
 /** Показ машини друга за пакетами (місцевий час — секунди, performance.now / 1000). */
