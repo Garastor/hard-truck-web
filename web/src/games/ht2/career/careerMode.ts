@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { modal } from '../engine/ui/modal';
 import { isList, str, type SExpr } from '../formats/sexpr';
-import { findStores, makeOrders, parseGoods, type Goods, type Order, type Store, type Town } from './economy';
+import { findStores, makeOrders, orderValue as orderValueOf, parseGoods, type Goods, type Order, type Store, type Town } from './economy';
 import { FUEL_PRICE, REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
 import { toThree } from '../world/world';
 import { install, type Upgrade } from './upgrades';
@@ -16,6 +16,8 @@ import { ukMessage } from '../ui/uk';
 import { StoreZones } from './storeZones';
 import { arrestCard, ILLEGAL_FINE, noFines, SPEEDING_PER_DEGREE, type Fines } from './law';
 import { capitalShare } from './capital';
+import type { MissionLot } from '../vehicles/presents';
+import type { TechRecord } from '../formats/tech';
 
 /**
  * Кар'єра в режимі їзди HT2: склади (замовлення й здача вантажу), СТО (ремонт), удари (пошкодження машини й
@@ -105,6 +107,68 @@ export class CareerMode {
   /** Крок: час, удари, пальне, табло; зупинка біля складу/СТО/заправки — вікно. */
   /** Відкладена картка «Неустойка» після пограбування мафією (через 8 с, 0x64b698). */
   private forfeitCard: { left: number; amount: number } | null = null;
+
+  /**
+   * Лот дорожньої місії (king.exe 0x41d340): склад відвантаження — найближчий до місця; товар — з його списку без
+   * illegal і fuel (порожній список — будь-який такий); призначення — випадковий інший склад. Гіпотези: вага
+   * «×0,25 за кожне замовлення складу з тим самим товаром» не перенесена; приймання — будь-який склад (не газгольдер).
+   */
+  missionLot(pos: THREE.Vector3): MissionLot | null {
+    const gx = pos.x;
+    const gy = -pos.z;
+    const near = [...this.stores].sort((a, b) => Math.hypot(a.center[0] - gx, a.center[1] - gy) - Math.hypot(b.center[0] - gx, b.center[1] - gy));
+    const ok = (g: Goods) => !g.illegal && !g.fuel && g.price > 0 && g.mass > 0;
+    for (const w of near.slice(0, 2)) {
+      const local = this.goods.filter((g) => ok(g) && w.goods.includes(g.id.toUpperCase()));
+      const pool = local.length ? local : near.indexOf(w) === 1 ? this.goods.filter(ok) : [];
+      const targets = this.stores.filter((s) => s.id !== w.id);
+      if (!pool.length || !targets.length) continue;
+      return { goods: pool[Math.floor(Math.random() * pool.length)].id, from: w.id, to: targets[Math.floor(Math.random() * targets.length)].id };
+    }
+    return null;
+  }
+
+  /**
+   * Вікно дорожньої місії при підборі (0x56bc80, case 0x19) і замовлення (0x41be60 → 0x41bca0, 0x471200):
+   * кількість — 0,85 · min(M, V·m/v) / m (M, V — вантажопідйомність і обʼєм причепа, m, v — маса й обʼєм одиниці);
+   * оплата — 5,4 · (0,115 · L + (1,2 − k)·√(ціна · кількість)), L — шлях до складу; строк — 0,13 с на метр (0x471780),
+   * від підбору. Повертає прийняте замовлення (вантаж у причепі ставить drive) або null.
+   */
+  async offerMission(lot: MissionLot, trailer: TechRecord): Promise<boolean> {
+    const c = this.career;
+    if (c.order) {
+      this.drive.say('СПОЧАТКУ ДОСТАВТЕ ВАНТАЖ');
+      return false;
+    }
+    const g = this.goods.find((x) => x.id === lot.goods);
+    const to = this.stores.find((s) => s.id === lot.to);
+    if (!g || !to) return false;
+    const volume = Math.max(1, trailer.bodySquare * trailer.bodyHeight);
+    const units = Math.round(((0.85 * Math.min(trailer.cargoLoad, g.volume > 0 ? (volume * g.mass) / g.volume : Infinity)) / g.mass) * 100) / 100;
+    const L = this.drive.routeLeft(toThree(...to.center)) ?? Math.hypot(to.center[0] - this.drive.truck.visual.position.x, to.center[1] + this.drive.truck.visual.position.z) * 1.35;
+    const pay = Math.round(5.4 * (0.115 * L + (1.2 - g.ratio) * Math.sqrt(g.price * units)));
+    const deadline = Math.round(0.13 * L);
+    const box = [
+      g.name,
+      `→ ${to.town}`,
+      formatMoney(pay),
+      `${Math.floor(deadline / 60)}:${String(deadline % 60).padStart(2, '0')}`,
+      `${((units * g.mass) / 1000).toFixed(2)} т`,
+      `${(units * g.volume).toFixed(2)} м3`,
+    ].join('\n');
+    this.drive.paused = true;
+    try {
+      const i = await modal(this.drive.overlay, 'Причіп з вантажем', box, ['Взяти', 'Не брати']);
+      if (i !== 0 || c.order) return false;
+      const o: Order = { goods: g, units, from: lot.from, to: lot.to, distance: L, pay, value: Math.round(orderValueOf(g, units)), deadline, urgent: false };
+      c.order = { ...o, deadline: o.deadline * this.drive.timeScale, taken: c.time, integrity: 1 };
+      this.recountGuilt();
+      this.persist();
+      return true;
+    } finally {
+      this.drive.paused = false;
+    }
+  }
 
   /** Гонки на Кільці (career/races.ts). */
   readonly races: CareerRaces;

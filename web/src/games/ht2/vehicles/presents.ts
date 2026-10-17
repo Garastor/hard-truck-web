@@ -19,6 +19,12 @@ import { truckDef, type Ht2Trucks } from './trucks';
  *   причепа ≤ 10 м, висоти — ≤ 0,3 м, курси — скалярний добуток ≥ 0,2 (0x55f000); відчепити — та сама клавіша,
  *   причіп лишається на місці present'ом («кинутий»; прибирається, коли старший 1200 с і далі 5000 м від гравця).
  *
+ * Дорожні місії (0x41d340, розд. 8 нотаток): причіп з вантажем на вільному вузлі `pos_road_*` (22 у світі), поки
+ * таких менше за `missions 10`; перевірка раз на 7 с, місце — не ближче 700 м від гравця (на старті — будь-яке);
+ * курс — носом до дороги, у вузлах з ORTN — за орієнтацією вузла; невзяті не зникають. Вантаж — лот складу,
+ * найближчого до місця (career: missionLot), кількість, оплата й строк — при підборі (offerMission). На карті й
+ * мінікарті такі причепи — значок `I_trailer` (0x529890), порожні — без значка.
+ *
  * Гіпотези порту: «паливне» місце — ближче 150 м від вузла газгольдера (`(node … fuel)` без `unload` у mod_*.sch:
  * так стоять pos_base_0020/0021/bb12/cc00/cc01); вага типу — 1 (поле +0x70 не знайдено у файлах); presents — на
  * сесію, не в збереженні; причепи з вантажем на дорогах (`pos_road`, `missions 10`) ще не перенесено.
@@ -59,6 +65,34 @@ export interface Place {
   pos: THREE.Vector3;
   /** «Паливне» місце — лише для цистерн. */
   fuel: boolean;
+  /** Курс з ORTN вузла (Three.js), якщо є; інакше — носом до дороги. */
+  forward?: THREE.Vector3;
+}
+
+/** Лот дорожньої місії: товар (ID merchandise), склад відвантаження й призначення. */
+export interface MissionLot {
+  goods: string;
+  from: number;
+  to: number;
+}
+
+/** Вузли WAY за префіксом; ORTN — осі X, Y, Z і точка (система гри): курс — вісь Y (уперед). */
+function nodePlaces(ways: Iterable<{ way: { rooms: { nodes: { name: string; pos: [number, number, number]; orient?: number[] }[] }[] } }>, re: RegExp): Place[] {
+  const out: Place[] = [];
+  for (const r of ways)
+    for (const room of r.way.rooms)
+      for (const n of room.nodes)
+        if (re.test(n.name)) {
+          const o = n.orient;
+          const forward = o && o.length >= 6 ? toThree(o[3], o[4], o[5]).setY(0) : undefined;
+          out.push({ name: n.name, pos: toThree(...n.pos), fuel: false, ...(forward && forward.lengthSq() > 1e-6 ? { forward: forward.normalize() } : {}) });
+        }
+  return out;
+}
+
+/** Місця дорожніх місій: вузли `pos_road_*`. */
+export function roadPlaces(ways: Iterable<{ way: { rooms: { nodes: { name: string; pos: [number, number, number]; orient?: number[] }[] }[] } }>): Place[] {
+  return nodePlaces(ways, /^pos_road_/i);
 }
 
 /** Місця presents: вузли `pos_base_*`; «паливні» — ближче FUEL_REACH від газгольдера. */
@@ -76,13 +110,18 @@ export function basePlaces(ways: Iterable<{ way: { rooms: { nodes: { name: strin
 }
 
 const FUEL_REACH = 150;
+/** Дорожні місії: період перевірки (с) і найменша відстань нового місця від гравця (м). */
+const MISSION_PERIOD = 7;
+const MISSION_MIN_DIST = 700;
 /** Причіп має модель і колізію ближче цієї відстані від гравця, м. */
 const MODEL_RANGE = 350;
 /** Пошук present'а для зчіпки, м (0x56ffd0). */
 const PICK_RANGE = 30;
 /** Умови зчіпки (0x55f000): відстань сідло — шворінь, різниця висот, косинус між курсами. */
 const HITCH_DIST = 10;
-const HITCH_DY = 0.3;
+// king.exe — 0,3 м; у порту сідло на підвісці сидить на ≈ 0,16 м вище, а на узбіччях зі схилом — до ≈ 0,35 м (гіпотеза
+// порту: допуск 0,5 м).
+const HITCH_DY = 0.5;
 const HITCH_COS = 0.2;
 /** Кинутий причіп прибирається, коли старший і далі від гравця (0x42a1c0), с і м. */
 const STRAY_AGE = 1200;
@@ -97,7 +136,17 @@ export interface Present {
   forward: THREE.Vector3;
   /** Час кидання (ігрові секунди) — для прибирання; null — на базі. */
   dropped: number | null;
-  model: { visual: THREE.Group; body: RAPIER.RigidBody; kingpin: THREE.Vector3; topSaddle: THREE.Vector3; lift: number; grounded: boolean } | null;
+  /** Дорожня місія: лот вантажу (значок I_trailer на карті). */
+  lot?: MissionLot;
+  model: {
+    visual: THREE.Group;
+    body: RAPIER.RigidBody;
+    kingpin: THREE.Vector3;
+    topSaddle: THREE.Vector3;
+    /** Точка дотику коліс (середня вісь) у системі моделі (Three.js). */
+    contact: THREE.Vector3;
+    grounded: boolean;
+  } | null;
 }
 
 export interface PresentsCtx {
@@ -112,6 +161,11 @@ export class Presents {
   readonly list: Present[] = [];
   private readonly weight = new Map<string, number>();
 
+  /** Дорожні місії: місця, ліміт, лот для місця (null — немає вантажу), таймер перевірки й перша (на старті) спроба. */
+  private roads: { places: Place[]; limit: number; lot: (p: Place) => MissionLot | null } | null = null;
+  private missionTimer = 0;
+  private missionStart = true;
+
   constructor(
     private readonly ctx: PresentsCtx,
     private readonly kinds: SemiKind[],
@@ -122,21 +176,50 @@ export class Presents {
     for (const k of kinds) this.weight.set(k.id, 1);
   }
 
+  /** Увімкнути дорожні місії (кар'єра). */
+  missions(places: Place[], limit: number, lot: (p: Place) => MissionLot | null): void {
+    this.roads = { places, limit, lot };
+  }
+
+  /** Причепи з вантажем (дорожні місії) — для значків карти. */
+  get withCargo(): Present[] {
+    return this.list.filter((p) => p.lot);
+  }
+
   /**
    * Крок: поповнення до ліміту (вільні місця), прибирання кинутих, моделі поблизу гравця. compatible — чи може
    * тягач гравця тягти тип (×2 до ваги); time — ігровий час, с.
    */
-  update(player: THREE.Vector3, time: number, compatible: (k: SemiKind) => boolean): void {
+  update(player: THREE.Vector3, time: number, compatible: (k: SemiKind) => boolean, dt = 1 / 60): void {
     for (let i = this.list.length - 1; i >= 0; i--) {
       const p = this.list[i];
       if (p.dropped !== null && time - p.dropped > STRAY_AGE && p.pos.distanceTo(player) > STRAY_FAR) this.remove(i);
     }
-    const based = this.list.filter((p) => p.place).length;
+    const based = this.list.filter((p) => p.place && !p.lot).length;
     if (based < this.limit) {
       const used = new Set(this.list.map((p) => p.place));
       // Нове — лише поза полем зору гравця (поза зоною моделей), щоб причіп не зʼявлявся на очах.
       const free = this.places.filter((pl) => !used.has(pl) && pl.pos.distanceTo(player) > MODEL_RANGE);
       if (free.length) this.spawn(free[Math.floor(this.rnd() * free.length)], compatible);
+    }
+    // Дорожні місії: раз на 7 с (0x41ed50), не ближче 700 м від гравця; на старті — до ліміту будь-де (0x434780).
+    const r = this.roads;
+    if (r && (this.missionStart || (this.missionTimer -= dt) <= 0)) {
+      this.missionTimer = MISSION_PERIOD;
+      const min = this.missionStart ? 0 : MISSION_MIN_DIST;
+      for (let n = this.withCargo.length; n < r.limit; n++) {
+        const used = new Set(this.list.map((p) => p.place));
+        const free = r.places.filter((pl) => !used.has(pl) && pl.pos.distanceTo(player) >= min);
+        if (!free.length) break;
+        const place = free[Math.floor(this.rnd() * free.length)];
+        const lot = r.lot(place);
+        if (!lot) break;
+        this.spawn(place, compatible);
+        const p = this.list[this.list.length - 1];
+        if (p?.place === place) p.lot = lot;
+        if (!this.missionStart) break;
+      }
+      this.missionStart = false;
     }
     for (const p of this.list) {
       const near = p.pos.distanceTo(player) < MODEL_RANGE;
@@ -161,8 +244,8 @@ export class Presents {
     const i = Math.max(0, w.findIndex((v) => (x -= v) < 0));
     const kind = this.kinds[i];
     this.weight.set(kind.id, (this.weight.get(kind.id) ?? 1) * WEIGHT_DECAY);
-    const road = this.ctx.roadPoint(place.pos);
-    const forward = road ? road.clone().sub(place.pos).setY(0) : new THREE.Vector3(0, 0, -1);
+    const road = place.forward ? null : this.ctx.roadPoint(place.pos);
+    const forward = place.forward ? place.forward.clone() : road ? road.clone().sub(place.pos).setY(0) : new THREE.Vector3(0, 0, -1);
     if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
     this.list.push({ kind, place, pos: place.pos.clone(), forward: forward.normalize(), dropped: null, model: null });
   }
@@ -237,20 +320,42 @@ export class Presents {
     const body = rapier.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(visual.position.x, visual.position.y, visual.position.z).setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }));
     rapier.createCollider(RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2).setTranslation(center.x, center.y, center.z), body);
     const topSaddle = g2t(rec.topSaddle);
-    p.model = { visual, body, kingpin: topSaddle.clone().applyMatrix4(visual.matrixWorld), topSaddle, lift, grounded: false };
+    const axleY = model.wheelBase.reduce((s, m) => s + m.elements[13], 0) / Math.max(1, model.wheelBase.length);
+    const contact = new THREE.Vector3(0, -lift, -axleY);
+    p.model = { visual, body, kingpin: topSaddle.clone().applyMatrix4(visual.matrixWorld), topSaddle, contact, grounded: false };
     this.settle(p);
   }
 
-  /** Поставити на ґрунт: промінь донизу повз власну коробку; немає влучання — ще раз наступного кроку. */
+  /**
+   * Поставити на ґрунт (промені донизу повз власну коробку): колеса — на ґрунті під віссю, шворінь — на тій самій
+   * висоті над ґрунтом під ним, що й на рівному (причіп на опорах нахиляється вздовж схилу; гіпотеза порту — місця
+   * pos_road на узбіччях зі схилом, рівний причіп ставав на 0,7 м нижче сідла). Немає влучання — наступного кроку.
+   */
   private settle(p: Present): void {
     const m = p.model!;
-    const from = { x: p.pos.x, y: p.pos.y + 6, z: p.pos.z };
-    const hit = this.ctx.rapier.castRay(new RAPIER.Ray(from, { x: 0, y: -1, z: 0 }), 60, true, undefined, undefined, undefined, m.body);
-    if (!hit) return;
-    const y = from.y - hit.timeOfImpact + m.lift;
-    m.visual.position.y = y;
+    const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(-p.forward.x, -p.forward.z));
+    const groundAt = (local: THREE.Vector3): number | null => {
+      const w = local.clone().applyQuaternion(yawQ).add(p.pos);
+      const from = { x: w.x, y: p.pos.y + 6, z: w.z };
+      const hit = this.ctx.rapier.castRay(new RAPIER.Ray(from, { x: 0, y: -1, z: 0 }), 60, true, undefined, undefined, undefined, m.body);
+      return hit ? from.y - hit.timeOfImpact : null;
+    };
+    const ya = groundAt(m.contact);
+    const kpFlat = new THREE.Vector3(m.topSaddle.x, m.contact.y, m.topSaddle.z);
+    const yk = groundAt(kpFlat);
+    if (ya === null || yk === null) return;
+    const run = Math.abs(m.topSaddle.z - m.contact.z);
+    const pitch = run > 0.5 ? Math.atan2(yk - ya, run) : 0;
+    const q = yawQ.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch));
+    // Початок моделі — так, щоб точка дотику коліс опинилась на ґрунті під віссю.
+    const contactW = m.contact.clone().applyQuaternion(q);
+    const flatW = m.contact.clone().applyQuaternion(yawQ);
+    m.visual.quaternion.copy(q);
+    m.visual.position.set(p.pos.x + flatW.x - contactW.x, ya - contactW.y, p.pos.z + flatW.z - contactW.z);
     m.visual.updateMatrixWorld(true);
-    m.body.setTranslation({ x: m.visual.position.x, y, z: m.visual.position.z }, true);
+    const t = m.visual.position;
+    m.body.setTranslation({ x: t.x, y: t.y, z: t.z }, true);
+    m.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
     m.kingpin.copy(m.topSaddle).applyMatrix4(m.visual.matrixWorld);
     m.grounded = true;
   }

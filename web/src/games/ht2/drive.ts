@@ -30,7 +30,7 @@ import { Markets, parseMarkets } from './career/market';
 import { WorldMap, type MapPoint } from './world/worldMap';
 import { GlassRain } from './engine/render/glassRain';
 import { Dents, dentGeometry } from './vehicles/dents';
-import { basePlaces, fuelNodes, Presents, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
+import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
 import { terrainCollider } from './world/terrain';
 import { parseMsk } from './engine/formats/msk';
 import { findStores } from './career/economy';
@@ -281,6 +281,8 @@ export class Ht2Drive {
   private sizeLights = false;
   /** Напівпричепи на базах (кар'єра, vehicles/presents.ts) і типи з evehicles.sch. */
   presents: Presents | null = null;
+  /** Відкрито вікно причепа з вантажем (друге натискання T не відкриває ще одне). */
+  private offering = false;
   private semiTypes: SemiKind[] = [];
   /** Габарити (SizeLightKey моделі). */
   private setTruckSwitch: ((n: string, s: number) => void) | undefined;
@@ -513,6 +515,10 @@ export class Ht2Drive {
         basePlaces(this.world.regions.values(), fuelNodes(regionMods)),
         limit,
       );
+      // Дорожні місії — причепи з вантажем на pos_road_* (ліміт `missions` з GAME.CNF, 10).
+      const missions = cnf ? num(assoc(cnf, 'missions')?.[1], 10) : 10;
+      const cm = this.careerMode;
+      if (cm) this.presents.missions(roadPlaces(this.world.regions.values()), missions, (pl) => cm.missionLot(pl.pos));
     }
     if (!o.race) {
       const names = await o.source.read('names.sch').then(readSch).catch(() => []);
@@ -993,11 +999,26 @@ export class Ht2Drive {
       this.say(why === 'type' ? 'ЦЕЙ ПРИЧІП НЕ ПІДХОДИТЬ ДО ТЯГАЧА' : why === 'align' ? 'ПІДЇДЬТЕ СІДЛОМ ДО ШВОРНЯ ПРИЧЕПА' : 'ПОРУЧ НЕМАЄ ПРИЧЕПА');
       return;
     }
-    this.presents.take(present);
-    c.trailer = { id: present.kind.id, carNode: present.kind.carNode, cluster: present.kind.cluster } satisfies TrailerChoice;
-    c.trailerDents = {};
-    this.hitch();
-    this.say('ПРИЧІП ПРИЧЕПЛЕНО');
+    const take = () => {
+      this.presents!.take(present);
+      c.trailer = { id: present.kind.id, carNode: present.kind.carNode, cluster: present.kind.cluster } satisfies TrailerChoice;
+      c.trailerDents = {};
+      this.hitch();
+      this.say('ПРИЧІП ПРИЧЕПЛЕНО');
+    };
+    // Причіп з вантажем — спершу вікно замовлення (0x56bc80): взяв — зчіпка й вантаж у причепі.
+    const lot = present.lot;
+    const trailerRec = this.trucks.records.find((r) => r.carNode.toLowerCase() === present.kind.carNode.toLowerCase());
+    if (!lot || !trailerRec || !this.careerMode) return take();
+    if (this.offering) return;
+    this.offering = true;
+    void this.careerMode.offerMission(lot, trailerRec).then((ok) => {
+      this.offering = false;
+      if (!ok || !this.presents?.list.includes(present)) return;
+      take();
+      const o = c.order;
+      if (o) this.setCargo(o.goods.mass * o.units);
+    });
   }
 
   /** Вантажопідйомність і обʼєм (площа × висота, гіпотеза): кузова вантажівки або напівпричепа; тягач без причепа — 0. */
@@ -2056,7 +2077,7 @@ export class Ht2Drive {
     this.input.setToggle('mirror', this.mirrorOn);
     // Причепити / відчепити — лише тягачем; світиться, поки причіп зчеплений.
     this.input.setToggle('attach', !!this.trailer, !this.hitched || !!this.race);
-    if (this.presents && this.careerMode) this.presents.update(this.truck.visual.position, this.careerMode.career.time, (k) => this.canTow(k));
+    if (this.presents && this.careerMode) this.presents.update(this.truck.visual.position, this.careerMode.career.time, (k) => this.canTow(k), dt);
     this.updateNavigator(dt);
     this.tabMap?.draw(dt, {
       me: this.truck.visual.position,
@@ -2067,6 +2088,8 @@ export class Ht2Drive {
       target: this.careerMode?.target() ?? null,
       // Фініш гонки — значок I_race з написом mess.txt 88 «Кольцо».
       finish: this.race?.finishPos ?? null,
+      // Причепи з вантажем (дорожні місії) — I_trailer; порожні на базах — без значка (0x529890).
+      trailers: this.presents?.withCargo.map((p) => p.pos) ?? [],
       finishLabel: 'КІЛЬЦЕ',
     });
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
