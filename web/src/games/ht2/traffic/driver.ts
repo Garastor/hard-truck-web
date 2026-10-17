@@ -18,8 +18,11 @@ import type { RoadLine } from '../world/roads';
  * - Маршрут: на кожній лінії заздалегідь вибирається дорога після стику (у king.exe — маршрут до випадкової цілі,
  *   тож повороти так само випадкові); ближче 100 м до стику — перестроювання (changeLanes 0x420360): праворуч —
  *   у крайню праву смугу, ліворуч — у смугу біля осі, прямо — лишитись (іноді — випадкова смуга).
- * - Перестроювання — бічний зсув, що згасає (у king.exe кінематична машина: lat ← s·lat + (1 − s)·ціль; тут стала
- *   часу LANE_TAU — гіпотеза порту, щоб маневр було видно).
+ * - Перестроювання — бічний зсув (у king.exe кінематична машина: lat ← s·lat + (1 − s)·ціль). Порт (відступ на
+ *   прохання користувача — «природніше»): зсув іде S-кривою з бічним прискоренням до LAT_ACC (смуга ≈ 3,7 с), а
+ *   кінематична машина не котиться ламаною, а їде своїм курсом до точки на шляху попереду (як фізична), з кривизною
+ *   до KAPPA_MAX і бічним прискоренням до TURN_ACC: вершини ламаних і стики ліній — дугами; позиція на лінії —
+ *   проєкцією (sync).
  * - Розгін/гальмування: газ 0,2·Δv, гальмо min(1; 0,2·Δv) (0x4d60c0) → прискорення порту (гіпотеза: до 2,5 м/с²,
  *   гальмування до 7 м/с²).
  */
@@ -33,6 +36,17 @@ const STOP_GAP = 3;
 const SLOW_OBSTACLE = 5;
 const LANE_PLAN = 100;
 const LANE_TAU = 0.9;
+/** S-крива бічного зсуву: бічне прискорення, м/с², і найкоротший маневр, с. */
+const LAT_ACC = 1.2;
+const LAT_MIN_TIME = 1.5;
+/** Курс кінематичної машини: найбільша кривизна, 1/м, бічне прискорення на дузі, м/с², огляд уперед L = a·v + b. */
+const KAPPA_MAX = 1 / 7;
+const TURN_ACC = 4;
+const LOOK_A = 0.6;
+const LOOK_B = 4;
+/** Далі від запланованого зсуву — довертати з найбільшою кривизною; ще далі — повернути на лінію (застрягла). */
+const OFF_TRACK = 1.5;
+const SNAP_OFF = 8;
 const ACCEL = 2.5;
 const BRAKE = 7;
 /** Перешкода на шляху, якщо ближче за це до осі смуги (півширина машини + запас), м. */
@@ -98,6 +112,15 @@ export interface Mover {
   wantLane: number;
   /** Доїхала до тупика — прибрати. */
   gone: boolean;
+  /**
+   * Запланований бічний зсув від лінії (S-крива від offFrom до offTo за offDur с, пройдено offT с): за ним їдуть і
+   * кінематична, і фізична машина (carrot); lat — фактичний.
+   */
+  off: number;
+  offFrom: number;
+  offTo: number;
+  offT: number;
+  offDur: number;
 }
 
 export interface Obstacle {
@@ -133,6 +156,11 @@ export function newMover(line: RoadLine, seg: number, t: number, cruise: number,
     plan: null,
     wantLane: line.lane,
     gone: false,
+    off: 0,
+    offFrom: 0,
+    offTo: 0,
+    offT: 0,
+    offDur: 0,
     goal: goals.length ? Math.floor(Math.random() * goals.length) : -1,
   };
   planNext(m);
@@ -295,7 +323,7 @@ export function leaderOn(
   m: Mover,
   path: { pts: THREE.Vector3[]; s: number[] },
   obstacles: readonly Obstacle[],
-  lat = m.lat,
+  lat?: number,
 ): { gap: number; speed: number; obstacle: Obstacle } | null {
   let best: { gap: number; speed: number; obstacle: Obstacle } | null = null;
   // Далі кінця шляху (з запасом) перешкода не на шляху.
@@ -312,10 +340,11 @@ export function leaderOn(
       ab.divideScalar(len);
       const along = (o.pos.x - a.x) * ab.x + (o.pos.z - a.z) * ab.z;
       if (along < -o.half || along > len + o.half) continue;
-      // Бічна відстань праворуч від шляху (вектор праворуч — (−z, x)) мінус наш зсув.
-      const side = Math.abs((o.pos.z - a.z) * ab.x - (o.pos.x - a.x) * ab.z - lat);
-      if (side > PATH_HALF) continue;
       const s = path.s[i] + THREE.MathUtils.clamp(along, 0, len);
+      // Бічна відстань праворуч від шляху (вектор праворуч — (−z, x)) мінус наш зсув — запланований на мить, коли
+      // доїдемо до перешкоди (S-крива маневру), якщо не задано інший.
+      const side = Math.abs((o.pos.z - a.z) * ab.x - (o.pos.x - a.x) * ab.z - (lat ?? offAt(m, s / Math.max(2, m.speed))));
+      if (side > PATH_HALF) continue;
       if (s <= 0.5) continue; // поруч чи позаду — не лідер
       const gap = s - m.halfLen - o.half;
       if (!best || gap < best.gap) best = { gap, speed: Math.max(0, o.vel.x * ab.x + o.vel.z * ab.z), obstacle: o };
@@ -351,12 +380,40 @@ function laneFree(m: Mover, sib: RoadLine | undefined, obstacles: readonly Obsta
   return true;
 }
 
-/** Перестроїтися на сусідню смугу (на одну), зберігши місце: бічний зсув компенсує різницю. */
+/** Перестроїтися на сусідню смугу (на одну), зберігши місце: бічний зсув компенсує різницю й згасає S-кривою. */
 function changeLane(m: Mover, to: number): void {
   const sib = m.line.siblings[to];
   if (!sib || sib === m.line || sib.pts.length !== m.line.pts.length) return;
-  m.lat += (m.line.lane - to) * m.line.laneWidth;
+  const d = (m.line.lane - to) * m.line.laneWidth;
+  m.lat += d;
+  m.off += d;
   m.line = sib;
+  shiftTo(m, m.latGoal);
+}
+
+/** Новий маневр бічного зсуву: від поточного запланованого до goal, тривалість — за бічним прискоренням. */
+function shiftTo(m: Mover, goal: number): void {
+  m.offFrom = m.off;
+  m.offTo = goal;
+  m.offT = 0;
+  m.offDur = Math.max(LAT_MIN_TIME, Math.sqrt((6 * Math.abs(goal - m.off)) / LAT_ACC));
+}
+
+/** Запланований зсув через ahead с (smoothstep: найбільше бічне прискорення 6·Δ/T²). */
+export function offAt(m: Mover, ahead: number): number {
+  if (m.offDur <= 0) return m.offTo;
+  const x = THREE.MathUtils.clamp((m.offT + ahead) / m.offDur, 0, 1);
+  return m.offFrom + (m.offTo - m.offFrom) * x * x * (3 - 2 * x);
+}
+
+/** Крок маневру: нова ціль latGoal — новий маневр. */
+function updateOff(m: Mover, dt: number): void {
+  if (m.offTo !== m.latGoal) shiftTo(m, m.latGoal);
+  if (m.offDur > 0) {
+    m.offT += dt;
+    if (m.offT >= m.offDur) m.offDur = 0;
+  }
+  m.off = offAt(m, 0);
 }
 
 /** Крок водія кінематичної машини: рішення (decide) і рух уздовж ліній. */
@@ -366,14 +423,39 @@ export function step(m: Mover, dt: number, obstacles: readonly Obstacle[], net: 
   const dv = want - m.speed;
   const acc = dv > 0 ? Math.min(ACCEL, 0.3 + 0.6 * dv) : want === 0 ? -BRAKE : -Math.min(BRAKE, Math.max(2.5, 0.8 * -dv));
   m.speed = Math.max(0, dv > 0 ? Math.min(want, m.speed + acc * dt) : Math.max(want, m.speed + acc * dt));
-  advance(m, m.speed * dt);
-  m.lat = m.latGoal + (m.lat - m.latGoal) * Math.exp(-dt / LANE_TAU);
-  if (Math.abs(m.lat - m.latGoal) < 1e-3) m.lat = m.latGoal;
-  place(m, dt);
+  const move = m.speed * dt;
+  if (move > 0) pursue(m, move, Math.abs(m.lat - m.off) > OFF_TRACK);
+  // Позиція на лінії — проєкцією; далеко від лінії (кут, якого дуга не бере) — повернути на лінію.
+  const away = sync(m, m.pos, m.heading, m.speed);
+  if (away > SNAP_OFF + Math.abs(m.off)) {
+    m.lat = m.off;
+    place(m, dt);
+  } else m.pos.y = linePoint(m).y;
+}
+
+/**
+ * Кінематична машина за точкою на шляху (порт): курс повертає до точки на L = 0,6·v + 4 м уперед (з запланованим
+ * зсувом), кривизна κ = 2·sin α / d — не більше KAPPA_MAX і TURN_ACC/v²; позиція — уздовж курсу.
+ */
+function pursue(m: Mover, move: number, recover: boolean): void {
+  const look = THREE.MathUtils.clamp(LOOK_A * m.speed + LOOK_B, 5, 20);
+  const to = carrot(m, look).sub(m.pos).setY(0);
+  const d = to.length();
+  if (d > 0.05) {
+    to.divideScalar(d);
+    const h = m.heading;
+    const alpha = Math.atan2(h.z * to.x - h.x * to.z, h.x * to.x + h.z * to.z);
+    // Зійшла з траєкторії (кут, якого не взяла) — довертає різкіше, щоб не «телепортувати» на лінію.
+    const kMax = recover ? KAPPA_MAX : Math.min(KAPPA_MAX, TURN_ACC / Math.max(1, m.speed * m.speed));
+    const k = THREE.MathUtils.clamp((2 * Math.sin(alpha)) / Math.max(d, 1), -kMax, kMax);
+    h.applyAxisAngle(new THREE.Vector3(0, 1, 0), k * move).setY(0).normalize();
+  }
+  m.pos.addScaledVector(m.heading, move);
 }
 
 /** Рішення водія (і кінематичного, і фізичного): перестроювання, обʼїзд, обгін, пропуск, цільова швидкість, м/с. */
 export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net: Net | null = null): number {
+  updateOff(m, dt);
   const path = pathAhead(m, LEADER_RANGE);
   // Машину, яку обганяємо, лідером не вважаємо (вона збоку чи позаду).
   const others = m.overtaking && m.bypass ? obstacles.filter((o) => o.pos !== m.bypass) : obstacles;
@@ -645,9 +727,12 @@ export function carrot(m: Mover, dist: number): THREE.Vector3 {
   const k = seg > 0 ? THREE.MathUtils.clamp((dist - s[i - 1]) / seg, 0, 1) : 0;
   const out = a.clone().lerp(b, k);
   const d = b.clone().sub(a).setY(0);
-  if (d.lengthSq() > 1e-6 && m.latGoal) {
+  // Зсув — запланований на час, коли машина буде в цій точці (S-крива маневру), а не кінцевий: інакше точка
+  // стрибала на ширину смуги й фізична машина смикала кермом.
+  const lat = offAt(m, dist / Math.max(2, m.speed));
+  if (d.lengthSq() > 1e-6 && lat) {
     d.normalize();
-    out.add(new THREE.Vector3(-d.z, 0, d.x).multiplyScalar(m.latGoal));
+    out.add(new THREE.Vector3(-d.z, 0, d.x).multiplyScalar(lat));
   }
   return out;
 }

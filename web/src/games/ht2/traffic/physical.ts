@@ -68,7 +68,8 @@ export function control(m: Mover, v: TruckVehicle, ps: PhysState, want: number, 
   const delta = Math.atan((2 * v.base * Math.sin(angle)) / Math.max(4, to.length()));
   c.steer = THREE.MathUtils.clamp(steerFor(delta), -1, 1);
 
-  if (Math.abs(m.lat - m.latGoal) > OFF_LANE) want = Math.min(want, OFF_LANE_SPEED);
+  // Далеко від запланованого зсуву (не маневр, а занесло) — повільно.
+  if (Math.abs(m.lat - m.off) > OFF_LANE) want = Math.min(want, OFF_LANE_SPEED);
   const dv = want - speed;
   c.handbrake = false;
   if (want < 0.1) {
