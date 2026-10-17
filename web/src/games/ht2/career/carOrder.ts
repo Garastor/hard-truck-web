@@ -49,6 +49,13 @@ export function vehiclePowers(sch: SExpr[]): Map<string, number> {
   return out;
 }
 
+/** Ціни моделей з evehicles.sch (тариф найманого — від ціни моделі, 0x477350). */
+export function vehiclePrices(sch: SExpr[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const e of sch) if (isList(e) && e[0] === 'vehicle' && !out.has(str(e[2]))) out.set(str(e[2]), num(e[6]));
+  return out;
+}
+
 /** Що можна замовити в абонента (kind: мафія чи продавець/водій) у точці from; null — нікуди пригнати. */
 export function vehicleOffers(kind: 'maf' | 'nei', from: THREE.Vector3, markets: Markets, trucks: Ht2Trucks, powers: Map<string, number>): VehicleOffer[] | null {
   const to = markets.deliveryFor(from);

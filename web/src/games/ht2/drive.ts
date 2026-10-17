@@ -31,8 +31,10 @@ import { WorldMap, type MapPoint } from './world/worldMap';
 import { GlassRain } from './engine/render/glassRain';
 import { Dents, dentGeometry } from './vehicles/dents';
 import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
-import { orderVehicle, vehicleOffers, vehiclePowers } from './career/carOrder';
-import { HIRED_SPEED, HiredOnRoads } from './career/hired';
+import { orderVehicle, vehicleOffers, vehiclePowers, vehiclePrices } from './career/carOrder';
+import { HIRED_MIN_SPEED, HiredOnRoads } from './career/hired';
+import { driverCosts, hiredLoad, upgradeDriver } from './career/company';
+import { routeLength } from './career/economy';
 import { terrainCollider } from './world/terrain';
 import { parseMsk } from './engine/formats/msk';
 import { findStores } from './career/economy';
@@ -132,6 +134,8 @@ const OFFROAD_ROLL = 5;
 const VIEW_FALLBACK = 900;
 /** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
 /** Рація: радіус зв'язку, м; скільки після штрафу можна домовитися, с; перемирʼя з мафією, с (гіпотези). */
+/** Найманий прибув на склад ближче цього, м (гіпотеза порту). */
+const HIRED_ARRIVE = 60;
 const RADIO_R = 500;
 
 /**
@@ -287,8 +291,16 @@ export class Ht2Drive {
   /** Наймані водії на дорогах (career/hired.ts) і їхні точки для карти (I_tr_myc). */
   private hiredRoads: HiredOnRoads | null = null;
   private hiredMarks: THREE.Vector3[] = [];
+  /** Лінія, з якої маршрут до складу не знайшовся (не шукати щокадру). */
+  private readonly hiredNoRoute = new Map<string, string>();
   /** Потужність моделей з evehicles.sch (вікно замовлення машини). */
   private vehiclePowers = new Map<string, number>();
+  private vehiclePriceMap = new Map<string, number>();
+
+  /** Ціна моделі з evehicles.sch (без запису — з vehicle.tech). */
+  vehiclePrice(carNode: string): number {
+    return this.vehiclePriceMap.get(carNode) ?? this.trucks.records.find((r) => r.carNode === carNode)?.price ?? 0;
+  }
   /** Відкрито вікно причепа з вантажем (друге натискання T не відкриває ще одне). */
   private offering = false;
   private semiTypes: SemiKind[] = [];
@@ -512,6 +524,7 @@ export class Ht2Drive {
     const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
     this.semiTypes = semiKinds(vehicles);
     this.vehiclePowers = vehiclePowers(vehicles);
+    this.vehiclePriceMap = vehiclePrices(vehicles);
     if (o.career && this.semiTypes.length) {
       const limit = cnf ? num(assoc(cnf, 'semitrailers')?.[1], 28) : 28;
       this.presents = new Presents(
@@ -974,18 +987,74 @@ export class Ht2Drive {
    * (Truckers.syncHired), позиція — за машиною; новий найманий — на дорозі біля гравця.
    */
   private hiredStep(dt: number): void {
-    const drivers = this.careerMode?.career.company ?? [];
-    if (!drivers.length && !this.truckers?.hired.size && !this.hiredMarks.length) return;
+    const cm = this.careerMode;
+    const c = cm?.career;
+    const drivers = c?.company ?? [];
+    if (!cm || !c || (!drivers.length && !this.truckers?.hired.size && !this.hiredMarks.length)) return;
     const hr = (this.hiredRoads ??= new HiredOnRoads(this.roads));
     const want: { name: string; carNode: string; pos: THREE.Vector3; forward: THREE.Vector3 }[] = [];
-    for (const d of drivers) {
+    // Абстрактна швидкість (0x41a9d0): не менше 13,89 м/с або згладжена швидкість гравця.
+    const speed = Math.max(HIRED_MIN_SPEED, Math.abs(this.truck.speedKmh) / 3.6);
+    const dock = (id: number) => {
+      const st = cm.stores.find((x) => x.id === id);
+      return st?.docks.length ? toThree(...st.docks[0]) : null;
+    };
+    for (const d of [...drivers]) {
+      const rec = this.trucks.records.find((r) => r.carNode === d.truck);
+      upgradeDriver(d, this.vehiclePrice(d.truck), cm.capitalShare());
       const phys = this.truckers?.hired.get(d.name);
+      const before = hr.at(d)?.pos ?? null;
+      let meters = 0;
       // Новий найманий — на дорозі за 40 м попереду гравця (не в його машині).
       if (!d.road) hr.place(d, this.truck.visual.position.clone().addScaledVector(this.truck.forward(), 40));
-      else if (phys) hr.place(d, phys.truck.visual.position);
-      else hr.advance(d, HIRED_SPEED * dt);
+      else if (phys) {
+        hr.place(d, phys.truck.visual.position);
+        meters = before ? before.distanceTo(phys.truck.visual.position) : 0;
+      } else {
+        // Маршрут до складу рейсу; немає шляху — їде далі й пробує знову з наступної лінії.
+        const target = d.trip ? dock(d.trip.to) : null;
+        if (target && !d.road.route && d.road.line !== this.hiredNoRoute.get(d.name)) {
+          if (!hr.routeTo(d, target)) this.hiredNoRoute.set(d.name, d.road.line);
+        }
+        hr.advance(d, speed * dt);
+        meters = speed * dt;
+      }
+      // Аванс і пальне (0x423f40); нема чим платити — іде й повертає вартість машини (0x476f70).
+      if (!driverCosts(d, meters, c, rec?.fuelConsumption ?? 5)) {
+        c.money += d.value ?? 0;
+        c.company = (c.company ?? []).filter((x) => x !== d);
+        this.truckers?.dropHired(d.name);
+        this.say(cm.msg('NO_MONEY_FOR_ADVANCE', 'ВАШ НАЙМАНИЙ ВОДІЙ ЗВІЛЬНИВСЯ - У ВАС НЕ БУЛО ГРОШЕЙ, ЩОБ ЗАПЛАТИТИ'));
+        cm.persist();
+        continue;
+      }
       const at = hr.at(d);
       if (at) want.push({ name: d.name, carNode: d.truck, ...at });
+      if (!at) continue;
+      // Рейс як у далекобійника ІІ (0x4185d0): порожнім — до найближчого складу, там вантаж до іншого складу.
+      if (!d.trip) {
+        const near = [...cm.stores].sort((a, b) => toThree(...a.center).distanceTo(at.pos) - toThree(...b.center).distanceTo(at.pos))[0];
+        if (near) d.trip = { to: near.id };
+        if (d.road) delete d.road.route;
+        continue;
+      }
+      const target = dock(d.trip.to);
+      // Прибув: біля складу або пройшов маршрут до лінії біля нього.
+      if (!target || (target.distanceTo(at.pos) > HIRED_ARRIVE && !hr.routeDone(d))) continue;
+      if (d.trip.load) {
+        // Розвантаження: оплата — роботодавцю, прибуток водія росте; повідомлень немає (0x417660 — лише людині).
+        c.money += d.trip.load.pay;
+        d.profit += d.trip.load.pay;
+        d.trip = undefined;
+      } else {
+        const from = cm.stores.find((x) => x.id === d.trip!.to)!;
+        const tractor = rec?.group === 'tractors';
+        const tr = tractor ? this.trucks.records.find((r) => r.carNode === 'STrailerM') : undefined;
+        const body = tr ?? rec;
+        const cap = { mass: body?.cargoLoad ?? 0, volume: body ? body.bodySquare * body.bodyHeight : 0 };
+        d.trip = hiredLoad(from, cm.stores, cm.goodsList, cap, tractor, (to) => routeLength(from, to)) ?? undefined;
+      }
+      if (d.road) delete d.road.route;
     }
     this.truckers?.syncHired(want, this.truck.visual.position);
     this.hiredMarks = want.map((w) => w.pos);
@@ -1742,6 +1811,9 @@ export class Ht2Drive {
       fire: (i) => {
         const c = this.careerMode?.career;
         if (!c?.company?.[i]) return;
+        // Звільнення (0x476f70): водій повертає вартість машини, аванс лишає собі.
+        c.money += c.company[i].value ?? 0;
+        this.truckers?.dropHired(c.company[i].name);
         this.say(`${c.company[i].name.toUpperCase()} ЗВІЛЬНЕНО`);
         c.company = c.company.filter((_, k) => k !== i);
         this.careerMode!.persist();

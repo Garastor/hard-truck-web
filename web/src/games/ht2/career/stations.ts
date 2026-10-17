@@ -88,7 +88,7 @@ export function jobPanel(art: EscArt, parent: HTMLElement, j: JobView, hire: () 
   const p = new SidePanel(art, parent, 'm_16\\BackJob.txr');
   p.image(`m16\\escphoto${String(j.photo).padStart(2, '0')}.txr`, 98, 454);
   p.write(101, 580, j.name, VALUE);
-  p.write(101, 600, `$${j.tariff} / 10 КМ`, VALUE);
+  p.write(101, 600, `$${j.tariff} / КМ`, VALUE);
   p.write(101, 620, j.model, VALUE);
   p.write(101, 640, `$${Math.round(j.price)}`, VALUE);
   p.write(145, 660, `${Math.round(j.power)} К.С.`, VALUE);

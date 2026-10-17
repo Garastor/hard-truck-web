@@ -10,7 +10,7 @@ import type { Ht2Drive } from '../drive';
 import { gasPanel, jobPanel, orderPanel, salePanel, servicePanel } from './stations';
 import type { SidePanel } from '../ui/panel';
 import { active, advance, makeRivals, place, PREMIUM_SHARE } from './competition';
-import { hireOffer, LICENCE_TIME, newDriver, tickCompany } from './company';
+import { hireOffer, hireTariff, LICENCE_TIME, newDriver } from './company';
 import { CareerRaces } from './races';
 import { ukMessage } from '../ui/uk';
 import { StoreZones } from './storeZones';
@@ -168,6 +168,11 @@ export class CareerMode {
     } finally {
       this.drive.paused = false;
     }
+  }
+
+  /** Товари merchandise.sch (рейси найманих, drive.hiredStep). */
+  get goodsList(): Goods[] {
+    return this.goods;
   }
 
   /** Гонки на Кільці (career/races.ts). */
@@ -374,7 +379,8 @@ export class CareerMode {
     // На одному місці ринку — водій, що шукає роботу (зі своєю машиною).
     const offer = hireOffer(m.id, day, m.spots.length, this.drive.truckers?.allNames ?? []);
     if (offer && offer.spot === near.spot) {
-      const job = { ...offer, model: near.rec.carNode, price: near.price, power: near.rec.horsePower, load: near.rec.cargoLoad };
+      // Тариф — $/км (BackJob показує за км, 0x477350).
+      const job = { ...offer, tariff: Math.round(hireTariff(this.drive.vehiclePrice(near.rec.carNode), this.capitalShare()) * 10) / 10, model: near.rec.carNode, price: near.price, power: near.rec.horsePower, load: near.rec.cargoLoad };
       return this.openPanel(jobPanel(this.drive.escArt!, this.drive.overlay, job, () => this.hire(m, day, near, offer)));
     }
     this.openPanel(
@@ -715,21 +721,22 @@ export class CareerMode {
       if (live.length < c.licences.length) this.drive.say(this.msg('LICENCES_EXPIRED', 'ЛІЦЕНЗІЙ НА НАЙМ, ЩО ЗАКІНЧИЛИСЯ: %d', c.licences.length - live.length));
       c.licences = live;
     }
-    if (!c.company?.length) return;
-    for (const e of tickCompany(c.company, dt, c)) {
-      if (e.kind === 'quit') this.drive.say(this.msg('NO_MONEY_FOR_ADVANCE', 'ВАШ НАЙМАНИЙ ВОДІЙ ЗВІЛЬНИВСЯ - У ВАС НЕ БУЛО ГРОШЕЙ, ЩОБ ЗАПЛАТИТИ'));
-      else this.drive.say(`${e.driver.name.toUpperCase()} ДОСТАВИВ ВАНТАЖ: +$${e.income}`);
-    }
+    // Робота найманих — drive.hiredStep (рейси й витрати за king.exe, company.ts).
+    void dt;
   }
 
-  /** Найм водія з його машиною: потрібні ліцензія й гроші на викуп машини. */
-  private hire(m: Market, day: number, near: ForSale, offer: { name: string; tariff: number; photo: number }): void {
+  /**
+   * Найм (king.exe 0x476bc0): ліцензія; гроші більше за 10·тариф + вартість машини водія — обидва водієві (аванс і
+   * вартість машини, яку він поверне при звільненні); машина лишається в нього.
+   */
+  private hire(m: Market, day: number, near: ForSale, offer: { name: string; photo: number }): void {
     const c = this.career;
+    const tariff = hireTariff(this.drive.vehiclePrice(near.rec.carNode), this.capitalShare());
     if (!c.licences?.length) return this.drive.say(this.msg('NO_LICENCES', 'У ВАС НЕМАЄ ЛІЦЕНЗІЙ НА НАЙМ!'));
-    if (c.money < near.price) return this.drive.say(this.msg('NO_MONEY_TO_HIRE', 'У ВАС НЕ ВИСТАЧАЄ ГРОШЕЙ НА НАЙМ'));
-    c.money -= near.price;
+    if (!(c.money > 10 * tariff + near.price)) return this.drive.say(this.msg('NO_MONEY_TO_HIRE', 'У ВАС НЕ ВИСТАЧАЄ ГРОШЕЙ НА НАЙМ'));
+    c.money -= 10 * tariff + near.price;
     c.licences = [...c.licences].sort((a, b) => a - b).slice(1);
-    c.company = [...(c.company ?? []), newDriver(offer, near.rec.carNode)];
+    c.company = [...(c.company ?? []), newDriver(offer, near.rec.carNode, tariff, near.price)];
     this.drive.markets!.sell(m, day, near);
     this.drive.say(`${offer.name.toUpperCase()} ПРАЦЮЄ НА ВАС`);
     this.persist();

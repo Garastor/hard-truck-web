@@ -1,78 +1,127 @@
+import type { Goods, Store } from './economy';
+
 /**
- * Наймані водії (G9 Б7; посібник «Наемные водители», Ms.sch LICENCES_EXPIRED, NO_LICENCES, NO_MONEY_TO_HIRE,
- * NO_MONEY_FOR_ADVANCE). Ліцензію дають за доставку першим серед конкурентів; вона має строк. Водій шукає роботу на
- * стоянці ринку (вікно `BackJob`): найм — ліцензія й викуп його машини. Далі водій їздить сам: контракт
- * продовжується щоразу на 10 км (тариф з твого рахунку; нічим платити — звільняється), прибуток з кожної доставки —
- * тобі. Порт веде водіїв без моделі на дорозі (на карті їх ще немає). Строк ліцензії, тариф, швидкість, частота й
- * оплата доставок — гіпотези.
+ * Наймані водії — за king.exe (re/notes/ht2/company.md §2, 2а). Ліцензію дають за доставку першим серед конкурентів і
+ * за перемогу на Кільці; вона має строк. Водій шукає роботу на стоянці ринку (вікно `BackJob`).
+ * - тариф (0x477350) — (1 + 4·s) · ціна моделі / 1024 $/км, s — частка капіталу гравця;
+ * - найм (0x476bc0) — ліцензія й гроші більше за 10·тариф + вартість машини водія: вартість машини й аванс 10·тариф
+ *   ідуть водієві, машина лишається в нього;
+ * - робота (0x423f40) — аванс −= тариф·d·0,001 (d — пройдені метри); вичерпано — роботодавець платить ще 10·тариф,
+ *   нема чим — водій іде (NO_MONEY_FOR_ADVANCE); пальне — d·R·0,00002 $ з роботодавця (бака немає);
+ * - замовлення — як у далекобійника ІІ (0x4185d0): порожнім — до найближчого складу, там 85 % місткості товару складу
+ *   до іншого складу; оплата 12·(0,115·L + (1,2 − k)·√(ціна·кількість)), з причепом ×1,5 — уся роботодавцю, без
+ *   строків, неустойок і повідомлень (лічильник прибутку водія росте);
+ * - звільнення (0x476f70) — водій повертає вартість машини, аванс лишає собі; аварій і поломок абстрактний рух не має.
+ *
+ * Гіпотези порту: R (витрата tech+0x9c, порт поля не читає) ≈ 3 · fuelConsumption (у ЗіЛа king.exe R = 12,33);
+ * тягач найманого везе «з причепом» (×1,5).
  */
 export interface HiredDriver {
   name: string;
   /** car_node машини водія. */
   truck: string;
-  /** Тариф за 10 км, $. */
+  /** Тариф, $/км (до версії 2 збереження — $ за 10 км). */
   tariff: number;
   /** Номер фото escphotoNN. */
   photo: number;
+  /** Пробіг, км. */
   km: number;
-  /** На якому кілометрі наступна оплата контракту й наступна доставка. */
-  nextPay: number;
-  nextDelivery: number;
-  /** Уже виплачено водієві (аванс) і принесено прибутку, $. */
+  /** Застарілі поля першої версії (оплата й доставка за кілометрами). */
+  nextPay?: number;
+  nextDelivery?: number;
+  /** Залишок авансу, $ (вичерпано — роботодавець платить ще 10·тариф). */
   advance: number;
+  /** Принесено роботодавцю, $. */
   profit: number;
-  /** Де водій на дорогах (career/hired.ts): лінія мережі й відстань уздовж неї, м. */
-  road?: { line: string; s: number };
+  /** Вартість машини водія — повертає при звільненні, $. */
+  value?: number;
+  /** Рейс: склад-ціль і вантаж (є — везе до складу призначення). */
+  trip?: { to: number; load?: { goods: string; units: number; pay: number } };
+  /** Де водій на дорогах (career/hired.ts): лінія мережі, відстань уздовж неї, маршрут (імена ліній). */
+  road?: { line: string; s: number; route?: string[] };
+  /** Версія запису (2 — формули king.exe). */
+  v?: 2;
 }
 
 /** Строк ліцензії, с ігрового часу (доба гри). */
 export const LICENCE_TIME = 24 * 3600;
-/** Швидкість найманого водія, км/с реального часу (≈ 50 км/год). */
-const SPEED = 50 / 3600;
-/** Частка оплати доставки, що дістається компанії. */
-const SHARE = 0.6;
+/** Оплата авансу — на 10 км уперед (0x423f40). */
+const ADVANCE_KM = 10;
+const FUEL_K = 0.00002;
+const FUEL_R_PER_CONSUMPTION = 3;
+/** Частка місткості, яку бере далекобійник (0x64b6f8). */
+const LOAD_SHARE = 0.85;
+
+/** Тариф найманого, $/км (0x477350). */
+export function hireTariff(price: number, capitalShare: number): number {
+  return ((1 + 4 * capitalShare) * price) / 1024;
+}
 
 /** Пропозиція найму на місці ринку: одне місце на ринок на день (ймовірність 0,75 — GAME.CNF forhire 20 на 15 ринків). */
-export function hireOffer(market: number, day: number, spots: number, names: readonly string[]): { spot: number; name: string; tariff: number; photo: number } | null {
+export function hireOffer(market: number, day: number, spots: number, names: readonly string[]): { spot: number; name: string; photo: number } | null {
   if (!names.length || spots < 2) return null;
   const h = Math.abs((market * 7919 + day * 104729) ^ 0x5bd1e995);
   if (h % 4 === 0) return null;
-  return { spot: h % spots, name: names[h % names.length], tariff: 50 + (h % 11) * 10, photo: 1 + (h % 51) };
+  return { spot: h % spots, name: names[h % names.length], photo: 1 + (h % 51) };
 }
 
-export function newDriver(o: { name: string; tariff: number; photo: number }, truck: string, rnd = Math.random): HiredDriver {
-  return { name: o.name, truck, tariff: o.tariff, photo: o.photo, km: 0, nextPay: 0, nextDelivery: 8 + 17 * rnd(), advance: 0, profit: 0 };
+/** Новий найманий: аванс 10·тариф (уже виплачений при наймі). */
+export function newDriver(o: { name: string; photo: number }, truck: string, tariff: number, value: number): HiredDriver {
+  return { name: o.name, truck, tariff, photo: o.photo, km: 0, advance: ADVANCE_KM * tariff, profit: 0, value, v: 2 };
 }
 
-export type CompanyEvent = { kind: 'delivered'; driver: HiredDriver; income: number } | { kind: 'quit'; driver: HiredDriver };
+/** Старий запис (тариф за 10 км, без вартості машини) — на формули king.exe. */
+export function upgradeDriver(d: HiredDriver, price: number, capitalShare: number): void {
+  if (d.v === 2) return;
+  d.tariff = hireTariff(price, capitalShare);
+  d.advance = ADVANCE_KM * d.tariff;
+  d.value ??= price;
+  delete d.nextPay;
+  delete d.nextDelivery;
+  d.v = 2;
+}
 
 /**
- * Крок компанії (реальний час dt, с): водії їдуть; на початку кожних 10 км — тариф (не вистачає — водій іде);
- * доставка — прибуток за формулою оплати замовлення (economy.orderPay: 0,115 $/м + основа) × частка.
+ * Витрати за meters пройдених метрів (0x423f40): аванс і пальне з роботодавця. false — грошей немає, водій іде.
+ * consumption — fuelConsumption з vehicle.tech.
  */
-export function tickCompany(drivers: HiredDriver[], dt: number, wallet: { money: number }, rnd = Math.random): CompanyEvent[] {
-  const events: CompanyEvent[] = [];
-  for (let i = drivers.length - 1; i >= 0; i--) {
-    const d = drivers[i];
-    d.km += SPEED * dt;
-    if (d.km >= d.nextPay) {
-      if (wallet.money < d.tariff) {
-        drivers.splice(i, 1);
-        events.push({ kind: 'quit', driver: d });
-        continue;
-      }
-      wallet.money -= d.tariff;
-      d.advance += d.tariff;
-      d.nextPay += 10;
-    }
-    if (d.km >= d.nextDelivery) {
-      const distM = (8 + 17 * rnd()) * 1000;
-      const income = Math.round((distM * 0.115 + 100) * 3 * SHARE);
-      wallet.money += income;
-      d.profit += income;
-      d.nextDelivery = d.km + 8 + 17 * rnd();
-      events.push({ kind: 'delivered', driver: d, income });
-    }
+export function driverCosts(d: HiredDriver, meters: number, wallet: { money: number }, consumption: number): boolean {
+  d.km += meters / 1000;
+  d.advance -= d.tariff * meters * 0.001;
+  wallet.money -= meters * FUEL_R_PER_CONSUMPTION * consumption * FUEL_K;
+  if (d.advance < 0) {
+    const due = ADVANCE_KM * d.tariff;
+    if (wallet.money < due) return false;
+    wallet.money -= due;
+    d.advance += due;
   }
-  return events;
+  return wallet.money >= 0;
+}
+
+/**
+ * Вантаж на складі (0x4185d0, 0x41ba50): товар зі списку складу (легальний, не паливо), призначення — інший склад;
+ * кількість — 85 % місткості за меншим обмеженням; оплата 12·(0,115·L + (1,2 − k)·√(ціна·кількість)), з причепом ×1,5.
+ */
+export function hiredLoad(
+  from: Store,
+  stores: Store[],
+  goods: Goods[],
+  cap: { mass: number; volume: number },
+  trailer: boolean,
+  routeLength: (to: Store) => number,
+  rnd = Math.random,
+): { to: number; load: { goods: string; units: number; pay: number } } | null {
+  // Вантаж для вантажівки (клас trucks): «замовлення, що підходить машині» (0x418400) — гіпотеза, легкові C_* — ні.
+  const ok = (g: Goods) => !g.illegal && !g.fuel && g.trucks && g.price > 0 && g.mass > 0;
+  const local = goods.filter((g) => ok(g) && from.goods.includes(g.id.toUpperCase()));
+  const pool = local.length ? local : goods.filter(ok);
+  const targets = stores.filter((x) => x.id !== from.id);
+  if (!pool.length || !targets.length) return null;
+  const g = pool[Math.floor(rnd() * pool.length)];
+  const to = targets[Math.floor(rnd() * targets.length)];
+  const units = LOAD_SHARE * Math.min(cap.mass / g.mass, g.volume > 0 ? cap.volume / g.volume : Infinity);
+  if (!(units > 0)) return null;
+  const L = routeLength(to);
+  const pay = Math.round(12 * (0.115 * L + (1.2 - g.ratio) * Math.sqrt(g.price * units)) * (trailer ? 1.5 : 1));
+  return { to: to.id, load: { goods: g.id, units, pay } };
 }
