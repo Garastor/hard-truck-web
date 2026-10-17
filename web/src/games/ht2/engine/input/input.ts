@@ -310,10 +310,12 @@ export class Input {
   private steerExe(dt: number, target: number, sharp: boolean, p: InputProfile, rate: NonNullable<InputProfile['steerRate']>): void {
     let s = this.steerSmooth;
     const c = sharp ? 1 : (this.steerLimit?.() ?? 1);
-    // Уже понад межею (розігнався) — назад до c зі швидкістю 1/с, клавіша кермо не додає.
-    if (Math.abs(s) > c) {
-      this.steerSmooth = Math.sign(s) * Math.max(c, Math.abs(s) - dt);
-      if (target === 0) this.steerDir = 0;
+    // Уже понад межею (розігнався) і клавіша тисне в той самий бік — назад до c зі швидкістю 1/с, кермо не додає.
+    // Відпущене чи протилежне кермо — як завжди (інакше з межею, що коливається зі швидкістю, кермо «залипало» на c).
+    if (Math.abs(s) > c && target !== 0 && Math.sign(s) === target) {
+      this.steerDir = target;
+      this.steerT += dt;
+      this.steerSmooth = target * Math.max(c, Math.abs(s) - dt);
       return;
     }
     const back = Math.exp(-p.steerReturn * this.steerCenter * dt);
@@ -332,7 +334,8 @@ export class Input {
       s *= back;
       if (Math.abs(s) < 1e-3) s = 0;
     }
-    this.steerSmooth = Math.max(-c, Math.min(c, s));
+    // Межа — лише для керма, що зростає в бік клавіші (повернення до центру не обрізаємо вгору).
+    this.steerSmooth = target !== 0 && s * target > 0 ? Math.max(-c, Math.min(c, s)) : s;
   }
 
   /**
