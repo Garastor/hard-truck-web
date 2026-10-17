@@ -864,15 +864,21 @@ export class Ht2Drive {
         ].map(([a, b]) => pos.clone().addScaledVector(fwd, 3.5 * a).addScaledVector(side, 1.25 * b));
         return { bodies: [this.truck.body, ...(this.trailer ? [this.trailer.body] : [])], pos, forward: fwd, vel: new THREE.Vector3(lv.x, lv.y, lv.z), corners };
       },
+      // Партнер ДТП — лише машина (king.exe 0x54f040 пише партнера, лише коли тіло — у списку машин 0x53f750):
+      // стовпи, бочки, огорожі, причепи на базах, декоративні припарковані машини — без штрафу (police.md «ДТП з
+      // іншими обʼєктами»). Машини — фізичний трафік, міліція, мафія, далекобійники й наймані.
       candidates: () => {
-        const out: RAPIER.RigidBody[] = [];
         const p = this.truck.visual.position;
-        this.rapier.bodies.forEach((b) => {
-          if (!b.isDynamic() || b === this.truck.body || b === this.trailer?.body) return;
+        const cars = [
+          ...(this.traffic?.cars.flatMap((c) => (c.vehicle ? [c.vehicle.body] : [])) ?? []),
+          ...(this.police?.cops.map((c) => c.v.body) ?? []),
+          ...(this.mafia?.hoods.map((h) => h.v.body) ?? []),
+          ...[...(this.truckers?.list ?? []), ...(this.truckers?.hired.values() ?? [])].map((r) => r.truck.body),
+        ];
+        return cars.filter((b) => {
           const t = b.translation();
-          if (Math.hypot(t.x - p.x, t.z - p.z) < 150) out.push(b);
+          return Math.hypot(t.x - p.x, t.z - p.z) < 150;
         });
-        return out;
       },
       partner: (b) => ({ kind: this.police?.isCop(b) ? 'police' : this.mafia?.isMafia(b) ? 'mafia' : 'car', mass: b.mass() }),
       mafiaDebt: (amount) => {
@@ -888,7 +894,8 @@ export class Ht2Drive {
           return c.speed < 1 && along > 0 && along < 15 && Math.abs(rel.x * f.z - rel.z * f.x) < 2;
         });
       },
-      policeNear: (p) => this.police?.near(p, 200) ?? false,
+      // «Міліція поруч» (0x4cfd10): машина міліції чи гелікоптер (контролер Ка-50) ближче 200 м.
+      policeNear: (p) => (this.police?.near(p, 200) ?? false) || (this.copters?.near(p, 200) ?? false),
       fine: (amount, bits) => {
         fines().accident += amount;
         fines().violations |= bits;

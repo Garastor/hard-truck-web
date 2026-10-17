@@ -160,6 +160,11 @@ export class Helicopters {
     });
   }
 
+  /** Чи є гелікоптер ближче r (king.exe 0x4cfd10: Ка-50 — теж «міліція поруч» для штрафів за ДТП). */
+  near(p: THREE.Vector3, r: number): boolean {
+    return this.copters.some((c) => c.model && c.pos.distanceTo(p) < r);
+  }
+
   /** Гелікоптери, що ведуть ціль (для шкали попереджень і затримання міліції). */
   chasers(): { pos: THREE.Vector3; speed: number }[] {
     return this.copters.filter((c) => c.model && c.engaged && c.seen).map((c) => ({ pos: c.pos, speed: c.vel.length() }));
