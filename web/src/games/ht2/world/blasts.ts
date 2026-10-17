@@ -24,6 +24,10 @@ import { toThree } from './world';
  * затухання світла 1/(1 + 0,01·d²) до 70 м — гіпотеза агента; освітлення клубів — як дерев (TREE_LIGHT).
  */
 const TICK = 1 / 30;
+/** Уламки: розмір квадрата, м; гравітація, м/с² (0x651180 — саме 1,81); крок сліду, м. */
+const PART_SIZE = 0.25;
+const PART_G = 1.81;
+const TRAIL_STEP = 0.1;
 const MAX = 700;
 
 interface Puff {
@@ -39,6 +43,24 @@ interface Puff {
   s1: number;
   frames: THREE.Texture[];
   omega: number;
+  /** Тривалість кадру, с (сліди уламків — 0,05 с, один раз); без — кадри розтягнуто на все життя. */
+  fdur?: number;
+}
+
+/**
+ * Уламок (king.exe 0x4ba310 → клас 0x59f070, оновлення 0x59f180; objects.md «Уламки crPart»): квадрат 0,25 м з
+ * текстурою (перший кадр), що обертається всередині квадрата з ω = 2π·s; v −= 1,81·Z·dt, p += v·dt, без опору й
+ * зіткнень; зникає, щойно опуститься нижче висоти народження. trail — димний слід: клуб кожні 0,1 м шляху.
+ */
+interface Part {
+  s: THREE.Sprite;
+  p: THREE.Vector3;
+  v: THREE.Vector3;
+  bornZ: number;
+  omega: number;
+  trail: boolean;
+  /** Шлях, пройдений від останнього клубу сліду, м. */
+  acc: number;
 }
 
 interface Flame {
@@ -85,6 +107,7 @@ export class Blasts {
   private readonly free: THREE.Sprite[] = [];
   private readonly blows: Blow[] = [];
   private readonly flames: Flame[] = [];
+  private readonly parts: Part[] = [];
   private readonly tex = new Map<string, THREE.Texture[]>();
   private readonly lamp = new THREE.PointLight(0xffffff, 0, 70, 1);
   private readonly flicker = flickerTable();
@@ -106,6 +129,7 @@ export class Blasts {
     const vapor = frames(['mvapor00', 'mvapor01', 'mvapor02', 'mvapor03']);
     this.tex.set('vapor', vapor.length ? vapor : frames(['mvsmoke00', 'mvsmoke01', 'mvsmoke02', 'mvsmoke03']));
     this.tex.set('burn', frames(['burn01', 'burn02', 'burn03']));
+    this.tex.set('crpart', frames(['crpart1', 'crpart2', 'crpart3', 'crpart4']));
     // Лампа — одна на всю гру (як ThrowLamp) і вже в сцені: нове світло перекомпільовувало б усі шейдери.
     this.lamp.color.setRGB(1, 0.6, 0.3);
     this.group.add(this.lamp);
@@ -133,12 +157,15 @@ export class Blasts {
       this.emit();
     }
     this.step(dt, wind);
+    this.stepParts(dt);
     this.updateLamp(dt);
   }
 
   private emit(): void {
     for (let i = this.blows.length - 1; i >= 0; i--) {
       const b = this.blows[i];
+      // Уламки колонки (mnBlow3): 5 одразу з точки P, v = M·(4s₁·X + 4s₂·Y + (2 + 2r)·Z).
+      if (b.age === 0) for (let n = 0; n < 5; n++) this.part(b.P.clone().applyMatrix4(b.m), new THREE.Vector3(4 * sym(), 4 * sym(), 2 + 2 * rnd()).applyMatrix3(b.rot));
       b.age += TICK;
       if (b.age < 2) {
         const c = b.P.clone().add(new THREE.Vector3(0, 0, 2 * b.age));
@@ -203,12 +230,72 @@ export class Blasts {
     this.spawnWorld(this.fire.clone(), u, rnd() < 0.5 ? 'smoke' : 'vapor', 1, 5, 3, 1.5);
   }
 
+  /**
+   * Уламок (0x4ba310) у точці p зі швидкістю v (гра): r < 0,4 — пара burn01 (зі слідом) і msmoke00; r < 0,8 — msmoke00 зі
+   * слідом; інакше — crPart1…4 без сліду. Пропуск за налаштуванням деталізації (0x69605c) — порт не має, створює завжди.
+   */
+  private part(p: THREE.Vector3, v: THREE.Vector3): void {
+    const r = rnd();
+    if (r < 0.4) {
+      this.spawnPart(p, v, this.tex.get('burn')?.[0], true, true);
+      this.spawnPart(p, v, this.tex.get('smoke')?.[0], false, false);
+    } else if (r < 0.8) this.spawnPart(p, v, this.tex.get('smoke')?.[0], true, false);
+    else {
+      const parts = this.tex.get('crpart') ?? [];
+      this.spawnPart(p, v, parts[Math.floor(rnd() * parts.length)], false, false);
+    }
+  }
+
+  private spawnPart(p: THREE.Vector3, v: THREE.Vector3, map: THREE.Texture | undefined, trail: boolean, additive: boolean): void {
+    if (!map || this.puffs.length + this.parts.length >= MAX) return;
+    const s = this.free.pop() ?? new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, fog: true }));
+    const m = s.material;
+    m.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
+    m.map = map;
+    m.needsUpdate = true;
+    m.rotation = rnd() * Math.PI * 2;
+    m.color.setRGB(1, 1, 1);
+    s.scale.setScalar(PART_SIZE);
+    s.visible = true;
+    this.group.add(s);
+    this.parts.push({ s, p: p.clone(), v: v.clone(), bornZ: p.z, omega: 2 * Math.PI * sym(), trail, acc: 0 });
+  }
+
+  /** Політ уламків і їхні сліди (0x59f180, 0x4ba820): клуб msmoke кожні 0,1 м, 0,25 → 2 м за 0,75 с, кадр 0,05 с. */
+  private stepParts(dt: number): void {
+    for (let i = this.parts.length - 1; i >= 0; i--) {
+      const q = this.parts[i];
+      q.v.z -= PART_G * dt;
+      const old = q.p.clone();
+      q.p.addScaledVector(q.v, dt);
+      if (q.p.z < q.bornZ) {
+        q.s.visible = false;
+        this.group.remove(q.s);
+        this.free.push(q.s);
+        this.parts.splice(i, 1);
+        continue;
+      }
+      if (q.trail) {
+        const path = q.p.distanceTo(old);
+        const k = THREE.MathUtils.clamp((0.75 - dt) * 1.333, 0, 1);
+        const s0 = k * 0.25 + 2 * (1 - k);
+        for (let d = TRAIL_STEP - q.acc; d <= path; d += TRAIL_STEP) {
+          const at = old.clone().lerp(q.p, path > 0 ? d / path : 1);
+          this.spawnWorld(at, new THREE.Vector3(sym(), rnd() + rnd(), rnd()), 'smoke', s0, 2, 0, 0.75, 0.05);
+        }
+        q.acc = (q.acc + path) % TRAIL_STEP;
+      }
+      q.s.material.rotation += q.omega * dt;
+      toThree(q.p.x, q.p.y, q.p.z, q.s.position);
+    }
+  }
+
   /** Клуб у координатах станції. */
   private spawn(b: Blow, p: THREE.Vector3, v: THREE.Vector3, kind: string, s0: number, s1: number, g: number, life: number): void {
     this.spawnWorld(p.applyMatrix4(b.m), v.applyMatrix3(b.rot), kind, s0, s1, g, life);
   }
 
-  private spawnWorld(p: THREE.Vector3, v: THREE.Vector3, kind: string, s0: number, s1: number, g: number, life: number): void {
+  private spawnWorld(p: THREE.Vector3, v: THREE.Vector3, kind: string, s0: number, s1: number, g: number, life: number, fdur?: number): void {
     const frames = this.tex.get(kind) ?? [];
     if (!frames.length || this.puffs.length >= MAX) return;
     const s = this.free.pop() ?? new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, fog: true }));
@@ -219,7 +306,7 @@ export class Blasts {
     m.rotation = rnd() * Math.PI * 2;
     s.visible = true;
     this.group.add(s);
-    this.puffs.push({ s, p, v, born: p.clone(), g, age: 0, life, s0, s1, frames, omega: sym() * 2 * Math.PI });
+    this.puffs.push({ s, p, v, born: p.clone(), g, age: 0, life, s0, s1, frames, omega: sym() * 2 * Math.PI, fdur });
   }
 
   private step(dt: number, wind: number): void {
@@ -241,7 +328,7 @@ export class Blasts {
       q.p.z += q.v.z * dt;
       const u = q.age / q.life;
       const m = q.s.material;
-      const frame = q.frames[Math.min(q.frames.length - 1, Math.floor(u * q.frames.length))];
+      const frame = q.frames[Math.min(q.frames.length - 1, Math.floor(q.fdur ? q.age / q.fdur : u * q.frames.length))];
       if (m.map !== frame) {
         m.map = frame;
         m.needsUpdate = true;
@@ -278,8 +365,10 @@ export class Blasts {
 
   dispose(): void {
     for (const q of this.puffs) q.s.material.dispose();
+    for (const q of this.parts) q.s.material.dispose();
     for (const s of this.free) s.material.dispose();
     this.puffs.length = 0;
+    this.parts.length = 0;
     this.free.length = 0;
     this.group.removeFromParent();
   }
