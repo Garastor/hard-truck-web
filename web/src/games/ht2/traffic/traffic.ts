@@ -4,7 +4,7 @@ import { visibleBox } from '../engine/vehicle/trucks';
 import { GROUP_WORLD, groups } from '../engine/physics/world';
 import { isList, num, str, type SExpr } from '../formats/sexpr';
 import type { Ht2Roads, RoadLine } from '../world/roads';
-import { coast, decide, newMover, pathAhead, retrace, roadLimit, setGoals, step, sync, type Mover, type Obstacle } from './driver';
+import { coast, decide, newMover, pathAhead, retrace, roadLimit, setGoals, step, sync, turnSignal, type Mover, type Obstacle } from './driver';
 import { Navigator } from '../world/navigator';
 import { control, newPhysState, type PhysState } from './physical';
 import type { TruckVehicle } from '../engine/vehicle/truckVehicle';
@@ -57,6 +57,13 @@ const PHYS_SPEED = 18;
  * лежать до ±1,3 м від настилу, тож модель «пливла» й підскакувала при переході у фізику). Замір раз на GROUND_EVERY с,
  * висота згладжена з GROUND_LAG с; модель піднята на REST_LIFT — як фізична машина на підвісці в спокої.
  */
+/**
+ * Покажчики повороту — відступ порту на прохання користувача (у king.exe їх немає): відблиск оригінальної текстури
+ * `Ka50_GlowO` (помаранчева мигалка Ка-50, TRUCKS.B3D) біля передніх фар і задніх вогнів (StopFaraKeyL/R) свого
+ * боку, 1,5 Гц; коли — driver.turnSignal. Далеким абстрактним машинам — нічого.
+ */
+const BLINK_HZ = 1.5;
+const BLINK_SIZE = 0.55;
 const GROUND_EVERY = 0.12;
 const GROUND_LAG = 0.12;
 const REST_LIFT = 0.1;
@@ -110,6 +117,8 @@ interface Car extends Mover {
   flipped: number;
   /** Поверхня під кінематичною моделлю (промінь до нерухомих колізій): висота, нормаль, час до наступного заміру. */
   ground: Ground | null;
+  /** Покажчики повороту (4 відблиски: перед і зад лівого боку, перед і зад правого) — на моделі. */
+  blink: THREE.Group | null;
 }
 
 /** Поверхня під кінематичною моделлю: згладжена висота y, заміряна goal, нормаль n, час до заміру t. */
@@ -169,6 +178,10 @@ export class Traffic {
 
   /** Фари машин, що зʼявляються (king.exe: при створенні — з 22:00 до 6:00; ставить режим їзди). */
   lights = false;
+  private blinkTime = 0;
+  private blinkMat: THREE.SpriteMaterial | null | undefined;
+  /** Точки покажчиків моделі (Three.js, від початку координат моделі): перед лів., зад лів., перед прав., зад прав. */
+  private readonly blinkPts = new Map<string, THREE.Vector3[] | null>();
 
   /** Що бачить гравець: дальність (кінець туману, м) і чи видно точку з камери. Без нього — без перевірок. */
   view: { range(): number; sees(p: THREE.Vector3): boolean } | null = null;
@@ -267,6 +280,90 @@ export class Traffic {
       if (!c.ghost) this.addDumb(player, R + 50);
     }
     this.cars = this.all.filter((c) => c.root || c.vehicle);
+    this.updateSignals(dt);
+  }
+
+  /** Покажчики повороту: на моделі (кінематичній чи фізичній) — блимають, коли водій сигналить. */
+  private updateSignals(dt: number): void {
+    this.blinkTime += dt;
+    const on = (this.blinkTime * BLINK_HZ) % 1 < 0.5;
+    for (const c of this.cars) {
+      const side = turnSignal(c);
+      if (!side && !c.blink) continue;
+      const host = c.vehicle ? c.vehicle.visual : c.root;
+      if (!host) continue;
+      if (!c.blink || c.blink.parent !== host) {
+        c.blink?.removeFromParent();
+        c.blink = this.makeBlink(c, host);
+        if (!c.blink) continue;
+      }
+      c.blink.children.forEach((s, i) => (s.visible = on && side !== 0 && (i < 2 ? side < 0 : side > 0)));
+    }
+  }
+
+  /** Відблиски покажчиків на моделі машини (кінематична — над обгорткою моделі, фізична — у системі моделі). */
+  private makeBlink(c: Car, host: THREE.Object3D): THREE.Group | null {
+    const pts = this.signalPoints(c.kind.model);
+    if (this.blinkMat === undefined) {
+      const mats = this.trucks.asm.b3d.materials.map((m) => m.toLowerCase());
+      const i = mats.indexOf('ka50_glowo');
+      const map = i >= 0 ? (this.trucks.asm.lib.material(i) as THREE.MeshBasicMaterial).map : null;
+      this.blinkMat = map ? new THREE.SpriteMaterial({ map, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }) : null;
+    }
+    if (!pts || !this.blinkMat) return null;
+    const g = new THREE.Group();
+    g.name = 'TurnSignals';
+    // Кінематична модель піднята обгорткою (frame) над початком координат root.
+    if (!c.vehicle && c.root) g.position.copy(c.root.children[0]?.position ?? new THREE.Vector3());
+    for (const p of pts) {
+      const s = new THREE.Sprite(this.blinkMat);
+      s.position.copy(p);
+      s.scale.setScalar(BLINK_SIZE);
+      s.visible = false;
+      g.add(s);
+    }
+    host.add(g);
+    return g;
+  }
+
+  /**
+   * Точки покажчиків моделі: перед — краї фар (refer_HeadLightKey, стан 1), зад — задні вогні (StopFaraKeyL/R, стан 1);
+   * без них — кути габаритів моделі. Ліво — −x (уперед — −Z).
+   */
+  private signalPoints(model: string): THREE.Vector3[] | null {
+    if (this.blinkPts.has(model)) return this.blinkPts.get(model)!;
+    let out: THREE.Vector3[] | null = null;
+    const dyn = this.trucks.asm.dynamicObject(model);
+    if (dyn) {
+      const frame = new THREE.Group();
+      frame.rotation.x = -Math.PI / 2;
+      frame.add(dyn.root);
+      frame.updateMatrixWorld(true);
+      const body = visibleBox(dyn.root);
+      const part = (name: string): THREE.Box3 | null => {
+        let o: THREE.Object3D | null = null;
+        dyn.root.traverse((x) => {
+          if (!o && x.name === name) o = x;
+        });
+        if (!o) return null;
+        const b = new THREE.Box3().setFromObject(o);
+        return b.isEmpty() ? null : b;
+      };
+      const head = part('refer_HeadLightKey#1');
+      const rl = part('StopFaraKeyL#1');
+      const rr = part('StopFaraKeyR#1');
+      const y = head ? head.getCenter(new THREE.Vector3()).y : body.min.y + 0.4 * (body.max.y - body.min.y);
+      const fz = (head ? head.min.z : body.min.z) - 0.05;
+      const rear = (b: THREE.Box3 | null, x: number) => (b ? b.getCenter(new THREE.Vector3()).setZ(b.max.z + 0.05) : new THREE.Vector3(x, y, body.max.z + 0.05));
+      out = [
+        new THREE.Vector3((head ? head.min.x : body.min.x) + 0.15, y, fz),
+        rear(rl, body.min.x + 0.2),
+        new THREE.Vector3((head ? head.max.x : body.max.x) - 0.15, y, fz),
+        rear(rr, body.max.x - 0.2),
+      ];
+    }
+    this.blinkPts.set(model, out);
+    return out;
   }
 
   /** Перед кожним кроком фізики: педалі й кермо фізичних машин. */
@@ -318,6 +415,8 @@ export class Traffic {
   /** Фізична → кінематична: модель знову котиться лінією (зсув від лінії згасає). */
   private unphysical(c: Car): void {
     if (!c.vehicle) return;
+    c.blink?.removeFromParent();
+    c.blink = null;
     c.heading.copy(c.vehicle.forward()).setY(0).normalize();
     this.physics?.remove(c.vehicle);
     c.vehicle = null;
@@ -351,7 +450,7 @@ export class Traffic {
   private newCar(line: RoadLine, seg: number, ghost: boolean): Car {
     const kind = this.kinds[Math.floor(Math.random() * this.kinds.length)];
     const cruise = CRUISE_MIN + Math.random() * (CRUISE_MAX - CRUISE_MIN);
-    return Object.assign(newMover(line, seg, Math.random(), cruise, 2.2), { kind, ghost, age: 0, root: null, body: null, vehicle: null, phys: newPhysState(), want: 0, flipped: 0, ground: null });
+    return Object.assign(newMover(line, seg, Math.random(), cruise, 2.2), { kind, ghost, age: 0, root: null, body: null, vehicle: null, phys: newPhysState(), want: 0, flipped: 0, ground: null, blink: null });
   }
 
   /**
@@ -434,6 +533,8 @@ export class Traffic {
   }
 
   private deactivate(c: Car): void {
+    c.blink?.removeFromParent();
+    c.blink = null;
     if (c.vehicle) {
       this.physics?.remove(c.vehicle);
       c.vehicle = null;

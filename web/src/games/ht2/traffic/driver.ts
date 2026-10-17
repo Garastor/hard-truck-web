@@ -64,6 +64,10 @@ const LOOK_LANE = 90;
 const JERK = 6;
 const JERK_HARD = 40;
 const HARD = 5;
+/** Покажчик: за скільки секунд до маневру, від якого кута повороту (рад), скільки метрів після стику. */
+const SIGNAL_AHEAD = 3;
+const SIGNAL_TURN = 0.35;
+const SIGNAL_AFTER = 15;
 const ACCEL = 2.5;
 const BRAKE = 7;
 /** Перешкода на шляху, якщо ближче за це до осі смуги (півширина машини + запас), м. */
@@ -131,6 +135,8 @@ export interface Mover {
   gone: boolean;
   /** Поточне прискорення кінематичної машини, м/с² (для плавного гальмування). */
   acc: number;
+  /** Кут повороту на останньому стику ліній (праворуч — додатний), рад — покажчик тримається й після стику. */
+  turned: number;
   /**
    * Запланований бічний зсув від лінії (S-крива від offFrom до offTo за offDur с, пройдено offT с): за ним їдуть і
    * кінематична, і фізична машина (carrot); lat — фактичний.
@@ -176,6 +182,7 @@ export function newMover(line: RoadLine, seg: number, t: number, cruise: number,
     wantLane: line.lane,
     gone: false,
     acc: 0,
+    turned: 0,
     off: 0,
     offFrom: 0,
     offTo: 0,
@@ -643,6 +650,25 @@ function crosses(a: THREE.Vector3[], b: THREE.Vector3[]): boolean {
 }
 
 /** Запланований поворот на стику (праворуч — додатний), рад. */
+/**
+ * Покажчик повороту (порт, на прохання користувача — у king.exe покажчиків немає): −1 ліворуч, 1 праворуч, 0 — ні.
+ * Під час бічного маневру (перестроювання, обʼїзд, обгін); за SIGNAL_AHEAD с до перестроювання в смугу повороту й до
+ * стику з поворотом понад SIGNAL_TURN; після стику — ще SIGNAL_AFTER м нової лінії.
+ */
+export function turnSignal(m: Mover): -1 | 0 | 1 {
+  if (m.gone) return 0;
+  if (m.offDur > 0 && Math.abs(m.offTo - m.offFrom) > 1) return m.offTo > m.offFrom ? 1 : -1;
+  const toEnd = remaining(m);
+  const soon = Math.max(m.speed, 3) * SIGNAL_AHEAD + 10;
+  if (m.wantLane !== m.line.lane && toEnd < Math.min(LANE_PLAN, soon)) return m.wantLane > m.line.lane ? 1 : -1;
+  if (toEnd < soon) {
+    const t = plannedTurn(m);
+    if (Math.abs(t) > SIGNAL_TURN) return t > 0 ? 1 : -1;
+  }
+  if (Math.abs(m.turned) > SIGNAL_TURN && fromStart(m) < SIGNAL_AFTER) return m.turned > 0 ? 1 : -1;
+  return 0;
+}
+
 function plannedTurn(m: Mover): number {
   const to = m.plan === null ? null : nextLine(m.line, m.plan, m.line.lane);
   return to ? turnAngle(m.line, to) : 0;
@@ -730,6 +756,7 @@ export function sync(m: Mover, p: THREE.Vector3, fwd: THREE.Vector3, speed: numb
         break;
       }
       m.from = m.line.pts[m.line.pts.length - 1].clone();
+      m.turned = turnAngle(m.line, nx);
       m.line = nx;
       m.seg = 0;
       m.t = 0;
@@ -799,6 +826,7 @@ function advance(m: Mover, move: number): void {
         m.t = 1;
         return;
       }
+      m.turned = turnAngle(m.line, nx);
       m.line = nx;
       m.seg = 0;
       m.from = p1.clone();
