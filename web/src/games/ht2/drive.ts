@@ -24,7 +24,7 @@ import { RED_LIGHT_FINE, bribeSum, copsTakeBribes, totalFine, wanted } from './c
 import { Mafia, parseMafiaAmbushes } from './traffic/mafia';
 import { ForbiddenZone, Helicopters } from './traffic/helicopters';
 import { Water } from './vehicles/water';
-import { showGameOver } from './ui/gameOver';
+import { showGameOver, type LoseScreen } from './ui/gameOver';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
 import { WorldMap, type MapPoint } from './world/worldMap';
@@ -1209,14 +1209,16 @@ export class Ht2Drive {
   /** Вода (тригери 13/16) і кінець гри. */
   private readonly water = new Water();
   private over = false;
+  /** Перевірка банкрутства раз на 8 с (SeeIfBankrupted 0x427020). */
+  private bankTimer = 8;
 
   /**
    * Кінець гри (king.exe 0x51eea0 / 0x51f380, upgrades.md «Вибування гравця»): гра на паузі, звуки стихають,
-   * youlostSound, вікно BackLoose2 «Восстановлению не подлежит» (утонув чи машину знищено). Збереження кар'єри
-   * не пишеться й не стирається (як .pl1 в оригіналі): «Головне меню» — вихід, «Почати спочатку» — нова кар'єра.
-   * Ролик trirr.bne перед вікном порт не показує.
+   * youlostSound, вікно BackLoose2 «Восстановлению не подлежит» (утонув чи машину знищено) чи BackLoose5 «Вы банкрот».
+   * Збереження кар'єри не пишеться й не стирається (як .pl1 в оригіналі): «Головне меню» — вихід, «Почати
+   * спочатку» — нова кар'єра. Ролики trirr.bne / trbn.bne перед вікном порт не показує.
    */
-  private gameOver(): void {
+  private gameOver(screen: LoseScreen = 'BackLoose2'): void {
     if (this.over) return;
     this.over = true;
     this.paused = true;
@@ -1225,7 +1227,7 @@ export class Ht2Drive {
     this.blasts?.carFire(null);
     this.truck.engineOn = false;
     this.audio?.play('youlost');
-    showGameOver(this.escArt, this.overlay, 'BackLoose2', {
+    showGameOver(this.escArt, this.overlay, screen, {
       main: () => this.opts.onExit(),
       restart: () => this.opts.onExit('new'),
     });
@@ -1259,6 +1261,11 @@ export class Ht2Drive {
     // (сума пошкоджень > 0,9, 0x597b00; у порту — стан машини) — кінець гри.
     const sunk = this.water.update(dt, this.world.loaded.values(), this.truck.visual.position, (c.upgrades ?? []).includes('PR_AIR_FILTER_SNORKEL:1'));
     if (sunk || c.damage > 0.9) return this.gameOver();
+    // Банкрутство (0x427020): раз на 8 с гроші < 0 — кінець гри, BackLoose5 «Вы банкрот».
+    if ((this.bankTimer -= dt) <= 0) {
+      this.bankTimer = 8;
+      if (c.money < 0) return this.gameOver('BackLoose5');
+    }
     if (this.burning < 0) return;
     this.burning += dt;
     c.damage = Math.min(1, c.damage + dt / 60);
