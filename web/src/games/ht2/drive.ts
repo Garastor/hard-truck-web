@@ -12,7 +12,7 @@ import { GROUP_WORLD, addCollisionPolys, forgetSurfaces, g2t, groups, initRapier
 import { assoc, num, readSch, str, type SExpr } from './formats/sexpr';
 import { drivable, loadTrucks, truckDef, type Ht2Trucks } from './vehicles/trucks';
 import { FOV } from './ui/viewer';
-import { Ht2World, toThree, type LoadedRegion } from './world/world';
+import { Ht2World, toThree, yieldTask, type LoadedRegion } from './world/world';
 import { AutoPilot } from './engine/vehicle/autopilot';
 import { Ht2Roads } from './world/roads';
 import { Traffic, recolor, trafficKinds } from './traffic/traffic';
@@ -135,6 +135,10 @@ function viewFov(xpyramid: number): number {
 const CHASE_LAG = 0.6;
 /** Точка погляду — на цій відстані від місця камери в спокої під нахилом CHASE_PITCH (біля машини), м. */
 const CHASE_LOOK = 10;
+/** Текстур нового регіону на GPU за одне завдання (решта — у наступних, між кадрами). */
+const TEXTURES_PER_TASK = 6;
+/** Полігонів колізій в одному trimesh-колайдері (будуються по одному за завдання). */
+const COLLIDER_CHUNK = 2500;
 /** Далі за стільки метрів від свого місця камера не «доганяє», а переставляється (телепорт, 911). */
 const CHASE_JUMP = 60;
 
@@ -446,6 +450,8 @@ export class Ht2Drive {
     this.objects = new WorldObjects(this.rapier);
     this.rapier.timestep = 1 / 60;
     this.world.onRegion = (reg, loaded) => (loaded ? this.addRegion(reg) : this.removeRegion(reg.id));
+    // Новий регіон — текстури на GPU й шейдери до показу, частинами: інакше перший кадр з ним стояв 50…100 мс.
+    this.world.prepare = (root) => this.prepareRegion(root);
     this.roads = new Ht2Roads(this.world.regions.values());
 
     // Старт і вантажівка гравця — з ENV/GAME.CNF.
@@ -833,8 +839,36 @@ export class Ht2Drive {
   }
 
   /** Колізії регіону: підлога й стіни з `hit_road_*`/`hit_obj_*` (усі кімнати регіону разом). */
-  private addRegion(reg: LoadedRegion): void {
+  /** Текстури регіону — на GPU по кілька за завдання, потім шейдери (compileAsync, без блокування де підтримується). */
+  private async prepareRegion(root: THREE.Object3D): Promise<void> {
+    const textures = new Set<THREE.Texture>();
+    root.traverse((o) => {
+      const ms = (o as THREE.Mesh).material;
+      for (const m of Array.isArray(ms) ? ms : ms ? [ms] : []) {
+        const t = (m as THREE.MeshLambertMaterial).map;
+        if (t) textures.add(t);
+      }
+    });
+    const r = this.opts.renderer;
+    let n = 0;
+    for (const t of textures) {
+      r.initTexture(t);
+      if (++n % TEXTURES_PER_TASK === 0) await yieldTask();
+    }
+    await r.compileAsync(root, this.camera, this.world.scene).catch(() => undefined);
+  }
+
+  /**
+   * Колізії регіону — частинами між кадрами (разом ≈ 20 мс на регіон на ПК, з рештою підвантаження — ривок). Регіон
+   * можуть вивантажити посеред побудови — тоді зупиняємось (готові колайдери прибрала removeRegion).
+   */
+  private async addRegion(reg: LoadedRegion): Promise<void> {
+    const alive = () => this.world.loaded.get(reg.id) === reg && !this.disposed;
+    const cs: RAPIER.Collider[] = [];
+    this.colliders.set(reg.id, cs);
     const col = levelCollision(reg.built.assembler.b3d);
+    await yieldTask();
+    if (!alive()) return;
     // Колізії гілок перемикачів (обвали) — окремо: діють лише в стані своєї гілки.
     const parts = new Map<string, { floors: number[][][]; surfaces: number[]; walls: number[][][] }>();
     const part = (tag: string) => parts.get(tag) ?? parts.set(tag, { floors: [], surfaces: [], walls: [] }).get(tag)!;
@@ -853,13 +887,17 @@ export class Ht2Drive {
     floors.push(...inst.floors);
     surfaces.push(...inst.floorSurface);
     wallPolys.push(...inst.walls);
-    const cs: RAPIER.Collider[] = [];
     // Процедурний рельєф (aa) — heightfield.
     if (reg.terrain) cs.push(terrainCollider(this.rapier, reg.terrain));
-    const floor = addCollisionPolys(this.rapier, floors, 1.0, surfaces);
-    const walls = addCollisionPolys(this.rapier, wallPolys, 0.4);
-    if (floor) cs.push(floor);
-    if (walls) cs.push(walls);
+    // Trimesh — шматками по COLLIDER_CHUNK полігонів (великий регіон — ≈ 100 мс одним шматком); колеса — промені,
+    // шви між колайдерами їм не заважають.
+    for (const [polys, friction, surf] of [[floors, 1.0, surfaces], [wallPolys, 0.4, undefined]] as const)
+      for (let i = 0; i < polys.length; i += COLLIDER_CHUNK) {
+        const c = addCollisionPolys(this.rapier, polys.slice(i, i + COLLIDER_CHUNK), friction, surf?.slice(i, i + COLLIDER_CHUNK));
+        if (c) cs.push(c);
+        await yieldTask();
+        if (!alive()) return;
+      }
     const switched = new Map<string, RAPIER.Collider[]>();
     for (const [tag, g] of parts) {
       const list = [addCollisionPolys(this.rapier, g.floors, 1.0, g.surfaces), addCollisionPolys(this.rapier, g.walls, 0.4)].filter((c): c is RAPIER.Collider => !!c);
@@ -874,7 +912,6 @@ export class Ht2Drive {
       const c = groundFromMeshes(this.rapier, reg.built.root);
       if (c) cs.push(c);
     }
-    this.colliders.set(reg.id, cs);
     this.objects.addRegion(reg.id, reg.built.root, reg.poles, reg.movables);
   }
 

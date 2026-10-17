@@ -5,7 +5,7 @@ import { parseB3d } from '../engine/formats/b3d';
 import { parseRmp, type RmpArchive } from '../engine/formats/rmp';
 import { decodeCp1251 } from '../engine/formats/binary';
 import { parseWay, type Way } from '../formats/way';
-import { SKY_LIGHT, SceneAssembler, buildScene, type BuiltScene } from '../engine/render/sceneBuilder';
+import { SKY_LIGHT, SceneAssembler, buildSceneAsync, type BuiltScene } from '../engine/render/sceneBuilder';
 import { HT2_REGIONS, readTextures, regionFiles, type TexLevel } from '../files';
 import { DAY_TIME_HOUR, Weather, WeatherCycle, type DayTime, type Sky } from './weather';
 import { TREE_LIGHT, buildGlows, buildTrees, type TreeSway } from './trees';
@@ -65,13 +65,22 @@ export async function loadCommon(source: FileSource, tex: TexLevel = ''): Promis
   return { asm: new SceneAssembler(parseB3d(b3d), rmp, { lit: true, colorKey: true, nearGroup: 0 }), rmp };
 }
 
+/**
+ * Віддати потік між частинами важкої роботи (підвантаження регіону під час їзди): кадр встигає намалюватися, а не
+ * чекає 70…140 мс усього регіону разом (заміри на ПК, Docs/ht2/progress.md). setTimeout, не rAF — у прихованій
+ * вкладці rAF зупиняється, і завантаження на старті не завершилося б.
+ */
+export const yieldTask = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
 export async function loadRegion(source: FileSource, id: string, common: SceneAssembler | null, tex: TexLevel = '', dir = 'ENV'): Promise<LoadedRegion> {
   const f = regionFiles(id, tex, dir);
   const [b3d, res] = await Promise.all([source.read(f.b3d), readTextures(source, f.res)]);
   const scene = parseB3d(b3d);
   const rmp = parseRmp(res);
+  await yieldTask();
   const palette = common?.lib.palette ?? null;
-  const built = buildScene(scene, rmp, { lit: true, colorKey: true, nearGroup: 0, fallback: common ?? undefined, palette: palette ?? undefined });
+  const built = await buildSceneAsync(scene, rmp, { lit: true, colorKey: true, nearGroup: 0, fallback: common ?? undefined, palette: palette ?? undefined }, yieldTask);
+  await yieldTask();
   // Реквізит засідок — схований і поза злиттям нерухомої геометрії (mergeStatic пропускає невидиме).
   const props = new Map<string, THREE.Object3D[]>();
   built.root.traverse((o) => {
@@ -85,10 +94,12 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
   // Нерухома геометрія регіону — одна сітка на матеріал у клітинці (було ≈ 500 мешів на регіон).
   const merged = mergeStatic(built.root);
   built.stats.meshes = merged.after;
+  await yieldTask();
   const trees = buildTrees(scene, rmp, palette);
   built.root.add(trees);
   const glows = buildGlows(scene, rmp);
   built.root.add(glows);
+  await yieldTask();
   // Процедурний рельєф: генератор $$GeneratorOfTerrain (лише aa) — сітка з ENV/terrain0–2.raw.
   let terrain: Float32Array | undefined;
   let terrainMesh: THREE.Mesh | null = null;
@@ -99,11 +110,12 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
       const tile = (i: number) => source.read(`ENV/terrain${i}.raw`).catch(() => source.read(`MTR/terrain${i}.raw`)).then(parseHeightmap);
       const tiles = await Promise.all([0, 1, 2].map(tile));
       terrain = terrainHeights(tiles);
+      await yieldTask();
       const tex = (name: string) => {
         const i = scene.materials.findIndex((m) => m.toLowerCase() === name);
         return i >= 0 ? ((built.assembler.lib.material(i) as THREE.MeshLambertMaterial).map ?? null) : null;
       };
-      terrainMesh = buildTerrainMesh(terrain, tex('ter000'), tex('ter100'));
+      terrainMesh = await buildTerrainMesh(terrain, tex('ter000'), tex('ter100'), yieldTask);
       built.root.add(terrainMesh);
     } catch (e) {
       console.warn('HT2: рельєф не побудовано', e);
@@ -196,8 +208,10 @@ export class Ht2World {
   private lastCheck = 0;
   private readonly waiters: (() => void)[] = [];
   onChange: (() => void) | null = null;
-  /** Регіон завантажено (true) чи вивантажено (false) — для колізій режиму їзди. */
-  onRegion: ((reg: LoadedRegion, loaded: boolean) => void) | null = null;
+  /** Регіон завантажено (true) чи вивантажено (false) — для колізій режиму їзди (може будувати їх частинами). */
+  onRegion: ((reg: LoadedRegion, loaded: boolean) => void | Promise<void>) | null = null;
+  /** Підготувати регіон до показу (текстури на GPU, шейдери) — частинами, до додавання в сцену. */
+  prepare: ((root: THREE.Object3D) => Promise<void>) | null = null;
 
   private constructor(
     private readonly source: FileSource,
@@ -401,7 +415,8 @@ export class Ht2World {
     if (!next) return;
     this.loading = next;
     void loadRegion(this.source, next, this.common)
-      .then((reg) => {
+      .then(async (reg) => {
+        await this.prepare?.(reg.built.root);
         this.loaded.set(next, reg);
         const moving = new Set<THREE.MeshBasicMaterial>();
         reg.built.root.traverse((o) => {
@@ -414,7 +429,7 @@ export class Ht2World {
         if (glows) glows.visible = this.night;
         for (let i = 0; i < 16; i++) this.setIllum(reg, i, illumOn(i, this.hour));
         this.scene.add(reg.built.root);
-        this.onRegion?.(reg, true);
+        await this.onRegion?.(reg, true);
         if (!this.sky && reg.built.sky) {
           this.sky = reg.built.sky;
           this.sky.traverse((o) => {

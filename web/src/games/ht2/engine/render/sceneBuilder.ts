@@ -58,7 +58,8 @@ interface VertexSource {
  * Полігони за матеріалом; ord — порядковий номер полігона в даних для кожного трикутника; nrm — нормалі
  * (режим lit; null — у джерелі нормалей немає, рахуємо з геометрії).
  */
-type Batches = Map<number, { pos: number[]; uv: number[]; ord: number[]; layer?: number[]; nrm?: number[] | null }>;
+type Batch = { pos: number[]; uv: number[]; ord: number[]; layer?: number[]; nrm?: number[] | null };
+type Batches = Map<number, Batch>;
 
 /**
  * Шари в одній площині (фасад тунелю на суцільній стіні лісу): оригінал малює полігони по черзі й пізніший
@@ -71,6 +72,10 @@ type Batches = Map<number, { pos: number[]; uv: number[]; ord: number[]; layer?:
 const LAYER_OFFSET_FACTOR = -1;
 /** Розніс площин у даних (м), від якого порядок шарів визначає положення, а не черговість полігонів. */
 const DATA_LAYER_GAP = 0.004;
+/** Клітинка просторової сітки пошуку перекриттів шарів, м (лише прискорення — результат той самий). */
+const LAYER_CELL = 4;
+/** Сітку будуємо лише для площин з більшою кількістю трикутників (малі — простий перебір дешевший). */
+const LAYER_GRID_FROM = 64;
 const LAYER_OFFSET_UNITS = -4;
 
 export class MaterialLibrary {
@@ -416,58 +421,111 @@ export class SceneAssembler {
   /** Усі кімнати (тип 19) — геометрія світу. */
   buildRooms(): THREE.Group[] {
     const rooms: THREE.Group[] = [];
-    this.switchTarget = this.switches;
-    this.buildingRooms = true;
+    for (const b of this.b3d.blocks) if (b.data.t === 19) rooms.push(this.buildRoom(b));
+    return rooms;
+  }
+
+  /** Кімнати по черзі; щойно минуло budgetMs — pause() (віддати кадр). */
+  async buildRoomsAsync(pause: () => Promise<void>, budgetMs: number): Promise<THREE.Group[]> {
+    const rooms: THREE.Group[] = [];
+    let start = performance.now();
+    const check = async () => {
+      if (performance.now() - start <= budgetMs) return;
+      this.switchTarget = null;
+      this.buildingRooms = false;
+      await pause();
+      this.switchTarget = this.switches;
+      this.buildingRooms = true;
+      start = performance.now();
+    };
     for (const b of this.b3d.blocks) {
       if (b.data.t !== 19) continue;
+      // Діти кімнати незалежні (кімната не дає їм вершин) — пауза й між ними: в aa кімната одна на весь регіон.
+      this.switchTarget = this.switches;
+      this.buildingRooms = true;
       const grp = new THREE.Group();
       grp.name = b.name;
       const batches: Batches = new Map();
-      this.visit(b, null, batches, grp, 0);
-      this.flush(batches, grp);
-      rooms.push(grp);
+      for (const g of b.groups ?? [])
+        for (const child of g) {
+          this.visit(child, null, batches, grp, 1);
+          await check();
+        }
+      await this.flushAsync(batches, grp, check);
       this.stats.rooms++;
+      this.switchTarget = null;
+      this.buildingRooms = false;
+      rooms.push(grp);
+      await check();
     }
+    return rooms;
+  }
+
+  private buildRoom(b: Block): THREE.Group {
+    this.switchTarget = this.switches;
+    this.buildingRooms = true;
+    const grp = new THREE.Group();
+    grp.name = b.name;
+    const batches: Batches = new Map();
+    this.visit(b, null, batches, grp, 0);
+    this.flush(batches, grp);
+    this.stats.rooms++;
     this.switchTarget = null;
     this.buildingRooms = false;
-    return rooms;
+    return grp;
   }
 
   private polyOrder = 0;
 
   private flush(batches: Batches, into: THREE.Object3D): void {
+    this.layerPass(batches);
+    for (const [matIndex, b] of batches) this.flushBatch(matIndex, b, into);
+  }
+
+  /** Те саме з паузами між партіями (buildRoomsAsync). */
+  private async flushAsync(batches: Batches, into: THREE.Object3D, check: () => Promise<void>): Promise<void> {
+    this.layerPass(batches);
+    await check();
+    for (const [matIndex, b] of batches) {
+      this.flushBatch(matIndex, b, into);
+      await check();
+    }
+  }
+
+  private layerPass(batches: Batches): void {
     if (this.buildingRooms) this.stats.layered += separateLayers(
         [...batches].filter(([m]) => !!(this.lib.material(m) as THREE.MeshBasicMaterial).map).map(([, b]) => b),
       );
-    for (const [matIndex, b] of batches) {
-      if (!b.pos.length) continue;
-      // Трикутники за шаром: шар 0 — звичайний матеріал, вищі — копія зі зсувом глибини.
-      const byLayer = new Map<number, { pos: number[]; uv: number[]; nrm?: number[] | null }>();
-      if (!b.layer) byLayer.set(0, b);
-      else
-        for (let t = 0; t < b.pos.length / 9; t++) {
-          const l = b.layer[t] ?? 0;
-          let part = byLayer.get(l);
-          if (!part) byLayer.set(l, (part = { pos: [], uv: [], nrm: b.nrm ? [] : null }));
-          part.pos.push(...b.pos.slice(t * 9, t * 9 + 9));
-          part.uv.push(...b.uv.slice(t * 6, t * 6 + 6));
-          if (b.nrm) part.nrm!.push(...b.nrm.slice(t * 9, t * 9 + 9));
-        }
-      for (const [layer, part] of byLayer) {
-        const g = new THREE.BufferGeometry();
-        g.setAttribute('position', new THREE.Float32BufferAttribute(part.pos, 3));
-        g.setAttribute('uv', new THREE.Float32BufferAttribute(part.uv, 2));
-        if (this.lit) {
-          if (part.nrm && part.nrm.length === part.pos.length) g.setAttribute('normal', new THREE.Float32BufferAttribute(part.nrm, 3));
-          else g.computeVertexNormals();
-        }
-        g.computeBoundingSphere();
-        const mesh = new THREE.Mesh(g, layer ? this.layerMaterial(matIndex, layer) : this.lib.material(matIndex));
-        mesh.matrixAutoUpdate = false;
-        into.add(mesh);
-        this.stats.meshes++;
-        this.stats.triangles += part.pos.length / 9;
+  }
+
+  private flushBatch(matIndex: number, b: Batch, into: THREE.Object3D): void {
+    if (!b.pos.length) return;
+    // Трикутники за шаром: шар 0 — звичайний матеріал, вищі — копія зі зсувом глибини.
+    const byLayer = new Map<number, { pos: number[]; uv: number[]; nrm?: number[] | null }>();
+    if (!b.layer) byLayer.set(0, b);
+    else
+      for (let t = 0; t < b.pos.length / 9; t++) {
+        const l = b.layer[t] ?? 0;
+        let part = byLayer.get(l);
+        if (!part) byLayer.set(l, (part = { pos: [], uv: [], nrm: b.nrm ? [] : null }));
+        part.pos.push(...b.pos.slice(t * 9, t * 9 + 9));
+        part.uv.push(...b.uv.slice(t * 6, t * 6 + 6));
+        if (b.nrm) part.nrm!.push(...b.nrm.slice(t * 9, t * 9 + 9));
       }
+    for (const [layer, part] of byLayer) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(part.pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(part.uv, 2));
+      if (this.lit) {
+        if (part.nrm && part.nrm.length === part.pos.length) g.setAttribute('normal', new THREE.Float32BufferAttribute(part.nrm, 3));
+        else g.computeVertexNormals();
+      }
+      g.computeBoundingSphere();
+      const mesh = new THREE.Mesh(g, layer ? this.layerMaterial(matIndex, layer) : this.lib.material(matIndex));
+      mesh.matrixAutoUpdate = false;
+      into.add(mesh);
+      this.stats.meshes++;
+      this.stats.triangles += part.pos.length / 9;
     }
   }
 
@@ -812,9 +870,21 @@ export class SceneAssembler {
 
 export function buildScene(b3d: B3d, rmp: RmpArchive, opts: BuildOptions = {}): BuiltScene {
   const asm = new SceneAssembler(b3d, rmp, opts);
+  return finishScene(asm, asm.buildRooms());
+}
+
+/**
+ * Те саме частинами: між кімнатами — pause(), щойно минуло budgetMs (підвантаження регіону під час їзди — без
+ * ривка на 50…120 мс усього регіону).
+ */
+export async function buildSceneAsync(b3d: B3d, rmp: RmpArchive, opts: BuildOptions, pause: () => Promise<void>, budgetMs = 8): Promise<BuiltScene> {
+  const asm = new SceneAssembler(b3d, rmp, opts);
+  return finishScene(asm, await asm.buildRoomsAsync(pause, budgetMs));
+}
+
+function finishScene(asm: SceneAssembler, rooms: THREE.Group[]): BuiltScene {
   const root = new THREE.Group();
   root.rotation.x = -Math.PI / 2;
-  const rooms = asm.buildRooms();
   for (const r of rooms) root.add(r);
   root.updateMatrixWorld(true);
   clampUntiled(root);
@@ -1063,13 +1133,34 @@ function separateLayers(batches: { pos: number[]; ord: number[]; layer?: number[
     // дошкою: він має бути зверху, хоч у файлі йде раніше — інакше дошка перекривала його здалеку); у точно спільній
     // площині (до DATA_LAYER_GAP) — порядок полігонів у даних (пізніший — зверху).
     g.sort((a, c) => Math.round(a.d / DATA_LAYER_GAP) - Math.round(c.d / DATA_LAYER_GAP) || a.ord - c.ord);
-    for (let i = 1; i < g.length; i++) {
+    // Кандидати — лише попередні трикутники з сусідніх клітинок (рамки перетинаються): у великій кімнаті (aa) перебір
+    // усіх пар у площині займав ≈ 2,6 с одним шматком — ривок при підвантаженні регіону.
+    const grid = new Map<string, number[]>();
+    const big: number[] = [];
+    const cellsOf = (t: Tri): string[] | null => {
+      const lo = t.pts[0].clone().min(t.pts[1]).min(t.pts[2]);
+      const hi = t.pts[0].clone().max(t.pts[1]).max(t.pts[2]);
+      const [x0, y0, z0] = [lo.x, lo.y, lo.z].map((v) => Math.floor((v - 0.05) / LAYER_CELL));
+      const [x1, y1, z1] = [hi.x, hi.y, hi.z].map((v) => Math.floor((v + 0.05) / LAYER_CELL));
+      if ((x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > 64) return null;
+      const out: string[] = [];
+      for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) out.push(`${x},${y},${z}`);
+      return out;
+    };
+    const useGrid = g.length > LAYER_GRID_FROM;
+    for (let i = 0; i < g.length; i++) {
       const top = g[i];
-      for (let j = 0; j < i; j++) {
+      const cells = useGrid ? cellsOf(top) : null;
+      const cand = new Set<number>(big);
+      if (cells) for (const c of cells) for (const j of grid.get(c) ?? []) cand.add(j);
+      else for (let j = 0; j < i; j++) cand.add(j);
+      for (const j of cand) {
         const low = g[j];
         if (low.ord === top.ord || top.n.dot(low.n) < 0.999 || Math.abs(top.d - low.d) > 0.05) continue;
         if (overlapInPlane(top.pts, low.pts, top.n)) top.layer = Math.max(top.layer, low.layer + 1);
       }
+      if (cells) for (const c of cells) (grid.get(c) ?? grid.set(c, []).get(c)!).push(i);
+      else big.push(i);
       if (!top.layer) continue;
       (top.b.layer ??= [])[top.at / 9] = top.layer;
       moved++;

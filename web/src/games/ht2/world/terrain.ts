@@ -68,15 +68,24 @@ export function terrainHeightAt(heights: Float32Array, gx: number, gy: number): 
  * рухається з деталізацією.
  */
 const DECIMATE = 2;
+/** Рядків сітки рельєфу за одне завдання при підвантаженні (решта — у наступних, між кадрами). */
+const TERRAIN_ROWS_PER_TASK = 64;
 /** Поріг висоти ґрунт/скеля, м: 474,9 − 15 − 0,5 ([0x72c0cc], ініціалізатор 0x61a850). */
 export const GROUND_BELOW = 474.9 - 15 - 0.5;
 
-export function buildTerrainMesh(heights: Float32Array, base: THREE.Texture | null, detail: THREE.Texture | null): THREE.Mesh {
+export async function buildTerrainMesh(
+  heights: Float32Array,
+  base: THREE.Texture | null,
+  detail: THREE.Texture | null,
+  pause: () => Promise<void> = async () => undefined,
+): Promise<THREE.Mesh> {
   const { n, step, x0, y0 } = TERRAIN;
   const m = Math.floor((n - 1) / DECIMATE) + 1;
   const pos = new Float32Array(m * m * 3);
   const uv = new Float32Array(m * m * 2);
-  for (let i = 0; i < m; i++)
+  for (let i = 0; i < m; i++) {
+    // Частинами (≈ 120 мс на ПК разом): між смугами рядків — pause().
+    if (i % TERRAIN_ROWS_PER_TASK === TERRAIN_ROWS_PER_TASK - 1) await pause();
     for (let j = 0; j < m; j++) {
       const X = i * DECIMATE;
       const Y = j * DECIMATE;
@@ -87,11 +96,13 @@ export function buildTerrainMesh(heights: Float32Array, base: THREE.Texture | nu
       uv[k * 2] = X / 8;
       uv[k * 2 + 1] = Y / 8;
     }
+  }
   const ground: number[] = [];
   const rock: number[] = [];
   const tri = (a: number, b: number, c: number) =>
     (Math.max(pos[a * 3 + 2], pos[b * 3 + 2], pos[c * 3 + 2]) < GROUND_BELOW ? ground : rock).push(a, b, c);
-  for (let i = 0; i + 1 < m; i++)
+  for (let i = 0; i + 1 < m; i++) {
+    if (i % TERRAIN_ROWS_PER_TASK === TERRAIN_ROWS_PER_TASK - 1) await pause();
     for (let j = 0; j + 1 < m; j++) {
       const a = i * m + j;
       const b = (i + 1) * m + j;
@@ -99,6 +110,8 @@ export function buildTerrainMesh(heights: Float32Array, base: THREE.Texture | nu
       tri(a, b, a + 1);
       tri(a + 1, b, b + 1);
     }
+  }
+  await pause();
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
@@ -106,6 +119,7 @@ export function buildTerrainMesh(heights: Float32Array, base: THREE.Texture | nu
   g.addGroup(0, ground.length, 0);
   g.addGroup(ground.length, rock.length, 1);
   g.computeVertexNormals();
+  await pause();
   // UV вершин — X / 8 (скеля); ґрунт — X / 3, тобто повтор текстури ×8/3 (копія текстури з тим самим зображенням).
   const tex = (t: THREE.Texture | null, repeat: number) => {
     if (!t) return undefined;
