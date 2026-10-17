@@ -59,9 +59,17 @@ export function terrainHeightAt(heights: Float32Array, gx: number, gy: number): 
 
 /**
  * Сітка рельєфу для малювання: кожен DECIMATE-й вузол (на телефоні 771² вершин забагато), у системі гри (x, y,
- * висота) — як решта геометрії регіону (корінь регіону повертає її в систему Three.js). Текстура — ter000 з UV = X / 8, деталь — ter100 з UV = X / 3 (множення ×2, гіпотеза змішування).
+ * висота) — як решта геометрії регіону (корінь регіону повертає її в систему Three.js).
+ *
+ * Текстури — як king.exe (re/notes/ht2/terrain.md): у трикутника одна текстура, без змішування (0x61bf20 малює два
+ * списки). Усі три вершини нижче GROUND_BELOW — ґрунт `ter000` з UV = X / 3 (0x61bbd0), інакше скеля `ter100` з
+ * UV = X / 8. Окремих доріг на рельєфі немає: дороги aa (450…453 м) лежать нижче порогу — на ґрунті.
+ * Відхилення порту: сітка стала (кожен DECIMATE-й вузол), а в exe — тесселяція за камерою, тож межа ґрунт/скеля там
+ * рухається з деталізацією.
  */
 const DECIMATE = 2;
+/** Поріг висоти ґрунт/скеля, м: 474,9 − 15 − 0,5 ([0x72c0cc], ініціалізатор 0x61a850). */
+export const GROUND_BELOW = 474.9 - 15 - 0.5;
 
 export function buildTerrainMesh(heights: Float32Array, base: THREE.Texture | null, detail: THREE.Texture | null): THREE.Mesh {
   const { n, step, x0, y0 } = TERRAIN;
@@ -79,30 +87,41 @@ export function buildTerrainMesh(heights: Float32Array, base: THREE.Texture | nu
       uv[k * 2] = X / 8;
       uv[k * 2 + 1] = Y / 8;
     }
-  const index: number[] = [];
+  const ground: number[] = [];
+  const rock: number[] = [];
+  const tri = (a: number, b: number, c: number) =>
+    (Math.max(pos[a * 3 + 2], pos[b * 3 + 2], pos[c * 3 + 2]) < GROUND_BELOW ? ground : rock).push(a, b, c);
   for (let i = 0; i + 1 < m; i++)
     for (let j = 0; j + 1 < m; j++) {
       const a = i * m + j;
       const b = (i + 1) * m + j;
       // Обхід — лицем угору (+z гри).
-      index.push(a, b, a + 1, a + 1, b, b + 1);
+      tri(a, b, a + 1);
+      tri(a + 1, b, b + 1);
     }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  g.setIndex(index);
+  g.setIndex([...ground, ...rock]);
+  g.addGroup(0, ground.length, 0);
+  g.addGroup(ground.length, rock.length, 1);
   g.computeVertexNormals();
-  for (const t of [base, detail]) if (t) t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  const mat = new THREE.MeshLambertMaterial({ map: base ?? undefined, color: base ? 0xffffff : 0x8a7a55 });
-  if (detail) {
-    mat.onBeforeCompile = (sh) => {
-      sh.uniforms.detailMap = { value: detail };
-      sh.fragmentShader = sh.fragmentShader
-        .replace('#include <map_pars_fragment>', '#include <map_pars_fragment>\nuniform sampler2D detailMap;')
-        .replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.rgb *= texture2D(detailMap, vMapUv * (8.0 / 3.0)).rgb * 2.0;');
-    };
-  }
-  const mesh = new THREE.Mesh(g, mat);
+  // UV вершин — X / 8 (скеля); ґрунт — X / 3, тобто повтор текстури ×8/3 (копія текстури з тим самим зображенням).
+  const tex = (t: THREE.Texture | null, repeat: number) => {
+    if (!t) return undefined;
+    const c = t.clone();
+    c.wrapS = c.wrapT = THREE.RepeatWrapping;
+    c.repeat.set(repeat, repeat);
+    c.needsUpdate = true;
+    return c;
+  };
+  const groundMap = tex(base, 8 / 3);
+  const rockMap = tex(detail, 1);
+  const mats = [
+    new THREE.MeshLambertMaterial({ map: groundMap, color: groundMap ? 0xffffff : 0x8a7a55 }),
+    new THREE.MeshLambertMaterial({ map: rockMap, color: rockMap ? 0xffffff : 0x6f6355 }),
+  ];
+  const mesh = new THREE.Mesh(g, mats);
   mesh.name = 'terrain';
   return mesh;
 }

@@ -111,7 +111,10 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
     dispose();
     if (terrainMesh) {
       terrainMesh.geometry.dispose();
-      (terrainMesh.material as THREE.Material).dispose();
+      for (const m of ([] as THREE.Material[]).concat(terrainMesh.material)) {
+        (m as THREE.MeshLambertMaterial).map?.dispose();
+        m.dispose();
+      }
     }
     for (const g of [trees, glows])
       g.traverse((o) => {
