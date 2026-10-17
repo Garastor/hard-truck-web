@@ -598,6 +598,20 @@ body.ht2-orig-ui .touch-btn.gas.pressed::before {
   filter: brightness(1.35) saturate(1.2);
 }
 
+/* «Різко» (Ctrl) на кнопці керма — зсув пальця чи сильне натискання (input.ts sharpGesture): кнопка мерехтить яскравістю. */
+.touch-btn.sharp-on {
+  animation: ht2-sharp-flicker 0.36s ease-in-out infinite alternate;
+}
+
+@keyframes ht2-sharp-flicker {
+  from {
+    filter: brightness(1);
+  }
+  to {
+    filter: brightness(2.1) saturate(1.4);
+  }
+}
+
 /* Відкрита бічна панель F1–F4: ліва група (згорнута «☰») — під панеллю, щоб не перекривати її. */
 body.ht2-side-open .ht2-hud {
   z-index: 2;

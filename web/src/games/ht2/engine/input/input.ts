@@ -69,8 +69,17 @@ const ICONS = {
   brake: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M4 7l8 11 8-11z"/></svg>',
 };
 
-/** Чи показувати сенсорну кнопку «Різко» (поки сховано). */
-const SHARP_TOUCH_BUTTON = false;
+/**
+ * «Різко» (Ctrl) на сенсорному екрані (на прохання користувача; окремої кнопки немає): на кнопці керма — зсунути палець
+ * у бік повороту на SHARP_SLIDE ширини кнопки (назад до SHARP_SLIDE_OFF — вимкнути), або сильно натиснути, де екран
+ * міряє силу (3D Touch на iPhone: PointerEvent.pressure, без датчика — 0,5): від SHARP_FORCE, вимкнути нижче
+ * SHARP_FORCE_OFF. Діє, доки кнопку тримають; кнопка в цей час мерехтить (клас sharp-on).
+ */
+const SHARP_SLIDE = 0.3;
+const SHARP_SLIDE_OFF = 0.12;
+const SHARP_FORCE = 0.8;
+const SHARP_FORCE_OFF = 0.6;
+const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 type Command = 'f1' |'f2' | 'f3' | 'f4' | 'f5' | 'menu' | 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror' | 'cab' | 'swap' | 'attach';
 
@@ -135,8 +144,8 @@ export class Input {
   private readonly held = new Set<Action>();
   /** Швидкість машини, км/год (для профілю: кермо на швидкості повертається повільніше). */
   speedKmh = 0;
-  /** «Різко» з сенсорної кнопки — перемикач (утримувати разом з кермом одним пальцем незручно). */
-  private sharpLatched = false;
+  /** Кнопки керма, на яких зараз «різко» (зсув пальця чи сильне натискання). */
+  private readonly touchSharp = new Set<HTMLElement>();
   private steerSmooth = 0;
   private steerHold = 0;
   private steerDir = 0;
@@ -236,7 +245,7 @@ export class Input {
       padBrake = p.buttons[6]?.value ?? 0;
       break;
     }
-    const sharp = this.held.has('sharp') || this.sharpLatched;
+    const sharp = this.held.has('sharp') || this.touchSharp.size > 0;
     if (this.profile) this.steerProfile(dt, target, sharp, this.profile);
     // Кермо з клавіатури як в оригіналі (телеметрія s6, поля [0x22f]/[0x230]): при утриманні — плавна
     // S-крива від 0 до повного за 1,1 с; відпустив — експоненційно до нуля (≈ 4,3 1/с).
@@ -406,19 +415,10 @@ export class Input {
       parent.append(b);
       return b;
     };
-    btn('left', '', 'left', undefined, ICONS.left);
-    btn('right', '', 'right', undefined, ICONS.right);
+    this.sharpGesture(btn('left', '', 'left', undefined, ICONS.left), -1);
+    this.sharpGesture(btn('right', '', 'right', undefined, ICONS.right), 1);
     btn('brake', '', 'brake', undefined, ICONS.brake);
     btn('gas', '', 'gas', undefined, ICONS.gas);
-    // Сенсорну «Різко» поки сховано (на прохання користувача; що з нею робити — вирішимо). Ctrl на клавіатурі працює.
-    if (this.profile?.sharp && SHARP_TOUCH_BUTTON) {
-      // «Різко» (Ctrl): на дотик — перемикач, підсвічений, поки ввімкнений.
-      const b = btn('sharp', 'РІЗКО');
-      b.addEventListener('pointerdown', () => {
-        this.sharpLatched = !this.sharpLatched;
-        b.classList.toggle('on', this.sharpLatched);
-      });
-    }
     // Група «ще» (згорнута): фари, дзеркало (лише з кабіни), двірники, двигун (клавіші L, M, W, пробіл) і сигнал;
     // кабіни 2D у другій грі немає — кнопку прибрано.
     const more = document.createElement('div');
@@ -453,6 +453,50 @@ export class Input {
   }
 
   private touchUi: HTMLElement | null = null;
+
+  /** «Різко» на кнопці керма: зсув пальця в бік повороту dir (−1 ліворуч, 1 праворуч) чи сильне натискання. */
+  private sharpGesture(b: HTMLElement, dir: number): void {
+    if (!this.profile?.sharp) return;
+    let x0 = 0;
+    let slide = false;
+    let force = false;
+    const set = () => {
+      const on = slide || force;
+      b.classList.toggle('sharp-on', on);
+      if (on) this.touchSharp.add(b);
+      else this.touchSharp.delete(b);
+    };
+    const pressure = (e: PointerEvent) => {
+      // Без датчика сили натиснутий дотик має 0,5 (мишка — 0,5 чи 0), тож поріг 0,8 спрацьовує лише з датчиком.
+      // Лише iPhone/iPad (3D Touch): на Android pressure часто — площа дотику, і тверде натискання вмикало б «різко».
+      if (!IOS || e.pointerType !== 'touch') return;
+      if (e.pressure >= SHARP_FORCE) force = true;
+      else if (e.pressure < SHARP_FORCE_OFF) force = false;
+    };
+    b.addEventListener('pointerdown', (e) => {
+      x0 = e.clientX;
+      slide = false;
+      force = false;
+      pressure(e);
+      set();
+    });
+    b.addEventListener('pointermove', (e) => {
+      if (!b.classList.contains('pressed')) return;
+      const w = Math.max(40, b.getBoundingClientRect().width);
+      const d = ((e.clientX - x0) * dir) / w;
+      if (d >= SHARP_SLIDE) slide = true;
+      else if (d < SHARP_SLIDE_OFF) slide = false;
+      pressure(e);
+      set();
+    });
+    const off = () => {
+      slide = false;
+      force = false;
+      set();
+    };
+    b.addEventListener('pointerup', off);
+    b.addEventListener('pointercancel', off);
+  }
   /** Підсвітка увімкнених функцій у групі «ще» (фари, дзеркало…); hidden — кнопку не показувати. */
   /** unavailable — функції немає (навігація без «НС»): кнопка видна, але сіра. */
   setToggle(cmd: Command, on: boolean, hidden = false, unavailable = false): void {
