@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseB3d } from '@ht2/engine/formats/b3d';
 import { weatherTriggers } from '@ht2/world/weatherRooms';
-import { Weather } from '@ht2/world/weather';
+import { Weather, WeatherCycle } from '@ht2/world/weather';
 import { decodeCp1251 } from '@ht2/engine/formats/binary';
 import { HT2_DIR } from '../gameDirs';
 
@@ -48,5 +48,22 @@ describe.skipIf(!existsSync(join(HT2_DIR, 'ENV/aa.b3d')))('Погода кімн
     expect(w.at(14, 0, 1, { set: 5, k: 0.5 }).fogFar).toBeCloseTo((base.fogFar + tun.fogFar) / 2, 5);
     // У тунелі сонця на довкілля немає (sunenv не задано — 0 0 0).
     expect(tun.sun.getHex()).toBe(0);
+  });
+});
+
+describe('Добова зміна погоди WEATHER1→4 (king.exe 0x5a9540)', () => {
+  it('щоночі 02:00…03:12 — плавний перехід до наступного набору по колу', () => {
+    const c = new WeatherCycle();
+    expect(c.update(14)).toEqual({ from: 1, to: 1, t: 0 });
+    expect(c.update(2)).toEqual({ from: 1, to: 2, t: 0 });
+    const mid = c.update(2.6);
+    expect(mid.from).toBe(1);
+    expect(mid.to).toBe(2);
+    expect(mid.t).toBeCloseTo(0.5, 5);
+    expect(c.update(4)).toEqual({ from: 2, to: 2, t: 0 });
+    for (const [h, set] of [[2.5, 3], [5, 3], [2.5, 4], [5, 4], [2.5, 1], [5, 1]] as const) {
+      c.update(h);
+      if (h === 5) expect(c.set).toBe(set);
+    }
   });
 });

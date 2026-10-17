@@ -7,7 +7,7 @@ import { decodeCp1251 } from '../engine/formats/binary';
 import { parseWay, type Way } from '../formats/way';
 import { SKY_LIGHT, SceneAssembler, buildScene, type BuiltScene } from '../engine/render/sceneBuilder';
 import { HT2_REGIONS, readTextures, regionFiles, type TexLevel } from '../files';
-import { DAY_TIME_HOUR, Weather, type DayTime, type Sky } from './weather';
+import { DAY_TIME_HOUR, Weather, WeatherCycle, type DayTime, type Sky } from './weather';
 import { TREE_LIGHT, buildGlows, buildTrees, type TreeSway } from './trees';
 import { illumOn, sunDirection, sunHeight } from './climate';
 import { LensFlare } from './lensFlare';
@@ -232,10 +232,12 @@ export class Ht2World {
    */
   /** Спецнабір погоди кімнати (world/weatherRooms.ts): WEATHERn з вагою k. */
   special = { set: 0, k: 0 };
+  /** Добова зміна звичайної погоди WEATHER1→4 (king.exe 0x5a9540). */
+  readonly cycle = new WeatherCycle();
 
   /** Прапорці набору, що діє (king.exe: маска спецнабору при вазі ≥ 0,05, інакше звичайного). */
   weatherFlags(): { rain: boolean; sun: boolean; thund: boolean } {
-    const set = this.special.set && this.special.k >= 0.05 ? this.special.set : 1;
+    const set = this.special.set && this.special.k >= 0.05 ? this.special.set : this.cycle.set;
     return this.weather?.flags(set) ?? { rain: true, sun: true, thund: true };
   }
 
@@ -244,7 +246,7 @@ export class Ht2World {
     this.weatherW = w;
     this.applyIllum();
     if (!this.weather) return;
-    const l = this.weather.at(hour, b, 1, this.special);
+    const l = this.weather.at(hour, b, this.cycle.update(hour), this.special);
     const fog = this.scene.fog as THREE.Fog;
     fog.color.copy(l.fog);
     fog.near = l.fogNear;

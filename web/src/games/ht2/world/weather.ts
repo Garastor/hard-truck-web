@@ -13,7 +13,8 @@ import { dayFactor, dayPhase, sunHeight } from './climate';
  * 0,2; сонце `sunenv` — 0…0,05), сутінки до 14:00 — srise, після — sset; good ↔ bad — за «негодою» b 0…1.
  * Звичайна погода — WEATHER1; спецнабори 5…8 підмішує кімната (подія `weather_change`, world/weatherRooms.ts):
  * X = (1 − k)·звичайна + k·спецнабір для всіх кольорів і меж туману (king.exe 0x5a8e90, 0x5a9240; k < 0,01 — 0,
- * > 0,99 — 1). Добової зміни WEATHER1→2→3→4 (0x5a9540) порт ще не робить.
+ * > 0,99 — 1). Звичайна погода щоночі змінюється по колу WEATHER1→2→3→4→1 (0x5a9540, WeatherCycle): поки фаза доби
+ * < 0,05 (02:00…03:12 гри) — плавний перехід до наступного набору.
  */
 export type Sky = 'good' | 'bad';
 export type DayTime = 'night' | 'srise' | 'day' | 'sset';
@@ -36,6 +37,28 @@ export interface Light {
 export const DAY_TIME_HOUR: Record<DayTime, number> = { night: 2, srise: 6, day: 14, sset: 22 };
 
 type Rgb = [number, number, number];
+
+/**
+ * Добова зміна звичайної погоди (king.exe 0x5a9540): на старті — WEATHER1; поки фаза доби < 0,05 (02:00…03:12 гри) —
+ * перехід до наступного набору по колу 1→2→3→4→1 з вагою фаза·20, потім він стає поточним.
+ */
+export class WeatherCycle {
+  set = 1;
+  private next = 0;
+
+  update(hour: number): { from: number; to: number; t: number } {
+    const ph = dayPhase(hour);
+    if (ph < 0.05) {
+      this.next ||= (this.set % 4) + 1;
+      return { from: this.set, to: this.next, t: ph * 20 };
+    }
+    if (this.next) {
+      this.set = this.next;
+      this.next = 0;
+    }
+    return { from: this.set, to: this.set, t: 0 };
+  }
+}
 
 export class Weather {
   private readonly cache = new Map<string, Rgb>();
@@ -95,12 +118,22 @@ export class Weather {
   }
 
   /** Світло на годину доби (0…24) і негоду b (0…1); special — спецнабір кімнати з вагою k. */
-  at(hour: number, b: number, set = 1, special?: { set: number; k: number }): Light {
+  at(hour: number, b: number, set: number | { from: number; to: number; t: number } = 1, special?: { set: number; k: number }): Light {
     const k = special && special.set ? (special.k < 0.01 ? 0 : special.k > 0.99 ? 1 : special.k) : 0;
-    if (k === 0) return this.one(hour, b, set);
-    const sp = this.one(hour, b, special!.set);
-    if (k === 1) return sp;
-    const base = this.one(hour, b, set);
+    const sp = k > 0 ? this.one(hour, b, special!.set) : null;
+    if (k === 1) return sp!;
+    // Звичайна: набір чи перехід між двома (e0 king.exe; < 0,01 — 0, > 0,99 — 1).
+    let base: Light;
+    if (typeof set === 'number') base = this.one(hour, b, set);
+    else {
+      const t = set.t < 0.01 ? 0 : set.t > 0.99 ? 1 : set.t;
+      base = t === 0 ? this.one(hour, b, set.from) : t === 1 ? this.one(hour, b, set.to) : Weather.blend(this.one(hour, b, set.from), this.one(hour, b, set.to), t);
+    }
+    return sp ? Weather.blend(base, sp, k) : base;
+  }
+
+  /** Лінійне змішування світла: a·(1 − k) + s·k (кольори й межі туману). */
+  private static blend(base: Light, sp: Light, k: number): Light {
     const c = (a: THREE.Color, s: THREE.Color) => a.clone().lerp(s, k);
     const n = (a: number, s: number) => a + (s - a) * k;
     return {

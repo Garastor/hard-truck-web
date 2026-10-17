@@ -1410,8 +1410,10 @@ export class Ht2Drive {
     if (this.traffic) this.traffic.lights = trafficLights(hour) && trafficHeadlights();
     this.rainSound ??= this.audio?.loopSound('rain') ?? null;
     this.windSound ??= this.audio?.loopSound('wind') ?? null;
-    this.rainSound?.set(this.sheltered ? 0 : c.rainVolume);
-    this.windSound?.set(c.windVolume);
+    // Набір кімнати з thund=off (тунелі): шум дощу й вітру не гучніший за 1 − k (king.exe 0x5a9dc0) — стихає з глибиною.
+    const quiet = this.weatherFlags.thund ? 1 : 1 - this.world.special.k;
+    this.rainSound?.set(this.sheltered ? 0 : Math.min(quiet, c.rainVolume));
+    this.windSound?.set(Math.min(quiet, c.windVolume));
     const on = this.lightsManual ?? dusk;
     for (const l of this.lamps) l.visible = on;
     // Габарити вантажівки (SizeLightKey: 1 — горять) — разом з фарами.
