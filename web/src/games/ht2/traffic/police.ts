@@ -207,6 +207,14 @@ export class Police {
     return this.cops.flatMap((c, id) => (c.v.visual.position.distanceTo(player) < r ? [{ id, pos: c.v.visual.position, person: c.person }] : []));
   }
 
+  /**
+   * Мигалки й сирена (king.exe run_car 0x4d1360 → +0x55A4, 0x546b60): машина веде погоню — лічильник 1…19 (не
+   * заборонена зона, 34) і гравець ближче 100 м. «Електрику» машини (0x557090 > 0,3) порт не моделює.
+   */
+  siren(c: Cop, player: THREE.Vector3): boolean {
+    return c.engaged && this.phase > 0 && !this.zone && c.v.visual.position.distanceTo(player) < ACT_R;
+  }
+
   /** Чи є машина міліції ближче r (штрафи за ДТП і червоне світло — лише при міліції в радіусі 200 м, 0x4cfd10). */
   near(p: THREE.Vector3, r = 200): boolean {
     return this.cops.some((c) => c.v.visual.position.distanceTo(p) < r);

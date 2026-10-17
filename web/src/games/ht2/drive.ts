@@ -474,7 +474,8 @@ export class Ht2Drive {
       this.police = new Police(parseAmbushes(regionMods, this.world.regions.values()), {
         rapier: this.rapier,
         roads: this.roads,
-        make: (pos, forward) => this.makeCar('BmwM5police', 0, pos, forward, 0),
+        // Динамічна модель — живі перемикачі CopLightKey / CopSirenKey (мигалки й сирена).
+        make: (pos, forward) => this.makeCar('BmwM5police', 0, pos, forward, 0, true),
         remove: (v) => this.removeCar(v),
         sees: (p) => this.canSee(p),
         obstacles: () => [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...(this.truckers?.positions ?? [])],
@@ -1399,10 +1400,10 @@ export class Ht2Drive {
   }
 
   /** Машина з vehicle.tech на моделі руху king.exe (фізичний трафік, міліція). */
-  private makeCar(carNode: string, variant: number, pos: THREE.Vector3, forward: THREE.Vector3, speed: number): TruckVehicle | null {
+  private makeCar(carNode: string, variant: number, pos: THREE.Vector3, forward: THREE.Vector3, speed: number, dynamic = false): TruckVehicle | null {
     const rec = this.trucks.records.find((r) => r.carNode === carNode);
     const def = rec && truckDef(this.trucks, rec);
-    const model = def && buildTruckModel(this.trucks.asm, def, false);
+    const model = def && buildTruckModel(this.trucks.asm, def, dynamic);
     if (!rec || !def || !model) return null;
     if (variant > 0) recolor(model.root, this.trucks, variant + 1);
     // Одразу на колесах на поверхні дороги (низ моделі + хід підвіски в спокої ≈ 0,1 м), а не на 2,5 м вище з падінням:
@@ -1421,7 +1422,47 @@ export class Ht2Drive {
     v.body.setLinvel({ x: forward.x * speed, y: 0, z: forward.z * speed }, true);
     v.engine.engageFor(speed);
     this.world.scene.add(v.visual);
+    if (model.setSwitch) this.carSwitches.set(v, model.setSwitch);
     return v;
+  }
+
+  /** Перемикачі моделей машин з динамічною моделлю (міліція: мигалки й сирена). */
+  private readonly carSwitches = new WeakMap<TruckVehicle, (name: string, state: number) => void>();
+  private readonly sirenSounds = new Map<TruckVehicle, NonNullable<ReturnType<EngineAudio['loopSound']>>>();
+
+  /**
+   * Мигалки й сирена міліції (king.exe 0x546b60, 0x547030; police.md «Мигалки й сирена»): у погоні ближче 100 м —
+   * CopSirenKey = 1 і CopLightKey = 1 + trunc(6·frac(t)) (оберт за секунду, t — ігрові секунди), інакше обидва 0;
+   * звук policeSound у точці машини, гучність 0,7, повна до 40 м, лінійно до нуля на 400 м.
+   */
+  private updateSirens(): void {
+    const cops = this.police?.cops ?? [];
+    const t = this.careerMode ? this.careerMode.career.time : this.freeTime;
+    const phase = 1 + Math.floor(6 * (t - Math.floor(t)));
+    const p = this.truck.visual.position;
+    const live = new Set<TruckVehicle>();
+    for (const c of cops) {
+      const on = this.police!.siren(c, p);
+      const sw = this.carSwitches.get(c.v);
+      sw?.('CopSirenKey', on ? 1 : 0);
+      sw?.('CopLightKey', on ? phase : 0);
+      if (!on) continue;
+      live.add(c.v);
+      let snd = this.sirenSounds.get(c.v);
+      if (!snd) {
+        const s = this.audio?.loopSound('police') ?? null;
+        if (!s) continue;
+        snd = s;
+        this.sirenSounds.set(c.v, snd);
+      }
+      const d = c.v.visual.position.distanceTo(p);
+      snd.set(0.7 * (d < 40 ? 1 : Math.max(0, 1 - (d - 40) / 360)));
+    }
+    for (const [v, s] of this.sirenSounds)
+      if (!live.has(v)) {
+        s.stop();
+        this.sirenSounds.delete(v);
+      }
   }
 
   /** Поверхня дороги під точкою (лише нерухомі колізії — не дах іншої машини); null — колізій немає. */
@@ -2253,6 +2294,7 @@ export class Ht2Drive {
     this.updatePolice(dt);
     this.updateCopters(dt);
     this.updateRadars(dt);
+    this.updateSirens();
     this.updateFire(dt);
     this.updateMafia(dt);
     if (this.markets && this.careerMode) this.markets.update(this.truck.visual.position, Math.floor(this.careerMode.career.time / 86400));
