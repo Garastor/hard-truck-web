@@ -20,7 +20,8 @@ import { ukName } from '../ui/uk';
  * вживана: дешевше на 40 %, з пошкодженням 30 %.
  */
 const SHOW_R = 450;
-const NEAR_R = 22;
+/** Вікно продажу (king.exe 0x56fc10): ближче 20 м до машини, що продається (без умови швидкості). */
+const NEAR_R = 20;
 const USED_DISCOUNT = 0.65;
 const STOLEN_DISCOUNT = 0.45;
 export const USED_DAMAGE = 0.3;
@@ -133,6 +134,28 @@ export class Markets {
   /** Ринок, біля місць якого стоїть вантажівка. */
   at(p: THREE.Vector3): Market | null {
     return this.list.find((m) => m.spots.some((s) => Math.hypot(s.pos.x - p.x, s.pos.z - p.z) < NEAR_R)) ?? null;
+  }
+
+  /**
+   * Машина на продаж, ближча за 20 м до точки (king.exe 0x56fc10: щокадру обхід машин із прапорцем «продається» чи
+   * «шукає роботу», відстань між машинами < 20 м — подія 0x12/0x18, вікно «ПРОДАЁТСЯ» / «ИЩУ РАБОТУ»; швидкість не
+   * перевіряється). skip — модель, якої не показуємо (своя). Найближча з тих, що поруч.
+   */
+  nearSale(p: THREE.Vector3, day: number, skip?: string): { market: Market; item: ForSale } | null {
+    let best: { market: Market; item: ForSale } | null = null;
+    let bd = NEAR_R;
+    for (const m of this.list) {
+      if (!m.spots.some((s) => Math.hypot(s.pos.x - p.x, s.pos.z - p.z) < NEAR_R + 5)) continue;
+      for (const item of this.stock(m, day)) {
+        if (item.rec.carNode === skip) continue;
+        const d = m.spots[item.spot].pos.distanceTo(p);
+        if (d < bd) {
+          bd = d;
+          best = { market: m, item };
+        }
+      }
+    }
+    return best;
   }
 
   /** Показати машини на ринках поблизу (і сховати далекі), день гри — для асортименту. */

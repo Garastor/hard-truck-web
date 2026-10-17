@@ -219,6 +219,22 @@ export class CareerMode {
       }
       return;
     }
+    // Машина на продаж чи водій, що шукає роботу (king.exe 0x56fc10): ближче 20 м — вікно, без умови швидкості;
+    // відʼїхав — вікно зникає.
+    const day = Math.floor(c.time / 86400);
+    const sale = this.drive.escArt ? (this.drive.markets?.nearSale(p, day, c.truck) ?? null) : null;
+    const skey = sale ? `m${sale.market.id}:${sale.item.spot}` : null;
+    if (this.shownAt?.startsWith('m') && this.shownAt !== skey) {
+      this.closePanel();
+      this.shownAt = null;
+    }
+    if (sale) {
+      if (this.shownAt !== skey && !this.drive.escArtLoading) {
+        this.shownAt = skey;
+        this.salePanel(sale.market, sale.item);
+      }
+      return;
+    }
     if (this.drive.truck.speedKmh > 3) {
       this.closePanel();
       // Відʼїхали — вікно цього місця можна показати знову.
@@ -234,11 +250,11 @@ export class CareerMode {
       else void this.atSto(this.stoNames[sto]);
       return;
     }
-    const market = this.drive.markets?.at(p);
-    if (market && this.shownAt !== `m${market.id}`) {
-      this.shownAt = `m${market.id}`;
-      if (this.drive.escArt) this.salePanel(market);
-      else void this.atMarket(market);
+    // Без графіки оригіналу — діалог порту (зупинитись біля ринку).
+    const market = this.drive.escArt ? null : this.drive.markets?.at(p);
+    if (market && this.shownAt !== `M${market.id}`) {
+      this.shownAt = `M${market.id}`;
+      void this.atMarket(market);
       return;
     }
     const fuel = this.fuelSpots.findIndex((d) => Math.hypot(d[0] - gx, d[1] - gy) < FUEL_RADIUS);
@@ -348,15 +364,11 @@ export class CareerMode {
     );
   }
 
-  /** Ринок (вікно «ПРОДАЁТСЯ»): машина на найближчому місці ринку; доплата — різниця зі старою (у залік — половина). */
-  private salePanel(m: Market): void {
+  /** Ринок (вікно «ПРОДАЁТСЯ»): машина near, біля якої стоїть гравець; доплата — різниця зі старою (у залік — половина). */
+  private salePanel(m: Market, near: ForSale): void {
     const c = this.career;
     const markets = this.drive.markets!;
     const day = Math.floor(c.time / 86400);
-    const p = this.drive.truck.visual.position;
-    const list = markets.stock(m, day).filter((s) => s.rec.carNode !== c.truck);
-    const near = list.reduce<ForSale | null>((best, s) => (!best || m.spots[s.spot].pos.distanceTo(p) < m.spots[best.spot].pos.distanceTo(p) ? s : best), null);
-    if (!near) return;
     const current = this.drive.drivableTrucks().find((r) => r.carNode === c.truck);
     const tradeIn = Math.round((current?.price ?? 0) * 0.5);
     // На одному місці ринку — водій, що шукає роботу (зі своєю машиною).
@@ -818,6 +830,7 @@ export class CareerMode {
     const f = this.drive.truck.forward();
     this.career.pos = [p.x, -p.z, p.y];
     this.career.heading = [f.x, -f.z];
+    if (this.drive.presents) this.career.presents = this.drive.presents.snapshot();
     saveCareer(this.career);
   }
 
