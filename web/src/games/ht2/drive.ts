@@ -137,6 +137,21 @@ const CHASE_LAG = 0.6;
 const CHASE_LOOK = 10;
 /** Далі за стільки метрів від свого місця камера не «доганяє», а переставляється (телепорт, 911). */
 const CHASE_JUMP = 60;
+
+/**
+ * Точки вздовж машини у світі — для трафіку (traffic.update: навколо кожної півдовжина 2,5 м): від заду до переду
+ * габариту, крайні — на 2 м всередину, крок не більше 4 м.
+ */
+function alongPoints(v: TruckVehicle): THREE.Vector3[] {
+  const g = v.lightGeometry;
+  const a = g.frontZ + 2;
+  const b = Math.max(a, g.backZ - 2);
+  const n = Math.max(1, Math.ceil((b - a) / 4));
+  v.visual.updateMatrix();
+  const out: THREE.Vector3[] = [];
+  for (let i = 0; i <= n; i++) out.push(new THREE.Vector3(0, 0, a + ((b - a) * i) / n).applyMatrix4(v.visual.matrix));
+  return out;
+}
 /** Займання від удару об нерухоме: сила удару (зміна швидкості з урахуванням рами), м/с (king.exe 0x554c20: x > 35). */
 const IMPACT_FIRE = 35;
 /** Вибух машини (_Blow) у кар'єрі: +0,4 пошкодження (0x555550(−0,4)). */
@@ -2566,7 +2581,13 @@ export class Ht2Drive {
         void this.finishRescue();
       }
     }
-    this.traffic?.update(dt, this.truck.visual.position, [...(this.trailer?.points() ?? []), ...rivals]);
+    // Вантажівки для трафіку — точками по всій довжині (трафік бере півдовжину 2,5 м навколо кожної): одна точка в
+    // центрі довгої машини, що стоїть навскіс чи частково в смузі, лишала задок або передок «невидимим» — трафік їхав
+    // у нього й таранив знову після кожного здавання назад.
+    const trucks = [this.truck, ...(this.truckers?.list ?? []).map((r) => r.truck), ...[...(this.truckers?.hired.values() ?? [])].map((r) => r.truck)];
+    // Гравець (центр — та сама точка, що й player) разом із напівпричепом — одне тіло: обʼїжджають усе.
+    const me = [this.truck.visual.position, ...alongPoints(this.truck), ...(this.trailer?.points() ?? [])];
+    this.traffic?.update(dt, this.truck.visual.position, [me, ...trucks.slice(1).map(alongPoints)]);
     const obstacles = [this.truck.visual.position, ...(this.trailer?.points() ?? []), ...(this.traffic?.cars.map((c) => c.pos) ?? [])];
     this.updateSurface();
     this.acc += dt;

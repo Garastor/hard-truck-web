@@ -270,6 +270,20 @@ export interface Obstacle {
   half: number;
   /** Машина трафіку (для перевірки смуг при перестроюванні). */
   mover?: Mover;
+  /** Тіло, якому належить точка (вантажівка — кілька точок уздовж): обʼїжджають тіло цілком. */
+  group?: object;
+}
+
+/** Та сама перешкода чи інша точка того самого тіла. */
+function sameBody(a: Obstacle, b: Obstacle): boolean {
+  return a === b || (a.group !== undefined && a.group === b.group);
+}
+
+/** Точка тіла перешкоди, найдальша вперед за курсом heading (кінець обʼїзду — коли минули її). */
+function frontOf(o: Obstacle, obstacles: readonly Obstacle[], heading: THREE.Vector3): THREE.Vector3 {
+  let best = o.pos;
+  for (const x of obstacles) if (sameBody(x, o) && x.pos.dot(heading) > best.dot(heading)) best = x.pos;
+  return best;
 }
 
 export function newMover(line: RoadLine, seg: number, t: number, cruise: number, halfLen: number): Mover {
@@ -647,11 +661,13 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
     const w = m.line.laneWidth;
     const goals = [m.line.lane > 0 ? -w : null, m.line.lane < m.line.lanes - 1 ? w : null, m.line.flags & 12 ? null : -(m.line.lane + 1) * w, (m.line.lanes - m.line.lane) * w];
     for (const g of goals) {
-      if (g === null || leaderOn(m, path, obstacles, g)?.obstacle === leader.obstacle) continue;
-      const block = leaderOn(m, path, obstacles.filter((o) => o !== leader.obstacle), g);
+      if (g === null) continue;
+      const same = leaderOn(m, path, obstacles, g);
+      if (same && sameBody(same.obstacle, leader.obstacle)) continue;
+      const block = leaderOn(m, path, obstacles.filter((o) => !sameBody(o, leader.obstacle)), g);
       if (block && block.gap < BYPASS_CLEAR) continue;
       m.latGoal = g;
-      m.bypass = leader.obstacle.pos;
+      m.bypass = frontOf(leader.obstacle, obstacles, m.heading);
       m.waited = 0;
       break;
     }

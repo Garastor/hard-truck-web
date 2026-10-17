@@ -226,8 +226,11 @@ export class Traffic {
     return tpl.clone();
   }
 
-  /** player — гравець; extra — інші точки, яких машини не мають наїхати (напівпричіп гравця, суперники). */
-  update(dt: number, player: THREE.Vector3, extra: readonly THREE.Vector3[] = []): void {
+  /**
+   * player — гравець; extra — інші точки, яких машини не мають наїхати (напівпричіп гравця, суперники); масив точок —
+   * одне тіло (вантажівка вздовж): обʼїжджають його цілком.
+   */
+  update(dt: number, player: THREE.Vector3, extra: readonly (THREE.Vector3 | readonly THREE.Vector3[])[] = []): void {
     if (!this.started) {
       this.started = true;
       // Постійні машини dumb — на старті по всій мережі (king.exe createPlayersRegular: N·T).
@@ -259,12 +262,14 @@ export class Traffic {
     }
     this.cars = this.all.filter((c) => c.root || c.vehicle);
 
-    const avoid = [player, ...extra];
+    const groups = new Map<THREE.Vector3, object>();
+    for (const e of extra) if (Array.isArray(e)) for (const p of e) groups.set(p, e);
+    const avoid = [player, ...extra.flat()];
     const obstacles: Obstacle[] = this.cars.map((c) => ({ pos: c.pos, vel: c.heading.clone().multiplyScalar(c.speed), half: c.halfLen, mover: c }));
     avoid.forEach((p, i) => {
       const prev = this.avoidPrev[i];
       const vel = prev && dt > 0 && this.avoidPrev.length === avoid.length ? p.clone().sub(prev).divideScalar(dt) : new THREE.Vector3();
-      obstacles.push({ pos: p, vel: vel.lengthSq() < 900 ? vel : new THREE.Vector3(), half: AVOID_HALF });
+      obstacles.push({ pos: p, vel: vel.lengthSq() < 900 ? vel : new THREE.Vector3(), half: AVOID_HALF, group: groups.get(p) });
     });
     this.avoidPrev = avoid.map((p) => p.clone());
     for (const c of this.all) {
