@@ -47,6 +47,8 @@ export interface TabMapScene {
   /** Напрям руху гравця (Three.js). */
   heading: THREE.Vector3;
   rivals: readonly THREE.Vector3[];
+  /** Свої наймані водії (career/hired.ts) — `I_tr_myc`, без імені. */
+  mine?: readonly THREE.Vector3[];
   /** Причепи з вантажем (дорожні місії, vehicles/presents.ts) — `I_trailer`, без блимання. */
   trailers?: readonly THREE.Vector3[];
   /** Ціль (склад чи заправка) — її значок блимає. */
@@ -209,6 +211,7 @@ export class TabMap {
       if (s.finishLabel) label(s.finishLabel, s.finish);
     }
     for (const t of s.trailers ?? []) icon('I_trailer', t);
+    for (const m of s.mine ?? []) icon('I_tr_myc', m);
     for (const r of s.rivals) icon('I_tr_opp', r);
     // Напрям: сектор 15° від півночі карти (−z) за годинниковою стрілкою, з відкиданням дробу, як у king.exe.
     const len = Math.hypot(s.heading.x, s.heading.z) || 1;

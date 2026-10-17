@@ -21,6 +21,8 @@ export interface HiredDriver {
   /** Уже виплачено водієві (аванс) і принесено прибутку, $. */
   advance: number;
   profit: number;
+  /** Де водій на дорогах (career/hired.ts): лінія мережі й відстань уздовж неї, м. */
+  road?: { line: string; s: number };
 }
 
 /** Строк ліцензії, с ігрового часу (доба гри). */

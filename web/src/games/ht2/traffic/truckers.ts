@@ -18,6 +18,9 @@ import type { Ht2Drive } from '../drive';
  * зіткнення з ними — як з гравцем. Замовлень і торгівлі вони поки не ведуть (гіпотеза: у грі — конкуренти за вантажі).
  */
 const MAX = 4;
+/** Найманий водій гравця стає машиною ближче HIRED_ON і знову абстрактним далі HIRED_OFF, м (career/hired.ts). */
+const HIRED_ON = 300;
+const HIRED_OFF = 450;
 const SPAWN_MIN = 140;
 const SPAWN_MAX = 450;
 const DESPAWN = 650;
@@ -45,6 +48,8 @@ export function truckerNames(sch: SExpr[]): string[] {
 
 export class Truckers {
   readonly list: Rival[] = [];
+  /** Наймані водії гравця, що зараз машиною на дорозі (за іменем; career/hired.ts). */
+  readonly hired = new Map<string, Rival>();
   private timer = 0;
   private nameIndex = Math.floor(Math.random() * 51);
 
@@ -63,12 +68,56 @@ export class Truckers {
   }
 
   get positions(): THREE.Vector3[] {
-    return this.list.map((r) => r.truck.visual.position);
+    return [...this.list, ...this.hired.values()].map((r) => r.truck.visual.position);
+  }
+
+  /**
+   * Наймані водії гравця (king.exe: найнятий — звичайний далекобійник ІІ, ближче — фізична машина): want — усі наймані з
+   * абстрактною позицією на дорозі; ближче HIRED_ON у завантаженому регіоні — машина з автопілотом, далі HIRED_OFF —
+   * знову абстрактний (позицію веде career/hired.ts). Звільнені — прибираються.
+   */
+  syncHired(want: readonly { name: string; carNode: string; pos: THREE.Vector3; forward: THREE.Vector3 }[], player: THREE.Vector3): void {
+    const names = new Set(want.map((w) => w.name));
+    for (const [name, r] of this.hired) {
+      const far = r.truck.visual.position.distanceTo(player) > HIRED_OFF;
+      const line = this.roads.nearest(r.truck.visual.position);
+      if (!names.has(name) || far || (line && !this.loaded(line.line.region)) || r.truck.body.translation().y < -500) this.dropHired(name);
+    }
+    for (const w of want) {
+      if (this.hired.has(w.name) || w.pos.distanceTo(player) > HIRED_ON) continue;
+      const line = this.roads.nearest(w.pos);
+      if (!line || !this.loaded(line.line.region)) continue;
+      const rec = drivable(this.drive.trucksData).find((r) => r.carNode === w.carNode);
+      const r = rec && this.make(rec, 0, w.pos, w.forward, w.name);
+      if (r) this.hired.set(w.name, r);
+    }
+  }
+
+  /** Прибрати машину найманого (стане абстрактним; поміняв машину — зʼявиться з новою моделлю). */
+  dropHired(name: string): void {
+    const r = this.hired.get(name);
+    if (!r) return;
+    this.drive.world.scene.remove(r.truck.visual);
+    r.truck.dispose();
+    this.hired.delete(name);
+  }
+
+  /** Машина далекобійника з автопілотом у точці дороги. */
+  private make(rec: ReturnType<typeof drivable>[number], variant: number, at: THREE.Vector3, forward: THREE.Vector3, name: string): Rival | null {
+    const def = truckDef(this.drive.trucksData, rec);
+    const model = def && buildTruckModel(this.drive.trucksData.asm, def, false);
+    if (!def || !model) return null;
+    if (variant > 0) recolor(model.root, this.drive.trucksData, variant + 1);
+    const truck = new TruckVehicle(this.drive.rapierWorld, def, model, { position: this.drive.groundAtPublic(at), forward }, { engine: HT2_ENGINE, rollLift: HT2_ROLL_LIFT, steerLimit: HT2_STEER_LIMIT, steerPower: HT2_STEER_POWER, brake: HT2_BRAKE });
+    this.drive.world.scene.add(truck.visual);
+    const pilot = new AutoPilot(this.roads);
+    pilot.cruise = 50 + Math.random() * 25;
+    return { name, truck, pilot, bad: 0 };
   }
 
   /** Перед кроком фізики: автопілот кожного (оминає гравця, трафік і одне одного). */
   control(dt: number, obstacles: readonly THREE.Vector3[]): void {
-    for (const r of this.list) {
+    for (const r of [...this.list, ...this.hired.values()]) {
       const p = r.truck.body.translation();
       const others = [...obstacles, ...this.positions.filter((o) => o !== r.truck.visual.position)];
       r.truck.update(dt, r.pilot.update(new THREE.Vector3(p.x, p.y, p.z), r.truck.forward(), r.truck.speedKmh, dt, others));
@@ -77,6 +126,7 @@ export class Truckers {
 
   /** Після кроку: візуал, поява й зникнення. */
   after(dt: number, player: THREE.Vector3, alpha = 1): void {
+    for (const r of this.hired.values()) r.truck.syncVisual(alpha);
     for (let i = this.list.length - 1; i >= 0; i--) {
       const r = this.list[i];
       r.truck.syncVisual(alpha);
@@ -107,17 +157,10 @@ export class Truckers {
       if (d < SPAWN_MIN || d > SPAWN_MAX) continue;
       if (this.list.some((r) => r.truck.visual.position.distanceTo(a) < 40)) continue;
       const { rec, variant } = pool[Math.floor(Math.random() * pool.length)];
-      const def = truckDef(this.drive.trucksData, rec);
-      const model = def && buildTruckModel(this.drive.trucksData.asm, def, false);
-      if (!def || !model) return;
-      if (variant > 0) recolor(model.root, this.drive.trucksData, variant + 1);
       const forward = b.clone().sub(a).setY(0).normalize();
-      const truck = new TruckVehicle(this.drive.rapierWorld, def, model, { position: this.drive.groundAtPublic(a), forward }, { engine: HT2_ENGINE, rollLift: HT2_ROLL_LIFT, steerLimit: HT2_STEER_LIMIT, steerPower: HT2_STEER_POWER, brake: HT2_BRAKE });
-      this.drive.world.scene.add(truck.visual);
-      const pilot = new AutoPilot(this.roads);
-      pilot.cruise = 50 + Math.random() * 25;
       const name = this.names.length ? this.names[this.nameIndex++ % this.names.length] : rec.carNode;
-      this.list.push({ name, truck, pilot, bad: 0 });
+      const r = this.make(rec, variant, a, forward, name);
+      if (r) this.list.push(r);
       return;
     }
   }
@@ -145,5 +188,6 @@ export class Truckers {
 
   dispose(): void {
     for (let i = this.list.length - 1; i >= 0; i--) this.remove(i);
+    for (const name of [...this.hired.keys()]) this.dropHired(name);
   }
 }

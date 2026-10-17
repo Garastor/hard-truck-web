@@ -32,6 +32,7 @@ import { GlassRain } from './engine/render/glassRain';
 import { Dents, dentGeometry } from './vehicles/dents';
 import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
 import { orderVehicle, vehicleOffers, vehiclePowers } from './career/carOrder';
+import { HIRED_SPEED, HiredOnRoads } from './career/hired';
 import { terrainCollider } from './world/terrain';
 import { parseMsk } from './engine/formats/msk';
 import { findStores } from './career/economy';
@@ -283,6 +284,9 @@ export class Ht2Drive {
   /** Напівпричепи на базах (кар'єра, vehicles/presents.ts) і типи з evehicles.sch. */
   presents: Presents | null = null;
   private presentsSaveTimer = 0;
+  /** Наймані водії на дорогах (career/hired.ts) і їхні точки для карти (I_tr_myc). */
+  private hiredRoads: HiredOnRoads | null = null;
+  private hiredMarks: THREE.Vector3[] = [];
   /** Потужність моделей з evehicles.sch (вікно замовлення машини). */
   private vehiclePowers = new Map<string, number>();
   /** Відкрито вікно причепа з вантажем (друге натискання T не відкриває ще одне). */
@@ -963,6 +967,28 @@ export class Ht2Drive {
     this.truck.rayFilter = (c) => c.parent()?.handle !== trailerBody;
     this.truck.setTowLoad(this.trailer.kingpinLoad);
     this.truck.tow = { mass: this.trailer.mass, wheels: this.trailer.wheelCount };
+  }
+
+  /**
+   * Наймані водії на дорогах (career/hired.ts): далеко — абстрактно вздовж мережі, ближче — машиною
+   * (Truckers.syncHired), позиція — за машиною; новий найманий — на дорозі біля гравця.
+   */
+  private hiredStep(dt: number): void {
+    const drivers = this.careerMode?.career.company ?? [];
+    if (!drivers.length && !this.truckers?.hired.size && !this.hiredMarks.length) return;
+    const hr = (this.hiredRoads ??= new HiredOnRoads(this.roads));
+    const want: { name: string; carNode: string; pos: THREE.Vector3; forward: THREE.Vector3 }[] = [];
+    for (const d of drivers) {
+      const phys = this.truckers?.hired.get(d.name);
+      // Новий найманий — на дорозі за 40 м попереду гравця (не в його машині).
+      if (!d.road) hr.place(d, this.truck.visual.position.clone().addScaledVector(this.truck.forward(), 40));
+      else if (phys) hr.place(d, phys.truck.visual.position);
+      else hr.advance(d, HIRED_SPEED * dt);
+      const at = hr.at(d);
+      if (at) want.push({ name: d.name, carNode: d.truck, ...at });
+    }
+    this.truckers?.syncHired(want, this.truck.visual.position);
+    this.hiredMarks = want.map((w) => w.pos);
   }
 
   /** Клас машини гравця з vehicle.tech (lorries, tractors…) — суперники гонки в кар'єрі того самого класу. */
@@ -1692,8 +1718,16 @@ export class Ht2Drive {
     const c = this.careerMode?.career;
     const d = c?.company?.[i];
     if (!c || !d || c.order) return void (c?.order && this.say('СПЕРШУ ДОСТАВТЕ ВАНТАЖ'));
+    // Гравець — на місці водія, водій — на місці гравця (career/hired.ts; машина водія зʼявиться знову з новою моделлю).
+    const hr = (this.hiredRoads ??= new HiredOnRoads(this.roads));
+    const there = this.truckers?.hired.get(d.name)?.truck.visual.position.clone() ?? hr.at(d)?.pos ?? null;
+    const thereFwd = this.truckers?.hired.get(d.name)?.truck.forward() ?? hr.at(d)?.forward ?? null;
+    const here = this.truck.visual.position.clone();
+    this.truckers?.dropHired(d.name);
     [c.truck, d.truck] = [d.truck, c.truck];
     this.changeTruck(c.truck);
+    hr.place(d, here);
+    if (there && thereFwd) this.truck.reset({ position: this.groundAtPublic(there), forward: thereFwd });
     this.say(`ВИ ЗА КЕРМОМ ${c.truck}`);
     this.careerMode!.persist();
   }
@@ -2135,6 +2169,7 @@ export class Ht2Drive {
     this.input.setToggle('mirror', this.mirrorOn);
     // Причепити / відчепити — лише тягачем; світиться, поки причіп зчеплений.
     this.input.setToggle('attach', !!this.trailer, !this.hitched || !!this.race);
+    if (this.careerMode) this.hiredStep(dt);
     if (this.presents && this.careerMode) {
       const cm = this.careerMode;
       this.presents.update(this.truck.visual.position, cm.career.time, (k) => this.canTow(k), dt);
@@ -2156,6 +2191,8 @@ export class Ht2Drive {
       target: this.careerMode?.target() ?? null,
       // Фініш гонки — значок I_race з написом mess.txt 88 «Кольцо».
       finish: this.race?.finishPos ?? null,
+      // Свої наймані водії — I_tr_myc (0x529890).
+      mine: this.hiredMarks,
       // Причепи з вантажем (дорожні місії) — I_trailer; порожні на базах — без значка (0x529890).
       trailers: this.presents?.withCargo.map((p) => p.pos) ?? [],
       finishLabel: 'КІЛЬЦЕ',
