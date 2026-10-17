@@ -31,6 +31,7 @@ import { WorldMap, type MapPoint } from './world/worldMap';
 import { GlassRain } from './engine/render/glassRain';
 import { Dents, dentGeometry } from './vehicles/dents';
 import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
+import { orderVehicle, vehicleOffers, vehiclePowers } from './career/carOrder';
 import { terrainCollider } from './world/terrain';
 import { parseMsk } from './engine/formats/msk';
 import { findStores } from './career/economy';
@@ -282,6 +283,8 @@ export class Ht2Drive {
   /** Напівпричепи на базах (кар'єра, vehicles/presents.ts) і типи з evehicles.sch. */
   presents: Presents | null = null;
   private presentsSaveTimer = 0;
+  /** Потужність моделей з evehicles.sch (вікно замовлення машини). */
+  private vehiclePowers = new Map<string, number>();
   /** Відкрито вікно причепа з вантажем (друге натискання T не відкриває ще одне). */
   private offering = false;
   private semiTypes: SemiKind[] = [];
@@ -437,7 +440,11 @@ export class Ht2Drive {
     this.worldMap.onClose = () => {
       this.paused = false;
     };
-    if (o.career) this.markets = new Markets(this.world.scene, this.rapier, this.trucks, parseMarkets(regionMods, this.world.regions.values()), (p) => this.groundAtPublic(p).y - 2.5);
+    if (o.career) {
+      this.markets = new Markets(this.world.scene, this.rapier, this.trucks, parseMarkets(regionMods, this.world.regions.values()), (p) => this.groundAtPublic(p).y - 2.5);
+      // Замовлені рацією машини — зі збереження (стоять на ринку, доки не куплять).
+      this.markets.ordered = o.career.orderedCars ??= [];
+    }
     if (o.career) {
       const [merch, messages, restable, names] = await Promise.all([
         o.source.read('merchandise.sch').then(readSch).catch(() => []),
@@ -500,6 +507,7 @@ export class Ht2Drive {
     this.climate = new Climate(o.settings?.weather ?? 0.6, wtemp, o.weather === 'bad' ? 'bad' : o.weather ? 'good' : null);
     const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
     this.semiTypes = semiKinds(vehicles);
+    this.vehiclePowers = vehiclePowers(vehicles);
     if (o.career && this.semiTypes.length) {
       const limit = cnf ? num(assoc(cnf, 'semitrailers')?.[1], 28) : 28;
       this.presents = new Presents(
@@ -1535,7 +1543,18 @@ export class Ht2Drive {
     for (const s of this.mafia?.nearby(p, RADIO_R) ?? []) out.push({ kind: 'maf', id: s.id, name: 'МАФІЯ', d: s.pos.distanceTo(p) });
     this.truckers?.list.forEach((r, i) => {
       const d = r.truck.visual.position.distanceTo(p);
-      if (d < RADIO_R) out.push({ kind: 'nei', id: i + r.name.length, name: `ВОДІЙ ${r.name.toUpperCase()}`, d });
+      if (d < RADIO_R) out.push({ kind: 'nei', id: i + r.name.length, name: `ВОДІЙ ${r.name.toUpperCase()}`, d, sub: 'trucker' });
+    });
+    // Продавці на ринках і водії звичайного трафіку (king.exe 0x526080: ближче 100 м; замовлення машини — у них).
+    const day = this.careerMode ? Math.floor(this.careerMode.career.time / 86400) : 0;
+    for (const m of this.markets?.list ?? [])
+      for (const item of this.markets!.stock(m, day)) {
+        const d = m.spots[item.spot].pos.distanceTo(p);
+        if (d < RADIO_R) out.push({ kind: 'nei', id: m.id * 7 + item.spot, name: 'ПРОДАВЕЦЬ', d, sub: 'dealer' });
+      }
+    this.traffic?.cars.forEach((car, i) => {
+      const d = car.pos.distanceTo(p);
+      if (d < RADIO_R) out.push({ kind: 'nei', id: 20 + i, name: 'ВОДІЙ', d, sub: 'dumb' });
     });
     // Конкуренти з тим самим замовленням, що зараз поруч на маршруті.
     for (const r of this.careerMode?.nearRivals() ?? []) out.push({ kind: 'opp', id: r.index, name: `КОНКУРЕНТ ${r.name.toUpperCase()}`, d: 0 });
@@ -1616,8 +1635,8 @@ export class Ht2Drive {
           act: () => this.say(Math.random() < 0.3 ? 'БАНДИТИ ВЗЯЛИ ГРОШІ Й ОБДУРИЛИ' : 'БАНДИТИ ВЗЯЛИ ГРОШІ'),
         },
         { key: 'ask2', ...rivalAct(2000, (r) => (r.out = true), 'КОНКУРЕНТ ЗІЙШОВ З ДИСТАНЦІЇ') },
-        // «Заказ машины» (0x433660): при боргу чи інтересі мафії — відмова; інакше не розібрано.
-        { key: 'ask3', off: true },
+        // «Заказ машины» (0x433660): при боргу чи інтересі мафії — відмова (кнопка неактивна).
+        cm && !((cm.fines.mafiaDebt ?? 0) > 0) && !cm.fines.mafiaInterest ? { key: 'ask3', ...this.carOrder('maf') } : { key: 'ask3', off: true },
         { key: 'ask4', bye: true },
       ];
     if (c.kind === 'opp') {
@@ -1641,9 +1660,28 @@ export class Ht2Drive {
           cm.persist();
         },
       },
-      { key: 'ask2', off: true },
+      // Замовлення машини — у продавця й водія звичайного трафіку (тип 9 / 7), не в далекобійника.
+      c.sub === 'dealer' || c.sub === 'dumb' ? { key: 'ask2', ...this.carOrder('nei') } : { key: 'ask2', off: true },
       { key: 'ask3', bye: true },
     ];
+  }
+
+  /** Фраза «замовити машину» (career/carOrder.ts): вікно BackF5tru, плата — одразу, машина — на ринку-місті. */
+  private carOrder(kind: 'maf' | 'nei'): Partial<RadioAsk> {
+    const cm = this.careerMode;
+    const markets = this.markets;
+    if (!cm || !markets) return { off: true };
+    const from = this.truck.visual.position.clone();
+    return {
+      vehicles: () => vehicleOffers(kind, from, markets, this.trucks, this.vehiclePowers),
+      orderVehicle: (offer, color) => {
+        const c = cm.career;
+        orderVehicle(kind, from, offer, color, markets, c);
+        c.orderedCars = markets.ordered;
+        this.say(`ЗАМОВЛЕНО ${offer.name} → ${offer.town}`);
+        cm.persist();
+      },
+    };
   }
 
   /**

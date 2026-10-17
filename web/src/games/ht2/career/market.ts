@@ -8,6 +8,7 @@ import type { TechRecord } from '../formats/tech';
 import { drivable, truckDef, type Ht2Trucks } from '../vehicles/trucks';
 import { toThree } from '../world/world';
 import { ukName } from '../ui/uk';
+import { recolor } from '../traffic/traffic';
 
 /**
  * Ринки вантажівок HT2 — `parking` з `ENV/mod_<регіон>.sch`:
@@ -20,6 +21,8 @@ import { ukName } from '../ui/uk';
  * вживана: дешевше на 40 %, з пошкодженням 30 %.
  */
 const SHOW_R = 450;
+/** Замовлену машину приганяють на ринок далі цієї відстані від абонента, м (0x64b860). */
+const DELIVERY_MIN = 500;
 /** Вікно продажу (king.exe 0x56fc10): ближче 20 м до машини, що продається (без умови швидкості). */
 const NEAR_R = 20;
 const USED_DISCOUNT = 0.65;
@@ -31,6 +34,20 @@ export interface Market {
   name: string;
   town: string;
   spots: { pos: THREE.Vector3; heading: THREE.Vector3 }[];
+  /** Місце з прапорцем 4 (вузол з назвою міста) — туди приганяють замовлену машину (king.exe 0x433660); −1 — немає. */
+  townSpot: number;
+  /** Останнє число запису `parking` (поле ринку +0x30, типово 4): плата за доставку замовленої машини — N · 300 $. */
+  fee: number;
+}
+
+/** Замовлена рацією машина (career/carOrder.ts): стоїть на місці ринку, доки її не куплять. */
+export interface OrderedCar {
+  market: number;
+  spot: number;
+  carNode: string;
+  /** Фарбування — кластер TRUCKS.OVL з нуля. */
+  cluster: number;
+  stolen: boolean;
 }
 
 export interface ForSale {
@@ -40,6 +57,10 @@ export interface ForSale {
   stolen?: boolean;
   price: number;
   spot: number;
+  /** Фарбування замовленої машини (кластер з нуля). */
+  cluster?: number;
+  /** Замовлена рацією. */
+  ordered?: boolean;
 }
 
 export function parseMarkets(mods: Iterable<{ sch: SExpr[] }>, ways: Iterable<{ way: Way }>): Market[] {
@@ -66,12 +87,14 @@ export function parseMarkets(mods: Iterable<{ sch: SExpr[] }>, ways: Iterable<{ 
       if (!isList(e) || e[0] !== 'parking' || num(e[3], -1) < 0 || !isList(e[5])) continue;
       // Частина назв у даних — «??» (не заповнені): показуємо «Ринок».
       const name = str(e[2]);
-      const m: Market = { id: num(e[3]), name: /^\?*$/.test(name) ? 'Ринок' : ukName(name), town: '', spots: [] };
+      const m: Market = { id: num(e[3]), name: /^\?*$/.test(name) ? 'Ринок' : ukName(name), town: '', spots: [], townSpot: -1, fee: num(e[6], 4) };
       for (const n of e[5]) {
         if (!isList(n)) continue;
         const node = nodes.get(str(n[1]).toLowerCase());
         if (n.length > 3) m.town = ukName(str(n[3]));
-        if (node) m.spots.push({ pos: toThree(...node.pos), heading: node.dir });
+        if (!node) continue;
+        if (m.townSpot < 0 && num(n[2]) & 4) m.townSpot = m.spots.length;
+        m.spots.push({ pos: toThree(...node.pos), heading: node.dir });
       }
       if (m.spots.length) out.push(m);
     }
@@ -100,6 +123,8 @@ export class Markets {
   private readonly shown = new Map<number, Shown>();
   /** Продані сьогодні: `ринок:день:місце`. */
   private readonly sold = new Set<string>();
+  /** Замовлені рацією машини (зберігаються в кар'єрі). */
+  ordered: OrderedCar[] = [];
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -116,6 +141,14 @@ export class Markets {
     const out: ForSale[] = [];
     m.spots.forEach((_, spot) => {
       const rec = pool[Math.floor(rnd() * pool.length)];
+      // Замовлена машина стоїть на своєму місці, доки її не куплять (king.exe 0x433b60: звичайна машина на продаж).
+      const own = this.ordered.find((o) => o.market === m.id && o.spot === spot);
+      const oRec = own && this.trucks.records.find((r) => r.carNode === own.carNode);
+      if (own && oRec) {
+        rnd(); // той самий порядок випадкових чисел — інші місця ринку не міняються
+        out.push({ rec: oRec, used: false, stolen: own.stolen, price: Math.round(oRec.price * (own.stolen ? STOLEN_DISCOUNT : 1)), spot, cluster: own.cluster, ordered: true });
+        return;
+      }
       // Частки — як forsale 25 / forsale_used 5 / forsale_stolen 5 у GAME.CNF (гіпотеза: місце ринку — випадкове).
       const r = rnd();
       const used = r < 5 / 35;
@@ -128,6 +161,47 @@ export class Markets {
 
   sell(m: Market, day: number, item: ForSale): void {
     this.sold.add(`${m.id}:${day}:${item.spot}`);
+    if (item.ordered) this.ordered.splice(0, this.ordered.length, ...this.ordered.filter((o) => !(o.market === m.id && o.spot === item.spot)));
+    this.hide(m.id);
+  }
+
+  /**
+   * Куди пригнати замовлену машину (king.exe 0x433660): ринок з місцем-містом (прапорець 4) далі 500 м від абонента,
+   * найближчий.
+   */
+  deliveryFor(from: THREE.Vector3): Market | null {
+    let best: Market | null = null;
+    let bd = Infinity;
+    for (const m of this.list) {
+      if (m.townSpot < 0) continue;
+      const d = m.spots[m.townSpot].pos.distanceTo(from);
+      if (d > DELIVERY_MIN && d < bd) {
+        bd = d;
+        best = m;
+      }
+    }
+    return best;
+  }
+
+  /** Ринок, найближчий до точки (плата за доставку в продавця — N · 300 $ того ринку). */
+  nearest(p: THREE.Vector3): Market | null {
+    let best: Market | null = null;
+    let bd = Infinity;
+    for (const m of this.list)
+      for (const s of m.spots) {
+        const d = s.pos.distanceTo(p);
+        if (d < bd) {
+          bd = d;
+          best = m;
+        }
+      }
+    return best;
+  }
+
+  /** Поставити замовлену машину на місце-місто ринку (машину, що там стояла, прибирають — killPlayer 0x4466a0). */
+  deliver(m: Market, car: Omit<OrderedCar, 'market' | 'spot'>): void {
+    const spot = m.townSpot;
+    this.ordered.splice(0, this.ordered.length, ...this.ordered.filter((o) => !(o.market === m.id && o.spot === spot)), { market: m.id, spot, ...car });
     this.hide(m.id);
   }
 
@@ -174,6 +248,7 @@ export class Markets {
       const def = truckDef(this.trucks, item.rec);
       const model = def && buildTruckModel(this.trucks.asm, def, false);
       if (!model) continue;
+      if (item.cluster) recolor(model.root, this.trucks, item.cluster + 1);
       const spot = m.spots[item.spot];
       const frame = new THREE.Group();
       frame.rotation.x = -Math.PI / 2;

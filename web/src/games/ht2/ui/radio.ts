@@ -1,5 +1,6 @@
 import { SidePanel } from './panel';
 import type { EscArt } from './escArt';
+import type { VehicleOffer } from '../career/carOrder';
 
 /**
  * Рація F5 king.exe (re/notes/ht2/ui.md §4, Docs/ht2/gameplay.md §6). Корпус `BackF5cbradio` (0x525b50) посередині
@@ -16,6 +17,8 @@ export interface RadioContact {
   id: number;
   /** Напис на дисплеї рації. */
   name: string;
+  /** Хто саме «інший водій»: продавець на ринку, водій звичайного трафіку чи далекобійник (замовлення машини — лише перші два). */
+  sub?: 'dealer' | 'dumb' | 'trucker';
 }
 
 /** Фраза гравця: ціна (null — без оплати, одразу дія) або null-фраза «до побачення»; off — недоступна (`_f`). */
@@ -27,6 +30,10 @@ export interface RadioAsk {
   bye?: boolean;
   /** Що зробити після згоди платити. */
   act?: () => void;
+  /** Замовлення машини — вікно `BackF5tru` (career/carOrder.ts). */
+  vehicles?: () => VehicleOffer[] | null;
+  /** Замовити модель кольором 0…3 (плата — у самому замовленні). */
+  orderVehicle?: (offer: VehicleOffer, color: number) => void;
 }
 
 export interface RadioWorld {
@@ -111,6 +118,14 @@ export class Radio {
   private choose(c: RadioContact, a: RadioAsk): void {
     if (a.off) return;
     if (a.bye) return this.close();
+    if (a.vehicles) {
+      const list = a.vehicles();
+      if (!list?.length) {
+        this.world.say('НЕМАЄ КУДИ ПРИГНАТИ МАШИНУ');
+        return this.talk(c);
+      }
+      return this.vehicleOrder(c, a, list, 0, 0);
+    }
     if (a.price === null) {
       // «Без шансів»: картка, якщо є, інакше — перша відповідь і повідомлення.
       const no = NO_WAY[c.kind];
@@ -122,6 +137,51 @@ export class Radio {
       return this.close();
     }
     this.offer(c, a, a.price);
+  }
+
+  /**
+   * Замовлення машини (`BackF5tru`, 0x524530 / 0x525250): фото `m16\<Модель><колір>.msk` між стрілками `F5tr_l`
+   * (35, 84) і `F5tr_r` (225, 84), колір — `F5tr_col` (106, 186); написи шрифтом меню: модель (103, 235), потужність
+   * (143, 255), вантажопідйомність (143, 275), місто доставки — блимає по 0,5 с (143, 295), плата (143, 335);
+   * `F5tr_ok` (59, 356) — замовити, `F5tr_canc` (141, 356) — назад. Місце фото — гіпотеза (посередині між стрілками).
+   */
+  private vehicleOrder(c: RadioContact, a: RadioAsk, list: VehicleOffer[], index: number, color: number): void {
+    this.close();
+    const p = new SidePanel(this.art, this.parent, 'm_16\\BackF5tru.msk', 'center', [0, 405], 40);
+    const o = list[index];
+    const photo = p.image(`m16\\${o.model}${color + 1}.msk`, 0, 0);
+    if (photo) {
+      const place = () => {
+        photo.style.left = `${Math.round(140 - photo.naturalWidth / 2)}px`;
+        photo.style.top = `${Math.round(100 - photo.naturalHeight / 2)}px`;
+      };
+      if (photo.complete) place();
+      else photo.addEventListener('load', place);
+    }
+    const text = (blink: boolean) => {
+      p.clear();
+      p.write(103, 235, o.name);
+      p.write(143, 255, `${o.power}`);
+      p.write(143, 275, `${o.capacity}`);
+      if (blink) p.write(143, 295, o.town);
+      p.write(143, 335, `${o.fee}`);
+    };
+    text(true);
+    let on = true;
+    const timer = window.setInterval(() => {
+      if (this.panel !== p) return window.clearInterval(timer);
+      on = !on;
+      text(on);
+    }, 500);
+    p.button('m_16\\F5tr_l', 35, 84, 'l', () => this.vehicleOrder(c, a, list, (index + list.length - 1) % list.length, color));
+    p.button('m_16\\F5tr_r', 225, 84, 'r', () => this.vehicleOrder(c, a, list, (index + 1) % list.length, color));
+    p.button('m_16\\F5tr_col', 106, 186, 'col', () => this.vehicleOrder(c, a, list, index, (color + 1) % 4));
+    p.button('m_16\\F5tr_ok', 59, 356, 'ok', () => {
+      a.orderVehicle?.(o, color);
+      this.close();
+    });
+    p.button('m_16\\F5tr_canc', 141, 356, 'canc', () => this.talk(c));
+    this.panel = p;
   }
 
   /** «Це коштуватиме ___»: сума на картці, «домовилися» / «забудь про це». */
