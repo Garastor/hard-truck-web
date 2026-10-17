@@ -47,6 +47,23 @@ const LOOK_B = 4;
 /** Далі від запланованого зсуву — довертати з найбільшою кривизною; ще далі — повернути на лінію (застрягла). */
 const OFF_TRACK = 1.5;
 const SNAP_OFF = 8;
+/**
+ * Огляд перед перестроюванням (порт): у цільовій смузі машині попереду — не ближче GAP_AHEAD м і не менше
+ * T_AHEAD с наздоганяння; тій, що ззаду (зокрема гравцеві), — не ближче GAP_BEHIND м і не менше T_BEHIND с, доки
+ * вона нас наздожене; огляд — на LOOK_LANE м уперед і назад.
+ */
+const GAP_AHEAD = 8;
+const T_AHEAD = 3;
+const GAP_BEHIND = 6;
+const T_BEHIND = 4;
+const LOOK_LANE = 90;
+/**
+ * Гальмування кінематичної машини (порт): сповільнення наростає не швидше JERK м/с³ (звичайне — до 3,5 м/с²,
+ * зупинка — пропорційно швидкості); різко (JERK_HARD) — лише коли потрібне понад HARD м/с².
+ */
+const JERK = 6;
+const JERK_HARD = 40;
+const HARD = 5;
 const ACCEL = 2.5;
 const BRAKE = 7;
 /** Перешкода на шляху, якщо ближче за це до осі смуги (півширина машини + запас), м. */
@@ -112,6 +129,8 @@ export interface Mover {
   wantLane: number;
   /** Доїхала до тупика — прибрати. */
   gone: boolean;
+  /** Поточне прискорення кінематичної машини, м/с² (для плавного гальмування). */
+  acc: number;
   /**
    * Запланований бічний зсув від лінії (S-крива від offFrom до offTo за offDur с, пройдено offT с): за ним їдуть і
    * кінематична, і фізична машина (carrot); lat — фактичний.
@@ -156,6 +175,7 @@ export function newMover(line: RoadLine, seg: number, t: number, cruise: number,
     plan: null,
     wantLane: line.lane,
     gone: false,
+    acc: 0,
     off: 0,
     offFrom: 0,
     offTo: 0,
@@ -375,7 +395,14 @@ function laneFree(m: Mover, sib: RoadLine | undefined, obstacles: readonly Obsta
     const rel = o.pos.clone().sub(p);
     const along = rel.x * fwd.x + rel.z * fwd.z;
     const side = Math.abs(rel.x * fwd.z - rel.z * fwd.x);
-    if (side < PATH_HALF && along > -15 - o.half && along < 25 + o.half) return false;
+    if (side >= PATH_HALF || Math.abs(along) > LOOK_LANE) continue;
+    const ov = o.vel.x * fwd.x + o.vel.z * fwd.z;
+    const gap = Math.abs(along) - m.halfLen - o.half;
+    if (gap < 2) return false;
+    // Попереду: не ближче GAP_AHEAD і не менше T_AHEAD с наздоганяння; ззаду: не ближче GAP_BEHIND і не менше T_BEHIND с,
+    // доки задній наздожене (гравець ззаду на швидкості — не підрізати).
+    if (along > 0 && (gap < GAP_AHEAD || gap < (m.speed - ov) * T_AHEAD)) return false;
+    if (along <= 0 && (gap < GAP_BEHIND || gap < (ov - m.speed) * T_BEHIND)) return false;
   }
   return true;
 }
@@ -421,8 +448,13 @@ export function step(m: Mover, dt: number, obstacles: readonly Obstacle[], net: 
   if (m.gone) return;
   const want = decide(m, dt, obstacles, net);
   const dv = want - m.speed;
-  const acc = dv > 0 ? Math.min(ACCEL, 0.3 + 0.6 * dv) : want === 0 ? -BRAKE : -Math.min(BRAKE, Math.max(2.5, 0.8 * -dv));
-  m.speed = Math.max(0, dv > 0 ? Math.min(want, m.speed + acc * dt) : Math.max(want, m.speed + acc * dt));
+  // Потрібне прискорення: розгін — як було; гальмування — пропорційно різниці (зупинка — за швидкістю), до BRAKE.
+  const goal = dv > 0 ? Math.min(ACCEL, 0.3 + 0.6 * dv) : -Math.min(BRAKE, Math.max(want === 0 ? 0.6 * m.speed : 0, Math.max(1.5, 0.8 * -dv)));
+  // Сповільнення наростає плавно (JERK), різко — лише екстрено; відпускається одразу.
+  const jerk = goal < -HARD ? JERK_HARD : JERK;
+  m.acc = goal < m.acc ? Math.max(goal, m.acc - jerk * dt) : goal;
+  const acc = m.acc;
+  m.speed = Math.max(0, dv > 0 ? Math.min(want, m.speed + acc * dt) : acc < 0 ? Math.max(want, m.speed + acc * dt) : m.speed);
   const move = m.speed * dt;
   if (move > 0) pursue(m, move, Math.abs(m.lat - m.off) > OFF_TRACK);
   // Позиція на лінії — проєкцією; далеко від лінії (кут, якого дуга не бере) — повернути на лінію.
@@ -517,7 +549,7 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
         m.wantLane = to;
         if (to === m.backLane) m.backLane = -1;
       }
-    } else if (m.wantLane !== lane && (toEnd < LANE_PLAN || m.line.next.length === 0 || Math.random() < dt * 0.2)) {
+    } else if (m.wantLane !== lane && (toEnd < LANE_PLAN || m.line.next.length === 0)) {
       const to = lane + Math.sign(m.wantLane - lane);
       if (laneFree(m, m.line.siblings[to], obstacles)) changeLane(m, to);
     }
@@ -541,7 +573,8 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
       want = Math.min(want, left <= 0.3 ? 0 : Math.sqrt(2 * 2 * left));
     }
   } else m.redStop = false;
-  return want < 0.1 ? 0 : want;
+  // Підповзати впритул (бажана швидкість, пропорційна залишку дистанції) — неприродно: менше 0,3 м/с — стоїть.
+  return want < 0.3 ? 0 : want;
 }
 
 function endBypass(m: Mover): void {
