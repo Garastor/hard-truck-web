@@ -92,6 +92,8 @@ export interface Mover {
   redStop: boolean;
   /** Дорога після кінця лінії (null — тупик). */
   plan: number | null;
+  /** Ціль маршруту — індекс у goals (−1 — немає, вибір навмання). */
+  goal: number;
   /** Бажана смуга. */
   wantLane: number;
   /** Доїхала до тупика — прибрати. */
@@ -131,6 +133,7 @@ export function newMover(line: RoadLine, seg: number, t: number, cruise: number,
     plan: null,
     wantLane: line.lane,
     gone: false,
+    goal: goals.length ? Math.floor(Math.random() * goals.length) : -1,
   };
   planNext(m);
   place(m, 0);
@@ -168,9 +171,39 @@ export function retrace(m: Mover, line: RoadLine, seg: number, t: number): void 
 }
 
 /** Вибір дороги після стику й бажаної смуги (у king.exe — маршрут і changeLanes). */
+/**
+ * Цілі руху трафіку (king.exe 0x45cdc0, 0x406600; re/notes/ht2/career-misc.md §2): машина їде найкоротшим шляхом
+ * до одного з вузлів WAY з FLAG & 2 (міста біля стоянок), доїхала — нова ціль. Так з'їзди на заправки, СТО й склади
+ * машини проминають, якщо ті не на шляху. Кожна карта — відстань від кінця лінії до цілі (Navigator.distances).
+ */
+let goals: Map<RoadLine, number>[] = [];
+
+export function setGoals(maps: Map<RoadLine, number>[]): void {
+  goals = maps;
+}
+
 function planNext(m: Mover): void {
-  const roads = [...new Set((m.line.next as RoadLine[]).map((l) => l.road))];
+  const next = m.line.next as RoadLine[];
+  const roads = [...new Set(next.map((l) => l.road))];
   m.plan = roads.length ? roads[Math.floor(Math.random() * roads.length)] : null;
+  if (goals.length) {
+    let g = goals[m.goal];
+    // Доїхали (лінія біля цілі) чи ціль недосяжна — нова ціль.
+    if (!g || (g.get(m.line) ?? Infinity) === 0 || !next.some((l) => Number.isFinite(g!.get(l) ?? Infinity))) {
+      m.goal = Math.floor(Math.random() * goals.length);
+      g = goals[m.goal];
+    }
+    let best: RoadLine | null = null;
+    let bd = Infinity;
+    for (const l of next) {
+      const d = (g.get(l) ?? Infinity) + l.length;
+      if (d < bd) {
+        bd = d;
+        best = l;
+      }
+    }
+    if (best) m.plan = best.road;
+  }
   const to = m.plan === null ? null : nextLine(m.line, m.plan, m.line.lane);
   const turn = to ? turnAngle(m.line, to) : 0;
   if (turn > 0.35) m.wantLane = m.line.lanes - 1;

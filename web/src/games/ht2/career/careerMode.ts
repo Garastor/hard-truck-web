@@ -12,6 +12,7 @@ import type { SidePanel } from '../ui/panel';
 import { active, advance, makeRivals, place, PREMIUM_SHARE } from './competition';
 import { hireOffer, LICENCE_TIME, newDriver, tickCompany } from './company';
 import { ukMessage } from '../ui/uk';
+import { StoreZones } from './storeZones';
 import { arrestCard, ILLEGAL_FINE, noFines, SPEEDING_PER_DEGREE, type Fines } from './law';
 import { capitalShare } from './capital';
 
@@ -20,7 +21,6 @@ import { capitalShare } from './capital';
  * вантажу), табло (гроші, вантаж, куди й скільки лишилось часу, годинник), збереження раз на 10 с.
  * Вікна зʼявляються, коли вантажівка зупинилась біля місця завантаження складу чи біля СТО.
  */
-const DOCK_RADIUS = 22;
 const STO_RADIUS = 18;
 const FUEL_RADIUS = 14;
 /** Удар: зміна швидкості за крок, м/с — від неї пошкодження (гіпотеза, як у першій грі). */
@@ -35,6 +35,8 @@ export class CareerMode {
   private readonly fuelSpots: [number, number, number][] = [];
   private readonly lastPos = new THREE.Vector3();
   private busy = false;
+  /** Місця біля складів — тригери будівель. */
+  private readonly zones = new StoreZones();
   /** Біля якого місця вже показано вікно (повторно — лише після відʼїзду). */
   private shownAt: string | null = null;
   private saveTimer = 0;
@@ -133,6 +135,20 @@ export class CareerMode {
       this.saveTimer = 0;
       this.persist();
     }
+    // Місця складу — тригери будівлі (career/storeZones.ts): вікно, поки машина в зоні, без умови швидкості (як exe).
+    const zone = this.zones.at(this.drive.world.loaded.values(), p);
+    const zkey = zone ? `z${zone.store}:${zone.place}` : null;
+    if (this.shownAt?.startsWith('z') && this.shownAt !== zkey) {
+      this.closePanel();
+      this.shownAt = null;
+    }
+    if (zone) {
+      if (this.shownAt !== zkey && !this.drive.escArtLoading) {
+        this.shownAt = zkey;
+        this.atPlace(zone.store, zone.place);
+      }
+      return;
+    }
     if (this.drive.truck.speedKmh > 3) {
       this.closePanel();
       // Відʼїхали — вікно цього місця можна показати знову.
@@ -141,16 +157,6 @@ export class CareerMode {
     }
     // Графіка вікон оригіналу ще читається — не показувати замість них діалоги порту.
     if (this.drive.escArtLoading) return;
-    const store = this.stores.find((s) => s.docks.some((d) => Math.hypot(d[0] - gx, d[1] - gy) < DOCK_RADIUS));
-    if (store && this.shownAt !== `s${store.id}`) {
-      this.shownAt = `s${store.id}`;
-      if (this.drive.escArt && !c.order) this.storePanel(store, gx, gy);
-      else if (this.drive.escArt && c.order && c.order.to !== store.id) {
-        const to = this.stores.find((s) => s.id === c.order!.to);
-        this.drive.say(`У кузові — ${c.order.goods.name}, доставити в «${to?.town ?? '?'}»`);
-      } else void this.atStore(store);
-      return;
-    }
     const sto = this.sto.findIndex((d) => Math.hypot(d[0] - gx, d[1] - gy) < STO_RADIUS);
     if (sto >= 0 && this.shownAt !== `r${sto}`) {
       this.shownAt = `r${sto}`;
@@ -205,13 +211,30 @@ export class CareerMode {
    * Склад (вікно «ЗАКАЗ»): у кожного місця завантаження — своє замовлення, як в оригіналі («СКЛАД ЗАГРУЗКИ N»); їх
    * набір оновлюється раз на годину гри. Взяти — кнопкою (Num+ в оригіналі).
    */
-  private storePanel(store: Store, gx: number, gy: number): void {
+  /**
+   * Машина в місці складу (тригер будівлі): 00 — розвантаження, якщо вантаж для цього складу; 01…04 — картка
+   * замовлення цього місця (king.exe 0x56ffd0, career-misc.md §1).
+   */
+  private atPlace(storeId: number, place: number): void {
+    const c = this.career;
+    const store = this.stores.find((s) => s.id === storeId);
+    if (!store) return;
+    if (place === 0) {
+      if (c.order?.to === store.id) void this.atStore(store);
+      return;
+    }
+    if (c.order) {
+      const to = this.stores.find((s) => s.id === c.order!.to);
+      this.drive.say(`У кузові — ${c.order.goods.name}, доставити в «${to?.town ?? '?'}»`);
+      return;
+    }
+    if (this.drive.escArt) this.storePanel(store, place);
+    else void this.atStore(store);
+  }
+
+  private storePanel(store: Store, dock: number): void {
     const c = this.career;
     const art = this.drive.escArt!;
-    let dock = 0;
-    store.docks.forEach((d, i) => {
-      if (Math.hypot(d[0] - gx, d[1] - gy) < Math.hypot(store.docks[dock][0] - gx, store.docks[dock][1] - gy)) dock = i;
-    });
     let cached = this.storeOrders.get(store.id);
     if (!cached || c.time - cached.time > 3600) {
       const n = Math.max(1, store.docks.length);
@@ -237,7 +260,8 @@ export class CareerMode {
           mass: o.goods.mass * o.units,
           volume: o.goods.volume * o.units,
           fragility: o.goods.ratio * 100,
-          dock: dock + 1,
+          // Номер місця з тригера (store_NNMM: MM = 01…04).
+          dock,
         },
         () => {
           if (c.order) return;
@@ -586,7 +610,6 @@ export class CareerMode {
 
   private near(gx: number, gy: number, key: string): boolean {
     const id = Number(key.slice(1));
-    if (key[0] === 's') return this.stores.find((s) => s.id === id)!.docks.some((d) => Math.hypot(d[0] - gx, d[1] - gy) < DOCK_RADIUS * 2);
     const d = key[0] === 'f' ? this.fuelSpots[id] : this.sto[id];
     return !!d && Math.hypot(d[0] - gx, d[1] - gy) < (key[0] === 'f' ? FUEL_RADIUS : STO_RADIUS) * 2;
   }
@@ -682,6 +705,30 @@ export class CareerMode {
     const left = to ? this.drive.routeLeft(toThree(...to.center)) : null;
     const mine = left === null ? 0 : 1 - left / o.route;
     return o.rivals.flatMap((r, index) => (!r.out && !r.done && Math.abs(r.t / r.eta - mine) < 0.1 ? [{ index, name: r.name }] : []));
+  }
+
+  /**
+   * Оплата 911 (king.exe 0x511910, 0x5119e0): 1000 + 5000·пошкодження + пальне до 30 % бака по $2/л. Грошей досить —
+   * ремонт, пальне до 30 %, «ПЛАТА ЗА ВИКЛИК»; ні — «НЕ ВИСТАЧАЄ ГРОШЕЙ», машину однаково переставлено, без ремонту.
+   * Доплата за позначену машину (0,35 × 0,64 ціни) — не зроблено (порт не веде цієї позначки).
+   */
+  pay911(): void {
+    const c = this.career;
+    const fuel = c.fuel ?? this.tank;
+    const litres = Math.max(0, 0.3 * this.tank - fuel);
+    const cost = Math.round(1000 + 5000 * c.damage + 2 * litres);
+    if (c.money < cost) {
+      this.drive.say(this.msg('NOT_ENOUGH_MONEY', 'НЕ ВИСТАЧАЄ ГРОШЕЙ'));
+      return;
+    }
+    c.money -= cost;
+    c.damage = 0;
+    c.fuel = fuel + litres;
+    this.drive.dents?.repair();
+    this.drive.trailerDents?.repair();
+    this.drive.extinguish();
+    this.drive.say(`ПЛАТА ЗА ВИКЛИК $${cost}`);
+    this.persist();
   }
 
   /** Найближча СТО (точка вузла sto_*, координати гри) — для 911. */

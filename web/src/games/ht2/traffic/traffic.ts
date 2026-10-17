@@ -4,7 +4,8 @@ import { visibleBox } from '../engine/vehicle/trucks';
 import { GROUP_WORLD, groups } from '../engine/physics/world';
 import { isList, num, str, type SExpr } from '../formats/sexpr';
 import type { Ht2Roads, RoadLine } from '../world/roads';
-import { coast, decide, newMover, pathAhead, retrace, roadLimit, step, sync, type Mover, type Obstacle } from './driver';
+import { coast, decide, newMover, pathAhead, retrace, roadLimit, setGoals, step, sync, type Mover, type Obstacle } from './driver';
+import { Navigator } from '../world/navigator';
 import { control, newPhysState, type PhysState } from './physical';
 import type { TruckVehicle } from '../engine/vehicle/truckVehicle';
 import type { Ht2Trucks } from '../vehicles/trucks';
@@ -301,6 +302,13 @@ export class Traffic {
     c.vehicle = null;
     c.latGoal = 0;
     this.activate(c);
+  }
+
+  /** Цілі маршрутів (вузли WAY з FLAG & 2, Three.js): найкоротші шляхи мережею до кожної — driver.setGoals. */
+  setGoals(points: readonly THREE.Vector3[]): void {
+    const nav = new Navigator(this.roads);
+    setGoals(points.map((p) => nav.distances(p)));
+    for (const c of this.all) c.goal = Math.floor(Math.random() * points.length);
   }
 
   /** Постійна машина на випадковій лінії (пропорційно довжині), не ближче за minDist до гравця. */

@@ -126,8 +126,6 @@ const OFFROAD_ROLL = 5;
 /** Дальність видимості трафіку без туману в сцені, м. */
 const VIEW_FALLBACK = 900;
 /** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
-const RESCUE_SECONDS = 5;
-const RESCUE_COST = 1000;
 /** Рація: радіус зв'язку, м; скільки після штрафу можна домовитися, с; перемирʼя з мафією, с (гіпотези). */
 const RADIO_R = 500;
 
@@ -508,6 +506,10 @@ export class Ht2Drive {
       density: o.settings?.traffic ?? 1,
     });
     this.traffic.signals = this.lights;
+    // Цілі маршрутів трафіку — вузли WAY з FLAG & 2 (міста біля стоянок; king.exe 0x45cdc0).
+    const goals: THREE.Vector3[] = [];
+    for (const { way } of this.world.regions.values()) for (const room of way.rooms) for (const n of room.nodes) if (n.flag & 2) goals.push(toThree(...n.pos));
+    if (goals.length) this.traffic.setGoals(goals);
     this.traffic.view = {
       range: () => (this.world.scene.fog as THREE.Fog | null)?.far ?? VIEW_FALLBACK,
       sees: (p) => this.canSee(p),
@@ -1595,22 +1597,33 @@ export class Ht2Drive {
   }
 
   /**
-   * 911 (посібник: «дуже дорога операція»): машина стоїть RESCUE_SECONDS с («Восстановление через %d сек.», mess.txt
-   * 125), потім — біля найближчої СТО (у вільній їзді — на останню надійну точку дороги), плата «ПЛАТА ЗА ВЫЗОВ $%d»
-   * (mess.txt 9). Відлік, місце й ціна — гіпотези: обробник кнопки в king.exe не знайдено.
+   * 911 (king.exe 0x511c50 → 0x5119e0, re/notes/ht2/career-misc.md §3): одразу, на найближчій точці дороги біля місця
+   * виклику (0x533590) — по дотичній до осі, праворуч від неї на 0,5·W − 1,5 м; оплата й ремонт — careerMode.pay911.
    */
   call911(): void {
     if (this.rescue) return;
-    const p = this.truck.visual.position;
-    const sto = this.careerMode?.nearestSto(p.x, -p.z) ?? null;
-    const ready = sto
-      ? this.world.ready(sto[0], sto[1]).then(() => {
-          this.rapier.step();
-          return this.spawnAt(sto);
-        })
-      : Promise.resolve(null);
-    this.rescue = { left: RESCUE_SECONDS, ready, cost: this.careerMode ? RESCUE_COST : 0 };
-    this.say(`ВИКЛИК 911. ВІДНОВЛЕННЯ ЧЕРЕЗ ${RESCUE_SECONDS} С.`);
+    this.rescue = { left: 0, ready: Promise.resolve(this.roadside(this.truck.visual.position)), cost: 0 };
+  }
+
+  /** Точка на дорозі біля p: вісь WAY, дотична в бік курсу машини, зсув праворуч на 0,5·W − 1,5 м. */
+  private roadside(p: THREE.Vector3): { position: THREE.Vector3; forward: THREE.Vector3 } | null {
+    const n = this.roads.nearestAxis(p);
+    if (!n) return null;
+    const pts = n.axis.pts;
+    let best = 0;
+    let bd = Infinity;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const d = new THREE.Line3(pts[i], pts[i + 1]).closestPointToPoint(n.point, true, new THREE.Vector3()).distanceTo(n.point);
+      if (d < bd) {
+        bd = d;
+        best = i;
+      }
+    }
+    const forward = pts[best + 1].clone().sub(pts[best]).setY(0).normalize();
+    if (forward.dot(this.truck.forward()) < 0) forward.negate();
+    const right = new THREE.Vector3(-forward.z, 0, forward.x);
+    const at = n.point.clone().addScaledVector(right, Math.max(0, 0.5 * n.axis.width - 1.5));
+    return { position: this.groundAt(at), forward };
   }
 
   private async finishRescue(): Promise<void> {
@@ -1624,14 +1637,7 @@ export class Ht2Drive {
       this.safe = spawn;
       this.skipHits = 3;
     } else this.recover();
-    const c = this.careerMode?.career;
-    if (c && r.cost) {
-      // Грошей бракує — забирають що є (гіпотеза): лишити гравця без допомоги не можна.
-      const paid = Math.min(c.money, r.cost);
-      c.money -= paid;
-      this.say(`ОПЛАТА ВИКЛИКУ $${paid}`);
-      this.careerMode!.persist();
-    }
+    this.careerMode?.pay911();
     this.rescue = null;
   }
 
@@ -1954,7 +1960,9 @@ export class Ht2Drive {
     this.tabMap?.draw(dt, {
       me: this.truck.visual.position,
       heading: this.truck.forward(),
-      rivals: this.race ? this.race.racers.slice(1).map((r) => r.truck.visual.position) : (this.truckers?.positions ?? []),
+      // Лише суперники в змаганні (king.exe 0x529890: прапорець 0x80 — гонка, конкуренти за вантаж); звичайні
+      // далекобійники й трафік на карті не показуються (career-misc.md §4). Конкуренти за вантаж у порту без позиції.
+      rivals: this.race ? this.race.racers.slice(1).map((r) => r.truck.visual.position) : [],
       target: this.careerMode?.target() ?? null,
       // Фініш гонки — значок I_race з написом mess.txt 88 «Кольцо».
       finish: this.race?.finishPos ?? null,
