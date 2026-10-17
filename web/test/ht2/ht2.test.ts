@@ -332,9 +332,9 @@ describe.skipIf(!has)('HT2: налаштування одиночної гри (
   });
 });
 
-describe.skipIf(!has)('HT2: процедурний рельєф aa (MTR/terrain0–2.raw)', () => {
+describe.skipIf(!has)('HT2: процедурний рельєф aa (ENV/terrain0–2.raw)', () => {
   it('дороги WAY регіону лежать на рельєфі (крок і початок сітки — підібрані)', () => {
-    const heights = terrainHeights([0, 1, 2].map((i) => parseHeightmap(read(`MTR/terrain${i}.raw`))));
+    const heights = terrainHeights([0, 1, 2].map((i) => parseHeightmap(read(`ENV/terrain${i}.raw`))));
     expect(heights.length).toBe(TERRAIN.n * TERRAIN.n);
     const way = parseWay(read('ENV/aa.way'));
     const errs: number[] = [];

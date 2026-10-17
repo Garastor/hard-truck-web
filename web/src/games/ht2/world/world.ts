@@ -89,12 +89,15 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
   built.root.add(trees);
   const glows = buildGlows(scene, rmp);
   built.root.add(glows);
-  // Процедурний рельєф: генератор $$GeneratorOfTerrain (лише aa) — сітка з MTR/terrain0–2.raw.
+  // Процедурний рельєф: генератор $$GeneratorOfTerrain (лише aa) — сітка з ENV/terrain0–2.raw.
   let terrain: Float32Array | undefined;
   let terrainMesh: THREE.Mesh | null = null;
   if ([...walk(scene.blocks)].some(([b]) => b.data.t === 40 && b.data.name2 === '$$GeneratorOfTerrain')) {
     try {
-      const tiles = await Promise.all([0, 1, 2].map((i) => source.read(`MTR/terrain${i}.raw`).then(parseHeightmap)));
+      // Кар'єра читає ENV/terrain*.raw (king.exe 0x5726e3; MTR/ — для мережевого «Тріалу», terrain1 там інший, до
+      // 70 м); старий імпорт без ENV-файлів — MTR (re/notes/ht2/tracks.md).
+      const tile = (i: number) => source.read(`ENV/terrain${i}.raw`).catch(() => source.read(`MTR/terrain${i}.raw`)).then(parseHeightmap);
+      const tiles = await Promise.all([0, 1, 2].map(tile));
       terrain = terrainHeights(tiles);
       const tex = (name: string) => {
         const i = scene.materials.findIndex((m) => m.toLowerCase() === name);
