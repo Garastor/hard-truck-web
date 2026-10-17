@@ -25,6 +25,8 @@ const LAPS = 3;
 const COUNTDOWN = 5.5;
 /** Моменти звуку `alarm` (три блимання зеленого) від початку відліку, с — гіпотеза: раз на секунду від 2 с. */
 const BLINKS = [2, 3, 4];
+/** Суперників у гонці кар'єри (0x66c6d0). */
+const CAREER_RIVALS = 4;
 /** Ліміт часу гонки, с (0x66c698). */
 const TIME_LIMIT = 1800;
 /** Відстань від маршруту (м), далі якої суперник за 4 с відновлюється на маршруті, і скільки секунд він може стояти. */
@@ -223,7 +225,16 @@ export class RaceMode {
   private announced = 0;
   onFinish: ((place: number) => void) | null = null;
 
-  constructor(private readonly drive: Ht2Drive, roads: Ht2Roads, private readonly messages: (key: string, fb: string) => string) {
+  /**
+   * career — гонка в кар'єрі (0x4279d0): 4 суперники класу машини гравця на start1_1…4, гравець приїхав сам (не
+   * переставляємо), фініш — пейджер без вікна; інакше — режим «Гонки»: гравець на start1_1, 7 суперників на 2…8.
+   */
+  constructor(
+    private readonly drive: Ht2Drive,
+    roads: Ht2Roads,
+    private readonly messages: (key: string, fb: string) => string,
+    private readonly career = false,
+  ) {
     const nodes = new Map<string, THREE.Vector3>();
     for (const r of drive.world.regions.values())
       for (const room of r.way.rooms) for (const n of room.nodes) if (/^(start1_\d|check_point\d)$/.test(n.name)) nodes.set(n.name, toThree(...n.pos));
@@ -242,12 +253,14 @@ export class RaceMode {
     const rp = this.route.pts;
     const dir = rp[Math.min(5, rp.length - 1)].clone().sub(rp[0]).setY(0).normalize();
     const player = drive.truck;
-    player.reset({ position: drive.groundAtPublic(start), forward: dir });
-    this.racers.push({ truck: player, pilot: null, laps: 0, last: 0, halfway: false, finished: null, name: 'Ви' });
-    // Суперники: тягачі й вантажівки без надвеликих Storm (12 м і більше: на решітці з кроком 15 м — перетин).
-    const pool = drivable(drive.trucksData).filter((r) => (r.group === 'tractors' || r.group === 'lorries') && !/^Storm/.test(r.carNode));
+    if (!career) player.reset({ position: drive.groundAtPublic(start), forward: dir });
+    this.racers.push({ truck: player, pilot: null, laps: 0, last: career ? this.route.along(player.visual.position) : 0, halfway: false, finished: null, name: 'Ви' });
+    // Суперники: тягачі й вантажівки без надвеликих Storm (12 м і більше: на решітці з кроком 15 м — перетин); у
+    // кар'єрі — клас машини гравця (0x425d40; без причепів — гіпотеза порту).
+    const group = drive.truckGroup;
+    const pool = drivable(drive.trucksData).filter((r) => (career ? r.group === group : r.group === 'tractors' || r.group === 'lorries') && !/^Storm/.test(r.carNode));
     const side = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
-    for (let k = 2; k <= 8; k++) {
+    for (let k = career ? 1 : 2; k <= (career ? CAREER_RIVALS : 8); k++) {
       const base = nodes.get(`start1_${k}`);
       // Решітка — одна колона вздовж траси; машини — у два ряди за номером (±1,75 м, як смуги 0x4d43a0).
       const p = base?.clone().addScaledVector(side, k % 2 ? LANE : -LANE);
@@ -337,11 +350,21 @@ export class RaceMode {
     if (me.finished !== null) {
       this.done = true;
       const place = this.place(me);
+      if (this.career) {
+        this.drive.say(this.messages(`YOU_CAME_${place - 1}`, `ВИ ПРИЇХАЛИ ${place}-М`));
+        this.onFinish?.(place);
+        return;
+      }
       void modal(this.drive.overlay, 'Фініш', this.messages(`YOU_CAME_${place - 1}`, `Ви фінішували ${place}-м`), ['Гаразд']).then(() => this.onFinish?.(place));
       return;
     }
     if (this.clock > TIME_LIMIT) {
       this.done = true;
+      if (this.career) {
+        this.drive.say(this.messages('DISQUALIFIED', 'ВАС ЗНЯТО З ДИСТАНЦІЇ'));
+        this.onFinish?.(0);
+        return;
+      }
       void modal(this.drive.overlay, 'Гонка', this.messages('DISQUALIFIED', 'ВАС ЗНЯТО З ДИСТАНЦІЇ'), ['Гаразд']).then(() => this.onFinish?.(0));
       return;
     }

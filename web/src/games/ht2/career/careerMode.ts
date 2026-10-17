@@ -11,6 +11,7 @@ import { gasPanel, jobPanel, orderPanel, salePanel, servicePanel } from './stati
 import type { SidePanel } from '../ui/panel';
 import { active, advance, makeRivals, place, PREMIUM_SHARE } from './competition';
 import { hireOffer, LICENCE_TIME, newDriver, tickCompany } from './company';
+import { CareerRaces } from './races';
 import { ukMessage } from '../ui/uk';
 import { StoreZones } from './storeZones';
 import { arrestCard, ILLEGAL_FINE, noFines, SPEEDING_PER_DEGREE, type Fines } from './law';
@@ -72,6 +73,7 @@ export class CareerMode {
           if (/^node_car_fuel/i.test(n.name)) this.fuelSpots.push(n.pos);
         }
     this.lastPos.copy(drive.truck.visual.position);
+    this.races = new CareerRaces(drive, career, (k, fb, v) => this.msg(k, fb, v), LICENCE_TIME);
   }
 
   /** Бак і витрата з vehicle.tech: витрата у файлі × 10 = л/100 км (ЗіЛ — 51), запас ходу = бак / витрата. */
@@ -104,7 +106,11 @@ export class CareerMode {
   /** Відкладена картка «Неустойка» після пограбування мафією (через 8 с, 0x64b698). */
   private forfeitCard: { left: number; amount: number } | null = null;
 
+  /** Гонки на Кільці (career/races.ts). */
+  readonly races: CareerRaces;
+
   update(dt: number, throttle = 0): void {
+    this.races.update();
     if (this.forfeitCard && (this.forfeitCard.left -= dt) <= 0) {
       const amount = this.forfeitCard.amount;
       this.forfeitCard = null;

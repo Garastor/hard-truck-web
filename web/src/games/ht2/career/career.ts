@@ -56,6 +56,8 @@ export interface Ht2Career {
   trailerDents?: Partial<Record<string, number>>;
   /** Напівпричіп тягача — підібраний на базі (vehicles/presents.ts); null — без причепа (тягач купується без нього). */
   trailer?: TrailerChoice | null;
+  /** Перемог у гонках на Кільці поспіль (career/races.ts: ліцензії за перемогу). */
+  raceWins?: number;
   /** Штрафи, що висять на гравці (law.ts): розшук міліцією до затримання чи хабара. */
   fines?: Fines;
   /** Машина крадена (куплена на ринку як крадена): міліція з імовірністю 50 % вважає її викраденою. */

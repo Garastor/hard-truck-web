@@ -948,6 +948,11 @@ export class Ht2Drive {
     this.truck.tow = { mass: this.trailer.mass, wheels: this.trailer.wheelCount };
   }
 
+  /** Клас машини гравця з vehicle.tech (lorries, tractors…) — суперники гонки в кар'єрі того самого класу. */
+  get truckGroup(): string | undefined {
+    return this.rec?.group;
+  }
+
   /** Тягач гравця може тягти тип причепа: «Шторм» — лише свій, інші — модулі й цистерни (evehicles.sch). */
   private canTow(k: SemiKind): boolean {
     const storm = /^Storm/i.test(this.rec?.carNode ?? '');
@@ -2064,7 +2069,7 @@ export class Ht2Drive {
       this.drawTablo(dt, state.handbrake);
       this.cards?.update(dt);
       this.bar.textContent = (this.careerMode ? this.careerMode.hud(true) : this.race ? this.race.hud() : '') + who;
-    } else this.bar.textContent = (this.careerMode ? `${drive}\n${this.careerMode.hud()}` : this.race ? `${drive}\n${this.race.hud()}` : drive) + who;
+    } else this.bar.textContent = (this.careerMode ? `${drive}\n${this.careerMode.hud()}${this.race ? `\n${this.race.hud()}` : ''}` : this.race ? `${drive}\n${this.race.hud()}` : drive) + who;
   }
 
   /** Повідомлення гравцю: на пейджер (з оригінальним інтерфейсом) чи в рядок табло на time с. */
