@@ -39,6 +39,15 @@ describe.skipIf(!existsSync(join(HT2_DIR, 'ENV/aa.b3d')))('Погода кімн
     expect(w.flags(6)).toEqual({ rain: true, sun: true, thund: true });
   });
 
+  it('туман і дальня площина як на живій грі (7:25, ясно): fogn 167,6, fogf 900, площина frpl·fogf 540', () => {
+    const w = Weather.parse(decodeCp1251(readFileSync(join(HT2_DIR, 'WEATHER.INI'))));
+    const l = w.at(7.41, 0, 1);
+    expect(l.fogNear).toBeCloseTo(167.6, 0);
+    expect(l.fogFar).toBe(900);
+    expect(l.frpl * l.fogFar).toBeCloseTo(540, 3);
+    expect(w.at(14, 0, 5).frpl).toBe(1); // тунель без frpl — 1, як у king.exe
+  });
+
   it('змішування зі спецнабором: k = 0 — звичайна, k = 1 — спецнабір', () => {
     const w = Weather.parse(decodeCp1251(readFileSync(join(HT2_DIR, 'WEATHER.INI'))));
     const base = w.at(14, 0, 1);

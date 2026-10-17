@@ -23,6 +23,11 @@ export interface Light {
   fog: THREE.Color;
   fogNear: number;
   fogFar: number;
+  /**
+   * Частка далечіні туману `frpl_*` (немає ключа — 1): дальня площина камери king.exe = frpl · fogf (камера +0x20 →
+   * рендерер +0x2118; виміряно телеметрією 2026-10-18 — удень 0,6 · 900 = 540 м).
+   */
+  frpl: number;
   /** Сонце на довкілля (пряме світло), місяць і розсіяне світло. */
   sun: THREE.Color;
   moon: THREE.Color;
@@ -140,6 +145,7 @@ export class Weather {
       fog: c(base.fog, sp.fog),
       fogNear: n(base.fogNear, sp.fogNear),
       fogFar: n(base.fogFar, sp.fogFar),
+      frpl: n(base.frpl, sp.frpl),
       sun: c(base.sun, sp.sun),
       moon: c(base.moon, sp.moon),
       ambient: c(base.ambient, sp.ambient),
@@ -159,6 +165,7 @@ export class Weather {
       fog: c(this.mix(set, 'fog', s, ph, Math.min(1, 2 * b))),
       fogNear: this.dist(set, 'fogn', b, d, [20, 50, 500, 800]),
       fogFar: this.dist(set, 'fogf', b, d, [100, 250, 800, 1300]),
+      frpl: this.dist(set, 'frpl', b, d, [1, 1, 1, 1]),
       sun: c(this.mix(set, 'sunenv', s, ph, b, 0, 0.05)),
       moon: c(this.mix(set, 'moon', s, ph, b)),
       ambient: c(this.mix(set, 'envamb', s, ph, b)),

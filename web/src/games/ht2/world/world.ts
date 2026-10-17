@@ -205,6 +205,13 @@ export class Ht2World {
   /** Відблиски сонця на екрані (lightonglass2) і показник погоди w для них. */
   private readonly flare: LensFlare;
   private weatherW = 0;
+  /**
+   * Дальня площина камери, м: king.exe — frpl · fogf (удень 0,6 · 900 = 540 м, у негоду 1 · 250), ближня — 0,2 м
+   * (рендерер +0x2110/+0x2118, телеметрія 2026-10-18). Туман D3D іде з fogn/fogf без ділення на ближню площину
+   * (0x005adc80: FOGSTART/FOGEND = fogn/fogf; поділені — лише для програмного рендерера), тож на краю площини
+   * туман неповний (удень ≈ 45 %) і світ далі просто не малюється.
+   */
+  viewFar = 900;
   private loading: string | null = null;
   /** Увімкнений реквізит засідок (імена ambushProp). */
   private readonly propsOn = new Set<string>();
@@ -285,6 +292,7 @@ export class Ht2World {
     fog.color.copy(l.fog);
     fog.near = l.fogNear;
     fog.far = l.fogFar;
+    this.viewFar = l.frpl * l.fogFar;
     (this.scene.background as THREE.Color).copy(l.fog);
     this.sun.color.copy(l.sun);
     this.moon.color.copy(l.moon);

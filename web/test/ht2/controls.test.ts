@@ -58,6 +58,16 @@ describe('HT2: доба й погода (king.exe weatherandtime)', () => {
     expect(sunHeight(14)).toBeCloseTo(1.5);
     expect(sunDirection(14)[2]).toBeCloseTo(Math.sin(1.5 * Math.PI / 5));
   });
+  it('напрям сонця як у king.exe (sun_s0, телеметрія 7:25 і 21:00)', () => {
+    const d = sunDirection(7.41);
+    expect(d[0]).toBeCloseTo(0.965, 3);
+    expect(d[1]).toBeCloseTo(0.15, 2);
+    expect(d[2]).toBeCloseTo(0.216, 3);
+    const n = sunDirection(21.009);
+    expect(n[0]).toBeCloseTo(-0.9545, 3);
+    expect(n[1]).toBeCloseTo(0.2583, 3);
+    expect(sunDirection(14)[1]).toBeCloseTo(-Math.cos(1.5 * Math.PI / 5)); // опівдні — південь (−y)
+  });
   it('доба: повзунок 0,5 → 16,2 хв', () => {
     expect(86400 / gameTimeScale(0.5) / 60).toBeCloseTo(16.2);
   });

@@ -194,11 +194,6 @@ const HARD_SURFACE = new Set([1, 5, 10]);
 const GROUND_RAY = groups(GROUP_WORLD, GROUP_WORLD);
 /** Дальність видимості трафіку без туману в сцені, м. */
 const VIEW_FALLBACK = 900;
-/**
- * Дальня площина камери — край туману із запасом (туман 100…1300 м, далі однаково лише його колір; було завжди
- * 4000 м): за нею three.js не малює нічого. Небо й ореоли не обрізаються (engine/render/farClip.ts).
- */
-const FAR_MARGIN = 1.05;
 /** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
 /** Рація: радіус зв'язку, м; скільки після штрафу можна домовитися, с; перемирʼя з мафією, с (гіпотези). */
 /** Найманий прибув на склад ближче цього, м (гіпотеза порту). */
@@ -1495,7 +1490,8 @@ export class Ht2Drive {
     // Спалах: розсіяне світло до (0,9, 1, 1) (king.exe 0x005a9540 — через кадр протягом 1 с; на прохання користувача
     // — один плавний спалах без мерехтіння, коротший і мʼякший); thund=off — без спалаху.
     this.world.setClimate(hour, c.bad, this.weatherFlags.thund ? FLASH_PEAK * flashLevel(FLASH_TIME - this.flashTime) : 0, c.w());
-    const far = ((this.world.scene.fog as THREE.Fog | null)?.far ?? VIEW_FALLBACK) * FAR_MARGIN;
+    // Дальня площина — як у king.exe, frpl · fogf (world.viewFar); небо й ореоли не обрізаються (engine/render/farClip.ts).
+    const far = this.world.viewFar;
     if (this.camera.far !== far) {
       this.camera.far = far;
       this.camera.updateProjectionMatrix();
