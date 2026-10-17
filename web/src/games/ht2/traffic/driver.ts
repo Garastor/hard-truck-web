@@ -89,6 +89,11 @@ const INSIDE = 15;
 const CONFLICT_DIST = 3.5;
 const JUNCTION_STOP = 7;
 const YIELD_MAX = 6;
+/**
+ * Перехрестя з кількох вузлів WAY (порт): пропуск зважає на машини біля всіх вузлів ближче за стільки метрів —
+ * симуляція: зіткнення під прямим кутом переважно між машинами різних близьких вузлів.
+ */
+const JUNCTION_CLUSTER = 40;
 
 export interface Mover {
   line: RoadLine;
@@ -596,6 +601,16 @@ function tryOncoming(m: Mover, leader: { gap: number; speed: number; obstacle: O
 /** Мережа для пропуску на перехрестях (вузли). */
 export interface Net {
   isJunction(node: number): boolean;
+  /** Положення вузлів (перехрестя WAY часто з кількох близьких вузлів — пропуск дивиться на всі). */
+  nodes?: readonly { pos: THREE.Vector3 }[];
+}
+
+/** Вузли одного перехрестя: той самий чи ближче JUNCTION_CLUSTER м. */
+function sameJunction(net: Net, a: number, b: number): boolean {
+  if (a === b) return true;
+  const pa = net.nodes?.[a]?.pos;
+  const pb = net.nodes?.[b]?.pos;
+  return !!pa && !!pb && Math.hypot(pa.x - pb.x, pa.z - pb.z) < JUNCTION_CLUSTER;
 }
 
 /** Відстань від початку поточної лінії до машини, м. */
@@ -673,11 +688,11 @@ function mustYield(m: Mover, j: { node: number; dist: number }, obstacles: reado
     if (!om || om === m || om.gone || om.line.siblings === m.line.siblings) continue;
     let inside = false;
     let oDist: number;
-    if (om.line.endNode === j.node && net.isJunction(om.line.endNode)) {
+    if (net.isJunction(om.line.endNode) && sameJunction(net, om.line.endNode, j.node)) {
       oDist = remaining(om);
       if (oDist > JUNCTION_LOOK) continue;
       if (oDist > 25 && oDist / Math.max(om.speed, 0.5) > myEta + 4) continue;
-    } else if (om.line.startNode === j.node && fromStart(om) < INSIDE) {
+    } else if (sameJunction(net, om.line.startNode, j.node) && fromStart(om) < INSIDE) {
       inside = true;
       oDist = 0;
     } else continue;
