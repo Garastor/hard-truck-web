@@ -89,6 +89,8 @@ export class AutoPilot {
   steerFor: ((delta: number) => number) | null = null;
   private stuck = 0;
   private reversing = 0;
+  /** Кермо на час здавання назад (протилежне до того, з яким застряг). */
+  private reverseSteer = 0;
   /** Бічний зсув для обгону (м), плавно змінюється. */
   private offset = 0;
   /** Своя смуга — сталий зсув від осі маршруту, м (+ праворуч; гонка: ряди решітки ±1,75 м). */
@@ -109,6 +111,7 @@ export class AutoPilot {
       this.reversing -= dt;
       s.throttle = 0;
       s.brake = 1;
+      s.steer = this.reverseSteer;
       return s;
     }
     if (s.throttle > 0.5 && speedKmh < 2) this.stuck += dt;
@@ -116,7 +119,13 @@ export class AutoPilot {
     if (this.stuck > 1.5) {
       this.stuck = 0;
       this.reversing = 1.6;
-      s.steer = -s.steer;
+      // Назад — з протилежним кермом: ніс повертає до цілі (кінематичний рух king.exe інакше їздив туди-сюди по
+      // тій самій дузі, упираючись у ту саму стіну).
+      this.reverseSteer = -s.steer;
+      s.steer = this.reverseSteer;
+      s.throttle = 0;
+      s.brake = 1;
+      return s;
     }
     const n = this.net.nearest(pos, forward);
     if (!n) {

@@ -1,6 +1,7 @@
 import type { EngineProfile } from '../engine/vehicle/engine';
 import type { KingSetup } from '../engine/vehicle/truckVehicle';
 import type { InputProfile } from '../engine/input/input';
+import type { AutoPilot } from '../engine/vehicle/autopilot';
 
 /**
  * Керування Дальнобойщиків 2 з клавіатури — виміряне телеметрією king.exe (ZilR, 2026-10-13,
@@ -81,6 +82,24 @@ export const HT2_KING: KingSetup = { mu: 0.71, rain: 0.6, steerK: 8.8, steerScal
  * записі ≈ 3, тут ≈ 1,3).
  */
 export const HT2_KING_BRAKE = { pedal: (t: number) => (t + 0.001) / (t + 1), scale: 1 };
+
+/** Рух king.exe для машини з vehicle.tech (гравець, трафік, суперники, далекобійники); travel — хід підвіски. */
+export function kingCar(travel?: readonly number[]): { engine: EngineProfile; brake: typeof HT2_KING_BRAKE; king: KingSetup } {
+  return { engine: HT2_KING_ENGINE, brake: HT2_KING_BRAKE, king: { ...HT2_KING, travel } };
+}
+
+/** Кут коліс δ → кермо (обернене до δ = 45°·a·|s|^p, HT2_KING). */
+export function kingSteer(delta: number): number {
+  const k = HT2_KING;
+  return Math.sign(delta) * (Math.abs(delta) / (Math.PI / 4) / k.steerScale) ** (1 / k.steerPower);
+}
+
+/** Автопілот для машини на русі king.exe: переслідування цілі по дузі з колісною базою base. */
+export function kingPilot(ap: AutoPilot, base: number): AutoPilot {
+  ap.kinematicBase = base;
+  ap.steerFor = kingSteer;
+  return ap;
+}
 
 export const HT2_INPUT: InputProfile = {
   // До упору: на місці ≈ 0,4 с, на 26–35 км/год ≈ 0,8 с, на 57 км/год ≈ 1 с; з Ctrl — ≈ 0,4 с на будь-якій

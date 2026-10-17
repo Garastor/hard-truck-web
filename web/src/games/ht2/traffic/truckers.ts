@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HT2_ENGINE, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER, HT2_BRAKE } from '../vehicles/controls';
+import { kingCar, kingPilot } from '../vehicles/controls';
 import { AutoPilot } from '../engine/vehicle/autopilot';
 import { TruckVehicle } from '../engine/vehicle/truckVehicle';
 import { buildTruckModel } from '../engine/vehicle/trucks';
@@ -113,9 +113,10 @@ export class Truckers {
     const model = def && buildTruckModel(this.drive.trucksData.asm, def, false);
     if (!def || !model) return null;
     if (variant > 0) recolor(model.root, this.drive.trucksData, variant + 1);
-    const truck = new TruckVehicle(this.drive.rapierWorld, def, model, { position: this.drive.groundAtPublic(at), forward }, { engine: HT2_ENGINE, rollLift: HT2_ROLL_LIFT, steerLimit: HT2_STEER_LIMIT, steerPower: HT2_STEER_POWER, brake: HT2_BRAKE });
+    // Рух king.exe, як у гравця (kingModel), автопілот — переслідування по дузі з базою машини.
+    const truck = new TruckVehicle(this.drive.rapierWorld, def, model, { position: this.drive.groundAtPublic(at), forward }, kingCar(rec.suspension));
     this.drive.world.scene.add(truck.visual);
-    const pilot = new AutoPilot(this.roads);
+    const pilot = kingPilot(new AutoPilot(this.roads), truck.base);
     pilot.cruise = 50 + Math.random() * 25;
     return { name, truck, pilot, bad: 0 };
   }
