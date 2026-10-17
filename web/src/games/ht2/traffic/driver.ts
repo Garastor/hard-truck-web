@@ -19,10 +19,9 @@ import type { RoadLine } from '../world/roads';
  *   тож повороти так само випадкові); ближче 100 м до стику — перестроювання (changeLanes 0x420360): праворуч —
  *   у крайню праву смугу, ліворуч — у смугу біля осі, прямо — лишитись (іноді — випадкова смуга).
  * - Перестроювання — бічний зсув (у king.exe кінематична машина: lat ← s·lat + (1 − s)·ціль). Порт (відступ на
- *   прохання користувача — «природніше»): зсув іде S-кривою з бічним прискоренням до LAT_ACC (смуга ≈ 3,7 с), а
- *   кінематична машина не котиться ламаною, а їде своїм курсом до точки на шляху попереду (як фізична), з кривизною
- *   до KAPPA_MAX і бічним прискоренням до TURN_ACC: вершини ламаних і стики ліній — дугами; позиція на лінії —
- *   проєкцією (sync).
+ *   прохання користувача — «природніше»): зсув іде S-кривою з бічним прискоренням до LAT_ACC (смуга ≈ 3,7 с);
+ *   кінематична машина стоїть точно на лінії смуги з цим зсувом, а курс — на близьку точку шляху попереду (без зламів
+ *   на вершинах ламаної). Вільний курс дугою до далекої точки пробували — машини зрізали повороти на зустрічну.
  * - Розгін/гальмування: газ 0,2·Δv, гальмо min(1; 0,2·Δv) (0x4d60c0) → прискорення порту (гіпотеза: до 2,5 м/с²,
  *   гальмування до 7 м/с²).
  */
@@ -39,14 +38,10 @@ const LANE_TAU = 0.9;
 /** S-крива бічного зсуву: бічне прискорення, м/с², і найкоротший маневр, с. */
 const LAT_ACC = 1.2;
 const LAT_MIN_TIME = 1.5;
-/** Курс кінематичної машини: найбільша кривизна, 1/м, бічне прискорення на дузі, м/с², огляд уперед L = a·v + b. */
-const KAPPA_MAX = 1 / 7;
-const TURN_ACC = 4;
-const LOOK_A = 0.6;
-const LOOK_B = 4;
-/** Далі від запланованого зсуву — довертати з найбільшою кривизною; ще далі — повернути на лінію (застрягла). */
-const OFF_TRACK = 1.5;
-const SNAP_OFF = 8;
+/** Курс кінематичної машини — на точку шляху за HEADING_LOOK·v м (у межах MIN…MAX): без зламів на вершинах. */
+const HEADING_LOOK = 0.35;
+const HEADING_MIN = 2;
+const HEADING_MAX = 6;
 /**
  * Огляд перед перестроюванням (порт): у цільовій смузі машині попереду — не ближче GAP_AHEAD м і не менше
  * T_AHEAD с наздоганяння; тій, що ззаду (зокрема гравцеві), — не ближче GAP_BEHIND м і не менше T_BEHIND с, доки
@@ -58,12 +53,12 @@ const GAP_BEHIND = 6;
 const T_BEHIND = 4;
 const LOOK_LANE = 90;
 /**
- * Гальмування кінематичної машини (порт): сповільнення наростає не швидше JERK м/с³ (звичайне — до 3,5 м/с²,
- * зупинка — пропорційно швидкості); різко (JERK_HARD) — лише коли потрібне понад HARD м/с².
+ * Гальмування кінематичної машини (порт): сповільнення наростає не швидше JERK м/с³, різко (JERK_HARD) — коли потрібне
+ * понад HARD м/с² (підібрано симуляцією: зіткнень — як без обмеження, різких гальмувань — на ≈ 14 % менше).
  */
-const JERK = 6;
+const JERK = 10;
 const JERK_HARD = 40;
-const HARD = 5;
+const HARD = 3;
 /** Покажчик: за скільки секунд до маневру, від якого кута повороту (рад), скільки метрів після стику. */
 const SIGNAL_AHEAD = 3;
 const SIGNAL_TURN = 0.35;
@@ -455,41 +450,29 @@ export function step(m: Mover, dt: number, obstacles: readonly Obstacle[], net: 
   if (m.gone) return;
   const want = decide(m, dt, obstacles, net);
   const dv = want - m.speed;
-  // Потрібне прискорення: розгін — як було; гальмування — пропорційно різниці (зупинка — за швидкістю), до BRAKE.
-  const goal = dv > 0 ? Math.min(ACCEL, 0.3 + 0.6 * dv) : -Math.min(BRAKE, Math.max(want === 0 ? 0.6 * m.speed : 0, Math.max(1.5, 0.8 * -dv)));
-  // Сповільнення наростає плавно (JERK), різко — лише екстрено; відпускається одразу.
+  // Потрібне прискорення — як було (розгін 0,3 + 0,6·Δv до 2,5; гальмування 0,8·Δv, не менше 2,5, зупинка — 7 м/с²):
+  // м'якша формула (від 1,5 м/с², зупинка за швидкістю) втричі збільшувала зіткнення в симуляції.
+  const goal = dv > 0 ? Math.min(ACCEL, 0.3 + 0.6 * dv) : want === 0 ? -BRAKE : -Math.min(BRAKE, Math.max(2.5, 0.8 * -dv));
+  // Сповільнення наростає не миттєво (JERK), різко (JERK_HARD) — коли потрібне понад HARD; відпускається одразу.
   const jerk = goal < -HARD ? JERK_HARD : JERK;
   m.acc = goal < m.acc ? Math.max(goal, m.acc - jerk * dt) : goal;
   const acc = m.acc;
   m.speed = Math.max(0, dv > 0 ? Math.min(want, m.speed + acc * dt) : acc < 0 ? Math.max(want, m.speed + acc * dt) : m.speed);
-  const move = m.speed * dt;
-  if (move > 0) pursue(m, move, Math.abs(m.lat - m.off) > OFF_TRACK);
-  // Позиція на лінії — проєкцією; далеко від лінії (кут, якого дуга не бере) — повернути на лінію.
-  const away = sync(m, m.pos, m.heading, m.speed);
-  if (away > SNAP_OFF + Math.abs(m.off)) {
-    m.lat = m.off;
-    place(m, dt);
-  } else m.pos.y = linePoint(m).y;
+  advance(m, m.speed * dt);
+  // Позиція — точно на лінії смуги з запланованим зсувом (S-крива маневру); курс — на близьку точку шляху попереду
+  // (без зламів на вершинах ламаної), але сама машина зі смуги не зрізає (дуги з далекою точкою виводили її на
+  // зустрічну в поворотах — симуляція: зіткнень лоб у лоб удесятеро більше).
+  m.lat = m.off;
+  place(m, dt);
+  const look = THREE.MathUtils.clamp(HEADING_LOOK * m.speed, HEADING_MIN, HEADING_MAX);
+  const to = carrot(m, look).sub(m.pos).setY(0);
+  if (to.lengthSq() > 0.01) m.heading.copy(to.normalize());
 }
 
-/**
- * Кінематична машина за точкою на шляху (порт): курс повертає до точки на L = 0,6·v + 4 м уперед (з запланованим
- * зсувом), кривизна κ = 2·sin α / d — не більше KAPPA_MAX і TURN_ACC/v²; позиція — уздовж курсу.
- */
-function pursue(m: Mover, move: number, recover: boolean): void {
-  const look = THREE.MathUtils.clamp(LOOK_A * m.speed + LOOK_B, 5, 20);
-  const to = carrot(m, look).sub(m.pos).setY(0);
-  const d = to.length();
-  if (d > 0.05) {
-    to.divideScalar(d);
-    const h = m.heading;
-    const alpha = Math.atan2(h.z * to.x - h.x * to.z, h.x * to.x + h.z * to.z);
-    // Зійшла з траєкторії (кут, якого не взяла) — довертає різкіше, щоб не «телепортувати» на лінію.
-    const kMax = recover ? KAPPA_MAX : Math.min(KAPPA_MAX, TURN_ACC / Math.max(1, m.speed * m.speed));
-    const k = THREE.MathUtils.clamp((2 * Math.sin(alpha)) / Math.max(d, 1), -kMax, kMax);
-    h.applyAxisAngle(new THREE.Vector3(0, 1, 0), k * move).setY(0).normalize();
-  }
-  m.pos.addScaledVector(m.heading, move);
+/** Фізична → кінематична: запланований зсув — від того, де машина є, назад до цілі S-кривою. */
+export function settleFrom(m: Mover): void {
+  m.off = m.lat;
+  shiftTo(m, m.latGoal);
 }
 
 /** Рішення водія (і кінематичного, і фізичного): перестроювання, обʼїзд, обгін, пропуск, цільова швидкість, м/с. */

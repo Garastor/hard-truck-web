@@ -4,7 +4,7 @@ import { visibleBox } from '../engine/vehicle/trucks';
 import { GROUP_WORLD, groups } from '../engine/physics/world';
 import { isList, num, str, type SExpr } from '../formats/sexpr';
 import type { Ht2Roads, RoadLine } from '../world/roads';
-import { coast, decide, newMover, pathAhead, retrace, roadLimit, setGoals, step, sync, turnSignal, type Mover, type Obstacle } from './driver';
+import { coast, decide, newMover, pathAhead, retrace, roadLimit, setGoals, settleFrom, step, sync, turnSignal, type Mover, type Obstacle } from './driver';
 import { Navigator } from '../world/navigator';
 import { control, newPhysState, type PhysState } from './physical';
 import type { TruckVehicle } from '../engine/vehicle/truckVehicle';
@@ -421,6 +421,8 @@ export class Traffic {
     this.physics?.remove(c.vehicle);
     c.vehicle = null;
     c.latGoal = 0;
+    // Зсув від лінії, де машина є, — назад на смугу S-кривою (кінематична стоїть на лінії з запланованим зсувом).
+    settleFrom(c);
     this.activate(c);
   }
 
