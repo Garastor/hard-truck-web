@@ -13,12 +13,17 @@ import { recolor } from '../traffic/traffic';
 /**
  * Ринки вантажівок HT2 — `parking` з `ENV/mod_<регіон>.sch`:
  * `(parking MARKET_AJ "Барахолка" 1 () ((node "node_car_0100") … (node "node_car_0104" 4 "Приозерск")) 10)` — назва,
- * номер, місця (вузли WAY), у вузла з прапорцем 4 — назва міста. Записи з номером −1 (`hidden_car_*`, `old_car_*` —
- * схованки й старі машини) поки не використовуємо.
+ * номер, місця (вузли WAY), у вузла з прапорцем 4 — назва міста. Записи з номером −1 — безіменні стоянки-схованки:
+ * `hidden_car_*`, `node_stolen_*`, `stolen_truck_*` (прапорець 8) і `old_car_*` (прапорець 32).
  *
- * Асортимент — гіпотеза порту за GAME.CNF (`forsale 25`, `forsale_used 5`): на кожному місці ринку — вантажівка
- * (з кузовом чи тягач), набір змінюється щодня гри (псевдовипадково за номером ринку й днем), кожна п'ята —
- * вживана: дешевше на 40 %, з пошкодженням 30 %.
+ * Хто де стоїть (king.exe 0x421d90 createDealerForSale → 0x418c10 → фільтр місць 0x456460): ліміти GAME.CNF —
+ * `forsale 25` нових, `forsale_used 5` вживаних, `forsale_stolen 5` крадених на весь світ. Нова — лише на місці без
+ * прапорців 4|8|32 (місце-місто — для замовлених), вживана — на місці з 32, крадена — з 8; стоянку обирають ту, де
+ * зайнято найменше (перша з рівних), місце на ній — випадкове вільне. Отже на звичайних ринках — лише нові, вживані
+ * й крадені — на стоянках-схованках.
+ *
+ * Гіпотези порту: набір перераховується щодня гри (у king.exe продавців дозаповнює задача updateDealers, далі
+ * мінімальної відстані від гравця), модель — випадкова з придатних до їзди; вживана дешевша на 35 % і побита.
  */
 const SHOW_R = 450;
 /** Замовлену машину приганяють на ринок далі цієї відстані від абонента, м (0x64b860). */
@@ -38,7 +43,24 @@ export interface Market {
   townSpot: number;
   /** Останнє число запису `parking` (поле ринку +0x30, типово 4): плата за доставку замовленої машини — N · 300 $. */
   fee: number;
+  /** Прапорці місць (4 — місто, 8 — для крадених, 32 — для вживаних). */
+  flags: number[];
+  /** Стоянка-схованка (номер −1 у даних; id порту — від HIDDEN_ID): не ринок на карті, без найму. */
+  hidden: boolean;
 }
+
+/** Ліміти продавців з GAME.CNF. */
+export interface SaleLimits {
+  forsale: number;
+  used: number;
+  stolen: number;
+}
+
+const HIDDEN_ID = 1000;
+/** Вид продавця: 0 нова, 1 вживана, 2 крадена. */
+type SaleKind = 0 | 1 | 2;
+/** Чи підходить місце з прапорцями f для виду (0x456460). */
+const fits = (f: number, kind: SaleKind) => (kind === 0 ? (f & 0x2c) === 0 : kind === 1 ? (f & 0x20) !== 0 : (f & 8) !== 0);
 
 /** Замовлена рацією машина (career/carOrder.ts): стоїть на місці ринку, доки її не куплять. */
 export interface OrderedCar {
@@ -82,19 +104,32 @@ export function parseMarkets(mods: Iterable<{ sch: SExpr[] }>, ways: Iterable<{ 
         nodes.set(n.name.toLowerCase(), { pos: n.pos, dir });
       }
   const out: Market[] = [];
+  let hiddenId = HIDDEN_ID;
   for (const { sch } of mods)
     for (const e of sch) {
-      if (!isList(e) || e[0] !== 'parking' || num(e[3], -1) < 0 || !isList(e[5])) continue;
-      // Частина назв у даних — «??» (не заповнені): показуємо «Ринок».
+      if (!isList(e) || e[0] !== 'parking' || !isList(e[5])) continue;
+      const hidden = num(e[3], -1) < 0;
+      // Частина назв у даних — «??» (не заповнені): показуємо «Ринок»; схованки — без назви.
       const name = str(e[2]);
-      const m: Market = { id: num(e[3]), name: /^\?*$/.test(name) ? 'Ринок' : ukName(name), town: '', spots: [], townSpot: -1, fee: num(e[6], 4) };
+      const m: Market = {
+        id: hidden ? hiddenId++ : num(e[3]),
+        name: hidden ? '' : /^\?*$/.test(name) ? 'Ринок' : ukName(name),
+        town: '',
+        spots: [],
+        townSpot: -1,
+        fee: num(e[6], 4),
+        flags: [],
+        hidden,
+      };
       for (const n of e[5]) {
         if (!isList(n)) continue;
         const node = nodes.get(str(n[1]).toLowerCase());
         if (n.length > 3) m.town = ukName(str(n[3]));
         if (!node) continue;
-        if (m.townSpot < 0 && num(n[2]) & 4) m.townSpot = m.spots.length;
+        const f = num(n[2], 0);
+        if (m.townSpot < 0 && f & 4) m.townSpot = m.spots.length;
         m.spots.push({ pos: toThree(...node.pos), heading: node.dir });
+        m.flags.push(f);
       }
       if (m.spots.length) out.push(m);
     }
@@ -132,12 +167,44 @@ export class Markets {
     private readonly trucks: Ht2Trucks,
     readonly list: Market[],
     private readonly ground: (p: THREE.Vector3) => number,
+    private readonly limits: SaleLimits = { forsale: 25, used: 5, stolen: 5 },
   ) {}
 
-  /** Що продається на ринку в цей день гри. */
+  private planDay = -1;
+  private planned = new Map<number, Map<number, SaleKind>>();
+
+  /** Розстановка продавців на день (0x418c10): стоянка з найменшою кількістю зайнятих місць, місце — випадкове вільне. */
+  private plan(day: number): Map<number, Map<number, SaleKind>> {
+    if (this.planDay === day) return this.planned;
+    const rnd = seeded(day * 104729 + 0x51ed);
+    // Замовлені машини стоять на місцях-містах (прапорець 4), куди нових не ставлять, — розстановку не міняють
+    // (інакше машини на ринку переставлялися б посеред дня).
+    const taken = new Map<number, Map<number, SaleKind>>();
+    const limits: [SaleKind, number][] = [[0, this.limits.forsale], [1, this.limits.used], [2, this.limits.stolen]];
+    for (const [kind, n] of limits)
+      for (let k = 0; k < n; k++) {
+        let best: Market | null = null;
+        let free: number[] = [];
+        for (const m of this.list) {
+          const t = taken.get(m.id);
+          if (best && (t?.size ?? 0) >= (taken.get(best.id)?.size ?? 0)) continue;
+          const f = m.flags.map((fl, i) => (fits(fl, kind) && !t?.has(i) ? i : -1)).filter((i) => i >= 0);
+          if (f.length) [best, free] = [m, f];
+        }
+        if (!best) break;
+        if (!taken.has(best.id)) taken.set(best.id, new Map());
+        taken.get(best.id)!.set(free[Math.floor(rnd() * free.length)], kind);
+      }
+    this.planDay = day;
+    this.planned = taken;
+    return taken;
+  }
+
+  /** Що продається на ринку (чи стоянці-схованці) в цей день гри. */
   stock(m: Market, day: number): ForSale[] {
     const pool = drivable(this.trucks).filter((r) => !/^Storm/i.test(r.carNode));
     const rnd = seeded(m.id * 7919 + day * 104729);
+    const plan = this.plan(day).get(m.id);
     const out: ForSale[] = [];
     m.spots.forEach((_, spot) => {
       const rec = pool[Math.floor(rnd() * pool.length)];
@@ -145,15 +212,13 @@ export class Markets {
       const own = this.ordered.find((o) => o.market === m.id && o.spot === spot);
       const oRec = own && this.trucks.records.find((r) => r.carNode === own.carNode);
       if (own && oRec) {
-        rnd(); // той самий порядок випадкових чисел — інші місця ринку не міняються
         out.push({ rec: oRec, used: false, stolen: own.stolen, price: Math.round(oRec.price * (own.stolen ? STOLEN_DISCOUNT : 1)), spot, cluster: own.cluster, ordered: true });
         return;
       }
-      // Частки — як forsale 25 / forsale_used 5 / forsale_stolen 5 у GAME.CNF (гіпотеза: місце ринку — випадкове).
-      const r = rnd();
-      const used = r < 5 / 35;
-      const stolen = !used && r < 10 / 35;
-      if (!rec || this.sold.has(`${m.id}:${day}:${spot}`)) return;
+      const kind = plan?.get(spot);
+      if (kind === undefined || !rec || this.sold.has(`${m.id}:${day}:${spot}`)) return;
+      const used = kind === 1;
+      const stolen = kind === 2;
       out.push({ rec, used, stolen, price: Math.round(rec.price * (used ? USED_DISCOUNT : stolen ? STOLEN_DISCOUNT : 1)), spot });
     });
     return out;

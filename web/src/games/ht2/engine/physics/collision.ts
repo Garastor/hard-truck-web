@@ -10,6 +10,8 @@ import { walk, type B3d, type Block } from '../formats/b3d';
  * - листки — колайдери: **23** полігони, **20** ламані-огорожі, **12** площина, **16/17** циліндр
  *   (`a` — центр осі, `b` — напрям осі, `f = [пів-довжина, радіус]`; 16 — суцільний, 17 — порожнистий).
  * Аналітичні фігури перетворюємо на полігони й обрізаємо площинами предків — так Rapier отримує trimesh.
+ * Вузли **21** (перемикач `refer_<Ключ>`: обвали `Fall…Key`, ремонт мосту `CLOSE_BD_*`…) — колізії гілки діють лише
+ * в її стані: полігони позначаємо ключем і гілкою (`<Ключ>#<гілка>`), гра вмикає колайдери гілки сама.
  * Корпуси `hit_<вантажівка>` і рухомі `hitAnmObj*` — локальні, тут не враховуються.
  */
 export type Poly = number[][];
@@ -24,12 +26,16 @@ export interface LevelCollision {
    * його з запису контакту колеса): μ шин, опір кочення, нерівність. 0 — невідоме.
    */
   floorSurface: number[];
+  /** Гілка перемикача кожного полігона підлоги (`<Ключ>#<гілка>`, без `refer_`); '' — діє завжди. */
+  floorSwitch: string[];
   /** Стіни й огорожі. */
   walls: Poly[];
   /** Кімната кожної стіни. */
   wallRoom: string[];
   /** Стіна — з огорожі (блок 20). */
   wallFence: boolean[];
+  /** Гілка перемикача кожної стіни ('' — діє завжди). */
+  wallSwitch: string[];
   /** Чи описує `hit_*` поверхню для коліс; інакше землю беремо з видимої геометрії. */
   hasFloor: boolean;
   /** Кількість колайдерів за типами блоків (для налагодження). */
@@ -51,21 +57,26 @@ export function levelCollision(b3d: B3d): LevelCollision {
   const walls: Poly[] = [];
   const wallRoom: string[] = [];
   const wallFence: boolean[] = [];
+  const floorSwitch: string[] = [];
+  const wallSwitch: string[] = [];
   const stats: Record<string, number> = {};
   const roomBoxes = roomBounds(b3d);
   let room = '';
   let isFence = false;
   let surface = 0;
+  let sw = '';
   const add = (p: Poly) => {
     if (Math.abs(normalZ(p)) < FLOOR_MIN_NZ) {
       walls.push(p);
       wallRoom.push(room);
       wallFence.push(isFence);
+      wallSwitch.push(sw);
       return;
     }
     floors.push(p);
     floorRoom.push(room);
     floorSurface.push(surface);
+    floorSwitch.push(sw);
   };
 
   for (const top of b3d.blocks) {
@@ -73,23 +84,24 @@ export function levelCollision(b3d: B3d): LevelCollision {
     if (!m) continue;
     room = `room_${m[2]}`;
     const box = roomBoxes.get(room.toLowerCase()) ?? null;
-    shapes(top, [], box, (p, fence, t, s) => {
+    shapes(top, [], box, (p, fence, t, s, tag) => {
       stats[t] = (stats[t] ?? 0) + 1;
       isFence = fence;
       surface = s;
+      sw = tag;
       add(p);
       isFence = false;
     });
   }
-  return { floors, floorRoom, floorSurface, walls, wallRoom, wallFence, hasFloor: floors.length > walls.length / 4, stats };
+  return { floors, floorRoom, floorSurface, floorSwitch, walls, wallRoom, wallFence, wallSwitch, hasFloor: floors.length > walls.length / 4, stats };
 }
 
 /**
  * Колайдери піддерева: 23 полігони, 20 огорожі, 12 площина (у межах box), 16/17 циліндр; 9 — поділ площиною
  * (обрізає нащадків). emit — полігон (координати блоку), чи огорожа, тип блоку, покриття (`i2` колайдера).
  */
-function shapes(top: Block, clip0: Plane[], box: Box | null, emit: (p: Poly, fence: boolean, t: number, surface: number) => void): void {
-  const visit = (b: Block, clip: Plane[]): void => {
+function shapes(top: Block, clip0: Plane[], box: Box | null, emit: (p: Poly, fence: boolean, t: number, surface: number, tag: string) => void): void {
+  const visit = (b: Block, clip: Plane[], tag = ''): void => {
     const d = b.data;
     let emitted: Poly[] = [];
     switch (d.t) {
@@ -117,8 +129,15 @@ function shapes(top: Block, clip0: Plane[], box: Box | null, emit: (p: Poly, fen
       case 9:
         if (d.shape.kind === 5 && b.groups) {
           const [nx, ny, nz, w] = d.shape.v;
-          b.groups[0]?.forEach((c) => visit(c, [...clip, [nx, ny, nz, w]]));
-          b.groups[1]?.forEach((c) => visit(c, [...clip, [-nx, -ny, -nz, -w]]));
+          b.groups[0]?.forEach((c) => visit(c, [...clip, [nx, ny, nz, w]], tag));
+          b.groups[1]?.forEach((c) => visit(c, [...clip, [-nx, -ny, -nz, -w]], tag));
+          return;
+        }
+        break;
+      case 21:
+        if (b.name && b.groups) {
+          const key = b.name.replace(/^refer_/i, '');
+          b.groups.forEach((g, gi) => g.forEach((c) => visit(c, clip, `${key}#${gi}`)));
           return;
         }
         break;
@@ -126,9 +145,9 @@ function shapes(top: Block, clip0: Plane[], box: Box | null, emit: (p: Poly, fen
     const surface = 'trigger' in d && d.trigger ? d.trigger.i2 : 0;
     for (const p of emitted) {
       const c = clipAll(p, clip);
-      if (c) emit(c, d.t === 20, d.t, surface);
+      if (c) emit(c, d.t === 20, d.t, surface, tag);
     }
-    for (const g of b.groups ?? []) for (const c of g) visit(c, clip);
+    for (const g of b.groups ?? []) for (const c of g) visit(c, clip, tag);
   };
   visit(top, clip0);
 }

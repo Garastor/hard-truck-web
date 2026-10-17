@@ -241,7 +241,10 @@ export function setGoals(maps: Map<RoadLine, number>[]): void {
 }
 
 function planNext(m: Mover): void {
-  const next = m.line.next as RoadLine[];
+  // Закриту завалом дорогу оминаємо, якщо є інша (world/obstacles.ts).
+  const all = m.line.next as RoadLine[];
+  const open = all.filter((l) => !l.closed);
+  const next = open.length ? open : all;
   const roads = [...new Set(next.map((l) => l.road))];
   m.plan = roads.length ? roads[Math.floor(Math.random() * roads.length)] : null;
   if (goals.length) {

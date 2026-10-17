@@ -57,7 +57,8 @@ import { REPAIR_PER_PERCENT, type Ht2Career } from './career/career';
 import { HT2_MOD_REGIONS, readTextures } from './files';
 import { saveSettings, steerGain, timeScale, type Ht2Settings } from './ui/settings';
 import { EscArt } from './ui/escArt';
-import { ukMessage } from './ui/uk';
+import { ukMessage, ukSign } from './ui/uk';
+import { Obstacles, closedAxes, parseObstacles, type Obstacle } from './world/obstacles';
 import { EscMenu, type EscCommand } from './ui/escMenu';
 import { FPanels, type FPanel } from './ui/fPanels';
 import { TabMap } from './ui/tabMap';
@@ -211,6 +212,16 @@ export class Ht2Drive {
   /** Згладжена висота машини для камери ззаду. */
   private camBaseY = NaN;
   private readonly colliders = new Map<string, RAPIER.Collider[]>();
+  /** Колайдери гілок перемикачів світу (регіон → `<Ключ>#<гілка>` → колайдери): обвали, ремонт мосту. */
+  private readonly switchColliders = new Map<string, Map<string, RAPIER.Collider[]>>();
+  /** Стани перемикачів світу, які задає гра (ключ без `refer_` → гілка); решта — початкові з B3D. */
+  private readonly worldSwitches = new Map<string, number>();
+  /** Обвали, повені й ремонт мосту (world/obstacles.ts). */
+  obstacles: Obstacles | null = null;
+  /** Катки на місцях `pos_work` діючого завалу. */
+  private readonly obstacleProps = new Map<string, { root: THREE.Object3D; body: RAPIER.RigidBody }[]>();
+  /** Цілі маршрутів трафіку (перераховуються, коли завал закриває чи відкриває дорогу). */
+  private trafficGoals: THREE.Vector3[] = [];
   /** Збивні стовпи й рухомі предмети світу. */
   private objects!: WorldObjects;
   /** Вибухи й полумʼя (mnBlow3, mnFire). */
@@ -464,14 +475,19 @@ export class Ht2Drive {
           if (/^sto_/i.test(n.name)) points.push({ pos: toThree(...n.pos), kind: 'sto' });
           if (/^node_car_fuel/i.test(n.name)) points.push({ pos: toThree(...n.pos), kind: 'fuel' });
         }
-    for (const m of parseMarkets(regionMods, this.world.regions.values())) points.push({ pos: m.spots[0].pos, kind: 'market', label: m.name });
+    for (const m of parseMarkets(regionMods, this.world.regions.values())) if (!m.hidden) points.push({ pos: m.spots[0].pos, kind: 'market', label: m.name });
     this.mapPoints = points;
     this.worldMap = new WorldMap(document.body, this.roads.axes, points);
     this.worldMap.onClose = () => {
       this.paused = false;
     };
     if (o.career) {
-      this.markets = new Markets(this.world.scene, this.rapier, this.trucks, parseMarkets(regionMods, this.world.regions.values()), (p) => this.groundAtPublic(p).y - 2.5);
+      this.markets = new Markets(this.world.scene, this.rapier, this.trucks, parseMarkets(regionMods, this.world.regions.values()), (p) => this.groundAtPublic(p).y - 2.5, {
+        // Продавці: нові, вживані (стоянки old_car), крадені (hidden_car) — ліміти GAME.CNF.
+        forsale: cnf ? num(assoc(cnf, 'forsale')?.[1], 25) : 25,
+        used: cnf ? num(assoc(cnf, 'forsale_used')?.[1], 5) : 5,
+        stolen: cnf ? num(assoc(cnf, 'forsale_stolen')?.[1], 5) : 5,
+      });
       // Замовлені рацією машини — зі збереження (стоять на ринку, доки не куплять).
       this.markets.ordered = o.career.orderedCars ??= [];
     }
@@ -583,6 +599,7 @@ export class Ht2Drive {
     const goals: THREE.Vector3[] = [];
     for (const { way } of this.world.regions.values()) for (const room of way.rooms) for (const n of room.nodes) if (n.flag & 2) goals.push(toThree(...n.pos));
     if (goals.length) this.traffic.setGoals(goals);
+    this.trafficGoals = goals;
     this.traffic.view = {
       range: () => (this.world.scene.fog as THREE.Fog | null)?.far ?? VIEW_FALLBACK,
       sees: (p) => this.canSee(p),
@@ -592,6 +609,16 @@ export class Ht2Drive {
       make: (kind, pos, forward, speed) => this.makeCar(kind.model, kind.variant, pos, forward, speed),
       remove: (v) => this.removeCar(v),
     };
+    if (!o.race) {
+      // Обвали й повені (obstacle у mod_*.sch): діючий — зі збереження кар'єри.
+      const list = parseObstacles(regionMods, this.world.regions.values());
+      const closed = new Map<string, number[]>();
+      this.obstacles = new Obstacles(
+        list,
+        { player: () => this.truck.visual.position, apply: (ob, on, announce) => this.applyObstacle(ob, on, announce, closed) },
+        o.career?.obstacle,
+      );
+    }
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);
     this.input.onCommand = (cmd) => {
       if (cmd === 'camera') this.camMode = NEXT_CAM[this.camMode];
@@ -769,19 +796,41 @@ export class Ht2Drive {
   /** Колізії регіону: підлога й стіни з `hit_road_*`/`hit_obj_*` (усі кімнати регіону разом). */
   private addRegion(reg: LoadedRegion): void {
     const col = levelCollision(reg.built.assembler.b3d);
+    // Колізії гілок перемикачів (обвали) — окремо: діють лише в стані своєї гілки.
+    const parts = new Map<string, { floors: number[][][]; surfaces: number[]; walls: number[][][] }>();
+    const part = (tag: string) => parts.get(tag) ?? parts.set(tag, { floors: [], surfaces: [], walls: [] }).get(tag)!;
+    const floors: number[][][] = [];
+    const surfaces: number[] = [];
+    const wallPolys: number[][][] = [];
+    col.floors.forEach((p, i) => {
+      const t = col.floorSwitch[i];
+      (t ? part(t).floors : floors).push(p);
+      (t ? part(t).surfaces : surfaces).push(col.floorSurface[i]);
+    });
+    col.walls.forEach((p, i) => (col.wallSwitch[i] ? part(col.wallSwitch[i]).walls : wallPolys).push(p));
     // Будівлі складів, СТО, заправки — окремі обʼєкти колізій, розставлені екземплярами.
     const asm = reg.built.assembler;
     const inst = instanceCollision(asm.b3d, (n) => asm.block(n) ?? this.world.common.block(n), (n) => asm.space(n));
-    col.floors.push(...inst.floors);
-    col.floorSurface.push(...inst.floorSurface);
-    col.walls.push(...inst.walls);
+    floors.push(...inst.floors);
+    surfaces.push(...inst.floorSurface);
+    wallPolys.push(...inst.walls);
     const cs: RAPIER.Collider[] = [];
     // Процедурний рельєф (aa) — heightfield.
     if (reg.terrain) cs.push(terrainCollider(this.rapier, reg.terrain));
-    const floor = addCollisionPolys(this.rapier, col.floors, 1.0, col.floorSurface);
-    const walls = addCollisionPolys(this.rapier, col.walls, 0.4);
+    const floor = addCollisionPolys(this.rapier, floors, 1.0, surfaces);
+    const walls = addCollisionPolys(this.rapier, wallPolys, 0.4);
     if (floor) cs.push(floor);
     if (walls) cs.push(walls);
+    const switched = new Map<string, RAPIER.Collider[]>();
+    for (const [tag, g] of parts) {
+      const list = [addCollisionPolys(this.rapier, g.floors, 1.0, g.surfaces), addCollisionPolys(this.rapier, g.walls, 0.4)].filter((c): c is RAPIER.Collider => !!c);
+      const [key, branch] = tag.split('#');
+      for (const c of list) c.setEnabled((this.worldSwitches.get(key) ?? 0) === Number(branch));
+      switched.set(tag, list);
+      cs.push(...list);
+    }
+    this.switchColliders.set(reg.id, switched);
+    for (const [key, state] of this.worldSwitches) this.showSwitch(reg, key, state);
     if (!col.hasFloor && !reg.terrain) {
       const c = groundFromMeshes(this.rapier, reg.built.root);
       if (c) cs.push(c);
@@ -796,7 +845,79 @@ export class Ht2Drive {
       this.rapier.removeCollider(c, false);
     }
     this.colliders.delete(id);
+    this.switchColliders.delete(id);
     this.objects.removeRegion(id);
+  }
+
+  /** Стан перемикача світу (обвали): видима гілка в усіх регіонах і колайдери гілки. */
+  setWorldSwitch(key: string, state: number): void {
+    this.worldSwitches.set(key, state);
+    for (const reg of this.world.loaded.values()) this.showSwitch(reg, key, state);
+    for (const m of this.switchColliders.values())
+      for (const [tag, list] of m) {
+        const [k, branch] = tag.split('#');
+        if (k === key) for (const c of list) c.setEnabled(Number(branch) === state);
+      }
+  }
+
+  private showSwitch(reg: LoadedRegion, key: string, state: number): void {
+    reg.built.assembler.setSwitch(key, state);
+    reg.built.assembler.setSwitch(`refer_${key}`, state);
+  }
+
+  /**
+   * Увімкнути чи вимкнути завал (king.exe 0x42b060): перемикач, дорога між вузлами завалу (маршрути трафіку
+   * перераховуються), каток на місцях `pos_work`, текст на табло.
+   */
+  private applyObstacle(ob: Obstacle, on: boolean, announce: boolean, closed: Map<string, number[]>): void {
+    this.setWorldSwitch(ob.key, on ? 1 : 0);
+    if (ob.ends) {
+      if (!closed.has(ob.id)) closed.set(ob.id, closedAxes(this.roads, ob.ends));
+      for (const r of closed.get(ob.id)!) this.roads.setClosed(r, on);
+      if (this.traffic && this.trafficGoals.length) this.traffic.setGoals(this.trafficGoals);
+    }
+    for (const p of this.obstacleProps.get(ob.id) ?? []) {
+      this.world.scene.remove(p.root);
+      this.rapier.removeRigidBody(p.body);
+    }
+    this.obstacleProps.delete(ob.id);
+    if (on) this.obstacleProps.set(ob.id, ob.work.map((w) => this.placeKatok(w)).filter((x): x is { root: THREE.Object3D; body: RAPIER.RigidBody } => !!x));
+    const text = on ? ob.closeText : ob.openText;
+    if (announce && text) this.say(ukSign(text), 8);
+  }
+
+  /** Каток KATOK (TRUCKS.B3D) на вузлі `pos_work`: уздовж найближчої дороги, нерухомий брус колізії. */
+  private placeKatok(at: THREE.Vector3): { root: THREE.Object3D; body: RAPIER.RigidBody } | null {
+    const tpl = this.trucks.asm.template('Katok');
+    if (!tpl) return null;
+    const model = tpl.clone();
+    const frame = new THREE.Group();
+    frame.rotation.x = -Math.PI / 2;
+    frame.add(model);
+    const root = new THREE.Group();
+    root.add(frame);
+    root.updateMatrixWorld(true);
+    const box = visibleBox(model);
+    frame.position.y = -box.min.y;
+    // Вузол WAY — на 1,5…2,5 м над дорогою, а регіон може бути ще не завантажений: висота — з лінії дороги поруч
+    // (точки WAY лежать на покритті).
+    const near = this.roads.nearest(at);
+    const on = near && near.dist < 15 ? near.line.pts[near.seg].clone().lerp(near.line.pts[near.seg + 1], near.t) : null;
+    at = new THREE.Vector3(at.x, on ? on.y : at.y, at.z);
+    root.position.copy(at);
+    const dir = near ? near.line.pts[near.seg + 1].clone().sub(near.line.pts[near.seg]).setY(0).normalize() : new THREE.Vector3(0, 0, -1);
+    root.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), dir, new THREE.Vector3(0, 1, 0)));
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const body = this.rapier.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(at.x, at.y, at.z).setRotation(root.quaternion));
+    this.rapier.createCollider(
+      RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2)
+        .setTranslation(center.x, center.y - box.min.y, center.z)
+        .setCollisionGroups(groups(GROUP_WORLD, 0xffff)),
+      body,
+    );
+    this.world.scene.add(root);
+    return { root, body };
   }
 
   get overlay(): HTMLElement {
@@ -2381,6 +2502,7 @@ export class Ht2Drive {
     this.updateFire(dt);
     this.updateMafia(dt);
     if (this.markets && this.careerMode) this.markets.update(this.truck.visual.position, Math.floor(this.careerMode.career.time / 86400));
+    this.obstacles?.update(dt);
     const sign = this.signs?.update(this.truck.visual.position, this.truck.forward());
     if (sign) this.say(sign, 6);
     this.fPanels?.update(dt);
@@ -2426,6 +2548,7 @@ export class Ht2Drive {
       mine: this.hiredMarks,
       // Причепи з вантажем (дорожні місії) — I_trailer; порожні на базах — без значка (0x529890).
       trailers: this.presents?.withCargo.map((p) => p.pos) ?? [],
+      debris: this.obstacles?.activeObstacle ? [this.obstacles.activeObstacle.pos] : [],
       finishLabel: 'КІЛЬЦЕ',
     });
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;

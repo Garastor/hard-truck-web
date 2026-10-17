@@ -52,6 +52,8 @@ export interface RoadLine extends WayLine {
   /** Вузли мережі на початку й кінці лінії (індекси `Ht2Roads.nodes`; в осі — за напрямком точок). */
   startNode: number;
   endNode: number;
+  /** Дорогу закрито завалом (world/obstacles.ts; king.exe прапорець 0x40 смуг): маршрути її оминають. */
+  closed?: boolean;
 }
 
 /** Вузол мережі: точка, де сходяться кінці осей (ближче JOIN); перехрестя — якщо доріг три й більше. */
@@ -158,6 +160,18 @@ export class Ht2Roads {
   /** Лінії руху дороги (усі смуги обох напрямків). */
   linesOf(road: number): RoadLine[] {
     return this.byRoad.get(String(road)) ?? [];
+  }
+
+  /** Лічильник змін закритих доріг (кеші маршрутів перераховуються). */
+  closedVersion = 0;
+
+  /** Закрити чи відкрити дорогу (вісь і всі її смуги). */
+  setClosed(road: number, closed: boolean): void {
+    const axis = this.axes[road];
+    if (!axis || !!axis.closed === closed) return;
+    axis.closed = closed;
+    for (const l of this.linesOf(road)) l.closed = closed;
+    this.closedVersion++;
   }
 
   /** Вузли: кінці осей ближче JOIN — один вузол (позиція — середня), degree — скільки осей. */

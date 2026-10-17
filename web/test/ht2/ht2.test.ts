@@ -296,8 +296,15 @@ describe.skipIf(!has)('HT2: описи регіонів (ENV/mod_*.sch)', () => 
   });
   it('ринки вантажівок: parking MARKET_* з місцями-вузлами WAY', () => {
     const ways = HT2_REGIONS.map((id) => ({ way: parseWay(read(`ENV/${id}.way`)) }));
-    const markets = parseMarkets(mods, ways);
+    const all = parseMarkets(mods, ways);
+    const markets = all.filter((m) => !m.hidden);
     expect(markets.length).toBe(15);
+    // Стоянки-схованки (номер −1): місця крадених (прапорець 8) і вживаних (32).
+    const hidden = all.filter((m) => m.hidden);
+    expect(hidden.length).toBe(15);
+    expect(hidden.flatMap((m) => m.flags).filter((f) => f & 8).length).toBe(13);
+    // У mod_*.sch їх 12, але одного вузла old_car у WAY немає.
+    expect(hidden.flatMap((m) => m.flags).filter((f) => f & 32).length).toBe(11);
     const aj = markets.find((m) => m.id === 1)!;
     expect(aj.name).toBe('Барахолка');
     expect(aj.town).toBe('Приозерськ');

@@ -34,7 +34,7 @@ export class Navigator {
 
   /** Відстані від кожної лінії до цілі (по мережі, з кінця лінії). */
   distances(target: THREE.Vector3): Map<RoadLine, number> {
-    const key = `${Math.round(target.x)},${Math.round(target.z)}`;
+    const key = `${Math.round(target.x)},${Math.round(target.z)},${this.roads.closedVersion}`;
     if (this.dist && key === this.targetKey) return this.dist;
     const dist = new Map<RoadLine, number>();
     const heap: [number, RoadLine][] = [];
@@ -65,13 +65,13 @@ export class Navigator {
       }
       return top;
     };
-    for (const l of this.roads.lines) if (l.pts.some((p) => Math.hypot(p.x - target.x, p.z - target.z) < ARRIVE)) push(0, l);
+    for (const l of this.roads.lines) if (!l.closed && l.pts.some((p) => Math.hypot(p.x - target.x, p.z - target.z) < ARRIVE)) push(0, l);
     while (heap.length) {
       const [d, l] = pop();
       if (dist.has(l)) continue;
       dist.set(l, d);
       // Попередня лінія доходить до цілі через цю: + довжина цієї.
-      for (const p of this.prev.get(l) ?? []) if (!dist.has(p)) push(d + this.length.get(l)!, p);
+      for (const p of this.prev.get(l) ?? []) if (!dist.has(p) && !p.closed) push(d + this.length.get(l)!, p);
     }
     this.dist = dist;
     this.targetKey = key;

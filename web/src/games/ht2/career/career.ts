@@ -64,6 +64,8 @@ export interface Ht2Career {
   trailer?: TrailerChoice | null;
   /** Причепи-presents (бази, дорожні місії, кинуті гравцем з вантажем) — vehicles/presents.ts. */
   presents?: SavedPresent[];
+  /** Діючий завал (id `obstacle` з mod_*.sch, world/obstacles.ts); null — жодного. */
+  obstacle?: string | null;
   /** Замовлені рацією машини, що чекають на ринках (career/carOrder.ts). */
   orderedCars?: OrderedCar[];
   /** Перемог у гонках на Кільці поспіль (career/races.ts: ліцензії за перемогу). */

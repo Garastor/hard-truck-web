@@ -377,7 +377,8 @@ export class CareerMode {
     const current = this.drive.drivableTrucks().find((r) => r.carNode === c.truck);
     const tradeIn = Math.round((current?.price ?? 0) * 0.5);
     // На одному місці ринку — водій, що шукає роботу (зі своєю машиною).
-    const offer = hireOffer(m.id, day, m.spots.length, this.drive.truckers?.allNames ?? []);
+    // Шукачі роботи — лише на ринках (стоянки-схованки — продавці вживаних і крадених).
+    const offer = m.hidden ? null : hireOffer(m.id, day, m.spots.length, this.drive.truckers?.allNames ?? []);
     if (offer && offer.spot === near.spot) {
       // Тариф — $/км (BackJob показує за км, 0x477350).
       const job = { ...offer, tariff: Math.round(hireTariff(this.drive.vehiclePrice(near.rec.carNode), this.marketShare()) * 10) / 10, model: near.rec.carNode, price: near.price, power: near.rec.horsePower, load: near.rec.cargoLoad };
@@ -652,7 +653,7 @@ export class CareerMode {
       const load = (r: ForSale['rec']) => (r.group === 'tractors' ? `тягач, причіп ${Math.round((trailer?.cargoLoad ?? 0) / 1000)} т` : `${Math.round(r.cargoLoad / 1000)} т`);
       const tag = (s: ForSale) => (!this.scanner ? '' : s.stolen ? ' (крадена)' : s.used ? ' (вживана)' : '');
       const labels = list.map((s) => `${s.rec.carNode}${tag(s)} — ${s.rec.horsePower} к.с., ${load(s.rec)}: ${formatMoney(s.price - tradeIn)}`);
-      const title = `${m.name || 'Ринок'}${m.town ? ` «${m.town}»` : ''}`;
+      const title = `${m.name || (m.hidden ? 'Стоянка' : 'Ринок')}${m.town ? ` «${m.town}»` : ''}`;
       const i = await modal(this.drive.overlay, title, `Ваша ${current?.carNode ?? c.truck} — у залік ${formatMoney(tradeIn)}. Гроші: ${formatMoney(c.money)}.`, [...labels, 'Поїхали']);
       const s = list[i];
       if (!s) return;
@@ -844,6 +845,7 @@ export class CareerMode {
     this.career.pos = [p.x, -p.z, p.y];
     this.career.heading = [f.x, -f.z];
     if (this.drive.presents) this.career.presents = this.drive.presents.snapshot();
+    if (this.drive.obstacles) this.career.obstacle = this.drive.obstacles.active;
     saveCareer(this.career);
   }
 

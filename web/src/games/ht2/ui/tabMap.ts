@@ -16,7 +16,8 @@ import { hudScale } from '../engine/ui/pixelFont';
  * `I_park`, СТО `I_repair` — лише на мінікарті; ціль блимає `I_city0…3…1` (`I_fuel…`) — кадр змінюється кожні
  * 0,125 с; гравець — `I_tr_myNN_K`: NN — напрям (24 сектори по 15° за годинниковою стрілкою від півночі карти),
  * K — кадр анімації 0…5 (той самий лічильник); далекобійники й суперники гонки — `I_tr_opp`; фініш гонки —
- * `I_race` з написом; причепи з вантажем — `I_trailer` (і на мінікарті, і на карті, 0x529890).
+ * `I_race` з написом; причепи з вантажем — `I_trailer` (і на мінікарті, і на карті, 0x529890); діючі завали —
+ * `I_debris`.
  * Відхилення порту на малих екранах: рамка мінікарти не заходить на кнопки (верхній ряд і сенсорні), масштаб
  * мінікарти не дрібніший, ніж у king.exe при 1024×768; гравець — у центрі рамки; рамка на 15% менша.
  * Гіпотези: колір підписів (палітра екрана, індекс 5, не розібрано); оригінал показує суперників лише з певним
@@ -51,6 +52,8 @@ export interface TabMapScene {
   mine?: readonly THREE.Vector3[];
   /** Причепи з вантажем (дорожні місії, vehicles/presents.ts) — `I_trailer`, без блимання. */
   trailers?: readonly THREE.Vector3[];
+  /** Діючі завали (world/obstacles.ts) — `I_debris`, перед значком гравця (0x4420b0 → 0x529890). */
+  debris?: readonly THREE.Vector3[];
   /** Ціль (склад чи заправка) — її значок блимає. */
   target: THREE.Vector3 | null;
   /** Фініш гонки. */
@@ -213,6 +216,7 @@ export class TabMap {
     for (const t of s.trailers ?? []) icon('I_trailer', t);
     for (const m of s.mine ?? []) icon('I_tr_myc', m);
     for (const r of s.rivals) icon('I_tr_opp', r);
+    for (const d of s.debris ?? []) icon('I_debris', d);
     // Напрям: сектор 15° від півночі карти (−z) за годинниковою стрілкою, з відкиданням дробу, як у king.exe.
     const len = Math.hypot(s.heading.x, s.heading.z) || 1;
     let sector = Math.floor((Math.acos(Math.max(-1, Math.min(1, -s.heading.z / len))) * 12) / Math.PI);
