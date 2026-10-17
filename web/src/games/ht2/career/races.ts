@@ -78,6 +78,8 @@ export class CareerRaces {
         c.money += PRIZE;
         c.raceWins = (c.raceWins ?? 0) + 1;
         this.drive.say(this.msg('YOU_MADE', 'ВИ ЗАРОБИЛИ: %g', PRIZE), 6);
+        // Перемога в гонці (подія 0xb з бітом 0, king.exe 0x4d76b0) — ролик кубка TRw.bne.
+        void this.drive.clip('TRw.bne');
         const n = Math.min(3, Math.floor(Math.sqrt(c.raceWins + 1)));
         c.licences = [...(c.licences ?? []), ...Array.from({ length: n }, () => c.time + this.licenceTime)];
       } else this.career.raceWins = 0;

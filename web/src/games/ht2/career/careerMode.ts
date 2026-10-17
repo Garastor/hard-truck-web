@@ -572,12 +572,12 @@ export class CareerMode {
 
   /**
    * Затримання (подія 2 king.exe, 0x430a80): картка (один штраф — своя, кілька — 15 з переліком), сума списується
-   * з грошей без перевірки на мінус, усі штрафи обнуляються. Ролик trp.bne і вилучення прихованого вантажу — пізніше.
+   * з грошей без перевірки на мінус, усі штрафи обнуляються. true — затримання було (далі — ролик trp.bne, drive.ts).
    */
-  async arrest(): Promise<void> {
+  async arrest(): Promise<boolean> {
     const c = this.career;
     const card = arrestCard(this.fines);
-    if (!card) return;
+    if (!card) return false;
     const line = (l: { key: string; amount?: number }) => this.msg(l.key, l.key, l.amount).replace(/\s*\n\s*/g, ' ');
     const text = card.lines.map(line).join('\n');
     c.money -= card.amount;
@@ -590,7 +590,7 @@ export class CareerMode {
     if (this.drive.cards) {
       this.drive.cards.show(card.card, { amount: card.amount, text, limit: info?.limit, speed: info?.speed });
       this.drive.say(`${this.msg('MONEY_PAID', 'СПЛАЧЕНО: ')}$${card.amount}`);
-      return;
+      return true;
     }
     this.busy = true;
     this.drive.paused = true;
@@ -600,6 +600,7 @@ export class CareerMode {
       this.drive.paused = false;
       this.busy = false;
     }
+    return true;
   }
 
   /**
@@ -610,8 +611,10 @@ export class CareerMode {
    * Напад мафії (mafiaAttack 0x445740; mafia.md §4): вартість вантажу V = Σ 10·√(ціна × кількість); V ≤ борг мафії —
    * з грошей списується борг (картка 20, може піти в мінус); інакше вантаж забирають (картка 21), через 8 с картка 6
    * «Неустойка» з сумою V — гроші НЕ списуються (метод лише показує картку). Після — борг і інтерес мафії нуль.
+   * Повертає, чи лишився прихований вантаж (king.exe `+0xC9` — гілка «гроші» його не знімає; гіпотеза: це
+   * незаконний вантаж) — тоді ролик trml.bne перед trmm.bne (drive.ts).
    */
-  async robbed(): Promise<void> {
+  async robbed(): Promise<boolean> {
     const c = this.career;
     const f = this.fines;
     const o = c.order;
@@ -632,6 +635,7 @@ export class CareerMode {
     f.mafiaDebt = 0;
     f.mafiaInterest = false;
     this.persist();
+    return (f.illegal ?? 0) > 0;
   }
 
 

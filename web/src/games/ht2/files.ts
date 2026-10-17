@@ -61,6 +61,12 @@ export const HT2_MODS = HT2_MOD_REGIONS.map((r) => `ENV/mod_${r}.sch`);
  */
 export const HT2_UI = ['COMMON/esc16.RES'];
 
+/**
+ * Ролики подій (AVI Indeo 5, re/notes/ht2/video.md; engine/video) — необовʼязкові (27,5 МБ): без них події йдуть
+ * без ролика. Заставки kotr*.avi (69 МБ) не імпортуються.
+ */
+export const HT2_VIDEO = ['trp.bne', 'trml.bne', 'trmm.bne', 'TRw.bne', 'TRw1.bne', 'trbn.bne', 'TRirr.bne'];
+
 /** Повний набір текстур → половинний (запасний, імпортований раніше). */
 export function halfTextures(path: string): string {
   if (/^COMMON\/COMMON\.RES$/i.test(path)) return 'COMMON/common1.res';
@@ -85,7 +91,7 @@ export const HT2_FILES: FileSet<'ht2'> = {
   game: 'ht2',
   required: HT2_REQUIRED,
   prefix: 'ht2/',
-  canonical: (path) => matchRequired(HT2_REQUIRED, path) ?? matchRequired(HT2_MUSIC, path) ?? matchRequired(HT2_MODS, path) ?? matchRequired(HT2_UI, path) ?? matchRequired(HT2_HALF_TEX, path),
+  canonical: (path) => matchRequired(HT2_REQUIRED, path) ?? matchRequired(HT2_MUSIC, path) ?? matchRequired(HT2_MODS, path) ?? matchRequired(HT2_UI, path) ?? matchRequired(HT2_VIDEO, path) ?? matchRequired(HT2_HALF_TEX, path),
 };
 
 /** Dev-сервер ПК: файли HT2 за `/game2/` (vite.config.ts). */

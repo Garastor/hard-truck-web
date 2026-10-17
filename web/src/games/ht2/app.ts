@@ -5,7 +5,7 @@ import { setSoftFont } from './engine/ui/softUi';
 import { parseFon } from './engine/formats/fon';
 import { PixelFont } from './engine/ui/pixelFont';
 import type { GameContext } from '@shared/gameContext';
-import { HT2_FILES, HT2_MODS, HT2_MUSIC, HT2_REQUIRED, HT2_UI, ht2DevSource } from './files';
+import { HT2_FILES, HT2_MODS, HT2_MUSIC, HT2_REQUIRED, HT2_UI, HT2_VIDEO, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2ExitScreen, ht2MainScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem, type RoundKey } from './ui/menu';
 import { Input } from './engine/input/input';
 import { ht2ControlsScreen, ht2DriversScreen, ht2GraphicsScreen, ht2RecordsScreen } from './ui/menuScreens';
@@ -63,6 +63,7 @@ async function manageFiles(ctx: Ht2Context): Promise<void> {
     `Графіка інтерфейсу (COMMON/esc16.RES): ${count(HT2_UI) ? 'є' : 'немає'}`,
     `Описи регіонів: ${count(HT2_MODS)} з ${HT2_MODS.length}`,
     `Музика: ${count(HT2_MUSIC)} з ${HT2_MUSIC.length}`,
+    `Ролики подій (*.bne): ${count(HT2_VIDEO)} з ${HT2_VIDEO.length}`,
     '',
     '«Імпортувати» додасть файли чи замінить наявні. «З нуля» спершу видалить з пристрою всі файли «Дальнобійників 2».',
   ].join('\n');

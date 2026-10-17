@@ -42,7 +42,8 @@ export function rememberMute(): void {
   }
 }
 
-function sharedContext(): AudioContext {
+/** Спільний AudioContext гри (розблоковується першим жестом) — і для роликів (engine/video/player.ts). */
+export function sharedContext(): AudioContext {
   if (shared) return shared;
   const ctx = new AudioContext();
   shared = ctx;

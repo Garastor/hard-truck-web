@@ -26,6 +26,8 @@ import { ForbiddenZone, Helicopters } from './traffic/helicopters';
 import { Water } from './vehicles/water';
 import { Radars } from './traffic/radars';
 import { showGameOver, showVictory, type LoseScreen } from './ui/gameOver';
+import { playVideo } from './engine/video/player';
+import { sharedContext } from './engine/audio/engineAudio';
 import { WIN_SHARE } from './career/share';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
@@ -1678,7 +1680,7 @@ export class Ht2Drive {
    * Кінець гри (king.exe 0x51eea0 / 0x51f380, upgrades.md «Вибування гравця»): гра на паузі, звуки стихають,
    * youlostSound, вікно BackLoose2 «Восстановлению не подлежит» (утонув чи машину знищено) чи BackLoose5 «Вы банкрот».
    * Збереження кар'єри не пишеться й не стирається (як .pl1 в оригіналі): «Головне меню» — вихід, «Почати
-   * спочатку» — нова кар'єра. Ролики trirr.bne / trbn.bne перед вікном порт не показує.
+   * спочатку» — нова кар'єра. Перед вікном — ролик trirr.bne (знищено, утонув) чи trbn.bne (банкрут).
    */
   private gameOver(screen: LoseScreen = 'BackLoose2'): void {
     if (this.over) return;
@@ -1688,23 +1690,44 @@ export class Ht2Drive {
     this.burning = -1;
     this.blasts?.carFire(null);
     this.truck.engineOn = false;
-    this.audio?.play('youlost');
-    showGameOver(this.escArt, this.overlay, screen, {
-      main: () => this.opts.onExit(),
-      restart: () => this.opts.onExit('new'),
+    void this.clip(screen === 'BackLoose5' ? 'trbn.bne' : 'TRirr.bne').then(() => {
+      this.audio?.play('youlost');
+      showGameOver(this.escArt, this.overlay, screen, {
+        main: () => this.opts.onExit(),
+        restart: () => this.opts.onExit('new'),
+      });
     });
+  }
+
+  /**
+   * Ролики подій (`*.bne` у корені гри, king.exe 0x5279e0; engine/video/player.ts, re/notes/ht2/video.md): по черзі
+   * на весь екран, гра на паузі; дотик чи Esc — пропустити. Файлу немає (не імпортовано) — без ролика.
+   */
+  async clip(...names: string[]): Promise<void> {
+    const was = this.paused;
+    this.paused = true;
+    try {
+      for (const n of names) {
+        const data = await this.opts.source.read(n).catch(() => null);
+        if (data) await playVideo(data, { audio: sharedContext(), volume: this.opts.settings?.sfx ?? 1 }).catch((e: unknown) => console.warn(e));
+      }
+    } finally {
+      this.paused = was;
+    }
   }
 
   /**
    * Перемога «ринок захоплено» (king.exe 0x41fcf0 → подія 0xC → 0x51f380 режим 2; upgrades.md «Вибування гравця»):
    * частка X ≥ 0,51 — гра на паузі, youwinSound, вікно BackWin «Поздравляем! Вы захватили рынок перевозок региона!»
    * з кнопками «Главное меню», «Продолжить», «Начать сначала». Це не кінець кар'єри: «Продовжити» — їздити й
-   * наймати далі; перемога лише раз (career.won). Ролик TRw1.bne перед вікном порт не показує.
+   * наймати далі; перемога лише раз (career.won). Перед вікном — ролик TRw1.bne.
    */
-  private victory(): void {
+  private async victory(): Promise<void> {
     const cm = this.careerMode!;
     cm.career.won = true;
     cm.persist();
+    this.paused = true;
+    await this.clip('TRw1.bne');
     this.paused = true;
     this.audio?.play('youwin');
     showVictory(this.escArt, this.overlay, {
@@ -1797,7 +1820,7 @@ export class Ht2Drive {
       this.bankTimer = 8;
       if (c.money < 0) return this.gameOver('BackLoose5');
       // Частка X перераховується теж раз на 8 с (updateRating 0x41fcf0).
-      if (!c.won && cm.marketShare() >= WIN_SHARE) return this.victory();
+      if (!c.won && cm.marketShare() >= WIN_SHARE) return void this.victory();
     }
     if (this.burning < 0) return;
     this.burning += dt;
@@ -1895,7 +1918,9 @@ export class Ht2Drive {
           this.audio?.play('hit_bullet');
           this.ignite(0.1);
         }
-      } else if (e.kind === 'attack') void cm.robbed();
+      } else if (e.kind === 'attack')
+        // Після пограбування (0x56ad20, подія 3) — ролик trml.bne, якщо лишився прихований вантаж, потім завжди trmm.bne.
+        void cm.robbed().then((hidden) => this.clip(...(hidden ? ['trml.bne'] : []), 'trmm.bne'));
       else if (e.kind === 'mine') {
         // Вибух міни (mineExplose, 0x56f240): поштовх угору в точці міни [Г: сила], звук mineSound.
         const m = this.truck.body.mass();
@@ -1917,7 +1942,8 @@ export class Ht2Drive {
       if (e.hit) this.audio?.play('hit_bullet');
     } else if (e.kind === 'arrest') {
       this.zone.hot = false;
-      void cm.arrest();
+      // Затримання (0x56ad20, подія 2): картка, потім ролик trp.bne.
+      void cm.arrest().then((done) => (done ? this.clip('trp.bne') : undefined));
     }
   }
 
