@@ -92,7 +92,7 @@ export class Radio {
       this.list = this.world.contacts();
       if (this.list.length) this.index = (this.index + 1) % this.list.length;
       lcd();
-    });
+    }).el.classList.add('ht2-hit-wide');
     p.button('m_16\\F5talk', 137, 146, 'Прийом', () => {
       const c = this.list[this.index];
       if (c) this.talk(c);

@@ -140,7 +140,7 @@ export class EscMenu {
     }));
     if (kind === 'control') {
       // Порт — лише автоматична коробка: прапорець показує стан, перемкнути не можна (гіпотеза: механіка — згодом).
-      p.button('m_16\\agear', 141, 700, 'Автоматична коробка передач', () => undefined, () => (s.automatic ? 'pp' : 'p'));
+      p.button('m_16\\agear', 141, 700, 'Автоматична коробка передач', () => undefined, () => (s.automatic ? 'pp' : 'p')).el.classList.add('ht2-hit-wide');
     }
     const back = () => {
       p.close();
@@ -149,12 +149,12 @@ export class EscMenu {
     p.button('m_16\\ok', 21, 762, 'ОК', () => {
       this.o.apply?.(s, true);
       back();
-    });
+    }).el.classList.add('ht2-hit-wide');
     p.button('m_16\\canc', 77, 762, 'Скасувати', () => {
       Object.assign(s, before);
       this.o.apply?.(s, false);
       back();
-    });
+    }).el.classList.add('ht2-hit-wide');
     this.panel = p;
   }
 
@@ -170,16 +170,17 @@ export class EscMenu {
       set(Math.round(Math.max(0, Math.min(1, v)) * 100) / 100);
       show();
     };
-    const step = (x: number, d: number) => {
-      const b = p.action(x, track - 14, 16, '', () => put(get() + d));
+    // Стрілки — прозорі зони дотику ширші й вищі за малюнок 16×28 (на телефоні панель ≈ 0,8): 34×40 пікселів фону.
+    const step = (x: number, w: number, d: number) => {
+      const b = p.action(x, track - 20, w, '', () => put(get() + d));
       b.classList.add('ht2-panel-track');
-      b.style.height = '28px';
+      b.style.height = '40px';
     };
-    step(22, -0.1);
-    step(TRACK_X1 + 3, 0.1);
-    const area = p.action(TRACK_X0 - 3, track - 14, TRACK_X1 - TRACK_X0 + 6, '', () => undefined);
+    step(4, 34, -0.1);
+    step(TRACK_X1 + 3, 34, 0.1);
+    const area = p.action(TRACK_X0 - 3, track - 20, TRACK_X1 - TRACK_X0 + 6, '', () => undefined);
     area.classList.add('ht2-panel-track');
-    area.style.height = '28px';
+    area.style.height = '40px';
     const at = (e: PointerEvent) => {
       const r = area.getBoundingClientRect();
       // Доріжка — від 3 до ширина − 3 у пікселях фону (рамка дотику ширша на 3 з боків).

@@ -1,4 +1,28 @@
 /* Дальнобойщики 2: меню (menu.ts) і режим гри (app.ts). */
+
+/* Підказка повернути телефон (app.ts): лише портрет на сенсорному екрані, поверх усього (і роликів). */
+.ht2-rotate {
+  display: none;
+}
+
+@media (orientation: portrait) and (pointer: coarse) {
+  body.game-ht2 .ht2-rotate {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 0 24px;
+    background: rgba(8, 14, 8, 0.94);
+    color: rgb(165, 205, 174);
+    text-align: center;
+    font: 700 18px/1.3 Arial, sans-serif;
+    text-transform: uppercase;
+  }
+}
 .ht2-stage {
   width: 800px;
   height: 600px;
@@ -79,6 +103,17 @@
 .ht2-tex-button img {
   display: block;
   pointer-events: none;
+}
+
+/*
+ * Зона дотику ширша за малюнок (на телефоні сцена 800×600 зменшена до ≈ 0,6…0,7): стрілки повзунків і перемикачів
+ * (*.msk, 34 px завширшки) — на 15 px з боків (≈ 40 px екрана); угору й униз — ні: рядки повзунків стоять через
+ * 30 px, зона наповзала б на сусідній. Вигляд той самий.
+ */
+.ht2-tex-button.ht2-tex-arrow::after {
+  content: '';
+  position: absolute;
+  inset: 0 -15px;
 }
 
 /* Круглі кнопки повзунків — прозорі зони поверх намальованих на фоні. */
@@ -411,6 +446,20 @@ body.ht2-esc-open .ht2-drive-bar {
   display: block;
 }
 
+/* Ряд кнопок вікон кінця гри й перемоги (ht2-game-over): зона дотику вища на 20 px фону згори й знизу. */
+.ht2-game-over .ht2-panel-btn::after {
+  content: '';
+  position: absolute;
+  inset: -20px 0;
+}
+
+/* Малі кнопки панелей (прапорець, ОК / Скасувати меню Esc): зона дотику на 8 px фону довкола, вигляд той самий. */
+.ht2-panel-btn.ht2-hit-wide::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+
 /* Дії, що в оригіналі — клавішами (Num+ / Num−): кнопки порту в стилі табло. */
 .ht2-panel-act {
   min-height: 0;
@@ -425,8 +474,9 @@ body.ht2-esc-open .ht2-drive-bar {
   cursor: pointer;
 }
 
+/* Заголовок панелі — «наступна панель»: 44 px фону (≈ 32 px екрана на телефоні), до першого рядка таблиць. */
 .ht2-panel-act.ht2-panel-track {
-  height: 30px;
+  height: 44px;
   border: 0;
   background: transparent;
 }

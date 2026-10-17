@@ -336,6 +336,8 @@ export function texButton(art: Ht2MenuArt, stage: HTMLElement, base: string, x: 
   const off = () => (typeof opts.disabled === 'function' ? opts.disabled() : !!opts.disabled);
   const b = document.createElement('button');
   b.className = 'menu-abs ht2-tex-button';
+  // Стрілки (*.msk) — малі: ширша зона дотику (ht2.css).
+  if (ext === '.msk') b.classList.add('ht2-tex-arrow');
   b.style.left = `${x}px`;
   b.style.top = `${y}px`;
   b.setAttribute('aria-label', label);

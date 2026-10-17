@@ -80,6 +80,15 @@ async function manageFiles(ctx: Ht2Context): Promise<void> {
 export async function runHt2(ctx: Ht2Context): Promise<void> {
   document.body.classList.add('game-ht2');
   document.title = 'Дальнобойщики 2';
+  // Гра — ландшафтна (сцени 800×600, табло на всю ширину); iPhone у браузері орієнтацію не фіксує — у портреті на
+  // сенсорному екрані підказка повернути телефон (ht2.css, лише CSS-правилом).
+  const rotate = document.createElement('div');
+  rotate.className = 'ht2-rotate';
+  rotate.setAttribute('role', 'alert');
+  rotate.innerHTML =
+    '<svg viewBox="0 0 48 48" width="64" height="64" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"><rect x="15" y="6" width="18" height="32" rx="3"/><path d="M22 33h4"/><path d="M38 30a14 14 0 0 1-12 12" /><path d="M24 39l2 3-3 2"/></svg>' +
+    '<p>Поверніть телефон горизонтально</p>';
+  document.body.append(rotate);
   // Світло king.exe (Direct3D) рахується просто в кольорах екрана: текстура × (розсіяне + сонце·cos), до 1. Лінійний
   // простір three.js (sRGB → лінійне → sRGB) робив розсіяне 80/255 вчетверо слабшим, а суму — темнішою: асфальт 66
   // замість 106 (текстура 112). Тож у другій грі — без керування кольором: текстури й кольори як є, вихід без

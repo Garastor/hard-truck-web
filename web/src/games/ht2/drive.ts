@@ -7,7 +7,7 @@ import { instanceCollision, levelCollision } from './engine/physics/collision';
 import { TruckVehicle } from './engine/vehicle/truckVehicle';
 import { ROUGH_ASPHALT, ROUGH_GROUND } from './engine/vehicle/kingModel';
 import { buildTruckModel, visibleBox, type TruckDef, type TruckModel } from './engine/vehicle/trucks';
-import { Input } from './engine/input/input';
+import { Input, type Action, type Command } from './engine/input/input';
 import { GROUP_WORLD, addCollisionPolys, forgetSurfaces, g2t, groups, initRapier, surfaceAt } from './engine/physics/world';
 import { assoc, num, readSch, str, type SExpr } from './formats/sexpr';
 import { drivable, loadTrucks, truckDef, type Ht2Trucks } from './vehicles/trucks';
@@ -39,7 +39,7 @@ import { Dents, dentGeometry } from './vehicles/dents';
 import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
 import { orderVehicle, vehicleOffers, vehiclePowers, vehiclePrices } from './career/carOrder';
 import { HIRED_MIN_SPEED, HiredOnRoads } from './career/hired';
-import { RESOLUTION_H } from './ui/menuScreens';
+import { keyName, RESOLUTION_H } from './ui/menuScreens';
 import { driverCosts, hiredLoad, upgradeDriver } from './career/company';
 import { routeLength } from './career/economy';
 import { terrainCollider } from './world/terrain';
@@ -2218,6 +2218,10 @@ export class Ht2Drive {
 
   /** Дані панелей F1–F4. */
   private fData(): import('./ui/fPanels').FPanelData {
+    const key = (b: Action | Command, def: string) => {
+      const c = this.opts.settings?.keys?.[b];
+      return c ? keyName(c) : def;
+    };
     return {
       info: this.careerMode?.info() ?? null,
       company: this.careerMode?.career.company ?? [],
@@ -2236,20 +2240,21 @@ export class Ht2Drive {
       rivals: [...(this.truckers?.allNames ?? [])],
       share: this.careerMode?.marketShare() ?? 0,
       rivalShare: this.careerMode ? this.careerMode.marketShare() * (this.rivalLoad / Math.max(1, this.careerMode.fleetLoad())) : 0,
+      // Клавіші — з перепризначень меню «Керування» (ht2.settings.v1 keys), інакше типові.
       keys: [
-        ['ГАЗ', '↑'],
-        ['ГАЛЬМО, НАЗАД', '↓'],
-        ['КЕРМО', '← →'],
+        ['ГАЗ', key('gas', '↑')],
+        ['ГАЛЬМО, НАЗАД', key('brake', '↓')],
+        ['КЕРМО', `${key('left', '←')} ${key('right', '→')}`],
         ['РІЗКО', 'CTRL'],
-        ['РУЧНЕ ГАЛЬМО', 'SHIFT'],
-        ['ДВИГУН', 'ПРОБІЛ'],
-        ['КАМЕРА', 'C'],
-        ['ФАРИ', 'L'],
-        ['ДВІРНИКИ', 'W'],
+        ['РУЧНЕ ГАЛЬМО', key('handbrake', 'SHIFT')],
+        ['ДВИГУН', key('engine', 'ПРОБІЛ')],
+        ['КАМЕРА', key('camera', 'C')],
+        ['ФАРИ', key('lights', 'L')],
+        ['ДВІРНИКИ', key('wipers', 'W')],
         ['ДЗЕРКАЛО', 'M'],
-        ['СИГНАЛ', 'H'],
+        ['СИГНАЛ', key('horn', 'H')],
         ['ВІДНОВИТИСЯ', 'R, 0'],
-        ['МІНІКАРТА', 'TAB'],
+        ['МІНІКАРТА', key('map', 'TAB')],
         ['АВТОПІЛОТ', 'P'],
         ['МЕНЮ', 'ESC'],
         ['КЛАВІАТУРА', 'F1'],
