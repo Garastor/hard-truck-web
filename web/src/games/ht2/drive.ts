@@ -192,6 +192,14 @@ const OFFROAD_ROLL = 5;
 const HARD_SURFACE = new Set([1, 5, 10]);
 /** Промінь покриття — лише по світу (не по машинах і предметах). */
 const GROUND_RAY = groups(GROUP_WORLD, GROUP_WORLD);
+/**
+ * Розсіяне світло салону кабіни (king.exe 0x4df4a8): на час проходу кабіни envamb камери підмінено сірим
+ * 0,5 + 0,5·sin²(година·π/24) — 0,5 опівночі, 1 опівдні; інших світел у проході немає (0x5aea50 гасить світла світу,
+ * у CABINES.B3D блоку 33 немає), тож салон рівний, без тіней від сонця.
+ */
+function cabAmbient(hour: number): number {
+  return 0.5 + 0.5 * Math.sin((hour * Math.PI) / 24) ** 2;
+}
 /** Дальність видимості трафіку без туману в сцені, м. */
 const VIEW_FALLBACK = 900;
 /** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
@@ -1502,7 +1510,7 @@ export class Ht2Drive {
     this.blastFx().update(dt, c.wind);
     const dusk = sunHeight(hour) < 0.2;
     this.world.setNight(dusk);
-    this.cabLight?.color.copy(this.world.ambientColor).multiplyScalar(1.4);
+    this.cabLight?.color.setScalar(cabAmbient(hour));
     // Фари чужих машин — ще й за повзунками графіки (g > 0,5 і d > 0,5, ui/effects.ts).
     if (this.traffic) this.traffic.lights = trafficLights(hour) && trafficHeadlights();
     this.rainSound ??= this.audio?.loopSound('rain') ?? null;
@@ -2520,9 +2528,9 @@ export class Ht2Drive {
         const [b3d, res] = await Promise.all([this.opts.source.read('COMMON/CABINES.B3D'), readTextures(this.opts.source, 'COMMON/CABINES.RES')]);
         this.cabRmp = parseRmp(res);
         this.cabAsm = new SceneAssembler(parseB3d(b3d), this.cabRmp, { lit: true, colorKey: true, nearGroup: 0, type4Space: true, palette: this.world.common.lib.palette ?? undefined });
-        // Світло в кабіні — розсіяне світло пори доби (WEATHER.INI envamb) і трохи неба: уночі кабіна темна.
-        this.cabLight = new THREE.AmbientLight(this.world.ambientColor.clone().multiplyScalar(1.4), Math.PI);
-        this.overlayScene.add(this.cabLight, new THREE.HemisphereLight(0xffffff, 0x404040, Math.PI * 0.15));
+        // Світло в кабіні — лише розсіяне сіре cabAmbient(година) (king.exe 0x4df4a8), без сонця й envamb.
+        this.cabLight = new THREE.AmbientLight(new THREE.Color().setScalar(cabAmbient(this.hour)), Math.PI);
+        this.overlayScene.add(this.cabLight);
       }
       const name = `${this.cabPrefix}Cab`;
       const dyn = this.cabAsm.dynamicObject(name);
@@ -2568,8 +2576,8 @@ export class Ht2Drive {
   private updateCab(dt: number): void {
     const inside = this.camMode === 'cockpit';
     if (inside && !this.cab) void this.loadCab();
-    // Ховаємо лише модель (перший нащадок), не саму машину: її прожектори-фари мають світити й з кабіни.
-    this.truck.visual.children[0].visible = !inside || !this.cab;
+    // Модель машини з кабіни не ховається (king.exe: режим кабіни, 0x548120 → +0x2590, вимикає лише плями фар на
+    // дорозі, 0x552940): крізь скло видно капот, а оболонку кабіни зсередини відсікають однобічні полігони.
     if (!this.cab) return;
     this.cab.visible = inside;
     if (this.glassRain) {
