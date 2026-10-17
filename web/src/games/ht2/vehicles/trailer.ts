@@ -30,8 +30,19 @@ const HITCH_DAMP = 6;
 const HITCH_LIMIT = (70 * Math.PI) / 180;
 /** Відновлення за межею: кутова швидкість назад, рад/с на радіан перевищення. */
 const HITCH_RETURN = 3;
-/** Повернення до упору в русі king.exe (follow), рад/с на радіан понад межу. */
-const KING_RETURN = 10;
+/**
+ * Зчіпка в русі king.exe (physics.md «Упор і відрив причепа»): жорсткого упору немає — від складання 32,3°
+ * (|sin θ| > 0,534, 0x64fa30) пружний момент |s|·(|s| − 0,534)·10·I; відрив — складання понад 135° (0x64b810),
+ * відносний тангаж чи крен понад 45° (0x64fa48), перекидання тягача чи причепа, розходження сідло–шворень понад 5 м
+ * (0x64c320). Порт рух причепа задає кінематично, тож пружину передає сповільненням складання: швидкість складання
+ * ×(1 − min(FOLD_MAX, FOLD_K·|s|·(|s| − 0,534))) — гіпотеза порту.
+ */
+const FOLD_FROM = 0.534;
+const FOLD_K = 2;
+const FOLD_MAX = 0.8;
+const BREAK_FOLD = (135 * Math.PI) / 180;
+const BREAK_TILT = Math.cos((45 * Math.PI) / 180);
+const BREAK_GAP = 5;
 /** Повернення до спільного крену, 1/с. */
 const ROLL_RETURN = 5;
 
@@ -223,15 +234,15 @@ export class Trailer {
     if (len < 0.5) return;
     const lat = new THREE.Vector3().crossVectors(n, arm).divideScalar(len);
     let omega = -vK.dot(lat) / len;
-    // Упор зчіпки HITCH_LIMIT (як у колишній моделі, гіпотеза порту): далі причіп не складається, а повертає разом
-    // із тягачем — без нього на повному кермі причіп робив повні оберти навколо тягача.
+    // Пружний опір складанню від 32,3° (див. FOLD_*): складання сповільнюється, розкладання — ні.
     const ta = this.tractor.body.angvel();
     const wT = ta.x * n.x + ta.y * n.y + ta.z * n.z;
     const art = this.articulation;
-    const over = Math.abs(art) - HITCH_LIMIT;
-    // За межею — ще й повертається до неї (KING_RETURN рад/с на радіан): інакше кроки Rapier поступово доводили
-    // складання заднім ходом до 135°.
-    if (over >= 0 && Math.sign(omega - wT) !== -Math.sign(art)) omega = wT - Math.sign(art) * KING_RETURN * over;
+    const s = Math.abs(Math.sin(art));
+    if (Math.abs(art) > Math.asin(FOLD_FROM) && Math.sign(omega - wT) === Math.sign(art)) {
+      const k = Math.abs(art) > Math.PI / 2 ? FOLD_MAX : Math.min(FOLD_MAX, FOLD_K * s * (s - FOLD_FROM));
+      omega = wT + (omega - wT) * (1 - k);
+    }
     const com = this.body.worldCom();
     const toCom = new THREE.Vector3(com.x, com.y, com.z).sub(kp);
     const lv = this.body.linvel();
@@ -255,6 +266,20 @@ export class Trailer {
 
   /** Центр осей коліс у системі тіла (Three.js). */
   private axle = new THREE.Vector3();
+
+  /**
+   * Зчіпку розірвано (0x558f20 → 0x55d5d0): складання понад 135°, відносний тангаж чи крен понад 45°, тягач чи причіп
+   * перекинулись, сідло й шворень розійшлись понад 5 м. Відчіплює гра (drive.ts), як клавішею.
+   */
+  get broken(): boolean {
+    const up = (b: RAPIER.RigidBody) => {
+      const r = b.rotation();
+      return new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w));
+    };
+    const u1 = up(this.tractor.body);
+    const u2 = up(this.body);
+    return Math.abs(this.articulation) > BREAK_FOLD || u1.dot(u2) < BREAK_TILT || u1.y < 0 || u2.y < 0 || this.gap > BREAK_GAP;
+  }
 
   /** Крок фізики (до world.step): гальма й опір кочення; kinematic — рух king.exe (follow). */
   update(dt: number, brake: number, brakePower: number, kinematic = false): void {

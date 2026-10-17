@@ -1277,30 +1277,44 @@ export class Ht2Drive {
    * відчепити: причіп лишається на місці present'ом. Гіпотеза порту: відчепити — лише майже на місці (до 5 км/год) і
    * без вантажу в причепі (в оригіналі причіп з вантажем стає «місією» на дорозі — ще не перенесено).
    */
-  private toggleTrailer(): void {
+  /**
+   * Відчепити причіп (клавіша чи розрив зчіпки, 0x55d5d0 → looseSemitrailer 0x41fa00): у кар'єрі причіп лишається на
+   * місці present'ом, з вантажем — «місією» з тим самим замовленням і строком; у вільній їзді (presents немає) —
+   * зникає.
+   */
+  private dropTrailer(): void {
+    if (!this.trailer) return;
     const c = this.opts.career;
-    if (!c || !this.hitched || this.race || !this.presents) return;
-    if (this.trailer) {
-      if (this.truck.speedKmh > 5) return this.say('ЗУПИНІТЬСЯ, ЩОБ ВІДЧЕПИТИ ПРИЧІП');
+    const t = this.trailer.visual;
+    if (c && this.presents) {
       const kind = this.semiTypes.find((k) => k.id === c.trailer?.id);
-      const t = this.trailer.visual;
-      // З вантажем — причіп лишається на місці «місією» з тим самим замовленням і строком (0x41fa00).
       const order = c.order ?? undefined;
       if (kind) this.presents.drop(kind, t.position.clone(), new THREE.Vector3(0, 0, -1).applyQuaternion(t.quaternion), c.time, { order, dents: { ...(c.trailerDents ?? {}) } });
       if (order) c.order = null;
       c.trailer = null;
       c.trailerDents = {};
-      this.world.scene.remove(t);
-      this.trailer.dispose();
-      this.trailer = null;
-      this.trailerDents = null;
-      this.truck.towing = false;
-      this.truck.rayFilter = undefined;
-      this.truck.setTowLoad(0);
-      this.truck.tow = null;
       if (order) this.setCargo(0);
+    }
+    this.world.scene.remove(t);
+    this.trailer.dispose();
+    this.trailer = null;
+    this.trailerDents = null;
+    this.truck.towing = false;
+    this.truck.rayFilter = undefined;
+    this.truck.setTowLoad(0);
+    this.truck.tow = null;
+    if (c && this.presents) {
       c.presents = this.presents.snapshot();
       this.careerMode?.persist();
+    }
+  }
+
+  private toggleTrailer(): void {
+    const c = this.opts.career;
+    if (!c || !this.hitched || this.race || !this.presents) return;
+    if (this.trailer) {
+      if (this.truck.speedKmh > 5) return this.say('ЗУПИНІТЬСЯ, ЩОБ ВІДЧЕПИТИ ПРИЧІП');
+      this.dropTrailer();
       this.say('ПРИЧІП ВІДЧЕПЛЕНО');
       return;
     }
@@ -2603,6 +2617,11 @@ export class Ht2Drive {
       this.mafia?.control(step);
       this.rapier.step();
       this.acc -= step;
+      // Розрив зчіпки (складання понад 135°, перекидання, крен) — причіп відривається, як клавішею (physics.md).
+      if (this.trailer?.broken && !this.race) {
+        this.dropTrailer();
+        this.say('ПРИЧІП ВІДІРВАЛО');
+      }
     }
     // Частка кроку фізики, що «не дійшла» до наступного, — модель між станами кроків (без ривків при 120 Гц).
     const alpha = this.acc / step;
