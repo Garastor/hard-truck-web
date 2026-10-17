@@ -2,19 +2,25 @@ import * as THREE from 'three';
 import type { B3d } from '../engine/formats/b3d';
 
 /**
- * Видимість кімнат через портали (план G3 «Не малювати невидиме»). Як в оригіналі: king.exe малює світ лише від
- * кімнати камери крізь портали, звужуючи піраміду огляду многокутником порталу (re/notes/ht2/rendering.md); порт —
- * прямокутником на екрані й без відсікання обʼєктів кімнати звуженою пірамідою.
+ * Видимість кімнат через портали (план G3 «Не малювати невидиме») — як у king.exe (re/notes/ht2/rendering.md): світ
+ * малюється лише від кімнати камери крізь портали.
  *
  * Регіон HT2 поділено на кімнати (блок 19, 100…300 м — відрізки доріг з місцевістю довкола), зʼєднані порталами
- * (блок 30: вертикальний прямокутник між кутами p1 і p2 — поперек дороги, 50…80 × 100 м, у містах ab/da — 8 м
- * заввишки). Портал до кімнати сусіднього регіону названо `<рег>:<кімната>`. Щокадру: кімнати камери (за сіткою
- * слідів трикутників кімнат на плані), далі обхід порталів — портал видно, якщо його прямокутник на екрані перетинає
- * поточний (спершу весь екран), і за ним — кімнату, з обрізаним прямокутником. Решту кімнат сховано (разом з їхніми
- * деревами й ореолами — `userData.room`). Камера поза всіма кімнатами — малюємо все.
+ * (блок 30: вертикальний прямокутник між кутами p1 і p2 — поперек дороги, 50…80 × 100 м, у тунелях ab/da — 8 м
+ * заввишки). Портал до кімнати сусіднього регіону названо `<рег>:<кімната>`.
  *
- * Обмеження: кімната видима вся, а не лише крізь портал; що в межах однієї кімнати (пагорб і дорога за ним) —
- * портали не ховають. Те, що видно над сусідніми кімнатами, але не крізь портали, не малює й оригінал.
+ * Щокадру для кожної камери (основної й дзеркала):
+ * - кімната камери — переходом через портали (king.exe 0x5fb9e0: обʼєкт, що перетнув площину порталу в його прорізі,
+ *   переходить у кімнату-ціль); на старті й коли камера опинилася поза слідом своєї кімнати (телепорт) — за сіткою
+ *   слідів кімнат на плані (біля межі кімнат клітинка належить обом — тоді стартові обидві);
+ * - портал кімнати видно (0x5fb820), якщо камера з лицьового боку його площини і його многокутник, обрізаний
+ *   поточною пірамідою огляду, не порожній; за ним — кімната-ціль з пірамідою, звуженою цим многокутником (площини
+ *   через камеру й краї; 0x5b5710);
+ * - решту кімнат сховано, а у видимих — і вміст (злиті меші, дерева, ореоли, рельєф aa), що не потрапляє в жодну з
+ *   пірамід, крізь які кімнату видно.
+ * Камера поза всіма кімнатами — малюємо все.
+ *
+ * Те, що видно над сусідніми кімнатами, але не крізь портали (вулиця на пагорбі за селом aj), оригінал теж не малює.
  */
 
 export interface RoomPortal {
@@ -22,6 +28,11 @@ export interface RoomPortal {
   to: string;
   /** Кути в Three.js: p1, (p2 по горизонталі, z p1), p2, (p1 по горизонталі, z p2). */
   corners: [THREE.Vector3, THREE.Vector3, THREE.Vector3, THREE.Vector3];
+  /**
+   * Нормаль площини порталу — у бік кімнати-цілі (у площині гри (−Δy, Δx) від p1 до p2: так у всіх 2112 порталах,
+   * де бік визначено за центрами кімнат); null — горизонтальний портал (у даних HT2 немає).
+   */
+  normal: THREE.Vector3 | null;
 }
 
 /** Портали кімнат регіону з B3D: імʼя кімнати (мале письмо) → портали. */
@@ -33,14 +44,15 @@ export function readPortals(b3d: B3d): Map<string, RoomPortal[]> {
       if (d.t === 30) {
         const [x1, y1, z1] = d.p1;
         const [x2, y2, z2] = d.p2;
-        // Горизонтальний портал (p1 і p2 на одній висоті) — прямокутник у площині xy; у даних HT2 не трапляється.
         const flat = Math.abs(z2 - z1) < 0.5;
         const g = (x: number, y: number, z: number) => new THREE.Vector3(x, z, -y);
         const corners: RoomPortal['corners'] = flat
           ? [g(x1, y1, z1), g(x2, y1, z1), g(x2, y2, z1), g(x1, y2, z1)]
           : [g(x1, y1, z1), g(x2, y2, z1), g(x2, y2, z2), g(x1, y1, z2)];
+        // (−Δy, Δx) гри → Three.js (x, 0, −y).
+        const normal = flat ? null : new THREE.Vector3(-(y2 - y1), 0, -(x2 - x1)).normalize();
         const to = d.room.toLowerCase().replace(/^[a-z0-9]+:/, '');
-        (out.get(room) ?? out.set(room, []).get(room)!).push({ to, corners });
+        (out.get(room) ?? out.set(room, []).get(room)!).push({ to, corners, normal });
       }
       if (b.groups) for (const grp of b.groups) walk(grp, room);
     }
@@ -55,8 +67,7 @@ const cellKey = (ix: number, iy: number): number => (ix + 32768) * 65536 + (iy +
 
 /**
  * Сліди кімнат на плані: клітинка CELL × CELL → кімнати, чиї трикутники (за обмежувальним прямокутником) її
- * зачіпають. Біля межі кімнат клітинка належить обом — тоді обидві кімнати стартові (зайве малювання, але не дірка).
- * Будується частинами (pause — віддати кадр, як і решта завантаження регіону).
+ * зачіпають. Будується частинами (pause — віддати кадр, як і решта завантаження регіону).
  */
 export async function roomFootprints(rooms: THREE.Object3D[], root: THREE.Object3D, pause: () => Promise<void>): Promise<Map<number, string[]>> {
   const cells = new Map<number, string[]>();
@@ -105,26 +116,27 @@ export async function roomFootprints(rooms: THREE.Object3D[], root: THREE.Object
   return cells;
 }
 
-interface Rect {
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
+/** Обʼєкт кімнати, що відсікається пірамідами порталів: сфера у світі (обʼєкти нерухомі). */
+interface Cullable {
+  obj: THREE.Object3D;
+  sphere: THREE.Sphere;
 }
 
 interface RoomEntry {
   group: THREE.Object3D;
   portals: RoomPortal[];
-  /** Дерева, ореоли й рельєф кімнати поза її групою (userData.room). */
-  members: THREE.Object3D[];
+  /** Злиті меші кімнати, її дерева, ореоли й рельєф (userData.room). */
+  parts: Cullable[];
 }
 
-/**
- * Камера ближче до прямокутника порталу (м) — кімната за ним видима (увесь поточний прямокутник): камера ззаду
- * (12 м за машиною) буває вже за межею кімнат, а слід кімнати ще не той; дерева сусідньої кімнати біля межі.
- */
-const NEAR_PORTAL = 15;
-/** Обмеження обходу за кадр. */
+/** Піраміда огляду — площини (нормалі всередину). */
+type Planes = THREE.Plane[];
+
+/** Запас прорізу порталу для переходу камери між кімнатами, м (king.exe 0x5fb7d0 — теж із запасом). */
+const CROSS_MARGIN = 1;
+/** Обмеження обходу за кадр: глибина ланцюжка, пірамід на кімнату, переходів. */
+const MAX_DEPTH = 32;
+const MAX_FRUSTA = 8;
 const MAX_STEPS = 3000;
 
 export class RoomVisibility {
@@ -132,30 +144,31 @@ export class RoomVisibility {
   private readonly footprints = new Map<string, Map<number, string[]>>();
   /** Кімнати регіону (для вивантаження). */
   private readonly byRegion = new Map<string, string[]>();
+  /** Кімнати кожної камери з минулого кадру й де вона була. */
+  private readonly trackers = new WeakMap<THREE.Camera, { rooms: string[]; prev: THREE.Vector3 }>();
   /** Видимі в останньому update кімнати; null — показано все. */
   visible: Set<string> | null = null;
   /** Вимкнути (налагодження): усе видно. */
   enabled = true;
-  /** Портал ближче за near м — пропускає весь поточний прямокутник. */
-  near = NEAR_PORTAL;
-  /** Запас довкола екранного прямокутника порталу (частка NDC). */
-  margin = 0;
 
+  private readonly frustum = new THREE.Frustum();
   private readonly vp = new THREE.Matrix4();
-  private readonly clipped: THREE.Vector4[] = Array.from({ length: 8 }, () => new THREE.Vector4());
-  private readonly tmp: THREE.Vector4[] = Array.from({ length: 8 }, () => new THREE.Vector4());
-  private readonly reached = new Map<string, Rect>();
+  private readonly reached = new Map<string, Planes[]>();
 
   addRegion(id: string, rooms: THREE.Object3D[], portals: Map<string, RoomPortal[]>, footprint: Map<number, string[]>, root: THREE.Object3D): void {
+    root.updateMatrixWorld(true);
     const names: string[] = [];
     for (const g of rooms) {
       const name = g.name.toLowerCase();
       names.push(name);
-      this.rooms.set(name, { group: g, portals: portals.get(name) ?? [], members: [] });
+      const parts: Cullable[] = [];
+      // Злиті меші (mergeStatic) — прямі діти кімнати; решту (перемикачі, спрайти, окремі меші) не чіпаємо.
+      for (const c of g.children) if (c instanceof THREE.Mesh && c.name.startsWith('merged:')) parts.push(cullable(c));
+      this.rooms.set(name, { group: g, portals: portals.get(name) ?? [], parts });
     }
     root.traverse((o) => {
       const r = o.userData.room as string | undefined;
-      if (r) this.rooms.get(r.toLowerCase())?.members.push(o);
+      if (r) this.rooms.get(r.toLowerCase())?.parts.push(cullable(o));
     });
     this.byRegion.set(id, names);
     this.footprints.set(id, footprint);
@@ -175,107 +188,161 @@ export class RoomVisibility {
     return out;
   }
 
-  private setAll(on: boolean, except?: Set<string>): void {
-    for (const [name, r] of this.rooms) {
-      const v = except ? except.has(name) : on;
-      if (r.group.visible !== v) r.group.visible = v;
-      for (const o of r.members) if (o.visible !== v) o.visible = v;
-    }
+  /** Кімнати камери: перехід через портал своєї кімнати; поза слідом своєї кімнати чи вперше — за слідами. */
+  private track(camera: THREE.Camera): string[] {
+    const pos = camera.position;
+    const here = this.roomsAt(pos.x, -pos.z).filter((n) => this.rooms.has(n));
+    let t = this.trackers.get(camera);
+    if (!t) this.trackers.set(camera, (t = { rooms: [], prev: pos.clone() }));
+    let rooms = t.rooms.filter((n) => this.rooms.has(n));
+    if (rooms.length) {
+      cross: for (const n of rooms)
+        for (const p of this.rooms.get(n)!.portals)
+          if (this.rooms.has(p.to) && crosses(p, t.prev, pos)) {
+            rooms = [p.to];
+            break cross;
+          }
+      // Телепорт чи збій: камера не в сліді жодної зі своїх кімнат — заново за слідами.
+      if (here.length && !rooms.some((n) => here.includes(n))) rooms = here;
+    } else rooms = here;
+    t.rooms = rooms;
+    t.prev.copy(pos);
+    return rooms;
   }
 
   update(camera: THREE.PerspectiveCamera): void {
-    const cam = camera.position;
-    const start = this.enabled ? this.roomsAt(cam.x, -cam.z).filter((n) => this.rooms.has(n)) : [];
+    const start = this.enabled ? this.track(camera) : [];
     if (!start.length) {
       this.visible = null;
-      return this.setAll(true);
+      for (const r of this.rooms.values()) show(r, null);
+      return;
     }
     camera.updateMatrixWorld();
     this.vp.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    this.frustum.setFromProjectionMatrix(this.vp);
+    // Бічні площини й дальня (0…4); ближня не потрібна — бічні площини сходяться в камері, позаду неї нічого.
+    const far = this.frustum.planes[4];
+    const base = this.frustum.planes.slice(0, 5);
+    const cam = camera.position;
     const reached = this.reached;
     reached.clear();
-    const queue: [string, Rect][] = [];
+    const queue: [string, Planes, number][] = [];
     for (const n of start) {
-      const full = { x0: -1, y0: -1, x1: 1, y1: 1 };
-      reached.set(n, full);
-      queue.push([n, full]);
+      reached.set(n, [base]);
+      queue.push([n, base, 0]);
     }
     let steps = 0;
     for (let qi = 0; qi < queue.length && steps < MAX_STEPS; qi++) {
-      const [room, rect] = queue[qi];
+      const [room, planes, depth] = queue[qi];
+      if (depth >= MAX_DEPTH) continue;
       for (const p of this.rooms.get(room)?.portals ?? []) {
         steps++;
         if (!this.rooms.has(p.to)) continue;
-        const d = portalDistance(p, cam);
-        if (d > camera.far) continue;
-        const sub = d < this.near ? { ...rect } : this.portalRect(p, rect, camera.near);
-        if (!sub) continue;
-        const had = reached.get(p.to);
-        if (had && had.x0 <= sub.x0 && had.y0 <= sub.y0 && had.x1 >= sub.x1 && had.y1 >= sub.y1) continue;
-        // Кімнату вже досягнуто меншим прямокутником — іти далі з обʼєднаним (з запасом, зате без повторів).
-        const r = had ? { x0: Math.min(had.x0, sub.x0), y0: Math.min(had.y0, sub.y0), x1: Math.max(had.x1, sub.x1), y1: Math.max(had.y1, sub.y1) } : sub;
-        reached.set(p.to, r);
-        queue.push([p.to, r]);
+        // Камера з лицьового боку площини порталу (нормаль — у бік цілі).
+        if (p.normal && D.subVectors(p.corners[0], cam).dot(p.normal) <= 0) continue;
+        const poly = clipPolygon(p.corners, planes);
+        if (poly.length < 3) continue;
+        const sub = portalFrustum(cam, poly, far);
+        const list = reached.get(p.to);
+        if (list && list.length >= MAX_FRUSTA) continue;
+        if (list) list.push(sub);
+        else reached.set(p.to, [sub]);
+        queue.push([p.to, sub, depth + 1]);
       }
     }
-    const vis = new Set(reached.keys());
-    this.visible = vis;
-    this.setAll(false, vis);
-  }
-
-  /** Прямокутник порталу на екрані (NDC), обрізаний поточним; null — портал не видно. */
-  private portalRect(p: RoomPortal, clip: Rect, near: number): Rect | null {
-    // Кути — у простір відсікання; многокутник обрізаємо площиною w = near (перед камерою), далі — у NDC.
-    let n = 0;
-    for (const c of p.corners) {
-      this.tmp[n++].set(c.x, c.y, c.z, 1).applyMatrix4(this.vp);
-    }
-    const minW = Math.max(near, 1e-3);
-    let m = 0;
-    for (let i = 0; i < n; i++) {
-      const a = this.tmp[i];
-      const b = this.tmp[(i + 1) % n];
-      const ina = a.w >= minW;
-      const inb = b.w >= minW;
-      if (ina) this.clipped[m++].copy(a);
-      if (ina !== inb) {
-        const t = (minW - a.w) / (b.w - a.w);
-        this.clipped[m++].copy(a).lerp(b, t);
-      }
-    }
-    if (!m) return null;
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -Infinity;
-    let y1 = -Infinity;
-    for (let i = 0; i < m; i++) {
-      const q = this.clipped[i];
-      const x = q.x / q.w;
-      const y = q.y / q.w;
-      if (x < x0) x0 = x;
-      if (x > x1) x1 = x;
-      if (y < y0) y0 = y;
-      if (y > y1) y1 = y;
-    }
-    const e = this.margin;
-    const r = { x0: Math.max(x0 - e, clip.x0), y0: Math.max(y0 - e, clip.y0), x1: Math.min(x1 + e, clip.x1), y1: Math.min(y1 + e, clip.y1) };
-    return r.x0 < r.x1 && r.y0 < r.y1 ? r : null;
+    this.visible = new Set(reached.keys());
+    for (const [name, r] of this.rooms) show(r, reached.get(name) ?? []);
   }
 }
 
-const U = new THREE.Vector3();
-const V = new THREE.Vector3();
-const D = new THREE.Vector3();
+/** Показати кімнату (frusta — піраміди, крізь які її видно; null — усю, як без порталів; [] — сховати). */
+function show(r: RoomEntry, frusta: Planes[] | null): void {
+  const on = frusta === null || frusta.length > 0;
+  if (r.group.visible !== on) r.group.visible = on;
+  for (const c of r.parts) {
+    const v = on && (frusta === null || frusta.some((f) => sphereIn(c.sphere, f)));
+    if (c.obj.visible !== v) c.obj.visible = v;
+  }
+}
 
-/** Відстань від точки до прямокутника порталу (кути 0, 1, 3 задають сторони). */
-export function portalDistance(p: RoomPortal, q: THREE.Vector3): number {
-  const [c0, c1, , c3] = p.corners;
-  U.subVectors(c1, c0);
-  V.subVectors(c3, c0);
-  D.subVectors(q, c0);
-  const lu = U.lengthSq();
-  const lv = V.lengthSq();
-  const su = lu > 0 ? THREE.MathUtils.clamp(D.dot(U) / lu, 0, 1) : 0;
-  const sv = lv > 0 ? THREE.MathUtils.clamp(D.dot(V) / lv, 0, 1) : 0;
-  return D.sub(U.multiplyScalar(su)).sub(V.multiplyScalar(sv)).length();
+function sphereIn(s: THREE.Sphere, planes: Planes): boolean {
+  for (const p of planes) if (p.distanceToPoint(s.center) < -s.radius) return false;
+  return true;
+}
+
+/** Сфера обʼєкта у світі: меш (з інстансами — їхня сфера), спрайт — за позицією й розміром. */
+function cullable(o: THREE.Object3D): Cullable {
+  const sphere = new THREE.Sphere();
+  if (o instanceof THREE.InstancedMesh) {
+    if (!o.boundingSphere) o.computeBoundingSphere();
+    sphere.copy(o.boundingSphere!).applyMatrix4(o.matrixWorld);
+  } else if (o instanceof THREE.Mesh) {
+    if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+    sphere.copy(o.geometry.boundingSphere!).applyMatrix4(o.matrixWorld);
+  } else {
+    o.getWorldPosition(sphere.center);
+    const s = new THREE.Vector3();
+    o.getWorldScale(s);
+    sphere.radius = Math.max(s.x, s.y, s.z, 1);
+  }
+  return { obj: o, sphere };
+}
+
+const D = new THREE.Vector3();
+const A = new THREE.Vector3();
+const B = new THREE.Vector3();
+
+/** Многокутник, обрізаний площинами (лишається частина з додатного боку кожної). */
+function clipPolygon(src: readonly THREE.Vector3[], planes: Planes): THREE.Vector3[] {
+  let poly = src.map((v) => v.clone());
+  for (const pl of planes) {
+    const out: THREE.Vector3[] = [];
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i];
+      const b = poly[(i + 1) % poly.length];
+      const da = pl.distanceToPoint(a);
+      const db = pl.distanceToPoint(b);
+      if (da >= 0) out.push(a);
+      if (da >= 0 !== db >= 0) out.push(a.clone().lerp(b, da / (da - db)));
+    }
+    poly = out;
+    if (poly.length < 3) return poly;
+  }
+  return poly;
+}
+
+/** Піраміда від камери крізь опуклий многокутник: площини через камеру й кожен край, плюс дальня. */
+function portalFrustum(cam: THREE.Vector3, poly: THREE.Vector3[], far: THREE.Plane): Planes {
+  const c = new THREE.Vector3();
+  for (const v of poly) c.add(v);
+  c.divideScalar(poly.length);
+  const planes: Planes = [far];
+  for (let i = 0; i < poly.length; i++) {
+    A.subVectors(poly[i], cam);
+    B.subVectors(poly[(i + 1) % poly.length], cam);
+    const n = new THREE.Vector3().crossVectors(A, B);
+    if (n.lengthSq() < 1e-10) continue;
+    n.normalize();
+    const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(n, cam);
+    if (pl.distanceToPoint(c) < 0) pl.negate();
+    planes.push(pl);
+  }
+  return planes;
+}
+
+/** Відрізок a → b перетинає площину порталу з боку джерела в бік цілі в межах прорізу (з запасом). */
+function crosses(p: RoomPortal, a: THREE.Vector3, b: THREE.Vector3): boolean {
+  if (!p.normal) return false;
+  const o = p.corners[0];
+  const da = D.subVectors(a, o).dot(p.normal);
+  const db = D.subVectors(b, o).dot(p.normal);
+  if (!(da < 0 && db >= 0)) return false;
+  const q = A.copy(a).lerp(b, da / (da - db));
+  // Проріз: уздовж порталу (кут 0 → 1) і по висоті (кут 0 → 3).
+  B.subVectors(p.corners[1], o);
+  const len = B.length();
+  const along = D.subVectors(q, o).dot(B) / (len || 1);
+  const y0 = Math.min(o.y, p.corners[3].y);
+  const y1 = Math.max(o.y, p.corners[3].y);
+  return along > -CROSS_MARGIN && along < len + CROSS_MARGIN && q.y > y0 - CROSS_MARGIN && q.y < y1 + CROSS_MARGIN;
 }
