@@ -156,6 +156,8 @@ export function distToBounds(b: [number, number, number, number], x: number, y: 
 
 /** Відстань ламп неба від камери в бік сонця, м (гіпотеза). */
 const SKY_LAMP_DIST = 90;
+/** Розсіяне світло в спалаху блискавки (king.exe 0x005a9540). */
+const FLASH_COLOR = new THREE.Color().setRGB(0.9, 1, 1, THREE.SRGBColorSpace);
 
 export class Ht2World {
   readonly scene = new THREE.Scene();
@@ -244,7 +246,7 @@ export class Ht2World {
     return this.weather?.flags(set) ?? { rain: true, sun: true, thund: true };
   }
 
-  setClimate(hour: number, b: number, flash = false, w = b > 0 ? 0.5 + b / 2 : 0): void {
+  setClimate(hour: number, b: number, flash: number | boolean = 0, w = b > 0 ? 0.5 + b / 2 : 0): void {
     this.hour = hour;
     this.weatherW = w;
     this.applyIllum();
@@ -257,8 +259,10 @@ export class Ht2World {
     (this.scene.background as THREE.Color).copy(l.fog);
     this.sun.color.copy(l.sun);
     this.moon.color.copy(l.moon);
-    if (flash) this.ambient.color.setRGB(0.9, 1, 1, THREE.SRGBColorSpace);
-    else this.ambient.color.copy(l.ambient);
+    // Спалах f 0…1: розсіяне світло — від свого до (0,9, 1, 1).
+    const f = Number(flash);
+    this.ambient.color.copy(l.ambient);
+    if (f > 0) this.ambient.color.lerp(FLASH_COLOR, Math.min(1, f));
     const [x, y, z] = sunDirection(hour);
     toThree(x, y, z, this.sun.position);
     this.moon.position.set(-this.sun.position.x, 0, -this.sun.position.z).normalize().setY(1).normalize();

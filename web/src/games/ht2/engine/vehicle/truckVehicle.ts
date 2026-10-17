@@ -576,7 +576,7 @@ export class TruckVehicle {
     this.brakeTime = brake > 0 ? this.brakeTime + dt : 0;
     const bp = this.brakeProfile;
     const brakePedal = brake > 0 ? brake * (bp ? bp.pedal(this.brakeTime) : this.brakeTime / (this.brakeTime + 1)) : 0;
-    if (this.king) return this.updateKing(dt, input.steer, brakePedal, !!input.handbrake);
+    if (this.king) return this.updateKing(dt, input.steer, brakePedal, !!input.handbrake, !!input.sharp);
 
     // Сила двигуна — порівну на ведучі колеса (у Rapier відʼємна сила — уперед).
     // Гальма: сила колеса = педаль × B (передні 0,49·breakpower, задні 0,35·breakpower — ЗіЛ, s6);
@@ -624,7 +624,7 @@ export class TruckVehicle {
    * Уздовж ґрунту швидкість задаємо самі: v += (½·g_дот + ΣF/M)·dt, потім — уздовж курсу; поворот — кутова швидкість
    * v·sin δ / L навколо нормалі ґрунту. Усі колеса в повітрі — рух лише Rapier (балістика).
    */
-  private updateKing(dt: number, steer: number, pedal: number, handbrake: boolean): void {
+  private updateKing(dt: number, steer: number, pedal: number, handbrake: boolean, sharp = false): void {
     const K = this.king!;
     const ctrl = this.ctrl;
     for (let i = 0; i < this.wheels; i++) {
@@ -637,8 +637,9 @@ export class TruckVehicle {
     const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
     const lv0 = this.body.linvel();
-    // Кермо: δ = 45°·s, |s| — не більше межі зчеплення на цій швидкості.
-    const lim = steerLimit(lv0.x * fwd.x + lv0.y * fwd.y + lv0.z * fwd.z, mu, this.base, K.steerK);
+    // Кермо: δ = 45°·s, |s| — не більше межі зчеплення на цій швидкості; «різко» (Ctrl) — без межі, до упору
+    // (king.exe 0x500850: межу c при «різко» не застосовує — Input.steerExe).
+    const lim = sharp ? 1 : steerLimit(lv0.x * fwd.x + lv0.y * fwd.y + lv0.z * fwd.z, mu, this.base, K.steerK);
     const shaped = Math.sign(steer) * K.steerScale * Math.abs(steer) ** K.steerPower;
     const delta = KING.steerMax * Math.max(-lim, Math.min(lim, shaped));
     // Колеса на моделі: + — ліворуч; внутрішнє повертається більше (Аккерман — лише вигляд).

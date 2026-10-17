@@ -144,6 +144,18 @@ const BLOW_DAMAGE = 0.4;
 /** Після гасіння машина не займається, с (стан вогню 4 → 0). */
 const FIRE_COOL = 5;
 
+/** Спалах блискавки: тривалість, с, і сила в піку (частка шляху розсіяного світла до (0,9, 1, 1)) — порт, мʼякше за exe. */
+const FLASH_TIME = 0.45;
+const FLASH_PEAK = 0.6;
+
+/** Крива спалаху за часом від початку: наростання 0,05 с, далі плавне згасання (квадрат) до FLASH_TIME. */
+function flashLevel(t: number): number {
+  if (t <= 0 || t >= FLASH_TIME) return 0;
+  if (t < 0.05) return t / 0.05;
+  const k = 1 - (t - 0.05) / (FLASH_TIME - 0.05);
+  return k * k;
+}
+
 /** Колір туману, якщо в сцені його немає (дощ — world/precipitation.ts). */
 const FOG_FALLBACK = new THREE.Color(0.5, 0.5, 0.5);
 /** Опір кочення поза твердим покриттям, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
@@ -1397,8 +1409,9 @@ export class Ht2Drive {
     this.weatherFlags = this.world.weatherFlags();
     this.updateThunder(dt);
     this.tick++;
-    // Спалах: розсіяне світло (0,9, 1, 1) через кадр протягом 1 с (king.exe 0x005a9540); thund=off — без спалаху.
-    this.world.setClimate(hour, c.bad, this.weatherFlags.thund && this.flashTime > 0 && this.tick % 2 === 1, c.w());
+    // Спалах: розсіяне світло до (0,9, 1, 1) (king.exe 0x005a9540 — через кадр протягом 1 с; на прохання користувача
+    // — один плавний спалах без мерехтіння, коротший і мʼякший); thund=off — без спалаху.
+    this.world.setClimate(hour, c.bad, this.weatherFlags.thund ? FLASH_PEAK * flashLevel(FLASH_TIME - this.flashTime) : 0, c.w());
     this.world.updateTrees(dt, c.wind);
     this.updateDebris(dt, c.wind, c.w());
     this.updatePrecip(dt, c.wind, c.w());
@@ -1429,15 +1442,18 @@ export class Ht2Drive {
   private updateThunder(dt: number): void {
     this.flashTime = Math.max(0, this.flashTime - dt);
     if (this.bolt) {
-      this.bolt.visible = this.weatherFlags.thund && this.flashTime > 0.6 && this.tick % 3 !== 0;
+      // Спрайт — плавна прозорість за тією ж кривою (без миготіння через кадр).
+      const f = flashLevel(FLASH_TIME - this.flashTime);
+      this.bolt.visible = this.weatherFlags.thund && f > 0.01;
+      this.bolt.material.opacity = f;
       // Текстура flash — 8 кадрів у ряд (ефект 0x005a4880: 8 кадрів): кадр за часом спалаху.
       const map = this.bolt.material.map;
-      if (map) map.offset.x = Math.min(7, Math.floor((1 - this.flashTime) * 20)) / 8;
+      if (map) map.offset.x = Math.min(7, Math.floor(((FLASH_TIME - this.flashTime) / FLASH_TIME) * 8)) / 8;
     }
     if (!this.climate.thunder) return;
     if ((this.boltTimer -= dt) > 0) return;
     this.boltTimer = 10;
-    this.flashTime = 1;
+    this.flashTime = FLASH_TIME;
     if (!this.bolt) {
       const asm = this.world.common;
       const i = asm.b3d.materials.findIndex((m) => m.toLowerCase() === 'flash');
