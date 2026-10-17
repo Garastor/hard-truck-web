@@ -284,7 +284,33 @@ export class Ht2Roads {
     return !!n && n.dist > n.axis.width / 2 + margin;
   }
 
-  /** Точка на відстані `ahead` уздовж мережі; на розвилках — випадкова гілка, але стала для лінії (без смикання). */
+  /**
+   * Тупикова гілка (порт): з початку лінії за DEAD_LOOK м мережа доходить лише до кінців без продовження — в'їзди на
+   * бази, глухі майданчики. Автопілот (гравця з причепом, далекобійники) туди не звертає: розвернутися не може.
+   */
+  deadEnd(line: RoadLine): boolean {
+    let v = this.dead.get(line);
+    if (v === undefined) {
+      v = !reaches(line, DEAD_LOOK, new Map());
+      this.dead.set(line, v);
+    }
+    return v;
+  }
+
+  private readonly dead = new Map<RoadLine, boolean>();
+
+  /** Продовження лінії для автопілота: стала для лінії гілка (без смикання), крім тупикових, якщо є інші. */
+  pick(line: RoadLine): RoadLine | null {
+    if (!line.next.length) return null;
+    const open = (line.next as RoadLine[]).filter((n) => !this.deadEnd(n));
+    const pool = open.length ? open : (line.next as RoadLine[]);
+    return pool[hashPick(line.name, pool.length)];
+  }
+
+  /**
+   * Точка на відстані `ahead` уздовж мережі; на розвилках — випадкова гілка, але стала для лінії (без смикання), крім
+   * тупикових (deadEnd), якщо є інші.
+   */
   advance(line: RoadLine, seg: number, t: number, ahead: number): THREE.Vector3 {
     let cur = line.pts[seg].clone().lerp(line.pts[seg + 1], t);
     let left = ahead;
@@ -292,8 +318,9 @@ export class Ht2Roads {
     let i = seg + 1;
     for (let guard = 0; guard < 400; guard++) {
       if (i >= l.pts.length) {
-        if (!l.next.length) return cur;
-        l = l.next[hashPick(l.name, l.next.length)] as RoadLine;
+        const n = this.pick(l);
+        if (!n) return cur;
+        l = n;
         // Проміжок між смугами на стику — навпростець до другої точки наступної лінії.
         i = 1;
         continue;
@@ -312,6 +339,18 @@ export class Ht2Roads {
 export function isFork(line: RoadLine): boolean {
   const roads = new Set((line.next as RoadLine[]).map((n) => n.road));
   return roads.size > 1;
+}
+
+/** Як далеко дивитися, чи гілка не тупикова, м. */
+const DEAD_LOOK = 400;
+
+/** Чи веде лінія (від її початку) хоч куди-небудь на left метрів. */
+function reaches(line: RoadLine, left: number, tried: Map<RoadLine, number>): boolean {
+  if (line.length >= left) return true;
+  // Уже пробували звідси з не меншим запасом — і не дійшли.
+  if ((tried.get(line) ?? -1) >= left) return false;
+  tried.set(line, left);
+  return (line.next as RoadLine[]).some((n) => reaches(n, left - line.length, tried));
 }
 
 function hashPick(s: string, n: number): number {

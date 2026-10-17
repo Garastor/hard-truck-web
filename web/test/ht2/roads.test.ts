@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import * as THREE from 'three';
 import { parseWay } from '@ht2/formats/way';
 import { HT2_REGIONS } from '@ht2/files';
-import { Ht2Roads } from '@ht2/world/roads';
+import { Ht2Roads, type RoadLine } from '@ht2/world/roads';
 import { HT2_DIR } from '../gameDirs';
 
 const has = existsSync(join(HT2_DIR, 'ENV', 'ap.way'));
@@ -82,5 +82,22 @@ describe.skipIf(!has)('HT2: мережа доріг', () => {
     const side = new THREE.Vector3().crossVectors(flat(a.pts[0], a.pts[1]), new THREE.Vector3(0, 1, 0));
     expect(roads.offRoad(p.clone().addScaledVector(side, 5))).toBe(false);
     expect(roads.offRoad(p.clone().addScaledVector(side, 8))).toBe(true);
+  });
+
+  it('автопілот на розвилці не звертає в тупикову гілку (вʼїзд на базу), якщо є інша', () => {
+    let forks = 0;
+    let wrong = 0;
+    for (const l of roads.lines) {
+      const open = (l.next as RoadLine[]).filter((n) => !roads.deadEnd(n));
+      if (!open.length || open.length === l.next.length) continue;
+      forks++;
+      if (roads.deadEnd(roads.pick(l)!)) wrong++;
+    }
+    expect(forks).toBeGreaterThan(100);
+    expect(wrong).toBe(0);
+    // Розвилка в регіоні ac: друга гілка — тупик (за 400 м кінець без продовження).
+    const fork = roads.lines.find((l) => l.name === 'room_ac_034#193:0')!;
+    expect(fork.next.map((n) => roads.deadEnd(n as RoadLine))).toEqual([false, true]);
+    expect(roads.pick(fork)!.name).toBe('room_ac_024#194:0r');
   });
 });
