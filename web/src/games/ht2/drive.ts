@@ -120,6 +120,8 @@ function viewFov(xpyramid: number): number {
 const CHASE_LAG = 0.6;
 /** Точка погляду — на цій відстані від місця камери в спокої під нахилом CHASE_PITCH (біля машини), м. */
 const CHASE_LOOK = 10;
+/** Далі за стільки метрів від свого місця камера не «доганяє», а переставляється (телепорт, 911). */
+const CHASE_JUMP = 60;
 
 /** Опір кочення поза асфальтом, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
 const OFFROAD_ROLL = 5;
@@ -2081,11 +2083,17 @@ export class Ht2Drive {
     if (up.y > 0.8 && contacts >= 3) this.safe = { position: new THREE.Vector3(p.x, p.y + 0.5, p.z), forward: this.truck.forward() };
   }
 
+  /** Згладжені курс і нахил погляду камери за машиною (NaN — почати з поточних); стрибок — нова машина. */
+  private camYaw = NaN;
+  private camPitch = 0;
+  private chaseJump = false;
+
   private updateCamera(dt: number): void {
     const v = this.truck.visual;
     const fwd = this.truck.forward();
     const up = new THREE.Vector3(0, 1, 0);
     if (this.camMode === 'cockpit') {
+      this.camYaw = NaN;
       const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (this.def.tech.viewerTilt * Math.PI) / 180);
       this.camera.position.copy(this.cockpit).applyQuaternion(v.quaternion).add(v.position);
       this.camera.quaternion.copy(v.quaternion).multiply(tilt);
@@ -2107,6 +2115,7 @@ export class Ht2Drive {
     if (this.chaseFor !== this.truck) {
       this.chaseFor = this.truck;
       this.chaseMid = modelMid(v, fwd);
+      this.chaseJump = true;
     }
     const dist = far ? 28 * tow : (CHASE_BACK - this.chaseMid) * tow;
     const height = (far ? 12 : CHASE_UP) * tow;
@@ -2117,6 +2126,7 @@ export class Ht2Drive {
     this.camBaseY = Number.isFinite(this.camBaseY) && Math.abs(v.position.y - this.camBaseY) < 20 ? this.camBaseY + (v.position.y - this.camBaseY) * ky : v.position.y;
     const want = v.position.clone().setY(this.camBaseY).addScaledVector(flat, -dist).addScaledVector(up, height);
     if (far) {
+      this.camYaw = NaN;
       this.camPos.lerp(want, 1 - Math.exp(-dt * 4));
       this.camLook.lerp(v.position.clone().addScaledVector(up, 2), 1 - Math.exp(-dt * 10));
     } else {
@@ -2125,12 +2135,32 @@ export class Ht2Drive {
       // поворотах — убік до ±5 м), висота над машиною стала. Дивиться на точку біля машини — тож нахил сам зменшується
       // з відстанню (оригінал: 25° → 10° на 100 км/год).
       const k = 1 - Math.exp(-dt / CHASE_LAG);
+      // Стрибок машини (телепорт, 911, нова машина) — камера одразу на місці, без «польоту» через карту.
+      if (this.chaseJump || Math.hypot(want.x - this.camPos.x, want.z - this.camPos.z) > CHASE_JUMP) {
+        this.chaseJump = true;
+        this.camPos.copy(want);
+      }
       this.camPos.x += (want.x - this.camPos.x) * k;
       this.camPos.z += (want.z - this.camPos.z) * k;
       this.camPos.y = want.y;
       const target = want.clone().addScaledVector(flat, CHASE_LOOK * Math.cos(CHASE_PITCH)).addScaledVector(up, -CHASE_LOOK * Math.sin(CHASE_PITCH));
-      this.camLook.copy(target);
+      // Погляд (king.exe 0x59a030, re/notes/ht2/steering.md): з уже згладженої камери на точку машини, і курс та нахил
+      // погляду згладжуються вдруге тим самим k — тож на початку повороту машина зміщується в кадрі, а кадр
+      // розвертається з запізненням (курс машини змінюється одразу, як в оригіналі).
+      const d = target.sub(this.camPos);
+      const yaw = Math.atan2(d.x, d.z);
+      const pitch = Math.atan2(d.y, Math.hypot(d.x, d.z));
+      if (!Number.isFinite(this.camYaw) || this.chaseJump) {
+        this.camYaw = yaw;
+        this.camPitch = pitch;
+      } else {
+        this.camYaw += Math.atan2(Math.sin(yaw - this.camYaw), Math.cos(yaw - this.camYaw)) * k;
+        this.camPitch += (pitch - this.camPitch) * k;
+      }
+      const len = d.length();
+      this.camLook.set(Math.sin(this.camYaw) * Math.cos(this.camPitch), Math.sin(this.camPitch), Math.cos(this.camYaw) * Math.cos(this.camPitch)).multiplyScalar(len).add(this.camPos);
     }
+    this.chaseJump = false;
     this.camera.position.copy(this.camPos);
     this.camera.lookAt(this.camLook);
   }
