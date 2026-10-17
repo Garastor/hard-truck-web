@@ -30,6 +30,7 @@ import { Markets, parseMarkets } from './career/market';
 import { WorldMap, type MapPoint } from './world/worldMap';
 import { GlassRain } from './engine/render/glassRain';
 import { Dents, dentGeometry } from './vehicles/dents';
+import { basePlaces, fuelNodes, Presents, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
 import { terrainCollider } from './world/terrain';
 import { parseMsk } from './engine/formats/msk';
 import { findStores } from './career/economy';
@@ -278,6 +279,9 @@ export class Ht2Drive {
   private freeTrailerDents: Record<string, number> = {};
   /** Габарити ввімкнені (разом з фарами) — задні ліхтарі горять габаритом. */
   private sizeLights = false;
+  /** Напівпричепи на базах (кар'єра, vehicles/presents.ts) і типи з evehicles.sch. */
+  presents: Presents | null = null;
+  private semiTypes: SemiKind[] = [];
   /** Габарити (SizeLightKey моделі). */
   private setTruckSwitch: ((n: string, s: number) => void) | undefined;
   private cabRmp: ReturnType<typeof parseRmp> | null = null;
@@ -492,6 +496,24 @@ export class Ht2Drive {
     }
     this.climate = new Climate(o.settings?.weather ?? 0.6, wtemp, o.weather === 'bad' ? 'bad' : o.weather ? 'good' : null);
     const vehicles = await o.source.read('evehicles.sch').then(readSch).catch(() => []);
+    this.semiTypes = semiKinds(vehicles);
+    if (o.career && this.semiTypes.length) {
+      const limit = cnf ? num(assoc(cnf, 'semitrailers')?.[1], 28) : 28;
+      this.presents = new Presents(
+        {
+          scene: this.world.scene,
+          rapier: this.rapier,
+          trucks: this.trucks,
+          roadPoint: (p) => {
+            const n = this.roads.nearest(p);
+            return n ? n.line.pts[n.seg].clone().lerp(n.line.pts[n.seg + 1], n.t) : null;
+          },
+        },
+        this.semiTypes,
+        basePlaces(this.world.regions.values(), fuelNodes(regionMods)),
+        limit,
+      );
+    }
     if (!o.race) {
       const names = await o.source.read('names.sch').then(readSch).catch(() => []);
       this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r), truckerKinds(vehicles, this.trucks), Math.round(4 * (o.settings?.traffic ?? 1)));
@@ -538,6 +560,7 @@ export class Ht2Drive {
       // Двірники — окрема дія гри («Wipers», W); у порту без натискання вмикаються в дощ.
       if (cmd === 'wipers') this.wipersManual = !(this.glassRain?.wipersOn ?? this.wipersManual ?? this.raining);
       if (cmd === 'mirror') this.mirrorOn = !this.mirrorOn;
+      if (cmd === 'attach') this.toggleTrailer();
       // «Відновитися» — те саме, що 911 у меню Esc (на прохання користувача).
       if (cmd === 'reset') this.call911();
       if (cmd === 'menu') this.toggleEsc();
@@ -904,11 +927,17 @@ export class Ht2Drive {
     // Гонка на Кільці — без причепів (як у суперників).
     if (!rec || rec.group !== 'tractors' || this.opts.trailer === 'none' || this.opts.race) return;
     const trailers = this.trucks.records.filter((r) => r.group === 'trailers');
-    const want = /^Storm/i.test(rec.carNode) ? 'STrailerStorm' : this.opts.trailer || 'STrailerM';
+    // Кар'єра: причіп — підібраний на базі (presents.ts); старе збереження без поля — модуль (у «Шторма» — свій).
+    const c = this.opts.career;
+    if (c && c.trailer === undefined) c.trailer = /^Storm/i.test(rec.carNode) ? { id: 'URAGAN_SEMITRAILER', carNode: 'STrailerStorm', cluster: 0 } : { id: 'SEMITRAILER1', carNode: 'STrailerM', cluster: 0 };
+    if (c && !c.trailer) return;
+    const want = c?.trailer ? c.trailer.carNode : /^Storm/i.test(rec.carNode) ? 'STrailerStorm' : this.opts.trailer || 'STrailerM';
     const tr = trailers.find((r) => r.carNode.toLowerCase() === want.toLowerCase()) ?? trailers[0];
     const def = tr && truckDef(this.trucks, tr);
     if (!tr || !def) return;
-    this.trailer = new Trailer(this.rapier, this.trucks.asm, def, tr, { body: this.truck.body, saddle: rec.lowSaddle }, this.cargoMass);
+    const cluster = c?.trailer?.cluster ?? 0;
+    const paint = cluster > 0 ? (root: THREE.Object3D) => recolor(root, this.trucks, cluster + 1) : undefined;
+    this.trailer = new Trailer(this.rapier, this.trucks.asm, def, tr, { body: this.truck.body, saddle: rec.lowSaddle }, this.cargoMass, paint);
     this.world.scene.add(this.trailer.visual);
     const trl = this.trailer;
     this.trailerDents = new Dents(this.opts.career ? (this.opts.career.trailerDents ??= {}) : this.freeTrailerDents, trl.setSwitch, trl.switchStates, trl.dentGeom);
@@ -919,8 +948,56 @@ export class Ht2Drive {
     this.truck.tow = { mass: this.trailer.mass, wheels: this.trailer.wheelCount };
   }
 
-  /** Вантажопідйомність і обʼєм (площа × висота, гіпотеза): кузова вантажівки або напівпричепа. */
+  /** Тягач гравця може тягти тип причепа: «Шторм» — лише свій, інші — модулі й цистерни (evehicles.sch). */
+  private canTow(k: SemiKind): boolean {
+    const storm = /^Storm/i.test(this.rec?.carNode ?? '');
+    return storm === /^STrailerStorm$/i.test(k.carNode);
+  }
+
+  /**
+   * VVK_ATTACH_SEMITRAILER (T): без причепа — причепити present поруч (умови presents.hitchable), з причепом —
+   * відчепити: причіп лишається на місці present'ом. Гіпотеза порту: відчепити — лише майже на місці (до 5 км/год) і
+   * без вантажу в причепі (в оригіналі причіп з вантажем стає «місією» на дорозі — ще не перенесено).
+   */
+  private toggleTrailer(): void {
+    const c = this.opts.career;
+    if (!c || !this.hitched || this.race || !this.presents) return;
+    if (this.trailer) {
+      if (this.truck.speedKmh > 5) return this.say('ЗУПИНІТЬСЯ, ЩОБ ВІДЧЕПИТИ ПРИЧІП');
+      if (c.order) return this.say('СПОЧАТКУ ДОСТАВТЕ ВАНТАЖ');
+      const kind = this.semiTypes.find((k) => k.id === c.trailer?.id);
+      const t = this.trailer.visual;
+      if (kind) this.presents.drop(kind, t.position.clone().setY(t.position.y), new THREE.Vector3(0, 0, -1).applyQuaternion(t.quaternion), c.time);
+      c.trailer = null;
+      c.trailerDents = {};
+      this.world.scene.remove(t);
+      this.trailer.dispose();
+      this.trailer = null;
+      this.trailerDents = null;
+      this.truck.towing = false;
+      this.truck.rayFilter = undefined;
+      this.truck.setTowLoad(0);
+      this.truck.tow = null;
+      this.say('ПРИЧІП ВІДЧЕПЛЕНО');
+      return;
+    }
+    const rec = this.rec!;
+    const saddle = g2t(rec.lowSaddle).applyMatrix4(this.truck.visual.matrixWorld);
+    const { present, why } = this.presents.hitchable(saddle, this.truck.forward(), (k) => this.canTow(k));
+    if (!present) {
+      this.say(why === 'type' ? 'ЦЕЙ ПРИЧІП НЕ ПІДХОДИТЬ ДО ТЯГАЧА' : why === 'align' ? 'ПІДЇДЬТЕ СІДЛОМ ДО ШВОРНЯ ПРИЧЕПА' : 'ПОРУЧ НЕМАЄ ПРИЧЕПА');
+      return;
+    }
+    this.presents.take(present);
+    c.trailer = { id: present.kind.id, carNode: present.kind.carNode, cluster: present.kind.cluster } satisfies TrailerChoice;
+    c.trailerDents = {};
+    this.hitch();
+    this.say('ПРИЧІП ПРИЧЕПЛЕНО');
+  }
+
+  /** Вантажопідйомність і обʼєм (площа × висота, гіпотеза): кузова вантажівки або напівпричепа; тягач без причепа — 0. */
   get cargoSpace(): { mass: number; volume: number } {
+    if (this.hitched && !this.trailer) return { mass: 0, volume: 0 };
     const t = this.trailer?.rec ?? this.def.tech;
     return { mass: t.cargoLoad, volume: Math.max(1, t.bodySquare * t.bodyHeight) };
   }
@@ -1960,6 +2037,9 @@ export class Ht2Drive {
     // Двірники — два стани (увімкнені / вимкнені): світяться, поки ввімкнені (і без скла кабіни — за вибором чи дощем).
     this.input.setToggle('wipers', this.glassRain?.wipersOn ?? this.wipersManual ?? this.raining);
     this.input.setToggle('mirror', this.mirrorOn);
+    // Причепити / відчепити — лише тягачем; світиться, поки причіп зчеплений.
+    this.input.setToggle('attach', !!this.trailer, !this.hitched || !!this.race);
+    if (this.presents && this.careerMode) this.presents.update(this.truck.visual.position, this.careerMode.career.time, (k) => this.canTow(k));
     this.updateNavigator(dt);
     this.tabMap?.draw(dt, {
       me: this.truck.visual.position,
@@ -2206,6 +2286,7 @@ export class Ht2Drive {
     this.race?.dispose();
     this.truckers?.dispose();
     this.trailer?.dispose();
+    this.presents?.dispose();
     this.truck?.dispose();
     this.world.dispose();
     this.trucks.asm.dispose();

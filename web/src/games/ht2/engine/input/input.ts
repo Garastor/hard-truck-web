@@ -58,6 +58,8 @@ const ICONS = {
   swap: svg('<rect x="1.5" y="8.5" width="7" height="7" rx="1.4"/><rect x="15.5" y="8.5" width="7" height="7" rx="1.4"/><path d="M3.9 12l2.4-1.6v3.2zM20.1 12l-2.4-1.6v3.2z" fill="currentColor" stroke-width="1"/><path d="M8 6.6c2.3-2.6 5.7-2.6 8 0M16 17.4c-2.3 2.6-5.7 2.6-8 0"/><path d="M16.6 4.7l-.4 2.4-2.3-.5M7.4 19.3l.4-2.4 2.3.5"/>', 1.6),
   // Відеокамера — перемикання виду.
   cam: svg('<rect x="2" y="6" width="13.5" height="12" rx="2.5"/><path d="M15.5 10.5l6-3.5v10l-6-3.5z"/>'),
+  // Напівпричіп збоку зі шворнем спереду — причепити / відчепити (VVK_ATTACH_SEMITRAILER).
+  attach: svg('<path d="M7 6.5h14.5v9H7z"/><path d="M7 15.5H4.5v-3H2"/><circle cx="16" cy="17.8" r="1.7"/><circle cx="19.8" cy="17.8" r="1.7"/><path d="M8.5 15.5v2.5" stroke-width="1.6"/>'),
   // Кругова стрілка за годинниковою — відновитися.
   reset: svg('<path d="M17.2 16.8A6.8 6.8 0 1 1 18.3 9"/><path d="M15.6 9.6h5.2l-2.6 3.6z" fill="currentColor"/>'),
   left: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M17 4L6 12l11 8z"/></svg>',
@@ -70,7 +72,7 @@ const ICONS = {
 /** Чи показувати сенсорну кнопку «Різко» (поки сховано). */
 const SHARP_TOUCH_BUTTON = false;
 
-type Command = 'f1' |'f2' | 'f3' | 'f4' | 'f5' | 'menu' | 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror' | 'cab' | 'swap';
+type Command = 'f1' |'f2' | 'f3' | 'f4' | 'f5' | 'menu' | 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror' | 'cab' | 'swap' | 'attach';
 
 /**
  * Дозвіл на датчик руху (iOS 13+: DeviceOrientationEvent.requestPermission). Питати можна лише в жесті користувача;
@@ -199,6 +201,7 @@ export class Input {
     Space: 'engine',
     KeyW: 'wipers',
     KeyM: 'mirror',
+    KeyT: 'attach',
   };
 
   private key(e: KeyboardEvent): void {
@@ -425,6 +428,10 @@ export class Input {
     });
     btn('reset', '', undefined, 'reset', ICONS.reset, row);
     btn('cam', '', undefined, 'camera', ICONS.cam, row);
+    // Причепити / відчепити напівпричіп — лише в тягача (drive: setToggle('attach', …, hidden)).
+    const attach = btn('attach', '', undefined, 'attach', ICONS.attach, row);
+    attach.dataset.cmd = 'attach';
+    attach.hidden = true;
     // Карта (Tab) — першою в групі «ще» (на прохання користувача).
     const items: [string, Command, string][] = [
       ['map', 'map', ICONS.map],

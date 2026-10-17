@@ -305,6 +305,9 @@ export class CareerMode {
         this.bought(near);
         c.damage = near.used ? USED_DAMAGE : 0;
         c.dents = near.used ? { FC: 0.25, BC: 0.25 } : {};
+        // Тягач — без причепа (king.exe 0x433b60): причіп підбирають на базі.
+        c.trailer = null;
+        c.trailerDents = {};
         c.fuel = null;
         markets.sell(m, day, near);
         this.drive.changeTruck(near.rec.carNode);
@@ -574,6 +577,8 @@ export class CareerMode {
       c.damage = s.used ? USED_DAMAGE : 0;
       // Нова машина — без вмʼятин; вживана — трохи побита спереду й ззаду (гіпотеза).
       c.dents = s.used ? { FC: 0.25, BC: 0.25 } : {};
+      c.trailer = null;
+      c.trailerDents = {};
       c.fuel = null;
       markets.sell(m, day, s);
       this.drive.changeTruck(s.rec.carNode);

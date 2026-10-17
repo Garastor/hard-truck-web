@@ -59,12 +59,18 @@ export class Trailer {
     readonly rec: TechRecord,
     private readonly tractor: { body: RAPIER.RigidBody; saddle: readonly number[] },
     cargoMass = 0,
+    /** Фарбування (кластер TRUCKS.OVL, presents.ts) — перефарбувати модель. */
+    paint?: (root: THREE.Object3D) => void,
   ) {
     // Окремий екземпляр моделі — свої перемикачі (вмʼятини, колеса й вогні цього причепа).
     const model = buildTruckModel(asm, def, true);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня`);
+    paint?.(model.root);
     this.setSwitch = model.setSwitch;
     this.switchStates = model.switchStates;
+    // Зчеплений: опори підняті (SupportKey 0, 0x55ee80); логотип — компанії власника (у гравця компанії немає — 0).
+    this.setSwitch?.('SupportKey', 0);
+    this.setSwitch?.('refer_IconKey', 0);
     const frame = new THREE.Group();
     frame.rotation.x = -Math.PI / 2;
     frame.add(model.root);

@@ -2,6 +2,7 @@ import type { Fines } from './law';
 import type { Order } from './economy';
 import type { RivalRun } from './competition';
 import type { HiredDriver } from './company';
+import type { TrailerChoice } from '../vehicles/presents';
 
 /**
  * Кар'єра Дальнобойщиків 2 (перша версія): гроші, вантажівка, стан, поточне замовлення, ігровий час. Зберігається в
@@ -53,6 +54,8 @@ export interface Ht2Career {
   dents?: Partial<Record<string, number>>;
   /** Вмʼятини й шини напівпричепа (так само). */
   trailerDents?: Partial<Record<string, number>>;
+  /** Напівпричіп тягача — підібраний на базі (vehicles/presents.ts); null — без причепа (тягач купується без нього). */
+  trailer?: TrailerChoice | null;
   /** Штрафи, що висять на гравці (law.ts): розшук міліцією до затримання чи хабара. */
   fines?: Fines;
   /** Машина крадена (куплена на ринку як крадена): міліція з імовірністю 50 % вважає її викраденою. */
