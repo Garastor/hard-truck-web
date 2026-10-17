@@ -7,7 +7,7 @@ import { DEFAULT_KEYS, type Action, type Command } from '../engine/input/input';
  * координати — сцена 800×600, як у одиночної гри). Написи, які гра малює кодом, — українською (у фонах лишаються
  * оригінальні). Що в порту діє:
  * - графіка — роздільність 640×480…1600×1200 (висота кадру рендерера), «Автопошук» — за екраном пристрою; повзунки
- *   «спецефекти» й «детальність» у порту не діють (неактивні);
+ *   «спецефекти» й «детальність» — пороги ефектів king.exe (ui/effects.ts);
  * - керування — таблиця 22 дій з клавішами порту; рядок дії порту — перепризначити клавішу (наступне натискання;
  *   зайнята іншою дією — обмін), «За замовчуванням» — типові;
  * - водії — імʼя, логотип (`d/logo1…8`) і фото (`d/photo01…51`) водія кар'єри, список («недавні» — збереження порту),
@@ -101,8 +101,13 @@ export function ht2GraphicsScreen(art: Ht2MenuArt, o: GraphicsScreen): () => voi
     ['huge', 441, 330, '1600×1200'],
   ];
   res.forEach(([tex, x, y, label], i) => painters.push(texButton(art, stage, `g/${tex}`, x, y, label, { selected: () => (s.resolution ?? 2) === i, action: () => pick(i), after: repaint })));
-  painters.push(slider(art, stage, 349, 370, () => 1, 'Спецефекти'));
-  painters.push(slider(art, stage, 349, 405, () => 1, 'Детальність'));
+  const set = (k: 'effects' | 'detail') => (v: number) => {
+    s[k] = Math.round(Math.max(0, Math.min(1, v)) * 10) / 10;
+    o.onChange({ ...s });
+    repaint();
+  };
+  painters.push(slider(art, stage, 349, 370, () => s.effects, 'Спецефекти', set('effects')));
+  painters.push(slider(art, stage, 349, 405, () => s.detail, 'Детальність', set('detail')));
   painters.push(
     texButton(art, stage, 'g/canc', 348, 452, 'Скасувати', {
       action: () => {

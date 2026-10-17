@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { SceneAssembler } from '../engine/render/sceneBuilder';
 import { TREE_LIGHT } from './trees';
 import { toThree } from './world';
+import { fireLight, smokeChance } from '../ui/effects';
 
 /**
  * Вибух колонки заправки й полумʼя — задачі king.exe `mnBlow3` і `mnFire` (car.cpp; re/notes/ht2/objects.md,
@@ -263,6 +264,8 @@ export class Blasts {
       const [a, bb, c] = f.cur;
       const car = f.mode === 0;
       const u = new THREE.Vector3(bb, a, 0).applyMatrix3(f.rot).add(f.dir).multiplyScalar((Math.max(k, 0.75) + (car ? 0.15 : 0.1)) * c);
+      // Повзунок «Спецэффекты»: клуб з імовірністю g + 0,1 (ui/effects.ts).
+      if (rnd() >= smokeChance(0.1)) continue;
       if (car) this.spawnWorld(f.p.clone(), u, rnd() < 0.5 ? 'smoke' : 'vapor', 1, 5, 3, 1.5);
       else if (rnd() < 0.5) this.spawnWorld(f.p.clone(), u.clone().setZ(u.z * 0.8), 'burn', 0.5, 2.5, 3, 0.75);
       else this.spawnWorld(f.p.clone(), u, 'smoke', 1, 5, 3, 1.5);
@@ -278,6 +281,8 @@ export class Blasts {
 
   private emitCarFire(): void {
     for (const fire of this.fires.values()) {
+      // Повзунок «Спецэффекты»: клуб з імовірністю g + 0,2 (ui/effects.ts).
+      if (rnd() >= smokeChance(0.2)) continue;
       const c = 1 + 0.5 * rnd();
       const u = new THREE.Vector3(2 * sym(), 2 * sym(), 5).multiplyScalar(0.9 * c);
       this.spawnWorld(fire.clone(), u, rnd() < 0.5 ? 'smoke' : 'vapor', 1, 5, 3, 1.5);
@@ -399,6 +404,11 @@ export class Blasts {
 
   /** ThrowLamp: у першому живому полумʼї, колір (1, 0,6, 0,3)·f·мерехтіння. */
   private updateLamp(dt: number): void {
+    // Повзунок «Спецэффекты»: світло від вогню лише при g > 0,5 (ui/effects.ts).
+    if (!fireLight()) {
+      this.lamp.intensity = 0;
+      return;
+    }
     const f = this.flames[0];
     if (!f) {
       // Горить машина — лампа FlameLamp у її точці (одна на гру: у першої палаючої).

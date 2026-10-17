@@ -8,6 +8,7 @@ import type { GameContext } from '@shared/gameContext';
 import { HT2_FILES, HT2_MODS, HT2_MUSIC, HT2_REQUIRED, HT2_UI, HT2_VIDEO, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2ExitScreen, ht2MainScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem, type RoundKey } from './ui/menu';
 import { Input } from './engine/input/input';
+import { setFx } from './ui/effects';
 import { ht2ControlsScreen, ht2DriversScreen, ht2GraphicsScreen, ht2RecordsScreen } from './ui/menuScreens';
 import { loadSettings, saveSettings, type Ht2Settings } from './ui/settings';
 import { parseIni } from './engine/formats/ini';
@@ -97,6 +98,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   const ini = await source.read('TRUCK.INI').then((b) => parseIni(decodeCp1251(b))).catch(() => null);
   let settings: Ht2Settings = loadSettings(ini);
   Input.bind(settings.keys);
+  setFx(settings.effects, settings.detail);
   ctx.setStatus(null);
 
   // Налагодження: ?game=ht2&tab=world — одразу огляд світу (&region=ab); &tab=drive — вільна їзда (&truck=Kamaz);
@@ -142,6 +144,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
               onChange: (st) => {
                 settings = st;
                 saveSettings(st);
+                setFx(st.effects, st.detail);
               },
             });
           else if (key === 'contr')

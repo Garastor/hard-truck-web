@@ -28,6 +28,7 @@ import { Radars } from './traffic/radars';
 import { showGameOver, showVictory, type LoseScreen } from './ui/gameOver';
 import { playVideo } from './engine/video/player';
 import { sharedContext } from './engine/audio/engineAudio';
+import { glassDrops, trafficHeadlights } from './ui/effects';
 import { WIN_SHARE } from './career/share';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
@@ -1382,7 +1383,8 @@ export class Ht2Drive {
     const dusk = sunHeight(hour) < 0.2;
     this.world.setNight(dusk);
     this.cabLight?.color.copy(this.world.ambientColor).multiplyScalar(1.4);
-    if (this.traffic) this.traffic.lights = trafficLights(hour);
+    // Фари чужих машин — ще й за повзунками графіки (g > 0,5 і d > 0,5, ui/effects.ts).
+    if (this.traffic) this.traffic.lights = trafficLights(hour) && trafficHeadlights();
     this.rainSound ??= this.audio?.loopSound('rain') ?? null;
     this.windSound ??= this.audio?.loopSound('wind') ?? null;
     this.rainSound?.set(this.sheltered ? 0 : c.rainVolume);
@@ -2439,7 +2441,8 @@ export class Ht2Drive {
         const t = this.truck.body.translation();
         this.sheltered = this.raining && !!this.rapier.castRay(new RAPIER.Ray({ x: t.x, y: t.y + 3, z: t.z }, { x: 0, y: 1, z: 0 }), 60, true);
       }
-      this.glassRain.raining = this.raining && !this.sheltered;
+      // Краплі на склі — ще й за повзунками графіки (g > 0,5 і d > 0,2, ui/effects.ts).
+      this.glassRain.raining = this.raining && !this.sheltered && glassDrops();
       this.glassRain.wipersOn = this.wipersManual ?? this.raining;
       this.input.setToggle('wipers', this.glassRain.wipersOn);
       // Крок — справжній час кадру: з 1/30 на кадр двірники на 60 Гц ходили вдвічі, на 120 Гц — учетверо швидше.

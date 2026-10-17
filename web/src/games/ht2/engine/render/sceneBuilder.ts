@@ -291,6 +291,22 @@ export class DistanceSwitch extends THREE.Object3D {
   }
 }
 
+/**
+ * Стани перемикачів (тип 21) за назвою блоку, що заміняють початковий i1 при збиранні: налаштування гри (HT2 —
+ * `refer_GeometryKey` за повзунком «Детальность», ui/effects.ts). Діє на моделі, зібрані після зміни.
+ */
+const staticSwitches = new Map<string, number>();
+
+export function setStaticSwitch(name: string, state: number): void {
+  staticSwitches.set(name, state);
+}
+
+/** Початковий стан перемикача: з налаштування (не більше за кількість груп) чи i1. */
+function switchInit(name: string | undefined, i1: number, groups: number): number {
+  const s = name ? staticSwitches.get(name) : undefined;
+  return s === undefined ? i1 : Math.min(s, groups - 1);
+}
+
 export class SceneAssembler {
   readonly lib: MaterialLibrary;
   readonly stats = { rooms: 0, meshes: 0, triangles: 0, instances: 0, sprites: 0, layered: 0, missingTextures: 0 };
@@ -591,7 +607,7 @@ export class SceneAssembler {
         const b: Batches = new Map();
         for (const child of g) this.visit(child, cur, b, go, depth + 1);
         this.flush(b, go);
-        go.visible = gi === d.i1;
+        go.visible = gi === switchInit(block.name, d.i1, groups.length);
         into.add(go);
         return go;
       });
@@ -632,7 +648,7 @@ export class SceneAssembler {
       // «номер неба кімнати + 1» (HTruck.exe 0x42a8a8), група 0 — порожня (блок nil, без неба). Номер неба кімнати
       // ще не розібрано — беремо перше небо (група 1, гіпотеза).
       const sky = block.name === 'SkyDomeKey';
-      groups = [sky && block.groups.length > 1 ? block.groups[1] : (block.groups[d.i1] ?? [])];
+      groups = [sky && block.groups.length > 1 ? block.groups[1] : (block.groups[switchInit(block.name, d.i1, block.groups.length)] ?? [])];
     } else if (d.t === 9 && d.shape.kind === 5 && block.groups.length >= 2 && this.buildingRooms) {
       // У геометрії трас тип 9 — дерево поділу простору: обидві половини видимі (як було до перемикачів у
       // моделях); вибір за боком камери ховав частини траси — мерехтіння й «невидимі» стіни з колізією.

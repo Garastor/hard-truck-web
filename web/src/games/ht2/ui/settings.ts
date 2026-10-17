@@ -43,6 +43,12 @@ export interface Ht2Settings {
    * рендерера (ui/menuScreens.ts RESOLUTION_H); не задано — як вирішить оболонка (якість).
    */
   resolution?: number;
+  /**
+   * Повзунки «Спецэффекты» і «Детальность» меню «Графіка» (TRUCK.INI [EFFECTS] grf, dtl, 0…100, типово 100) —
+   * 0…1; що вмикають — ui/effects.ts.
+   */
+  effects: number;
+  detail: number;
   /** Перепризначені клавіші з меню «Керування»: дія → KeyboardEvent.code (engine/input Input.bind). */
   keys?: Partial<Record<Action | Command, string>>;
 }
@@ -66,6 +72,8 @@ export function defaultSettings(ini: Ini | null): Ht2Settings {
     force: pct('force', 50),
     automatic: true,
     xpyramid: Math.min(2, Math.max(1.2, ini ? iniNum(ini, 'EFFECTS', 'xpyramid', 1.6) : 1.6)),
+    effects: pct('grf', 100),
+    detail: pct('dtl', 100),
   };
 }
 
