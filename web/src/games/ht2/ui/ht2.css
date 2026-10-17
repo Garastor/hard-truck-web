@@ -628,3 +628,9 @@ div.ht2-mirror {
   box-sizing: border-box;
   border: 2px solid #8c8c8c;
 }
+
+/* Вікно результату (кінець гри, ui/gameOver.ts): поверх табло й панелей, поза картинкою — чорне. */
+.ht2-panel.ht2-game-over {
+  z-index: 40;
+  background: #000;
+}

@@ -23,6 +23,8 @@ import { Police, parseAmbushes, type PoliceEvent } from './traffic/police';
 import { RED_LIGHT_FINE, bribeSum, copsTakeBribes, totalFine, wanted } from './career/law';
 import { Mafia, parseMafiaAmbushes } from './traffic/mafia';
 import { ForbiddenZone, Helicopters } from './traffic/helicopters';
+import { Water } from './vehicles/water';
+import { showGameOver } from './ui/gameOver';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
 import { WorldMap, type MapPoint } from './world/worldMap';
@@ -1187,6 +1189,30 @@ export class Ht2Drive {
 
   /** Горить: секунд від займання; −1 — ні (king.exe 0x54e180). */
   private burning = -1;
+  /** Вода (тригери 13/16) і кінець гри. */
+  private readonly water = new Water();
+  private over = false;
+
+  /**
+   * Кінець гри (king.exe 0x51eea0 / 0x51f380, upgrades.md «Вибування гравця»): гра на паузі, звуки стихають,
+   * youlostSound, вікно BackLoose2 «Восстановлению не подлежит» (утонув чи машину знищено). Збереження кар'єри
+   * не пишеться й не стирається (як .pl1 в оригіналі): «Головне меню» — вихід, «Почати спочатку» — нова кар'єра.
+   * Ролик trirr.bne перед вікном порт не показує.
+   */
+  private gameOver(): void {
+    if (this.over) return;
+    this.over = true;
+    this.paused = true;
+    this.noSave = true;
+    this.burning = -1;
+    this.blasts?.carFire(null);
+    this.truck.engineOn = false;
+    this.audio?.play('youlost');
+    showGameOver(this.escArt, this.overlay, 'BackLoose2', {
+      main: () => this.opts.onExit(),
+      restart: () => this.opts.onExit('new'),
+    });
+  }
 
   /**
    * Займання від влучання кулі (0x567440): імовірність g·P·0,03/(P + 0,3) — P сила кулі (міліція й мафія 0,1,
@@ -1206,13 +1232,17 @@ export class Ht2Drive {
   /**
    * Горіння (0x54e180, 0x5494c0): двигун −1/60 стану за секунду (у порту — стан машини), бак −0,2/60 за секунду;
    * протипожежна система через 5 с гасить і витрачає заряд, після четвертого — пейджер mess 100 і системи більше
-   * немає. Гіпотези порту: витрата бака — частка ємності; стан 0 — двигун глухне й полумʼя гасне (що далі в
-   * оригіналі, не розібрано).
+   * немає; стан машини понад 0,9 — кінець гри. Гіпотеза порту: витрата бака — частка ємності.
    */
   private updateFire(dt: number): void {
     const cm = this.careerMode;
-    if (this.burning < 0 || !cm || this.paused) return;
+    if (!cm || this.paused) return;
     const c = cm.career;
+    // Утонув (0x4ce300/0x56ffd0: центр машини нижче рівня води; повітрозабірник — на 1 м глибше) чи машину знищено
+    // (сума пошкоджень > 0,9, 0x597b00; у порту — стан машини) — кінець гри.
+    const sunk = this.water.update(dt, this.world.loaded.values(), this.truck.visual.position, (c.upgrades ?? []).includes('PR_AIR_FILTER_SNORKEL:1'));
+    if (sunk || c.damage > 0.9) return this.gameOver();
+    if (this.burning < 0) return;
     this.burning += dt;
     c.damage = Math.min(1, c.damage + dt / 60);
     c.fuel = Math.max(0, (c.fuel ?? this.tank) - (0.2 * this.tank * dt) / 60);
@@ -1224,12 +1254,6 @@ export class Ht2Drive {
         c.fireUsed = 0;
         this.say('СИСТЕМА ПОЖЕЖОГАСІННЯ', 5);
       }
-      this.extinguish();
-      cm.persist();
-      return;
-    }
-    if (c.damage >= 1) {
-      this.truck.engineOn = false;
       this.extinguish();
       cm.persist();
       return;

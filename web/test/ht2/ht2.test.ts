@@ -260,7 +260,7 @@ describe.skipIf(!has)('HT2: покращення (restable.sch)', () => {
     expect(by['PR_BRAKES:1'].price).toBe(4500);
     expect(by['PR_TIRES:1'].price).toBe(2000);
     expect(by['PR_EXTRA_TANK:1'].price).toBe(500);
-    expect(ups.length).toBe(15);
+    expect(ups.length).toBe(16);
     const owned = install(['PR_TIRES:2', 'PR_ABS:1'], by['PR_TIRES:1']);
     expect(owned).toEqual(['PR_ABS:1', 'PR_TIRES:1']);
     expect(tuning(owned).tires).toBe(1);
