@@ -52,6 +52,17 @@ const PHYS_ON = 80;
 const PHYS_BACK = 100;
 const PHYS_OFF = 300;
 const PHYS_SPEED = 18;
+/**
+ * Кінематична модель — на поверхні дороги, з нахилом за нею (порт: у king.exe — висота лінії WAY, без нахилу; лінії
+ * лежать до ±1,3 м від настилу, тож модель «пливла» й підскакувала при переході у фізику). Замір раз на GROUND_EVERY с,
+ * висота згладжена з GROUND_LAG с; модель піднята на REST_LIFT — як фізична машина на підвісці в спокої.
+ */
+const GROUND_EVERY = 0.12;
+const GROUND_LAG = 0.12;
+const REST_LIFT = 0.1;
+/** Промінь до землі: звідки над лінією й як глибоко під нею, м. */
+const GROUND_UP = 6;
+const GROUND_DOWN = 10;
 /** Відкинуло далі за це від лінії — маршрут перебудовується (king.exe: ≥ 50 м; порт — менше, лінії смуг), м. */
 const RETRACE = 8;
 /** Перекинута (вгору < 0,5) довше за це — прибрати, щойно не видно, с. */
@@ -97,6 +108,16 @@ interface Car extends Mover {
   want: number;
   /** Скільки лежить перекинута, с. */
   flipped: number;
+  /** Поверхня під кінематичною моделлю (промінь до нерухомих колізій): висота, нормаль, час до наступного заміру. */
+  ground: Ground | null;
+}
+
+/** Поверхня під кінематичною моделлю: згладжена висота y, заміряна goal, нормаль n, час до заміру t. */
+interface Ground {
+  y: number;
+  goal: number;
+  n: THREE.Vector3;
+  t: number;
 }
 
 /** Фізичні машини трафіку (будує гра: модель, параметри king.exe з vehicle.tech, сцена). */
@@ -330,7 +351,7 @@ export class Traffic {
   private newCar(line: RoadLine, seg: number, ghost: boolean): Car {
     const kind = this.kinds[Math.floor(Math.random() * this.kinds.length)];
     const cruise = CRUISE_MIN + Math.random() * (CRUISE_MAX - CRUISE_MIN);
-    return Object.assign(newMover(line, seg, Math.random(), cruise, 2.2), { kind, ghost, age: 0, root: null, body: null, vehicle: null, phys: newPhysState(), want: 0, flipped: 0 });
+    return Object.assign(newMover(line, seg, Math.random(), cruise, 2.2), { kind, ghost, age: 0, root: null, body: null, vehicle: null, phys: newPhysState(), want: 0, flipped: 0, ground: null });
   }
 
   /**
@@ -393,14 +414,15 @@ export class Traffic {
     const box = visibleBox(model);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
-    // Модель стоїть на колесах: низ коробки — дорога.
-    frame.position.y = -box.min.y;
-    root.position.copy(c.pos);
-    root.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), c.heading, new THREE.Vector3(0, 1, 0)));
-    const body = this.rapier.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(c.pos.x, c.pos.y, c.pos.z));
+    // Модель стоїть на колесах: низ коробки — дорога (плюс хід підвіски в спокої).
+    frame.position.y = -box.min.y + REST_LIFT;
+    c.ground = this.groundUnder(c.pos);
+    root.position.set(c.pos.x, c.ground?.y ?? c.pos.y, c.pos.z);
+    orient(root.quaternion, c.heading, c.ground?.n);
+    const body = this.rapier.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(root.position.x, root.position.y, root.position.z));
     this.rapier.createCollider(
       RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2)
-        .setTranslation(center.x, center.y - box.min.y, center.z)
+        .setTranslation(center.x, center.y - box.min.y + REST_LIFT, center.z)
         .setCollisionGroups(groups(GROUP_WORLD, 0xffff)),
       body,
     );
@@ -439,13 +461,30 @@ export class Traffic {
       if (along > 0 && along < c.halfLen + 5 && side < 2.5) c.speed = 0;
     }
     if (!c.root || !c.body) return;
-    // lookAt ставить +Z від цілі до ока: ціль — уперед, тож −Z (перед моделі) дивиться за рухом.
-    const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), c.heading, new THREE.Vector3(0, 1, 0)));
+    // Поверхня під машиною — раз на GROUND_EVERY с; між замірами — висота й нахил з попереднього.
+    if (!c.ground || (c.ground.t -= dt) <= 0) {
+      const g = this.groundUnder(c.pos);
+      if (g) c.ground = c.ground ? { ...c.ground, n: g.n, goal: g.y, t: GROUND_EVERY } : g;
+      else if (c.ground) c.ground.t = GROUND_EVERY;
+    }
+    if (c.ground) c.ground.y += (c.ground.goal - c.ground.y) * (1 - Math.exp(-dt / GROUND_LAG));
+    const q = orient(new THREE.Quaternion(), c.heading, c.ground?.n);
     // Плавний поворот на зламах ламаної.
     c.root.quaternion.slerp(q, Math.min(1, dt * 6));
-    c.root.position.copy(c.pos);
-    c.body.setNextKinematicTranslation(c.pos);
+    c.root.position.set(c.pos.x, c.ground?.y ?? c.pos.y, c.pos.z);
+    c.body.setNextKinematicTranslation(c.root.position);
     c.body.setNextKinematicRotation(c.root.quaternion);
+  }
+
+  /** Поверхня під точкою: промінь униз до нерухомих колізій (дорога, рельєф); null — колізій там немає. */
+  private groundUnder(p: THREE.Vector3): Ground | null {
+    const from = { x: p.x, y: p.y + GROUND_UP, z: p.z };
+    const hit = this.rapier.castRayAndGetNormal(new RAPIER.Ray(from, { x: 0, y: -1, z: 0 }), GROUND_UP + GROUND_DOWN, true, undefined, undefined, undefined, undefined, (col) => col.parent()?.isFixed() ?? true);
+    if (!hit) return null;
+    const n = new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z);
+    if (n.y < 0.7) return null;
+    const y = from.y - hit.timeOfImpact;
+    return { y, goal: y, n, t: GROUND_EVERY };
   }
 
   dispose(): void {
@@ -472,4 +511,13 @@ export function recolor(root: THREE.Object3D, trucks: Ht2Trucks, n: number): voi
     };
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(one) : one(mesh.material);
   });
+}
+
+/** Орієнтація моделі: перед — курс, спроєктований на площину ґрунту з нормаллю n (без n — горизонтально). */
+function orient(q: THREE.Quaternion, heading: THREE.Vector3, n?: THREE.Vector3): THREE.Quaternion {
+  const up = n ?? new THREE.Vector3(0, 1, 0);
+  const f = heading.clone().addScaledVector(up, -heading.dot(up));
+  if (f.lengthSq() < 1e-6) f.copy(heading);
+  // lookAt ставить +Z від цілі до ока: ціль — уперед, тож −Z (перед моделі) дивиться за рухом.
+  return q.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), f.normalize(), up));
 }

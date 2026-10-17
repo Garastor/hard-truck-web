@@ -1253,7 +1253,13 @@ export class Ht2Drive {
     const model = def && buildTruckModel(this.trucks.asm, def, false);
     if (!rec || !def || !model) return null;
     if (variant > 0) recolor(model.root, this.trucks, variant + 1);
-    const v = new TruckVehicle(this.rapier, def, model, { position: this.groundAt(pos), forward: forward.clone() }, {
+    // Одразу на колесах на поверхні дороги (низ моделі + хід підвіски в спокої ≈ 0,1 м), а не на 2,5 м вище з падінням:
+    // перехід кінематичної машини трафіку у фізичну був помітним підскоком.
+    model.root.updateMatrixWorld(true);
+    const bottom = new THREE.Box3().setFromObject(model.root).min.z;
+    const surface = this.surfaceAt(pos);
+    const at = surface === null ? this.groundAt(pos) : new THREE.Vector3(pos.x, surface - bottom + 0.1, pos.z);
+    const v = new TruckVehicle(this.rapier, def, model, { position: at, forward: forward.clone() }, {
       cargoMass: 0,
       surfaceEffects: !this.arcade,
       engine: HT2_KING_ENGINE,
@@ -1264,6 +1270,12 @@ export class Ht2Drive {
     v.engine.engageFor(speed);
     this.world.scene.add(v.visual);
     return v;
+  }
+
+  /** Поверхня дороги під точкою (лише нерухомі колізії — не дах іншої машини); null — колізій немає. */
+  private surfaceAt(p: THREE.Vector3): number | null {
+    const hit = this.rapier.castRay(new RAPIER.Ray({ x: p.x, y: p.y + 6, z: p.z }, { x: 0, y: -1, z: 0 }), 16, true, undefined, undefined, undefined, undefined, (c) => c.parent()?.isFixed() ?? true);
+    return hit ? p.y + 6 - hit.timeOfImpact : null;
   }
 
   private removeCar(v: TruckVehicle): void {
