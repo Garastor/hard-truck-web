@@ -91,6 +91,8 @@ export class AutoPilot {
   private reversing = 0;
   /** Бічний зсув для обгону (м), плавно змінюється. */
   private offset = 0;
+  /** Своя смуга — сталий зсув від осі маршруту, м (+ праворуч; гонка: ряди решітки ±1,75 м). */
+  lane = 0;
 
   constructor(private readonly net: WayNet) {}
 
@@ -139,7 +141,7 @@ export class AutoPilot {
         }
       }
     }
-    const wantOffset = blockDist < 25 ? blockSide * 3.2 : 0;
+    const wantOffset = blockDist < 25 ? this.lane + blockSide * 3.2 : this.lane;
     this.offset += THREE.MathUtils.clamp(wantOffset - this.offset, -2 * dt, 2 * dt);
     target.addScaledVector(rightV, this.offset);
     const far = this.net.advance(n.line, n.seg, n.t, 12 + speedKmh * 0.6);

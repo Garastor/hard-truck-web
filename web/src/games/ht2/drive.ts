@@ -1984,6 +1984,11 @@ export class Ht2Drive {
   }
 
   /** Повідомлення гравцю: на пейджер (з оригінальним інтерфейсом) чи в рядок табло на time с. */
+  /** Звук з набору гри (гонка: `alarm` світлофора). */
+  playSound(name: string): void {
+    this.audio?.play(name);
+  }
+
   say(text: string, time = 5): void {
     if (this.tablo) this.tablo.message(text);
     else this.notice = { text, time };

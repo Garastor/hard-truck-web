@@ -10,28 +10,95 @@ import { toThree } from './world/world';
 import type { Ht2Drive } from './drive';
 
 /**
- * Гонка на Кільці (регіон dr): стартова решітка `start1_1…8`, контрольні точки `check_point1…3` (вузли WAY);
- * 3 кола (гіпотеза; mess.txt: «Пройдено кругов : %d из %d»), суперників — 7 (MENV/GAME.CNF: aitruck 8 разом з
- * гравцем). Маршрут кола — найкоротший шлях мережею доріг через точки по черзі; суперники їдуть ним автопілотом.
- * Місце — за пройденою відстанню маршруту. Фініш — повідомлення YOU_CAME_N з Ms.sch.
+ * Гонка на Кільці (регіон dr; re/notes/ht2/race.md): стартова решітка `start1_1…8`, контрольні точки
+ * `check_point1…3` (вузли WAY); 3 кола (king.exe 0x56ffd0), суперників — 7 (режим «Гонки»: MENV/GAME.CNF aitruck 8
+ * разом з гравцем). Маршрут кола — найкоротший шлях мережею доріг через точки по черзі; суперники їдуть ним
+ * автопілотом. Місце — за пройденою відстанню маршруту.
+ *
+ * За king.exe: світлофор — червоний, через 2 с три блимання зеленого зі звуком `alarm`, через 5,5 с — старт
+ * (0x53e510); суперники — у два ряди ±1,75 м від осі за номером на решітці (0x4d43a0); «гумова нитка» (0x4d4700):
+ * x = 0,002·Δ (Δ — на скільки метрів гравець попереду), швидкість × (1 + x·|x|) у межах 0,75…1,5; зміна місця
+ * гравця — пейджер YOU_ARE_N (0x4285c0), фініш суперника — COMPETITOR_ARRIVED; довше 1800 с — DISQUALIFIED.
+ * Фініш — повідомлення YOU_CAME_N з Ms.sch.
  */
 const LAPS = 3;
-const COUNTDOWN = 3;
+const COUNTDOWN = 5.5;
+/** Моменти звуку `alarm` (три блимання зеленого) від початку відліку, с — гіпотеза: раз на секунду від 2 с. */
+const BLINKS = [2, 3, 4];
+/** Ліміт часу гонки, с (0x66c698). */
+const TIME_LIMIT = 1800;
+/** Відстань від маршруту (м), далі якої суперник за 4 с відновлюється на маршруті, і скільки секунд він може стояти. */
+const OFF_ROUTE = 12;
+const IDLE_RESPAWN = 8;
+/** Ряди решітки — зсув від осі маршруту, м. */
+const LANE = 1.75;
+/** «Гумова нитка»: коефіцієнт при різниці поступу (1/м) і межі множника швидкості. */
+const RUBBER_K = 0.002;
+const RUBBER_MIN = 0.75;
+const RUBBER_MAX = 1.5;
+
+/** Лінії мережі, що проходять ближче reach від точки: найближчий сегмент і його напрям (горизонтальний). */
+function nearLines(roads: Ht2Roads, p: THREE.Vector3, reach: number): { line: WayLine; seg: number; dir: THREE.Vector3 }[] {
+  const out: { line: WayLine; seg: number; dir: THREE.Vector3 }[] = [];
+  const ab = new THREE.Vector3();
+  for (const line of roads.lines) {
+    let best = Infinity;
+    let seg = -1;
+    for (let i = 0; i + 1 < line.pts.length; i++) {
+      const a = line.pts[i];
+      ab.subVectors(line.pts[i + 1], a);
+      const l2 = ab.lengthSq();
+      if (!l2) continue;
+      const t = THREE.MathUtils.clamp(p.clone().sub(a).dot(ab) / l2, 0, 1);
+      const d = a.clone().addScaledVector(ab, t).distanceTo(p);
+      if (d < best) {
+        best = d;
+        seg = i;
+      }
+    }
+    if (seg >= 0 && best < reach) out.push({ line, seg, dir: line.pts[seg + 1].clone().sub(line.pts[seg]).setY(0).normalize() });
+  }
+  return out;
+}
+/** Радіус пошуку стартових ліній маршруту, м, і штраф (м) за лінію проти курсу старту. */
+const START_REACH = 12;
+const AGAINST_PENALTY = 300;
 
 /** Найкоротший шлях лініями мережі від лінії біля a до лінії біля b (Дейкстра; вага — довжина лінії). */
 function path(roads: Ht2Roads, a: THREE.Vector3, b: THREE.Vector3, heading?: THREE.Vector3): THREE.Vector3[] {
-  const from = roads.nearest(a, heading);
-  const to = roads.nearest(b);
-  if (!from || !to) return [a, b];
+  // Мета — будь-яка лінія поруч з b (решітка старту стоїть на тупиковій лінії, у яку шляху немає).
+  const ends = new Map<WayLine, number>();
+  for (const e of nearLines(roads, b, START_REACH)) ends.set(e.line, e.seg);
+  const nb = roads.nearest(b);
+  if (nb && !ends.has(nb.line)) ends.set(nb.line, nb.seg);
+  if (!ends.size) return [a, b];
+  // Старт — з усіх ліній поруч з a (найближча за курсом буває тупиком — тоді шляху немає і маршрут ішов навпростець
+  // через трибуни); лінія проти курсу — зі штрафом. Обирається та, з якої найкоротше до мети.
+  const starts = nearLines(roads, a, START_REACH);
+  const near = roads.nearest(a, heading);
+  if (near && !starts.some((s) => s.line === near.line)) starts.push({ line: near.line, seg: near.seg, dir: new THREE.Vector3() });
+  if (!starts.length) return [a, b];
   const len = (l: WayLine) => l.pts.reduce((s, p, i) => (i ? s + p.distanceTo(l.pts[i - 1]) : 0), 0);
-  const dist = new Map<WayLine, number>([[from.line, 0]]);
+  const startOf = new Map<WayLine, number>();
+  const dist = new Map<WayLine, number>();
+  for (const s of starts) {
+    const cost = heading && s.dir.dot(heading) < -0.2 ? AGAINST_PENALTY : 0;
+    if (cost < (dist.get(s.line) ?? Infinity)) {
+      dist.set(s.line, cost);
+      startOf.set(s.line, s.seg);
+    }
+  }
   const prev = new Map<WayLine, WayLine>();
-  const open = new Set<WayLine>([from.line]);
+  const open = new Set<WayLine>(dist.keys());
+  let reached: WayLine | null = null;
   while (open.size) {
     let cur: WayLine | null = null;
     for (const l of open) if (!cur || dist.get(l)! < dist.get(cur)!) cur = l;
     open.delete(cur!);
-    if (cur === to.line) break;
+    if (ends.has(cur!)) {
+      reached = cur;
+      break;
+    }
     const d = dist.get(cur!)! + len(cur!);
     for (const n of cur!.next)
       if (d < (dist.get(n) ?? Infinity)) {
@@ -40,13 +107,13 @@ function path(roads: Ht2Roads, a: THREE.Vector3, b: THREE.Vector3, heading?: THR
         open.add(n);
       }
   }
-  if (!dist.has(to.line)) return [a, b];
+  if (!reached) return [a, b];
   const chain: WayLine[] = [];
-  for (let l: WayLine | undefined = to.line; l; l = prev.get(l)) chain.unshift(l);
+  for (let l: WayLine | undefined = reached; l; l = prev.get(l)) chain.unshift(l);
   const pts: THREE.Vector3[] = [];
   chain.forEach((l, i) => {
-    const s = i === 0 ? from.seg : 0;
-    const e = i === chain.length - 1 ? to.seg + 1 : l.pts.length - 1;
+    const s = i === 0 ? (startOf.get(l) ?? 0) : 0;
+    const e = i === chain.length - 1 ? ends.get(l)! + 1 : l.pts.length - 1;
     for (let k = s; k <= e; k++) if (!pts.length || pts[pts.length - 1].distanceTo(l.pts[k]) > 0.5) pts.push(l.pts[k].clone());
   });
   return pts;
@@ -136,8 +203,12 @@ interface Racer {
   last: number;
   /** Пройшли середину кола (без цього перехід «кінець → початок» біля старту рахувався б як коло). */
   halfway: boolean;
+  /** Власна крейсерська швидкість без «гумової нитки», км/год. */
+  cruise?: number;
   /** Скільки секунд машина перекинута чи далеко від маршруту (суперники — відновлення). */
   bad?: number;
+  /** Скільки секунд суперник майже стоїть після старту. */
+  idle?: number;
   finished: number | null;
   name: string;
 }
@@ -148,6 +219,8 @@ export class RaceMode {
   private countdown = COUNTDOWN;
   private clock = 0;
   private done = false;
+  /** Останнє місце гравця, оголошене пейджером. */
+  private announced = 0;
   onFinish: ((place: number) => void) | null = null;
 
   constructor(private readonly drive: Ht2Drive, roads: Ht2Roads, private readonly messages: (key: string, fb: string) => string) {
@@ -176,8 +249,8 @@ export class RaceMode {
     const side = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
     for (let k = 2; k <= 8; k++) {
       const base = nodes.get(`start1_${k}`);
-      // Решітка — одна колона вздовж траси; розводимо машини на дві колони (±3,5 м), щоб не торкались.
-      const p = base?.clone().addScaledVector(side, k % 2 ? 3.5 : -3.5);
+      // Решітка — одна колона вздовж траси; машини — у два ряди за номером (±1,75 м, як смуги 0x4d43a0).
+      const p = base?.clone().addScaledVector(side, k % 2 ? LANE : -LANE);
       const rec = pool[(k * 5) % pool.length];
       const def = rec && truckDef(drive.trucksData, rec);
       const model = def && buildTruckModel(drive.trucksData.asm, def, false);
@@ -186,7 +259,8 @@ export class RaceMode {
       drive.world.scene.add(truck.visual);
       const pilot = new AutoPilot(this.route);
       pilot.cruise = 75 + (k % 4) * 6;
-      this.racers.push({ truck, pilot, laps: 0, last: 0, halfway: false, finished: null, name: rec.carNode });
+      pilot.lane = k % 2 ? LANE : -LANE;
+      this.racers.push({ truck, pilot, laps: 0, last: 0, halfway: false, finished: null, name: rec.carNode, cruise: pilot.cruise });
     }
   }
 
@@ -202,8 +276,12 @@ export class RaceMode {
   /** Перед кроком фізики: керування суперників (до відліку — стоять). */
   control(dt: number): void {
     const others = this.racers.map((r) => r.truck.visual.position);
+    const me = this.progress(this.racers[0]);
     for (const r of this.racers) {
       if (!r.pilot) continue;
+      // «Гумова нитка»: гравець попереду — суперник швидшає (до ×1,5), позаду — повільнішає (до ×0,75).
+      const x = RUBBER_K * (me - this.progress(r));
+      r.pilot.cruise = (r.cruise ?? r.pilot.cruise) * THREE.MathUtils.clamp(1 + x * Math.abs(x), RUBBER_MIN, RUBBER_MAX);
       const p = r.truck.body.translation();
       const st = r.pilot.update(new THREE.Vector3(p.x, p.y, p.z), r.truck.forward(), r.truck.speedKmh, dt, others.filter((o) => o !== r.truck.visual.position));
       r.truck.update(dt, this.countdown > 0 || r.finished !== null ? { steer: 0, throttle: 0, brake: 1, handbrake: true } : st);
@@ -217,7 +295,10 @@ export class RaceMode {
 
   /** Після кроку: візуал суперників, кола, місця, фініш. */
   after(dt: number, alpha = 1): void {
+    const before = COUNTDOWN - this.countdown;
     this.countdown -= dt;
+    const now = COUNTDOWN - this.countdown;
+    for (const b of BLINKS) if (before < b && now >= b) this.drive.playSound('alarm');
     if (this.countdown <= 0) this.clock += dt;
     for (const r of this.racers) {
       if (r.pilot) {
@@ -226,10 +307,14 @@ export class RaceMode {
         const y = r.truck.body.translation().y;
         const up = new THREE.Vector3(0, 1, 0).applyQuaternion(r.truck.visual.quaternion).y;
         const off = this.route.nearest(r.truck.visual.position)?.dist ?? 0;
-        r.bad = up < 0.5 ? (r.bad ?? 0) + dt * 2 : off > 25 ? (r.bad ?? 0) + dt : 0;
-        if (y < this.floor - 40 || r.bad > 4) {
+        r.bad = up < 0.5 ? (r.bad ?? 0) + dt * 2 : off > OFF_ROUTE ? (r.bad ?? 0) + dt : 0;
+        // Стоїть після старту (застряг за перешкодою чи в купі машин) — теж відновлення, як «застряглий» водій.
+        r.idle = this.countdown <= 0 && r.finished === null && r.truck.speedKmh < 3 ? (r.idle ?? 0) + dt : 0;
+        if (y < this.floor - 40 || r.bad > 4 || r.idle > IDLE_RESPAWN) {
+          const stuck = r.idle > IDLE_RESPAWN;
+          r.idle = 0;
           r.bad = 0;
-          this.respawn(r);
+          this.respawn(r, stuck ? 20 : 0);
         }
       }
       if (r.finished !== null || this.countdown > 0) continue;
@@ -240,15 +325,31 @@ export class RaceMode {
       if (r.halfway && r.last > L * 0.8 && s < L * 0.2) {
         r.laps++;
         r.halfway = false;
-        if (r.laps >= LAPS) r.finished = this.clock;
+        if (r.laps >= LAPS) {
+          r.finished = this.clock;
+          if (r.pilot && this.racers[0].finished === null) this.drive.say(this.messages('COMPETITOR_ARRIVED', 'ВАШ КОНКУРЕНТ ЩОЙНО ПРИБУВ. ПОКВАПТЕСЯ'));
+        }
       }
       r.last = s;
     }
     const me = this.racers[0];
-    if (me.finished !== null && !this.done) {
+    if (this.done || this.countdown > 0) return;
+    if (me.finished !== null) {
       this.done = true;
       const place = this.place(me);
       void modal(this.drive.overlay, 'Фініш', this.messages(`YOU_CAME_${place - 1}`, `Ви фінішували ${place}-м`), ['Гаразд']).then(() => this.onFinish?.(place));
+      return;
+    }
+    if (this.clock > TIME_LIMIT) {
+      this.done = true;
+      void modal(this.drive.overlay, 'Гонка', this.messages('DISQUALIFIED', 'ВАС ЗНЯТО З ДИСТАНЦІЇ'), ['Гаразд']).then(() => this.onFinish?.(0));
+      return;
+    }
+    // Пейджер: місце змінилось (повідомлення є лише для перших трьох місць).
+    const place = this.place(me);
+    if (place !== this.announced) {
+      if (this.announced && place <= 3) this.drive.say(this.messages(`YOU_ARE_${place - 1}`, `ВИ ${place}-Й У ГОНЦІ`));
+      this.announced = place;
     }
   }
 
@@ -257,12 +358,30 @@ export class RaceMode {
     return Math.min(...this.route.pts.map((p) => p.y));
   }
 
-  private respawn(r: Racer): void {
-    const n = this.route.nearest(r.truck.visual.position.clone().setY(this.route.pts[0].y));
-    const seg = n?.seg ?? 0;
-    const p = this.route.pts[seg];
-    const q = this.route.pts[(seg + 1) % this.route.pts.length];
-    r.truck.reset({ position: this.drive.groundAtPublic(p), forward: q.clone().sub(p).setY(0).normalize() });
+  /**
+   * Назад на маршрут, де був; застряглого — трохи вперед, на вільне місце у своєму ряду (гіпотеза порту: інакше
+   * машина знову ставала в ту саму купу).
+   */
+  private respawn(r: Racer, ahead = 0): void {
+    const route = this.route;
+    const n = route.nearest(r.truck.visual.position.clone().setY(route.pts[0].y));
+    let seg = n?.seg ?? 0;
+    const N = route.pts.length;
+    const free = (p: THREE.Vector3) => this.racers.every((o) => o === r || o.truck.visual.position.distanceTo(p) > 8);
+    for (let tries = 0; tries < 20; tries++) {
+      const from = route.cum[seg];
+      while (ahead > 0 && route.cum[(seg + 1) % N] - from < ahead && seg + 1 < N - 1) seg++;
+      const p = route.pts[seg];
+      const q = route.pts[(seg + 1) % N];
+      const fwd = q.clone().sub(p).setY(0).normalize();
+      const side = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+      const at = p.clone().addScaledVector(side, r.pilot?.lane ?? 0);
+      if (!ahead || free(at) || tries === 19) {
+        r.truck.reset({ position: this.drive.groundAtPublic(at), forward: fwd });
+        return;
+      }
+      ahead = 10;
+    }
   }
 
   private progress(r: Racer): number {
