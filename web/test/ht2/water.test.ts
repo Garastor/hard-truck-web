@@ -17,5 +17,11 @@ describe('HT2: вода', () => {
     const aa = all.find((t) => t.room === 'room_aa_000');
     expect(aa?.level).toBe(447);
     expect(all.every((t) => Number.isFinite(t.level) && t.level >= -2 && t.level <= 447)).toBe(true);
+    // Повені: тригери в гілках перемикачів Flood…Key — звичайний рівень (гілка 0) і на 3 м вище (1).
+    const aw = all.filter((t) => t.room === 'room_aw_006');
+    expect(aw.map((t) => [t.sw, t.level])).toEqual([['FloodAWKey#0', 14], ['FloodAWKey#1', 17]]);
+    expect(all.filter((t) => t.sw).map((t) => t.sw.split('#')[0]).sort()).toEqual(
+      ['FloodAQKey', 'FloodAQKey', 'FloodAWKey', 'FloodAWKey', ...Array(4).fill('FloodAX1Key'), ...Array(4).fill('FloodAX2Key')].sort(),
+    );
   });
 });

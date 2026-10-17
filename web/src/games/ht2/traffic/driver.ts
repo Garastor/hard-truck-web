@@ -149,6 +149,117 @@ export interface Mover {
   offTo: number;
   offT: number;
   offDur: number;
+  /** Розворот перед закритою завалом дорогою (null — немає). */
+  uturn?: UTurn | null;
+}
+
+/**
+ * Розворот (порт; у king.exe маршрут ІІ просто оминає дорогу з прапорцем 0x40, як розвертається машина, що вже на
+ * ній, не розібрано): півеліпс від точки p з курсом h на зустрічну смугу — f м уперед, w м ліворуч, 3 м/с.
+ */
+interface UTurn {
+  p: THREE.Vector3;
+  h: THREE.Vector3;
+  left: THREE.Vector3;
+  /** Зсув кінцевої точки вздовж h і ліворуч, м; виліт уперед, м. */
+  d0: number;
+  w: number;
+  f: number;
+  y1: number;
+  u: number;
+  len: number;
+  to: RoadLine;
+  seg: number;
+  t: number;
+}
+
+const UTURN_SPEED = 3;
+
+/** Машина на закритій дорозі їде до завалу (від нього — хай виїжджає). */
+function towardBlock(m: Mover): boolean {
+  const b = m.line.blockAt;
+  if (!m.line.closed) return false;
+  if (!b) return true;
+  return (b.x - m.pos.x) * m.heading.x + (b.z - m.pos.z) * m.heading.z > 0;
+}
+
+/** Попереду лише закриті продовження (дорогу перекрито завалом) — не справжній тупик. */
+function blockedAhead(line: RoadLine): boolean {
+  return line.next.length > 0 && (line.next as RoadLine[]).every((l) => l.closed);
+}
+
+/** Найближча точка лінії до p. */
+function nearestOnLine(line: RoadLine, p: THREE.Vector3): { seg: number; t: number; point: THREE.Vector3 } {
+  let best = { seg: 0, t: 0, point: line.pts[0].clone() };
+  let bd = Infinity;
+  for (let i = 0; i + 1 < line.pts.length; i++) {
+    const q = new THREE.Line3(line.pts[i], line.pts[i + 1]);
+    const t = q.closestPointToPointParameter(p, true);
+    const pt = q.at(t, new THREE.Vector3());
+    const d = Math.hypot(pt.x - p.x, pt.z - p.z);
+    if (d < bd) {
+      bd = d;
+      best = { seg: i, t, point: pt };
+    }
+  }
+  return best;
+}
+
+/** Почати розворот на крайню праву зустрічну смугу; false — зустрічних смуг немає. */
+function startUTurn(m: Mover): boolean {
+  const opp = m.line.opposite;
+  if (!opp?.length) return false;
+  const to = opp.reduce((a, b) => (b.lane > a.lane ? b : a));
+  const p = m.pos.clone();
+  const q = nearestOnLine(to, p);
+  const h = m.heading.clone().setY(0).normalize();
+  const left = new THREE.Vector3(h.z, 0, -h.x);
+  const rel = q.point.clone().sub(p);
+  const w = Math.max(3, rel.dot(left));
+  const d0 = rel.dot(h);
+  const f = Math.max(6, 1.5 * m.halfLen);
+  // Довжина півеліпса (наближення Рамануджана, половина).
+  const a = f;
+  const b = w / 2;
+  const len = (Math.PI * (3 * (a + b) - Math.sqrt((3 * a + b) * (a + 3 * b)))) / 2;
+  m.uturn = { p, h, left, d0, w, f, y1: q.point.y, u: 0, len, to, seg: q.seg, t: q.t };
+  m.bypass = null;
+  m.overtaking = false;
+  m.backLane = -1;
+  return true;
+}
+
+/** Крок розвороту; instant — одразу в кінець (далека машина). */
+function stepUTurn(m: Mover, dt: number, instant = false): void {
+  const r = m.uturn!;
+  r.u = instant ? 1 : Math.min(1, r.u + (UTURN_SPEED * dt) / r.len);
+  const th = Math.PI * r.u;
+  const along = r.f * Math.sin(th) + (r.d0 * (1 - Math.cos(th))) / 2;
+  const side = (r.w * (1 - Math.cos(th))) / 2;
+  m.pos.copy(r.p).addScaledVector(r.h, along).addScaledVector(r.left, side);
+  m.pos.y = THREE.MathUtils.lerp(r.p.y, r.y1, r.u);
+  const dir = r.h.clone().multiplyScalar(r.f * Math.cos(th) + (r.d0 * Math.sin(th)) / 2).addScaledVector(r.left, (r.w * Math.sin(th)) / 2);
+  if (dir.lengthSq() > 1e-6) m.heading.copy(dir.setY(0).normalize());
+  m.speed = instant ? 0 : UTURN_SPEED;
+  if (r.u < 1) return;
+  m.uturn = null;
+  m.line = r.to;
+  m.seg = Math.min(r.seg, r.to.pts.length - 2);
+  m.t = r.t;
+  m.from = null;
+  m.lat = m.off = m.latGoal = m.offFrom = m.offTo = 0;
+  m.speed = 0;
+  planNext(m);
+}
+
+/** Фізична машина перед завалом: маршрут — на зустрічну смугу (розвертається сама, за морквиною позаду). */
+function turnBack(m: Mover): boolean {
+  const opp = m.line.opposite;
+  if (!opp?.length) return false;
+  const to = opp.reduce((a, b) => (b.lane > a.lane ? b : a));
+  const q = nearestOnLine(to, m.pos);
+  retrace(m, to, q.seg, q.t);
+  return true;
 }
 
 export interface Obstacle {
@@ -286,7 +397,8 @@ function giveUpLeft(m: Mover): void {
 
 /** Продовження лінії на дорогу road — у смугу, найближчу за номером. */
 function nextLine(line: RoadLine, road: number | null, lane: number): RoadLine | null {
-  const all = line.next as RoadLine[];
+  // На закриту завалом дорогу не заїжджаємо (з закритої — можна: машина вже там і має з неї виїхати).
+  const all = (line.next as RoadLine[]).filter((l) => line.closed || !l.closed);
   const cand = road === null ? all : all.filter((l) => l.road === road);
   const list = cand.length ? cand : all;
   let best: RoadLine | null = null;
@@ -471,6 +583,9 @@ function updateOff(m: Mover, dt: number): void {
 /** Крок водія кінематичної машини: рішення (decide) і рух уздовж ліній. */
 export function step(m: Mover, dt: number, obstacles: readonly Obstacle[], net: Net | null = null): void {
   if (m.gone) return;
+  if (m.uturn) return stepUTurn(m, dt);
+  // Дорогу, якою їде, закрив завал — розвертається.
+  if (towardBlock(m) && startUTurn(m)) return stepUTurn(m, dt);
   const want = decide(m, dt, obstacles, net);
   const dv = want - m.speed;
   // Потрібне прискорення — як було (розгін 0,3 + 0,6·Δv до 2,5; гальмування 0,8·Δv, не менше 2,5, зупинка — 7 м/с²):
@@ -746,6 +861,8 @@ function mustYield(m: Mover, j: { node: number; dist: number }, obstacles: reado
  * Повертає відстань до лінії по горизонталі (далеко — маршрут треба перебудувати).
  */
 export function sync(m: Mover, p: THREE.Vector3, fwd: THREE.Vector3, speed: number): number {
+  m.uturn = null;
+  if (towardBlock(m)) turnBack(m);
   for (let guard = 0; guard < 4; guard++) {
     let best = -1;
     let bestT = 0;
@@ -771,6 +888,7 @@ export function sync(m: Mover, p: THREE.Vector3, fwd: THREE.Vector3, speed: numb
     // За кінцем лінії — на заплановану наступну.
     if (best === m.line.pts.length - 2 && bestT >= 1) {
       const nx = nextLine(m.line, m.plan, m.line.lane);
+      if (!nx && blockedAhead(m.line) && turnBack(m)) continue;
       if (!nx) {
         m.gone = true;
         break;
@@ -840,6 +958,12 @@ function advance(m: Mover, move: number): void {
     m.from = null;
     if (m.seg + 1 >= m.line.pts.length) {
       const nx = nextLine(m.line, m.plan, m.line.lane);
+      if (!nx && blockedAhead(m.line)) {
+        m.seg = m.line.pts.length - 2;
+        m.t = 1;
+        place(m, 0);
+        if (startUTurn(m)) return;
+      }
       if (!nx) {
         m.gone = true;
         m.seg = m.line.pts.length - 2;
@@ -875,6 +999,7 @@ function place(m: Mover, dt: number): void {
  */
 export function coast(m: Mover, dt: number): void {
   if (m.gone) return;
+  if (m.uturn || (towardBlock(m) && startUTurn(m))) return stepUTurn(m, dt, true);
   m.speed = m.cruise;
   m.lat = m.latGoal = 0;
   m.bypass = null;

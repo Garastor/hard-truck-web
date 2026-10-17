@@ -54,6 +54,10 @@ export interface RoadLine extends WayLine {
   endNode: number;
   /** Дорогу закрито завалом (world/obstacles.ts; king.exe прапорець 0x40 смуг): маршрути її оминають. */
   closed?: boolean;
+  /** Де завал на закритій дорозі (Three.js): розвертаються лише ті, хто їде до нього. */
+  blockAt?: THREE.Vector3;
+  /** Смуги зустрічного напрямку тієї ж осі (розворот перед закритою дорогою); на розділеному шосе — порожньо. */
+  opposite?: RoadLine[];
 }
 
 /** Вузол мережі: точка, де сходяться кінці осей (ближче JOIN); перехрестя — якщо доріг три й більше. */
@@ -131,6 +135,11 @@ export class Ht2Roads {
         }
         dirs.push(d);
       }
+      if (ways.length === 2) {
+        const [f, b] = dirs.slice(-2);
+        for (const l of f.lines) l.opposite = b.lines;
+        for (const l of b.lines) l.opposite = f.lines;
+      }
     }
 
     // Зʼєднання кінців напрямків з початками інших (за осями).
@@ -166,11 +175,15 @@ export class Ht2Roads {
   closedVersion = 0;
 
   /** Закрити чи відкрити дорогу (вісь і всі її смуги). */
-  setClosed(road: number, closed: boolean): void {
+  setClosed(road: number, closed: boolean, at?: THREE.Vector3): void {
     const axis = this.axes[road];
     if (!axis || !!axis.closed === closed) return;
     axis.closed = closed;
-    for (const l of this.linesOf(road)) l.closed = closed;
+    axis.blockAt = closed ? at : undefined;
+    for (const l of this.linesOf(road)) {
+      l.closed = closed;
+      l.blockAt = closed ? at : undefined;
+    }
     this.closedVersion++;
   }
 
@@ -252,10 +265,11 @@ export class Ht2Roads {
     return best;
   }
 
-  /** Відстань по горизонталі до найближчої осі дороги й сама вісь (null — доріг поблизу немає). */
-  nearestAxis(p: THREE.Vector3): { axis: RoadLine; dist: number; point: THREE.Vector3 } | null {
+  /** Відстань по горизонталі до найближчої осі дороги й сама вісь (null — доріг поблизу немає); open — без закритих. */
+  nearestAxis(p: THREE.Vector3, open = false): { axis: RoadLine; dist: number; point: THREE.Vector3 } | null {
     let best: { axis: RoadLine; dist: number; point: THREE.Vector3 } | null = null;
     for (const a of new Set(nearCells(this.axisGrid, p))) {
+      if (open && a.closed) continue;
       const q = closestOn(a.pts, p);
       if (!q) continue;
       const dist = Math.hypot(q.point.x - p.x, q.point.z - p.z);

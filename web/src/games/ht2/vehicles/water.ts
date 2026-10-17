@@ -10,6 +10,10 @@ import type { LoadedRegion } from '../world/world';
  * межу на 1 м (сервер 0x4ce300; клієнтська перевірка 0x570885 поправки не має — котра перша, не зʼясовано, у порту
  * діє, як описано в посібнику).
  *
+ * Повені (`obstacle` Flood…Key, world/obstacles.ts): тригери води кімнат aw_006, ax_012/013, ax_024/025, aq_024 лежать
+ * у гілках перемикача `refer_Flood…Key` — гілка 0 (звичайний рівень) і 1 (на 3 м вище, повінь). Діє лише гілка
+ * поточного стану перемикача (раніше бралися обидві — максимум, тобто «повінь» завжди й вода ≈ 2 м над дорогою).
+ *
  * Гіпотези порту: кімната — за габаритами її геометрії (як заборонена зона); висота машини — центр тіла.
  */
 interface Zone {
@@ -18,32 +22,38 @@ interface Zone {
   /** Площини шляху (гра): [a, b, c, d] і бік (true — a·x + b·y + c·z + d ≥ 0). */
   planes: { v: [number, number, number, number]; front: boolean }[];
   level: number;
+  /** Гілка перемикача (`<Ключ>#<гілка>`, без `refer_`); '' — діє завжди. */
+  sw: string;
 }
 
 const CHECK_EVERY = 0.25;
 const SNORKEL = 1;
 
 /** Тригери води в блоках регіону: кімната, площини шляху, рівень. */
-export function waterTriggers(blocks: readonly Block[]): { room: string; planes: Zone['planes']; level: number }[] {
-  const out: { room: string; planes: Zone['planes']; level: number }[] = [];
-  const walk = (b: Block, room: string, planes: Zone['planes']) => {
+export function waterTriggers(blocks: readonly Block[]): { room: string; planes: Zone['planes']; level: number; sw: string }[] {
+  const out: { room: string; planes: Zone['planes']; level: number; sw: string }[] = [];
+  const walk = (b: Block, room: string, planes: Zone['planes'], sw: string) => {
     if (b.data.t === 13 && b.data.trigger.i1 === 16 && b.data.trigger.values.length) {
       const v = b.data.trigger.values;
       const level = new Float32Array(v.buffer, v.byteOffset, 1)[0];
-      out.push({ room, planes, level });
+      out.push({ room, planes, level, sw });
       return;
     }
     const plane = b.data.t === 9 && b.data.shape.kind === 5 ? (b.data.shape.v as [number, number, number, number]) : null;
+    const key = b.data.t === 21 && b.name ? b.name.replace(/^refer_/i, '') : '';
     (b.groups ?? []).forEach((g, gi) => {
       const next = plane && gi < 2 ? [...planes, { v: plane, front: gi === 0 }] : planes;
-      for (const c of g) walk(c, room, next);
+      for (const c of g) walk(c, room, next, key ? `${key}#${gi}` : sw);
     });
   };
-  for (const b of blocks) if (b.data.t === 19 && b.name) walk(b, b.name.toLowerCase(), []);
+  for (const b of blocks) if (b.data.t === 19 && b.name) walk(b, b.name.toLowerCase(), [], '');
   return out;
 }
 
 export class Water {
+  /** Стан перемикача світу за ключем (без `refer_`); за замовчуванням — 0. */
+  constructor(private readonly switchState: (key: string) => number = () => 0) {}
+
   private timer = 0;
   private readonly seen = new WeakSet<LoadedRegion>();
   private readonly zones: Zone[] = [];
@@ -67,6 +77,10 @@ export class Water {
       const b = w.box;
       if (p.x < b.min.x || p.x > b.max.x || p.z < b.min.z || p.z > b.max.z) continue;
       if (!w.planes.every(({ v, front }) => v[0] * x + v[1] * y + v[2] * z + v[3] >= 0 === front)) continue;
+      if (w.sw) {
+        const [key, branch] = w.sw.split('#');
+        if (this.switchState(key) !== Number(branch)) continue;
+      }
       best = Math.max(best ?? -Infinity, w.level);
     }
     return best;
@@ -83,7 +97,7 @@ export class Water {
       const boxes = new Map(r.built.rooms.map((g) => [g.name.toLowerCase(), g]));
       for (const t of trig) {
         const g = boxes.get(t.room);
-        if (g) this.zones.push({ region: r, box: new THREE.Box3().setFromObject(g), planes: t.planes, level: t.level });
+        if (g) this.zones.push({ region: r, box: new THREE.Box3().setFromObject(g), planes: t.planes, level: t.level, sw: t.sw });
       }
     }
   }

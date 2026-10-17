@@ -9,6 +9,7 @@ import { HT2_MOD_REGIONS, HT2_REGIONS } from '@ht2/files';
 import { Ht2Roads } from '@ht2/world/roads';
 import { Navigator } from '@ht2/world/navigator';
 import { Obstacles, closedAxes, parseObstacles, type Obstacle } from '@ht2/world/obstacles';
+import { newMover, step, type Mover } from '@ht2/traffic/driver';
 import { HT2_DIR } from '../gameDirs';
 
 const has = existsSync(join(HT2_DIR, 'ENV', 'mod_ac.sch'));
@@ -59,6 +60,41 @@ describe.skipIf(!has)('HT2: обвали й повені', () => {
     expect(dist.size).toBeLessThan(before);
     for (const r of axes) roads.setClosed(r, false);
     expect(nav.distances(target).size).toBe(before);
+  });
+
+  it('трафік не заїжджає на закриту дорогу: перед нею й на ній (до завалу) — розворот', () => {
+    const roads = new Ht2Roads(regions);
+    const ac1 = list.find((o) => o.id === 'OBST_AC_1')!;
+    const mid = ac1.ends![0].clone().lerp(ac1.ends![1], 0.5);
+    for (const r of closedAxes(roads, ac1.ends!)) roads.setClosed(r, true, mid);
+    const sim = (m: Mover) => {
+      let turned = false;
+      let towardClosed = 0;
+      for (let i = 0; i < 900 && !m.gone; i++) {
+        step(m, 0.1, []);
+        if (m.uturn) turned = true;
+        // На закритій лінії й їде до завалу (поза розворотом) — заборонено.
+        if (!m.uturn && m.line.closed && (mid.x - m.pos.x) * m.heading.x + (mid.z - m.pos.z) * m.heading.z > 0) towardClosed++;
+      }
+      return { turned, towardClosed };
+    };
+    // Перед закритою дорогою: лінія, усі продовження якої закриті.
+    const entries = roads.lines.filter((l) => !l.closed && l.next.length && l.next.every((n) => (n as typeof l).closed));
+    expect(entries.length).toBeGreaterThan(0);
+    for (const l of entries) {
+      const m = newMover(l, Math.max(0, l.pts.length - 6), 0, 14, 2.5);
+      const r = sim(m);
+      expect(r.turned, l.name).toBe(true);
+      expect(r.towardClosed, l.name).toBe(0);
+      expect(m.gone, l.name).toBe(false);
+    }
+    // Уже на закритій дорозі, обличчям до завалу.
+    const on = roads.lines.find((l) => l.closed && l.opposite?.length)!;
+    const m = newMover(on, 0, 0, 14, 2.5);
+    const toward = (mid.x - on.pts[0].x) * (on.pts[1].x - on.pts[0].x) + (mid.z - on.pts[0].z) * (on.pts[1].z - on.pts[0].z) > 0;
+    const r = sim(m);
+    expect(r.towardClosed).toBe(0);
+    if (toward) expect(r.turned).toBe(true);
   });
 });
 

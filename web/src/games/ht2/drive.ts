@@ -876,7 +876,8 @@ export class Ht2Drive {
     this.setWorldSwitch(ob.key, on ? 1 : 0);
     if (ob.ends) {
       if (!closed.has(ob.id)) closed.set(ob.id, closedAxes(this.roads, ob.ends));
-      for (const r of closed.get(ob.id)!) this.roads.setClosed(r, on);
+      const at = ob.ends[0].clone().lerp(ob.ends[1], 0.5);
+      for (const r of closed.get(ob.id)!) this.roads.setClosed(r, on, at);
       if (this.traffic && this.trafficGoals.length) this.traffic.setGoals(this.trafficGoals);
     }
     for (const p of this.obstacleProps.get(ob.id) ?? []) {
@@ -1666,7 +1667,7 @@ export class Ht2Drive {
   /** Горить: секунд від займання; −1 — ні (king.exe 0x54e180). */
   private burning = -1;
   /** Вода (тригери 13/16) і кінець гри. */
-  private readonly water = new Water();
+  private readonly water = new Water((key) => this.worldSwitches.get(key) ?? 0);
   /** Стаціонарні камери-радари (картка 16). */
   private readonly radars = new Radars();
   private over = false;
@@ -2205,7 +2206,8 @@ export class Ht2Drive {
 
   /** Точка на дорозі біля p: вісь WAY, дотична в бік курсу машини, зсув праворуч на 0,5·W − 1,5 м. */
   private roadside(p: THREE.Vector3): { position: THREE.Vector3; forward: THREE.Vector3 } | null {
-    const n = this.roads.nearestAxis(p);
+    // Закриту завалом дорогу оминаємо: найближча точка могла б опинитися в камінні (world/obstacles.ts).
+    const n = this.roads.nearestAxis(p, true) ?? this.roads.nearestAxis(p);
     if (!n) return null;
     const pts = n.axis.pts;
     let best = 0;
