@@ -12,6 +12,7 @@ import { TREE_LIGHT, buildGlows, buildTrees, type TreeSway } from './trees';
 import { illumOn, sunDirection, sunHeight } from './climate';
 import { LensFlare } from './lensFlare';
 import { mergeStatic } from './mergeStatic';
+import { RoomVisibility, readPortals, roomFootprints, type RoomPortal } from './roomVisibility';
 import { walk } from '../engine/formats/b3d';
 import { parseHeightmap } from '../formats/heightmap';
 import { buildTerrainMesh, terrainHeights } from './terrain';
@@ -48,6 +49,9 @@ export interface LoadedRegion {
   movables: Movable[];
   /** Процедурний рельєф ($$GeneratorOfTerrain, регіон aa): висоти сітки для колізій (terrain.ts). */
   terrain?: Float32Array;
+  /** Портали кімнат (блок 30) і сліди кімнат на плані — видимість кімнат (roomVisibility.ts). */
+  portals: Map<string, RoomPortal[]>;
+  footprint: Map<number, string[]>;
 }
 
 /** Точка гри → Three.js. */
@@ -91,10 +95,14 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
   });
   const poles = findPoles(built.assembler, (n) => built.assembler.block(n) ?? common?.block(n));
   const movables = markObjects(built.root, poles);
-  // Нерухома геометрія регіону — одна сітка на матеріал у клітинці (було ≈ 500 мешів на регіон).
-  const merged = mergeStatic(built.root);
-  built.stats.meshes = merged.after;
+  // Нерухома геометрія регіону — одна сітка на матеріал у клітинці (було ≈ 500 мешів на регіон), у межах кімнати:
+  // кімнату, якої не видно крізь портали, ховають цілком (roomVisibility.ts).
+  let meshes = 0;
+  for (const room of built.rooms) meshes += mergeStatic(room).after;
+  built.stats.meshes = meshes;
   await yieldTask();
+  const portals = readPortals(scene);
+  const footprint = await roomFootprints(built.rooms, built.root, yieldTask);
   const trees = buildTrees(scene, rmp, palette);
   built.root.add(trees);
   const glows = buildGlows(scene, rmp);
@@ -116,6 +124,8 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
         return i >= 0 ? ((built.assembler.lib.material(i) as THREE.MeshLambertMaterial).map ?? null) : null;
       };
       terrainMesh = await buildTerrainMesh(terrain, tex('ter000'), tex('ter100'), yieldTask);
+      // Рельєф — частина єдиної кімнати aa: ховається з нею.
+      if (built.rooms.length === 1) terrainMesh.userData.room = built.rooms[0].name;
       built.root.add(terrainMesh);
     } catch (e) {
       console.warn('HT2: рельєф не побудовано', e);
@@ -139,7 +149,7 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
         }
       });
   };
-  return { id, built, terrain, props, poles, movables };
+  return { id, built, terrain, props, poles, movables, portals, footprint };
 }
 
 const AMBUSH_PROP = /^anmobj000[12]\d{3}$/;
@@ -178,6 +188,8 @@ export class Ht2World {
   readonly scene = new THREE.Scene();
   readonly regions = new Map<string, RegionInfo>();
   readonly loaded = new Map<string, LoadedRegion>();
+  /** Які кімнати малювати: щокадру з камери (drive.ts, і для дзеркала). */
+  readonly visibility = new RoomVisibility();
   private readonly sun = new THREE.DirectionalLight(0xffffff, 1);
   /** Місяць (WEATHER.INI moon_*; напрям у грі не розібрано — гіпотеза: навпроти сонця, під 45°). */
   private readonly moon = new THREE.DirectionalLight(0xffffff, 1);
@@ -403,6 +415,7 @@ export class Ht2World {
     for (const [id, reg] of this.loaded) {
       if (distToBounds(this.regions.get(id)!.bounds, x, y) > UNLOAD_R) {
         this.scene.remove(reg.built.root);
+        this.visibility.removeRegion(id);
         this.worldMoving.delete(id);
         this.onRegion?.(reg, false);
         reg.built.dispose();
@@ -428,6 +441,7 @@ export class Ht2World {
         const glows = reg.built.root.getObjectByName('glows');
         if (glows) glows.visible = this.night;
         for (let i = 0; i < 16; i++) this.setIllum(reg, i, illumOn(i, this.hour));
+        this.visibility.addRegion(next, reg.built.rooms, reg.portals, reg.footprint, reg.built.root);
         this.scene.add(reg.built.root);
         await this.onRegion?.(reg, true);
         if (!this.sky && reg.built.sky) {

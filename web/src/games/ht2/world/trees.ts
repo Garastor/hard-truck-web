@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { walk, type B3d } from '../engine/formats/b3d';
+import { walk, type B3d, type Block } from '../engine/formats/b3d';
 import type { RmpArchive } from '../engine/formats/rmp';
 import { parseTxr } from '../engine/formats/txr';
 
@@ -23,16 +23,26 @@ interface TreeSpot {
   kind: number;
   /** Форма (біти 8–11 i1). */
   shape: number;
+  /** Кімната (блок 19), у якій генератор; '' — поза кімнатами. */
+  room: string;
+}
+
+/** Блоки файлу з іменем кімнати (блок 19 верхнього рівня), у якій кожен лежить; '' — поза кімнатами. */
+export function* walkRooms(b3d: B3d): Generator<[Block, string]> {
+  for (const top of b3d.blocks) {
+    const room = top.data.t === 19 ? top.name : '';
+    for (const [blk] of walk([top])) yield [blk, room];
+  }
 }
 
 export function collectTrees(b3d: B3d): TreeSpot[] {
   const out: TreeSpot[] = [];
-  for (const [blk] of walk(b3d.blocks)) {
+  for (const [blk, room] of walkRooms(b3d)) {
     const d = blk.data;
     if (d.t !== 40 || d.name2 !== '$$TreeGenerator1') continue;
     const [x, y, z, r] = d.bound;
     if (r <= 0) continue;
-    out.push({ x, y, z, r, kind: (d.i1 >> 4) & 15, shape: (d.i1 >> 8) & 15 });
+    out.push({ x, y, z, r, kind: (d.i1 >> 4) & 15, shape: (d.i1 >> 8) & 15, room });
   }
   return out;
 }
@@ -215,7 +225,7 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
     return atlases.get(pair)!;
   };
   // Групи інстансів: атлас × половина (0, 1; 2 — увесь) × форма ширини.
-  const groups = new Map<string, { tex: THREE.Texture; u0: number; uw: number; width: number; crown: number; split: number; trunk: boolean; list: TreeSpot[] }>();
+  const groups = new Map<string, { tex: THREE.Texture; u0: number; uw: number; width: number; crown: number; split: number; trunk: boolean; room: string; list: TreeSpot[] }>();
   for (const s of spots) {
     const tex = atlas(s.kind >> 1);
     if (!tex) continue;
@@ -228,9 +238,11 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
     // Половина атласу — за парністю виду (атлас tree<2k><2k+1>: парний вид — ліва, непарний — права; у регіоні ap
     // tree01 — темна | блакитна ялина, tree23 — темна | світла хвоя).
     const half = full ? 2 : s.kind & 1;
-    const key = `${s.kind >> 1}:${half}:${width}:${crown}:${split}`;
+    // Окремо по кімнатах: кімнату, якої не видно крізь портали, ховають разом з її деревами (world/roomVisibility.ts),
+    // і менша сфера інстансів відсікається полем зору й туманом.
+    const key = `${s.room}:${s.kind >> 1}:${half}:${width}:${crown}:${split}`;
     let g = groups.get(key);
-    if (!g) groups.set(key, (g = { tex, u0: half === 2 ? 0 : half * 0.5, uw: half === 2 ? 0.95 : 0.45, width, crown, split, trunk, list: [] }));
+    if (!g) groups.set(key, (g = { tex, u0: half === 2 ? 0 : half * 0.5, uw: half === 2 ? 0.95 : 0.45, width, crown, split, trunk, room: s.room, list: [] }));
     g.list.push(s);
   }
   const m = new THREE.Matrix4();
@@ -269,6 +281,7 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
       geo.setAttribute('sway', swayAttr);
       const mesh = new THREE.InstancedMesh(geo, pi ? trunkMat(g.tex) : mat, g.list.length);
       mesh.name = `trees ${key}${pi ? ' trunk' : ''}`;
+      mesh.userData.room = g.room;
       g.list.forEach((s, i) => {
         // Центр сфери генератора — на рівні землі (z ≈ дорога поруч): основа — центр, висота — радіус (користувач:
         // до висоти претензій немає).
@@ -306,11 +319,12 @@ export function buildGlows(b3d: B3d, rmp: RmpArchive): THREE.Group {
   tex.generateMipmaps = true;
   tex.needsUpdate = true;
   const mat = new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false });
-  for (const [blk] of walk(b3d.blocks)) {
+  for (const [blk, room] of walkRooms(b3d)) {
     const d = blk.data;
     if (d.t !== 40 || d.name2 !== '$$DynamicGlow') continue;
     const [x, y, z, r] = d.bound;
     const s = new THREE.Sprite(mat);
+    s.userData.room = room;
     // Імʼя `<РЕГ>Glow<nn>` — ореол гасне, коли ліхтар збито (world/objects.ts).
     s.name = blk.name;
     s.position.set(x, y, z);

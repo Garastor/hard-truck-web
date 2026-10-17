@@ -2427,6 +2427,8 @@ export class Ht2Drive {
     this.last = now;
     this.update(dt);
     const r = this.opts.renderer;
+    // Лише кімнати, видимі крізь портали з камери (world/roomVisibility.ts).
+    this.world.visibility.update(this.camera);
     r.render(this.world.scene, this.camera);
     if (this.cab?.visible) {
       // Кабіна — другим проходом з близькою площиною відсікання поверх світу.
@@ -2483,6 +2485,8 @@ export class Ht2Drive {
     m.cam.position.copy(this.camera.position);
     m.cam.quaternion.copy(this.truck.visual.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI));
     m.cam.updateMatrixWorld();
+    // Дзеркало дивиться назад — свої видимі кімнати (наступний кадр рахує їх для камери знову).
+    this.world.visibility.update(m.cam);
     r.setRenderTarget(m.rt);
     r.clear();
     r.render(this.world.scene, m.cam);
