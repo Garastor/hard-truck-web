@@ -162,6 +162,13 @@ export class MaterialLibrary {
     mat.name = name;
     // Опис матеріалу з архіву — для ефектів, що читають параметри (move, noz).
     mat.userData.def = def;
+    // Рух текстури (move u v — річки, вода): своя копія текстури, зсув UV щосекунди робить світ (world.ts).
+    const move = def?.params.move;
+    const mm = mat as THREE.MeshBasicMaterial;
+    if (move && mm.map) {
+      mm.map = mm.map.clone();
+      mm.userData.move = move;
+    }
     this.cache.set(index, mat);
     return mat;
   }

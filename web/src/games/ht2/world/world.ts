@@ -167,6 +167,8 @@ export class Ht2World {
   private sky: THREE.Group | null = null;
   /** Шари неба з рухом текстури (move): хмари. */
   private readonly skyMoving: THREE.MeshBasicMaterial[] = [];
+  /** Матеріали регіонів з рухом текстури (move): річки й вода — за регіоном (вивантаження прибирає). */
+  private readonly worldMoving = new Map<string, THREE.MeshBasicMaterial[]>();
   private lastFrame = 0;
   /** Відблиски сонця на екрані (lightonglass2) і показник погоди w для них. */
   private readonly flare: LensFlare;
@@ -334,10 +336,12 @@ export class Ht2World {
     if (camera instanceof THREE.PerspectiveCamera) this.flare.update(camera, this.sun.position, sunHeight(this.hour), this.weatherW);
     const dt = this.lastFrame ? Math.min(0.1, (now - this.lastFrame) / 1000) : 0;
     this.lastFrame = now;
-    for (const m of this.skyMoving) {
+    const shift = (m: THREE.MeshBasicMaterial) => {
       const mv = m.userData.move as number[];
       m.map!.offset.set((m.map!.offset.x + mv[0] * dt) % 1, (m.map!.offset.y + mv[1] * dt) % 1);
-    }
+    };
+    this.skyMoving.forEach(shift);
+    for (const list of this.worldMoving.values()) list.forEach(shift);
     if (now - this.lastCheck < 500) return;
     this.lastCheck = now;
     this.stream(focus.x, -focus.z);
@@ -364,6 +368,7 @@ export class Ht2World {
     for (const [id, reg] of this.loaded) {
       if (distToBounds(this.regions.get(id)!.bounds, x, y) > UNLOAD_R) {
         this.scene.remove(reg.built.root);
+        this.worldMoving.delete(id);
         this.onRegion?.(reg, false);
         reg.built.dispose();
         this.loaded.delete(id);
@@ -377,6 +382,12 @@ export class Ht2World {
     void loadRegion(this.source, next, this.common)
       .then((reg) => {
         this.loaded.set(next, reg);
+        const moving = new Set<THREE.MeshBasicMaterial>();
+        reg.built.root.traverse((o) => {
+          const ms = (o as THREE.Mesh).material;
+          for (const m of Array.isArray(ms) ? ms : ms ? [ms] : []) if (m.userData.move) moving.add(m as THREE.MeshBasicMaterial);
+        });
+        if (moving.size) this.worldMoving.set(next, [...moving]);
         for (const [name, list] of reg.props) for (const o of list) o.visible = this.propsOn.has(name);
         const glows = reg.built.root.getObjectByName('glows');
         if (glows) glows.visible = this.night;
