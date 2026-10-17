@@ -65,6 +65,8 @@ const PHYS_SPEED = 18;
 const BLINK_HZ = 1.5;
 const BLINK_SIZE = 0.55;
 const GROUND_EVERY = 0.12;
+/** Нова машина на багатосмуговій дорозі — у крайній правій з такою імовірністю (порт). */
+const KEEP_RIGHT = 0.8;
 const GROUND_LAG = 0.12;
 const REST_LIFT = 0.1;
 /** Промінь до землі: звідки над лінією й як глибоко під нею, м. */
@@ -450,6 +452,9 @@ export class Traffic {
   }
 
   private newCar(line: RoadLine, seg: number, ghost: boolean): Car {
+    // Порт: на дорозі з кількома смугами в один бік — переважно у крайній правій (KEEP_RIGHT).
+    const right = line.siblings[line.lanes - 1];
+    if (line.lanes > 1 && right && right !== line && right.pts.length === line.pts.length && Math.random() < KEEP_RIGHT) line = right;
     const kind = this.kinds[Math.floor(Math.random() * this.kinds.length)];
     const cruise = CRUISE_MIN + Math.random() * (CRUISE_MAX - CRUISE_MIN);
     return Object.assign(newMover(line, seg, Math.random(), cruise, 2.2), { kind, ghost, age: 0, root: null, body: null, vehicle: null, phys: newPhysState(), want: 0, flipped: 0, ground: null, blink: null });

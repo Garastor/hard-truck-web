@@ -197,4 +197,17 @@ describe('HT2: водій трафіку', () => {
     run(m, 18);
     expect(m.line.lane).toBe(1);
   });
+
+  it('прямо — тримається крайньої правої смуги, щойно вона вільна (порт)', () => {
+    const lanes = road(straight(3000), 2, 0);
+    const m = newMover(lanes[0], 0, 0, 20, 2);
+    expect(m.wantLane).toBe(1);
+    run(m, 15);
+    expect(m.line.lane).toBe(1);
+    // Права зайнята повільною машиною поруч — лишається ліворуч.
+    const n = newMover(lanes[0], 0, 0, 20, 2);
+    const beside: Obstacle = { pos: lanes[1].pts[0].clone(), vel: new THREE.Vector3(0, 0, -20), half: 2 };
+    run(n, 3, [beside], () => beside.pos.z = n.pos.z);
+    expect(n.line.lane).toBe(0);
+  });
 });

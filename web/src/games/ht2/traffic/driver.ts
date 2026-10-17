@@ -34,6 +34,9 @@ const FOLLOW_ZONE = 20;
 const STOP_GAP = 3;
 const SLOW_OBSTACLE = 5;
 const LANE_PLAN = 100;
+/** Перестроювання ліворуч перед лівим поворотом — ближче за стільки до стику; не встиг ближче LATE_LEFT — прямо. */
+const LEFT_PLAN = 200;
+const LATE_LEFT = 30;
 const LANE_TAU = 0.9;
 /** S-крива бічного зсуву: бічне прискорення, м/с², і найкоротший маневр, с. */
 const LAT_ACC = 1.2;
@@ -261,9 +264,21 @@ function planNext(m: Mover): void {
   }
   const to = m.plan === null ? null : nextLine(m.line, m.plan, m.line.lane);
   const turn = to ? turnAngle(m.line, to) : 0;
-  if (turn > 0.35) m.wantLane = m.line.lanes - 1;
-  else if (turn < -0.35) m.wantLane = 0;
-  else m.wantLane = Math.random() < 0.25 ? Math.floor(Math.random() * m.line.lanes) : m.line.lane;
+  // Порт (на прохання користувача): триматися крайньої правої; ліва — лише для лівого повороту (і обгону). У king.exe
+  // прямо — лишитись у своїй смузі, іноді випадкова.
+  m.wantLane = turn < -0.35 ? 0 : m.line.lanes - 1;
+}
+
+/** Лівий поворот не з лівої смуги: інша дорога після стику — прямо чи праворуч, якщо така є; смуга — права. */
+function giveUpLeft(m: Mover): void {
+  const roads = [...new Set((m.line.next as RoadLine[]).map((l) => l.road))];
+  const ok = roads.filter((r) => {
+    const to = nextLine(m.line, r, m.line.lane);
+    return to && turnAngle(m.line, to) >= -0.35;
+  });
+  if (!ok.length) return;
+  m.plan = ok[Math.floor(Math.random() * ok.length)];
+  m.wantLane = m.line.lanes - 1;
 }
 
 /** Продовження лінії на дорогу road — у смугу, найближчу за номером. */
@@ -544,11 +559,15 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
         m.wantLane = to;
         if (to === m.backLane) m.backLane = -1;
       }
-    } else if (m.wantLane !== lane && (toEnd < LANE_PLAN || m.line.next.length === 0)) {
+    } else if (m.wantLane !== lane && (m.wantLane > lane || toEnd < LEFT_PLAN || m.line.next.length === 0)) {
+      // Праворуч (триматися правої) — будь-коли, щойно вільно; ліворуч (лівий поворот) — ближче LEFT_PLAN до стику.
       const to = lane + Math.sign(m.wantLane - lane);
       if (laneFree(m, m.line.siblings[to], obstacles)) changeLane(m, to);
     }
   }
+
+  // Не встиг у ліву смугу до лівого повороту — не повертати через смуги, а їхати прямо чи праворуч (порт).
+  if (m.wantLane < lane && toEnd < LATE_LEFT && lane > 0) giveUpLeft(m);
 
   const base = roadLimit(m, path);
   let want = followLimit(m, leader, m.overtaking ? Math.min(base + OVERTAKE_BOOST, m.cruise + OVERTAKE_BOOST) : base);
