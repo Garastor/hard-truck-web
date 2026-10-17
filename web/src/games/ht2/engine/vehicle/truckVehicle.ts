@@ -12,6 +12,8 @@ import { KING, ROUGH_ASPHALT, roadBump, type Roughness, rollingForce, steerLimit
  * шини, підвіска й інтегрування кузова — поки Rapier (доріжка R4 продовжується).
  */
 /** Кермо (телеметрія s6): межа 1,04/(1 + 0,056·v), не більше 0,913; кут колеса = 0,684 × кермо. */
+/** Центр повороту: частка шляху від середини задніх осей до останньої (порт, рішення користувача). */
+const PIVOT_TO_LAST = 0.6;
 const STEER_A = 1.041;
 const STEER_B = 0.056;
 const STEER_MAX = 0.913;
@@ -357,10 +359,18 @@ export class TruckVehicle {
     // Колісна база: z передніх (0, 1) і найближчої до них задньої осі.
     const wz = model.wheelBase.map((m) => g2t(new THREE.Vector3().setFromMatrixPosition(m)).z);
     const front = (wz[0] + wz[1]) / 2;
-    const rear = wz.slice(2).map((z) => Math.abs(z - front));
+    // Задні — лише осі по інший бік від середини колісної колії: у Storm дві передні керовані осі (3,10 і 1,15 м),
+    // друга — не задня (база 1,95 м замість 5,3 — розворот на місці з радіусом 2,9 м).
+    const mid = (Math.max(...wz) + Math.min(...wz)) / 2;
+    const rear = wz.slice(2).map((z) => (Math.sign(z - mid) === Math.sign(front - mid) ? Infinity : Math.abs(z - front)));
     this.base = Math.max(1, rear.length ? Math.min(...rear) : 1);
-    // Задня вісь (та сама, що для бази) — навколо неї машина повертає (moveKing).
-    this.rearAxleZ = rear.length ? front + Math.sign(wz[2 + rear.indexOf(Math.min(...rear))] - front) * this.base : front;
+    // Центр повороту (на прохання користувача): від середини задніх осей на 60 % до останньої — остання вісь
+    // тандема — крайня точка зчеплення з дорогою (ZilR: поворот навколо передньої задньої осі — задня на 1,36 м
+    // позаду ковзала вбік до 1,2 м/с). Темп повороту — від бази, як у king.exe.
+    const rearZ = wz.slice(2).filter((_, i) => Number.isFinite(rear[i]));
+    const midRear = rearZ.length ? rearZ.reduce((a, b) => a + b, 0) / rearZ.length : front;
+    const lastRear = rearZ.reduce((a, z) => (Math.abs(z - front) > Math.abs(a - front) ? z : a), midRear);
+    this.rearAxleZ = midRear + PIVOT_TO_LAST * (lastRear - midRear);
 
     // Габарити кузова в локальних координатах Three.js.
     gameFrame.updateMatrixWorld(true);
