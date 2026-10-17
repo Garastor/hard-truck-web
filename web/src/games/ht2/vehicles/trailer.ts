@@ -2,6 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { buildTruckModel, visibleBox, type TruckDef } from '../engine/vehicle/trucks';
 import { TIRE } from '../engine/vehicle/truckVehicle';
+import { HitMeter } from '../engine/vehicle/hitMeter';
 import { g2t } from '../engine/physics/world';
 import type { TechRecord } from '../formats/tech';
 import type { SceneAssembler } from '../engine/render/sceneBuilder';
@@ -64,6 +65,10 @@ export class Trailer {
   readonly dentGeom: DentGeometry;
   /** Горизонтальна швидкість після попереднього виклику velocityChange (удари). */
   private readonly lastVel = new THREE.Vector3();
+  /** Удари в русі king.exe (follow) — без власного кінематичного кроку. */
+  private readonly hits: HitMeter;
+  /** Останній крок — рух king.exe (follow). */
+  private kinematic = false;
 
   constructor(
     private readonly world: RAPIER.World,
@@ -102,6 +107,7 @@ export class Trailer {
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic().setTranslation(position.x, position.y, position.z).setRotation(rotation).setAngularDamping(0.5).setCanSleep(false),
     );
+    this.hits = new HitMeter(this.body, world);
     const mass = rec.mass + rec.bodyMass + cargoMass;
     this.mass = mass;
     // Центр мас порожнього — CenterMassInB3D (STrailerM (0; −3,22; −0,5) — над середньою віссю: порожній причіп
@@ -165,6 +171,7 @@ export class Trailer {
     this.body.setRotation(rotation, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.hits.reset();
     this.savePrev();
   }
 
@@ -284,7 +291,13 @@ export class Trailer {
   /** Крок фізики (до world.step): гальма й опір кочення; kinematic — рух king.exe (follow). */
   update(dt: number, brake: number, brakePower: number, kinematic = false): void {
     this.savePrev();
-    if (kinematic) return this.follow(dt);
+    this.kinematic = kinematic;
+    if (kinematic) {
+      this.hits.begin(dt);
+      this.follow(dt);
+      this.hits.end();
+      return;
+    }
     const n = this.wheels.length;
     const force = (brake * brakePower) / n + (ROLLING * this.mass * 9.81) / n;
     for (let i = 0; i < n; i++) this.ctrl.setWheelBrake(i, force * dt);
@@ -387,12 +400,13 @@ export class Trailer {
 
   /**
    * Зміна горизонтальної швидкості причепа від попереднього виклику — у системі причепа (Three.js: уперед — −z),
-   * для зони вмʼятини (dents.ts).
+   * для зони вмʼятини (dents.ts). У русі king.exe — лише від зіткнень (HitMeter: кінематичний поворот — не удар).
    */
   velocityChange(): THREE.Vector3 {
     const lv = this.body.linvel();
     const v = new THREE.Vector3(lv.x, 0, lv.z);
-    const dv = v.clone().sub(this.lastVel);
+    const hit = this.hits.take().setY(0);
+    const dv = this.kinematic ? hit : v.clone().sub(this.lastVel);
     this.lastVel.copy(v);
     const r = this.body.rotation();
     return dv.applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w).invert());

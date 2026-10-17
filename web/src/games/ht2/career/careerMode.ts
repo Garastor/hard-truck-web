@@ -43,7 +43,6 @@ export class CareerMode {
   /** Біля якого місця вже показано вікно (повторно — лише після відʼїзду). */
   private shownAt: string | null = null;
   private saveTimer = 0;
-  private readonly prevVel = new THREE.Vector3();
 
   /** Відкрите вікно оригіналу біля обʼєкта (склад, ринок, СТО, заправка) — закривається, коли від'їхали. */
   private panel: SidePanel | null = null;
@@ -192,9 +191,8 @@ export class CareerMode {
     this.burn(dt, throttle);
     this.updateRace(dt);
     this.updateCompany(dt);
-    const v = this.drive.truck.body.linvel();
-    const dv = Math.hypot(v.x - this.prevVel.x, v.y - this.prevVel.y, v.z - this.prevVel.z);
-    this.prevVel.set(v.x, v.y, v.z);
+    // Удар — зміна швидкості від зіткнень за кадр (drive.detectHits; кінематичний поворот — не удар).
+    const dv = this.drive.hitDv.length();
     if (dv > HIT_MIN) {
       c.damage = Math.min(1, c.damage + dv * 0.004 * this.drive.tuning.damage * (this.drive.arcade ? 0.5 : 1));
       // Пневмопідвіска: удар для вантажу ×0,3 (0x554bb0).

@@ -4,6 +4,7 @@ import { GROUP_BUMPER, GROUP_MOVABLE, g2t, groups } from '../physics/world';
 import type { ControlState } from '../input/input';
 import { visibleBox, type TruckDef, type TruckModel } from './trucks';
 import { Engine, GEAR_R, type EngineProfile } from './engine';
+import { HitMeter } from './hitMeter';
 import { KING, ROUGH_ASPHALT, roadBump, type Roughness, rollingForce, steerLimit, wheelForces, yawRate, type KingWheel, type WheelSlip } from './kingModel';
 
 /**
@@ -284,6 +285,8 @@ export class TruckVehicle {
   private readonly rearAxleZ: number;
   /** Бічна швидкість центру мас від повороту навколо задньої осі (ω·d), додана минулого кроку, м/с. */
   private readonly axleSide = new THREE.Vector3();
+  /** Удари king — зміна швидкості від зіткнень, без власного кінематичного кроку (hitMeter.ts). */
+  readonly hits: HitMeter;
   /** Стан коліс king: 1 — пробуксовка, −1 — заблоковане. */
   readonly slip: WheelSlip[];
   /**
@@ -416,6 +419,7 @@ export class TruckVehicle {
         .setAngularDamping(0.5)
         .setCanSleep(false), // контролер транспорту не будить тіло — сон «заморожує» вантажівку
     );
+    this.hits = new HitMeter(this.body, world);
     const cargo = Math.max(0, setup.cargoMass ?? 0);
     const mass = tech.mass + tech.bodyMass + cargo;
     this.mass = mass;
@@ -578,7 +582,12 @@ export class TruckVehicle {
     this.brakeTime = brake > 0 ? this.brakeTime + dt : 0;
     const bp = this.brakeProfile;
     const brakePedal = brake > 0 ? brake * (bp ? bp.pedal(this.brakeTime) : this.brakeTime / (this.brakeTime + 1)) : 0;
-    if (this.king) return this.updateKing(dt, input.steer, brakePedal, !!input.handbrake, !!input.sharp);
+    if (this.king) {
+      this.hits.begin(dt);
+      this.updateKing(dt, input.steer, brakePedal, !!input.handbrake, !!input.sharp);
+      this.hits.end();
+      return;
+    }
 
     // Сила двигуна — порівну на ведучі колеса (у Rapier відʼємна сила — уперед).
     // Гальма: сила колеса = педаль × B (передні 0,49·breakpower, задні 0,35·breakpower — ЗіЛ, s6);
@@ -999,6 +1008,8 @@ export class TruckVehicle {
     this.body.setRotation(q, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.axleSide.set(0, 0, 0);
+    this.hits.reset();
     this.reverseMode = false;
     this.brakeTime = 0;
     this.engine.reset();

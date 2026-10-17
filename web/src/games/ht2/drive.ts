@@ -350,7 +350,8 @@ export class Ht2Drive {
   private glassRain: GlassRain | null = null;
   /** Вмʼятини гравця (перемикачі пошкоджень моделі); у кар'єрі — зберігаються. */
   dents: Dents | null = null;
-  private readonly prevVel = new THREE.Vector3();
+  /** Зміна швидкості тягача від ударів за останній кадр (світ, м/с; detectHits). */
+  readonly hitDv = new THREE.Vector3();
   private freeDents: Record<string, number> = {};
   /** Вмʼятини й шини напівпричепа (свої перемикачі моделі; у кар'єрі — career.trailerDents). */
   trailerDents: Dents | null = null;
@@ -1038,18 +1039,18 @@ export class Ht2Drive {
   private skipHits = 0;
 
   /**
-   * Удари: різка зміна горизонтальної швидкості за кадр (понад 2 м/с) — вмʼятина в зоні, звідки прийшов удар
-   * (зміна швидкості в системі машини, dents.ts).
+   * Удари: різка зміна горизонтальної швидкості за кадр від зіткнень (понад 2 м/с; кінематичний поворот king.exe —
+   * не удар, HitMeter) — вмʼятина в зоні, звідки прийшов удар (зміна швидкості в системі машини, dents.ts).
+   * hitDv — та сама зміна з вертикаллю, для пошкоджень кар'єри.
    */
   private detectHits(): void {
-    const lv = this.truck.body.linvel();
-    const v = new THREE.Vector3(lv.x, 0, lv.z);
-    const dv = v.clone().sub(this.prevVel);
-    this.prevVel.copy(v);
+    this.hitDv.copy(this.truck.hits.take());
     if (this.skipHits > 0) {
       this.skipHits--;
+      this.hitDv.set(0, 0, 0);
       return;
     }
+    const dv = this.hitDv.clone().setY(0);
     // Посилена рама: імпульс удару ×0,3 від самого початку (0x554c20); захист фар — деформація переду ×0,2.
     const t = this.tuning;
     dv.multiplyScalar(t.damage);
