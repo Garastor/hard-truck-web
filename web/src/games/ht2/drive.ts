@@ -24,6 +24,7 @@ import { RED_LIGHT_FINE, bribeSum, copsTakeBribes, totalFine, wanted } from './c
 import { Mafia, parseMafiaAmbushes } from './traffic/mafia';
 import { ForbiddenZone, Helicopters } from './traffic/helicopters';
 import { Water } from './vehicles/water';
+import { Radars } from './traffic/radars';
 import { showGameOver, type LoseScreen } from './ui/gameOver';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
@@ -1459,6 +1460,8 @@ export class Ht2Drive {
   private burning = -1;
   /** Вода (тригери 13/16) і кінець гри. */
   private readonly water = new Water();
+  /** Стаціонарні камери-радари (картка 16). */
+  private readonly radars = new Radars();
   private over = false;
   /** Перевірка банкрутства раз на 8 с (SeeIfBankrupted 0x427020). */
   private bankTimer = 8;
@@ -1536,6 +1539,28 @@ export class Ht2Drive {
     // Двигун — у передній третині машини, 1,5 м над її центром (гіпотеза).
     const p = this.truck.visual.position.clone().addScaledVector(this.truck.forward(), 2).setY(this.truck.visual.position.y + 1.5);
     this.blastFx().carFire(new THREE.Vector3(p.x, -p.z, p.y));
+  }
+
+  /**
+   * Камери-радари (traffic/radars.ts, king.exe 0x56ffd0): перевищення — штраф 250 × ступінь одразу з грошей, картка 16;
+   * кожна камера — раз за гру.
+   */
+  private updateRadars(dt: number): void {
+    const cm = this.careerMode;
+    if (!cm || this.paused) return;
+    const lv = this.truck.body.linvel();
+    const fired = new Set(cm.career.radars ?? []);
+    const hit = this.radars.update(dt, this.world.loaded.values(), this.truck.visual.position, this.truck.forward(), Math.hypot(lv.x, lv.z), fired, this.tuning.stealth);
+    if (!hit) return;
+    const fine = 250 * hit.degree;
+    cm.career.radars = [...fired, hit.id];
+    cm.career.money -= fine;
+    // Картка 16: ліміт — trunc(ліміт) − 5 (0x571913), швидкість — trunc(v·3,6).
+    const limit = Math.trunc(hit.limit) - 5;
+    const speed = Math.trunc(hit.speedKmh);
+    if (this.cards) this.cards.show(16, { amount: fine, limit, speed });
+    else this.say(`КАМЕРА: ${speed} КМ/ГОД ЗАМІСТЬ ${limit}. ШТРАФ $${fine}`, 6);
+    cm.persist();
   }
 
   /** Гелікоптери Ка-50 (Б11) і заборонена зона db (traffic/helicopters.ts). */
@@ -1621,7 +1646,8 @@ export class Ht2Drive {
    */
   private updateRadarLamp(dt: number, radar: boolean): void {
     if (!this.cabSwitch) return;
-    const s = radar ? (this.police?.radarSignal(this.truck.visual.position) ?? 0) : 0;
+    // Пост міліції (0x538370) чи зона камери-радара (0x56ffd0: сигнал 0,5).
+    const s = radar ? Math.max(this.police?.radarSignal(this.truck.visual.position) ?? 0, this.radars.signal) : 0;
     if (s <= 0) {
       if (this.radarLit) this.cabSwitch('RD_LampKey', 0);
       this.radarLit = false;
@@ -2226,6 +2252,7 @@ export class Ht2Drive {
     this.careerMode?.update(dt, state.throttle);
     this.updatePolice(dt);
     this.updateCopters(dt);
+    this.updateRadars(dt);
     this.updateFire(dt);
     this.updateMafia(dt);
     if (this.markets && this.careerMode) this.markets.update(this.truck.visual.position, Math.floor(this.careerMode.career.time / 86400));
