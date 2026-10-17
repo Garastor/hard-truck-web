@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { installVertexFog } from './engine/render/vertexFog';
 import { cachedSource, idbSourceFor, missingFiles, prefetchMissing, removeFiles, storedFiles } from '@shared/gameStore';
 import type { FileSource } from '@shared/source';
 import { setSoftFont } from './engine/ui/softUi';
@@ -95,6 +96,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   // перетворення (вихід до вибору гри перезавантажує сторінку, першу гру це не зачіпає).
   THREE.ColorManagement.enabled = false;
   ctx.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  installVertexFog();
   ctx.setStatus('Завантаження «Дальнобійників 2»…');
   const source = await pickSource(ctx);
   const font = (name: string) => source.read(name).then((b) => new PixelFont(parseFon(b))).catch(() => null);
