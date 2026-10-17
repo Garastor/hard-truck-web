@@ -1,5 +1,6 @@
 import { iniNum, type Ini } from '../engine/formats/ini';
 import { gameTimeScale } from '../world/climate';
+import type { Action, Command } from '../engine/input/input';
 
 /**
  * Налаштування одиночної гри HT2 — повзунки й перемикачі екрана `s/backsing` (LOAD.RES). Початкові значення —
@@ -42,6 +43,8 @@ export interface Ht2Settings {
    * рендерера (ui/menuScreens.ts RESOLUTION_H); не задано — як вирішить оболонка (якість).
    */
   resolution?: number;
+  /** Перепризначені клавіші з меню «Керування»: дія → KeyboardEvent.code (engine/input Input.bind). */
+  keys?: Partial<Record<Action | Command, string>>;
 }
 
 const KEY = 'ht2.settings.v1';

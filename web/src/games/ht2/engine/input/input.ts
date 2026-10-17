@@ -32,7 +32,7 @@ export interface InputProfile {
   steerRate?: (t: number, v: number, sharp: boolean) => number;
 }
 
-type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake' | 'sharp';
+export type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake' | 'sharp';
 /** Значок сигналу (ріжок, за зразком користувача) — однотонний контур, як решта кнопок. */
 const HORN_SVG =
   '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M2.5 8.6v4.6M2.5 10.9H5"/><path d="M5 9h7.5c3.2 0 6-1.6 8-4.3.6-.8 1.5-.4 1.5.5v13.4c0 .9-.9 1.3-1.5.5-2-2.4-3.5-3.6-5.6-4.2"/><path d="M5 12.9h1.4"/><path d="M6.4 12.9c0 2.4 1.2 3.8 3.4 3.8h3.4"/><rect x="8.6" y="12.6" width="6.4" height="2.9" rx="1.45"/></svg>';
@@ -81,7 +81,7 @@ const SHARP_FORCE = 0.8;
 const SHARP_FORCE_OFF = 0.6;
 const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-type Command = 'f1' |'f2' | 'f3' | 'f4' | 'f5' | 'menu' | 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror' | 'cab' | 'swap' | 'attach';
+export type Command = 'f1' |'f2' | 'f3' | 'f4' | 'f5' | 'menu' | 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror' | 'cab' | 'swap' | 'attach';
 
 /**
  * Дозвіл на датчик руху (iOS 13+: DeviceOrientationEvent.requestPermission). Питати можна лише в жесті користувача;
@@ -182,36 +182,28 @@ export class Input {
   /**
    * Клавіші — як в оригіналі (таблиця клавіш HTruck.exe: стрілки — газ, гальмо, кермо; H — сигнал, W — двірники,
    * C — камера, 0 — відновитися; L — фари, M — дзеркало, Tab — навігація, пробіл — двигун). Ручне гальмо в таблиці оригіналу
-   * без клавіші — Shift.
+   * без клавіші — Shift. Перепризначені в меню «Керування» — Input.bind (типові — DEFAULT_KEYS).
    */
-  private static readonly KEYS: Record<string, Action> = {
-    ArrowLeft: 'left',
-    ArrowRight: 'right',
-    ArrowUp: 'gas',
-    ArrowDown: 'brake',
-    ShiftLeft: 'handbrake',
-    ShiftRight: 'handbrake',
-  };
-  private static readonly COMMANDS: Record<string, Command> = {
-    Escape: 'menu',
-    F1: 'f1',
-    F2: 'f2',
-    F3: 'f3',
-    F4: 'f4',
-    F5: 'f5',
-    KeyC: 'camera',
-    KeyR: 'reset',
-    Digit0: 'reset',
-    Numpad0: 'reset',
-    KeyH: 'horn',
-    KeyP: 'autopilot',
-    KeyL: 'lights',
-    Tab: 'map',
-    Space: 'engine',
-    KeyW: 'wipers',
-    KeyM: 'mirror',
-    KeyT: 'attach',
-  };
+  private static KEYS: Record<string, Action> = {};
+  private static COMMANDS: Record<string, Command> = {};
+
+  /**
+   * Перепризначення клавіш (меню «Керування», ht2.settings.v1 `keys`): дія → код клавіші (KeyboardEvent.code) замість
+   * усіх типових клавіш цієї дії. Діє на всі екземпляри Input.
+   */
+  static bind(over: Partial<Record<Action | Command, string>> = {}): void {
+    Input.KEYS = {};
+    Input.COMMANDS = {};
+    const put = (b: Action | Command, c: string) => {
+      delete Input.KEYS[c];
+      delete Input.COMMANDS[c];
+      if ((ACTIONS as readonly string[]).includes(b)) Input.KEYS[c] = b as Action;
+      else Input.COMMANDS[c] = b as Command;
+    };
+    // Спершу типові, потім перепризначені (клавіша, забрана в іншої дії, — лише новій).
+    for (const [b, def] of Object.entries(DEFAULT_KEYS) as [Action | Command, string[]][]) if (!over[b]) def.forEach((c) => put(b, c));
+    for (const [b, c] of Object.entries(over) as [Action | Command, string][]) if (c && DEFAULT_KEYS[b]) put(b, c);
+  }
 
   private key(e: KeyboardEvent): void {
     const a = Input.KEYS[e.code] ?? (this.profile?.sharp && (e.code === 'ControlLeft' || e.code === 'ControlRight') ? 'sharp' : undefined);
@@ -516,6 +508,34 @@ export class Input {
 
 /** Налаштування керування обох ігор: кермо праворуч, педалі ліворуч (body.swap-controls; зберігається в браузері). */
 const SWAP_KEY = 'ht.swapControls';
+const ACTIONS = ['left', 'right', 'gas', 'brake', 'handbrake', 'sharp'] as const;
+
+/** Типові клавіші дій і команд (перша — показується в меню «Керування»). */
+export const DEFAULT_KEYS: Partial<Record<Action | Command, string[]>> = {
+  left: ['ArrowLeft'],
+  right: ['ArrowRight'],
+  gas: ['ArrowUp'],
+  brake: ['ArrowDown'],
+  handbrake: ['ShiftLeft', 'ShiftRight'],
+  menu: ['Escape'],
+  f1: ['F1'],
+  f2: ['F2'],
+  f3: ['F3'],
+  f4: ['F4'],
+  f5: ['F5'],
+  camera: ['KeyC'],
+  reset: ['KeyR', 'Digit0', 'Numpad0'],
+  horn: ['KeyH'],
+  autopilot: ['KeyP'],
+  lights: ['KeyL'],
+  map: ['Tab'],
+  engine: ['Space'],
+  wipers: ['KeyW'],
+  mirror: ['KeyM'],
+  attach: ['KeyT'],
+};
+Input.bind();
+
 export function loadSwap(): boolean {
   try {
     return localStorage.getItem(SWAP_KEY) === '1';

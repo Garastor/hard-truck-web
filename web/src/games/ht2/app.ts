@@ -7,6 +7,7 @@ import { PixelFont } from './engine/ui/pixelFont';
 import type { GameContext } from '@shared/gameContext';
 import { HT2_FILES, HT2_MODS, HT2_MUSIC, HT2_REQUIRED, HT2_UI, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2ExitScreen, ht2MainScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem, type RoundKey } from './ui/menu';
+import { Input } from './engine/input/input';
 import { ht2ControlsScreen, ht2DriversScreen, ht2GraphicsScreen, ht2RecordsScreen } from './ui/menuScreens';
 import { loadSettings, saveSettings, type Ht2Settings } from './ui/settings';
 import { parseIni } from './engine/formats/ini';
@@ -94,6 +95,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   // Налаштування одиночної гри: збережені в браузері, інакше — з TRUCK.INI гри.
   const ini = await source.read('TRUCK.INI').then((b) => parseIni(decodeCp1251(b))).catch(() => null);
   let settings: Ht2Settings = loadSettings(ini);
+  Input.bind(settings.keys);
   ctx.setStatus(null);
 
   // Налагодження: ?game=ht2&tab=world — одразу огляд світу (&region=ab); &tab=drive — вільна їзда (&truck=Kamaz);
@@ -141,7 +143,16 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
                 saveSettings(st);
               },
             });
-          else if (key === 'contr') close = ht2ControlsScreen(art, { ...common, note: (t, p) => void modal(p, 'Керування', t, ['Гаразд']) });
+          else if (key === 'contr')
+            close = ht2ControlsScreen(art, {
+              ...common,
+              keys: settings.keys ?? {},
+              onChange: (keys) => {
+                settings = { ...settings, keys };
+                saveSettings(settings);
+                Input.bind(keys);
+              },
+            });
           else if (key === 'recor') close = ht2RecordsScreen(art, common);
           else {
             const c = loadCareer();

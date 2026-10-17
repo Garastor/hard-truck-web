@@ -1,5 +1,6 @@
 import { screen, texButton, type Ht2MenuArt, type RoundKey } from './menu';
 import type { Ht2Settings } from './settings';
+import { DEFAULT_KEYS, type Action, type Command } from '../engine/input/input';
 
 /**
  * Екрани меню LOAD.RES «Графіка», «Керування», «Водії», «Відеоплеєр» — розклад king.exe (re/notes/ht2/menu-screens.md;
@@ -7,7 +8,8 @@ import type { Ht2Settings } from './settings';
  * оригінальні). Що в порту діє:
  * - графіка — роздільність 640×480…1600×1200 (висота кадру рендерера), «Автопошук» — за екраном пристрою; повзунки
  *   «спецефекти» й «детальність» у порту не діють (неактивні);
- * - керування — таблиця 22 дій з клавішами порту; перепризначення клавіш у порту немає;
+ * - керування — таблиця 22 дій з клавішами порту; рядок дії порту — перепризначити клавішу (наступне натискання;
+ *   зайнята іншою дією — обмін), «За замовчуванням» — типові;
  * - водії — імʼя, логотип (`d/logo1…8`) і фото (`d/photo01…51`) водія кар'єри, список («недавні» — збереження порту),
  *   «Видалити» — стерти кар'єру;
  * - відеоплеєр — записів (файли .tr/.mvp оригіналу) у порту немає: список порожній, кнопки неактивні.
@@ -112,54 +114,109 @@ export function ht2GraphicsScreen(art: Ht2MenuArt, o: GraphicsScreen): () => voi
   return sc.close;
 }
 
+type Bind = Action | Command;
+
 /**
  * Дії таблиці керування king.exe (0x514d10): стовпчик 1 — 11 рядків, стовпчик 2 — 11; назви — mess.txt (0x29…0x66),
- * клавіші — порту (input.ts); «—» — дії порту немає.
+ * дія порту (engine/input) — без неї «—» (передачі: у порту лише автомат).
  */
-const ACTIONS: [string, string, string?][] = [
-  ['Кермо ліворуч', '←'],
-  ['Кермо праворуч', '→'],
-  ['Газ', '↑'],
-  ['Гальмо', '↓'],
-  ['Ручне гальмо', 'SHIFT'],
-  ['Передача вгору', '—'],
-  ['Передача вниз', '—'],
-  ['Запалювання', 'ПРОБІЛ'],
-  ['Фари', 'L'],
-  ['Напівпричіп', 'T'],
-  ['Сигнал', 'H'],
-  ['Двірники', 'W'],
-  ['Пейджер', '—'],
-  ['Зовнішня камера', 'C'],
-  ['Камера ліворуч', '—'],
-  ['Камера праворуч', '—'],
-  ['Камера ближче', '—'],
-  ['Камера далі', '—'],
-  ['Карта', 'TAB'],
-  ['Купівля', '—'],
-  ['Повернення', '—'],
-  ['Монітор', '—'],
+const ACTIONS: [string, Bind?][] = [
+  ['Кермо ліворуч', 'left'],
+  ['Кермо праворуч', 'right'],
+  ['Газ', 'gas'],
+  ['Гальмо', 'brake'],
+  ['Ручне гальмо', 'handbrake'],
+  ['Передача вгору'],
+  ['Передача вниз'],
+  ['Запалювання', 'engine'],
+  ['Фари', 'lights'],
+  ['Напівпричіп', 'attach'],
+  ['Сигнал', 'horn'],
+  ['Двірники', 'wipers'],
+  ['Пейджер'],
+  ['Зовнішня камера', 'camera'],
+  ['Камера ліворуч'],
+  ['Камера праворуч'],
+  ['Камера ближче'],
+  ['Камера далі'],
+  ['Карта', 'map'],
+  ['Купівля'],
+  ['Повернення'],
+  ['Монітор'],
 ];
 
-export interface ControlsScreen {
-  onCancel(): void;
-  onRound(key: RoundKey): void;
-  note(text: string, parent: HTMLElement): void;
+/** Назва клавіші за KeyboardEvent.code. */
+export function keyName(code: string): string {
+  const names: Record<string, string> = {
+    ArrowLeft: '←',
+    ArrowRight: '→',
+    ArrowUp: '↑',
+    ArrowDown: '↓',
+    Space: 'ПРОБІЛ',
+    Enter: 'ENTER',
+    Backspace: 'BACKSPACE',
+    Tab: 'TAB',
+    Escape: 'ESC',
+  };
+  if (names[code]) return names[code];
+  const m = /^(?:Key|Digit)(.)$/.exec(code) ?? /^Numpad(.+)$/.exec(code);
+  if (m) return code.startsWith('Numpad') ? `NUM ${m[1]}` : m[1];
+  const side = /^(Shift|Control|Alt|Meta)(Left|Right)$/.exec(code);
+  if (side) return { Shift: 'SHIFT', Control: 'CTRL', Alt: 'ALT', Meta: 'WIN' }[side[1]]! + (side[2] === 'Right' ? ' ПР' : '');
+  return code.toUpperCase();
 }
 
-/** Керування (`c/backCtrl`, 0x513b30): пристрій, таблиця дій, «за замовчуванням». */
+/** Клавіші, яких не можна призначити: меню, підказки F1…F5 (зайняті вікнами гри). */
+const RESERVED = new Set(['Escape', 'F1', 'F2', 'F3', 'F4', 'F5']);
+
+export interface ControlsScreen {
+  keys: Partial<Record<Bind, string>>;
+  onChange(keys: Partial<Record<Bind, string>>): void;
+  onCancel(): void;
+  onRound(key: RoundKey): void;
+}
+
+/**
+ * Керування (`c/backCtrl`, 0x513b30): пристрій, таблиця дій, «за замовчуванням». Рядок дії — чекати на клавішу
+ * (Esc — скасувати); клавіша іншої дії — обмін (та дія дістає попередню клавішу цієї).
+ */
 export function ht2ControlsScreen(art: Ht2MenuArt, o: ControlsScreen): () => void {
   const sc = screen(art, 'c/backctrl.txr', o.onRound);
-  const { stage, root } = sc;
+  const { stage } = sc;
+  let keys = { ...o.keys };
+  const was = { ...o.keys };
+  const code = (b: Bind) => keys[b] ?? DEFAULT_KEYS[b]![0];
+  const cells: [Bind, HTMLElement][] = [];
+  let waiting: Bind | null = null;
+  const paint = () => cells.forEach(([b, el]) => (el.textContent = b === waiting ? '…' : keyName(code(b))));
+  const set = (b: Bind, c: string) => {
+    const other = ACTIONS.find(([, a]) => a && a !== b && code(a) === c)?.[1];
+    if (other) keys[other] = code(b);
+    keys[b] = c;
+    // Типові — не зберігати (лишаються й додаткові клавіші: правий Shift, 0 на цифровій панелі).
+    for (const [, a] of ACTIONS) if (a && keys[a] === DEFAULT_KEYS[a]![0]) delete keys[a];
+    o.onChange({ ...keys });
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (!waiting) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.code !== 'Escape' && !RESERVED.has(e.code)) set(waiting, e.code);
+    waiting = null;
+    paint();
+  };
+  window.addEventListener('keydown', onKey, true);
   texButton(art, stage, 'aleft', 259, 157, 'Попередній пристрій', { ext: '.msk', disabled: true, action: () => {} });
   texButton(art, stage, 'aright', 514, 157, 'Наступний пристрій', { ext: '.msk', disabled: true, action: () => {} });
   text(stage, 'Клавіатура', 299, 178, { width: 204, size: 14 });
-  ACTIONS.forEach(([name, key], n) => {
+  ACTIONS.forEach(([name, bind], n) => {
     const col = Math.floor(n / 11);
     const y = 194 + 20 * (n % 11) + 15;
     text(stage, name, 222 + 180 * col, y, { size: 10 });
-    text(stage, key, 221 + 107 + 180 * col, y, { size: 10, color: '#fff' });
-    // Рядок — зона дотику (перепризначення клавіш у порті немає).
+    const cell = text(stage, '—', 221 + 107 + 180 * col, y, { size: 10, color: '#fff' });
+    if (!bind) return;
+    cells.push([bind, cell]);
+    // Рядок — зона дотику: чекати на клавішу.
     const row = document.createElement('button');
     row.className = 'menu-abs';
     row.style.cssText += 'background:transparent;border:0;padding:0;cursor:pointer;';
@@ -168,12 +225,31 @@ export function ht2ControlsScreen(art: Ht2MenuArt, o: ControlsScreen): () => voi
     row.style.width = '178px';
     row.style.height = '20px';
     row.setAttribute('aria-label', name);
-    row.addEventListener('click', () => o.note('Перепризначення клавіш у порті ще недоступне.', root));
+    row.addEventListener('click', () => {
+      waiting = waiting === bind ? null : bind;
+      paint();
+    });
     stage.append(row);
   });
-  texButton(art, stage, 'c/def', 350, 443, 'За замовчуванням', { action: () => o.note('Клавіші порту — типові.', root) });
-  texButton(art, stage, 'c/canc', 323, 490, 'Скасувати', { action: o.onCancel });
-  return sc.close;
+  paint();
+  texButton(art, stage, 'c/def', 350, 443, 'За замовчуванням', {
+    action: () => {
+      keys = {};
+      waiting = null;
+      o.onChange({});
+      paint();
+    },
+  });
+  texButton(art, stage, 'c/canc', 323, 490, 'Скасувати', {
+    action: () => {
+      o.onChange(was);
+      o.onCancel();
+    },
+  });
+  return () => {
+    window.removeEventListener('keydown', onKey, true);
+    sc.close();
+  };
 }
 
 export interface DriverInfo {
