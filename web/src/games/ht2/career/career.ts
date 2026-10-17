@@ -87,10 +87,13 @@ const KEY = 'ht2.career.v1';
 export const START_MONEY = 5000;
 export const REPAIR_PER_PERCENT = 30;
 export const FUEL_PRICE = 1;
-/** Ігровий час (`time`, с від початку кар'єри) іде з темпом повзунка «тривалість доби» (settings.timeScale). */
+/**
+ * Ігровий час (`time`, с від початку кар'єри) іде з темпом повзунка «тривалість доби» (settings.timeScale); старт —
+ * 10:00, як в оригіналі (TRUCK.INI timestart=10).
+ */
 
 export function newCareer(driver: string, truck: string): Ht2Career {
-  return { driver, money: START_MONEY, truck, damage: 0, fuel: null, time: 8 * 3600, order: null, delivered: 0, earned: 0 };
+  return { driver, money: START_MONEY, truck, damage: 0, fuel: null, time: 10 * 3600, order: null, delivered: 0, earned: 0 };
 }
 
 export function loadCareer(): Ht2Career | null {
