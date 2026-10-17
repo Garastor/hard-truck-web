@@ -113,16 +113,13 @@ const SOFT_DRAG_SPAN = 3;
  */
 const YAW_GYRATION2 = 3.425;
 /**
- * Гойдання кузова для перенесення навантаження (tireLoads): власна частота, Гц, і згасання. У king.exe — пружини
- * підвіски (0x4f8260); тут підібрано відтворенням запису ZilR з Ctrl-перекладаннями (2026-10-18): СКВ ω 0,212 → 0,166
- * рад/с, звичайний поворот — 0,046 → 0,055.
+ * Пружини king.exe (0x4f8260, дамп ZilR): L₀ = хід × 4/3 (0,4 при 0,3 — гіпотеза для інших машин), підкрок ≤ 0,0085 с;
+ * інерція крену й тангажу на кг маси, м² ([0x1f48] = 19 647 / 4314 / 22 849 при 6671 кг; X — бік, Y — уперед).
  */
-const SWAY_HZ = 0.8;
-const SWAY_ZETA = 0.15;
-/**
- * Висота ЦМ над дорогою для перенесення навантаження, м: у king.exe (дамп ZilR) центр колеса на 0,93 м нижче ЦМ плюс
- * радіус — ≈ 1,43; точки контакту Rapier у порту — лише 0,82 м нижче ЦМ. Для інших машин — гіпотеза.
- */
+const SPRING_L0 = 4 / 3;
+const SPRING_STEP = 0.0085;
+const KING_PITCH_GYRATION2 = 2.945;
+const KING_ROLL_GYRATION2 = 0.6467;
 const KING_COM_HEIGHT = 1.43;
 /**
  * Колія для перенесення навантаження, м (king.exe, дамп ZilR: колеса ±1,13 спереду, ±1,21 ззаду; точки контакту
@@ -748,8 +745,10 @@ export class TruckVehicle {
       for (const w of wheels) if (w.ground && w.driven) grip += w.mu * w.load;
       drive = Math.min(drive, 0.81 * grip);
     }
-    let force = wheelForces(wheels, drive, pedal, vFwd, this.slip);
-    if (handbrake && pedal <= KING.brakeFrom) force += wheelForces(wheels.map((w, i) => (i >= 2 ? w : { ...w, ground: false })), 0, 1, vFwd);
+    // Сили коліс окремо — для моменту рискання від нерівної тяги й гальм (режим шин).
+    const perWheel: number[] = [];
+    let force = wheelForces(wheels, drive, pedal, vFwd, this.slip, perWheel);
+    if (handbrake && pedal <= KING.brakeFrom) force += wheelForces(wheels.map((w, i) => (i >= 2 ? w : { ...w, ground: false })), 0, 1, vFwd, undefined, perWheel);
     let resist = engineBraking ? Math.abs(this.engine.force) * Math.min(1, Math.abs(vFwd)) * (1 + this.engineBrake * Math.sqrt(pedal)) : 0;
     for (const w of wheels) if (w.ground) resist += rollingForce(w.load, vFwd) * this.surfaceRoll;
     const over = Math.abs(vFwd) - this.surfaceMaxSpeed;
@@ -774,7 +773,7 @@ export class TruckVehicle {
     let tireOmega: number | null = null;
     if (K.tires) {
       const av0 = this.body.angvel();
-      tireOmega = this.tireStep(dt, next, n, ft, delta, wheels, Math.abs(vFwd), av0.x * n.x + av0.y * n.y + av0.z * n.z);
+      tireOmega = this.tireStep(dt, next, n, ft, delta, wheels, Math.abs(vFwd), av0.x * n.x + av0.y * n.y + av0.z * n.z, perWheel);
       // Прискорення від сил коліс (без ваги) — для перенесення навантаження наступного кроку.
       this.tireAcc.addScaledVector(ft, force / mass);
     }
@@ -825,7 +824,7 @@ export class TruckVehicle {
    * швидкість ЦМ і кутову швидкість. Змінює next (швидкість ЦМ), повертає кутову швидкість навколо n. Повне кермо на
    * швидкості — передні колеса зриваються (α ≈ 0,6–0,7 рад у записі), недоповорот.
    */
-  private tireStep(dt: number, next: THREE.Vector3, n: THREE.Vector3, ft: THREE.Vector3, delta: number, wheels: readonly KingWheel[], speed: number, omega0: number): number {
+  private tireStep(dt: number, next: THREE.Vector3, n: THREE.Vector3, ft: THREE.Vector3, delta: number, wheels: readonly KingWheel[], speed: number, omega0: number, along: readonly number[]): number {
     const c = this.body.worldCom();
     const com = new THREE.Vector3(c.x, c.y, c.z);
     const side = new THREE.Vector3().crossVectors(n, ft);
@@ -843,6 +842,13 @@ export class TruckVehicle {
       const p = this.ctrl.wheelContactPoint(i)!;
       const r = new THREE.Vector3(p.x, p.y, p.z).sub(com);
       r.addScaledVector(n, -r.dot(n));
+      // Поперечне плече — колія king.exe (KING_TRACK; точки контакту Rapier — з моделі, вужчі).
+      const q = Math.sign(r.dot(side) || (i % 2 ? -1 : 1)) * (i < 2 ? KING_TRACK.front : KING_TRACK.rear) / 2;
+      const s = r.dot(ft);
+      r.copy(ft).multiplyScalar(s).addScaledVector(side, q);
+      // Тяга й гальмо колеса (wheelForces; їхня сума вже в швидкості) збоку від ЦМ крутять кузов: у повороті з газом
+      // тяга — переважно на завантажених зовнішніх ведучих колесах (king.exe ділить її за μ·N), що докручує машину.
+      dw -= (q * (along[i] ?? 0) * dt) / I;
       // Сила — поперек колеса (передні повернуті на δ): її складова вздовж кузова гальмує на повному кермі — у записі
       // з повним газом опір повороту ≈ 1,7 м/с² на 51 км/год і ≈ 2,5 на 70 (поперек кузова опору не було б).
       const f = i < 2 ? fFront : ft;
@@ -851,7 +857,9 @@ export class TruckVehicle {
       const lat = u.dot(d);
       const lon = u.dot(f);
       const alpha = Math.atan2(Math.abs(lat), Math.abs(lon));
-      const size = wheels[i].mu * sideMu * wheels[i].load * tireCurve(alpha, speed) * Math.min(1, Math.hypot(lat, lon));
+      // Колесо, що буксує (+1) чи заблоковане (−1), вбік не тримає (king.exe: у дампі такі колеса мають нульову
+      // силу ковзання) — газ з Ctrl зриває задні ведучі, і задок заносить; гальмо блокує розвантажені колеса.
+      const size = this.slip[i] ? 0 : wheels[i].mu * sideMu * wheels[i].load * tireCurve(alpha, speed) * Math.min(1, Math.hypot(lat, lon));
       // Сухе тертя (як 0x4f4110): імпульс колеса не більший, ніж гасить бічну швидкість його контакту, — з поділом на
       // число коліс (діють одночасно), щоб разом не перекинути знак.
       const arm = new THREE.Vector3().crossVectors(r, d).dot(n);
@@ -866,60 +874,89 @@ export class TruckVehicle {
     return w;
   }
 
-  /** Прискорення від сил коліс минулого кроку (світ, м/с²) і стан гойдання кузова (tireLoads). */
+  /** Прискорення від сил коліс минулого кроку (світ, м/с²) і стан кузова на пружинах (tireLoads). */
   private readonly tireAcc = new THREE.Vector3();
-  private readonly sway = { x: 0, vx: 0, y: 0, vy: 0 };
+  private readonly spring = { z: 0, vz: 0, roll: 0, vroll: 0, pitch: 0, vpitch: 0 };
 
   /**
-   * Навантаження коліс динамічного режиму (машина гравця). У king.exe — сили пружин (0x4f8260): у записі передня вісь
-   * несе ≈ 41 % ваги (l_r/L), у повороті вага перетікає на зовнішні колеса, при гальмуванні — на передні. Тут: статичні
-   * частки за плечима від центру мас (передні — l_r/L, задні — l_f/L порівну), плюс поздовжнє M·a·h/L і бічне
-   * N_осі·a·h/(g·колія/2) перенесення від прискорення сил коліс; прискорення проходить через згасаючі коливання кузова
-   * (SWAY_HZ, SWAY_ZETA — гіпотеза порту), тож вага «гойдається»: зрив передка, гальмування, вага вперед — передок
-   * чіпляється, різкий поворот, зворотне гойдання — легка задня вісь зривається.
+   * Навантаження коліс динамічного режиму (машина гравця) — кузов на пружинах king.exe (0x4f8260): підскок, крен і
+   * тангаж кузова відносно коліс. Пружина колеса F = k·e·(1 + e/L₀)·(1 − exp(−((d − T)/(0,1·T))²)), e = L₀ − d,
+   * d — довжина ходу; k = N_ст/((x/L₀ + 1)·x), x = L₀ − 0,75·T (статичний стиск однаковий); демпфер — від швидкості
+   * стиску v: стиск — c·v/0,8, не більше 0,95·F; розтяг — −0,5·c·|v| (|v| ≤ 0,5) або −c·v², не більше F; c = N_ст.
+   * Сили шин на рівні дороги (KING_COM_HEIGHT нижче ЦМ) кренять і хитають кузов; нерівність дороги (roadBump) —
+   * під колесом. Сума N — не обовʼязково вага: кузов підстрибує (у записі — 28…69 кН при 65 кН).
    */
   private tireLoads(dt: number, wheels: KingWheel[], n: THREE.Vector3, ft: THREE.Vector3): void {
     const c = this.body.worldCom();
     const com = new THREE.Vector3(c.x, c.y, c.z);
     const side = new THREE.Vector3().crossVectors(n, ft);
-    const w0 = 2 * Math.PI * SWAY_HZ;
-    const sw = this.sway;
-    const ax = this.tireAcc.dot(ft);
-    const ay = this.tireAcc.dot(side);
-    sw.vx += (w0 * w0 * (ax - sw.x) - 2 * SWAY_ZETA * w0 * sw.vx) * dt;
-    sw.x += sw.vx * dt;
-    sw.vy += (w0 * w0 * (ay - sw.y) - 2 * SWAY_ZETA * w0 * sw.vy) * dt;
-    sw.y += sw.vy * dt;
     const pts: { i: number; s: number; q: number }[] = [];
     for (let i = 0; i < this.wheels; i++) {
       const p = wheels[i].ground ? this.ctrl.wheelContactPoint(i) : null;
       if (!p) continue;
-      const r = com.clone().sub(new THREE.Vector3(p.x, p.y, p.z));
-      pts.push({ i, s: -r.dot(ft), q: -r.dot(side) });
+      const r = new THREE.Vector3(p.x, p.y, p.z).sub(com);
+      // Поперечне плече — з колії king.exe (KING_TRACK), знак — бік колеса.
+      const q = Math.sign(r.dot(side) || (i % 2 ? -1 : 1)) * (i < 2 ? KING_TRACK.front : KING_TRACK.rear) / 2;
+      pts.push({ i, s: r.dot(ft), q });
     }
     const front = pts.filter((t) => t.i < 2);
     const rear = pts.filter((t) => t.i >= 2);
     if (!front.length || !rear.length) return;
-    // Плечі від ЦМ до передньої осі й до середини задніх. (King.exe ділить за останньою віссю — у дампі ZilR передні
-    // несуть ≈ 41–43 %, — але там ЦМ на 0,57 м далі назад, ніж у порту без вантажу; так порожня машина в порту
-    // отримала б 48 % спереду й розверталась у звичайному повороті, бо сили тандема — на обох осях.)
     const lf = front.reduce((a, t) => a + t.s, 0) / front.length;
     const lr = -rear.reduce((a, t) => a + t.s, 0) / rear.length;
     const L = lf + lr;
     if (!(lf > 0.3 && lr > 0.3)) return;
+    const M = this.mass;
+    const gn = Math.max(0, -(this.world.gravity.x * n.x + this.world.gravity.y * n.y + this.world.gravity.z * n.z));
+    const Mg = M * gn;
     const h = KING_COM_HEIGHT;
-    const Mg = this.mass * KING.g;
-    // Поздовжнє: прискорення вперед розвантажує передок.
-    const dLon = (this.mass * sw.x * h) / L;
-    for (const t of pts) {
-      const isFront = t.i < 2;
-      const axle = isFront ? (Mg * lr) / L - dLon : (Mg * lf) / L + dLon;
-      const pair = axle / (isFront ? front.length : rear.length);
-      // Бічне: прискорення ліворуч (+side) вантажить праві (q < 0) колеса; колія — з king.exe (KING_TRACK).
-      const lat = (pair * sw.y * h) / (KING.g * (isFront ? KING_TRACK.front : KING_TRACK.rear) / 2);
-      const N = Math.max(0, pair - Math.sign(t.q) * lat);
-      wheels[t.i].load = N * Math.abs(this.ctrl.wheelContactNormal(t.i)?.y ?? 1);
+    const sp = this.spring;
+    // Зовнішні моменти від сил коліс минулого кроку (на рівні дороги): бічна сила ліворуч кренить праворуч, тяга
+    // вперед піднімає ніс.
+    const Fy = M * this.tireAcc.dot(side);
+    const Fx = M * this.tireAcc.dot(ft);
+    const Iroll = M * KING_ROLL_GYRATION2;
+    const Ipitch = M * KING_PITCH_GYRATION2;
+    const loads = new Map<number, number>();
+    const sub = Math.max(1, Math.ceil(dt / SPRING_STEP));
+    const hdt = dt / sub;
+    for (let k = 0; k < sub; k++) {
+      let Fz = 0;
+      let Mr = -Fy * h;
+      let Mp = -Fx * h;
+      for (const t of pts) {
+        const isFront = t.i < 2;
+        const Ns = ((isFront ? Mg * lr : Mg * lf) / L) / (isFront ? front.length : rear.length);
+        const T = this.king!.travel?.[t.i] ?? 0.3;
+        const L0 = T * SPRING_L0;
+        const x0 = L0 - 0.75 * T;
+        const kk = Ns / ((x0 / L0 + 1) * x0);
+        // Стиск понад статичний: підскок (вниз +), крен (лівий борт вниз +), тангаж (ніс вниз +), нерівність дороги.
+        const de = sp.z + sp.roll * t.q + sp.pitch * t.s + (this.bumps[t.i]?.h ?? 0);
+        const e = x0 + de;
+        const d = L0 - e;
+        let N = 0;
+        if (d < T) {
+          const f = d < 0 ? 2 * kk * L0 : kk * e * (1 + Math.abs(e) / L0) * (1 - Math.exp(-(((d - T) / (0.1 * T)) ** 2)));
+          const v = sp.vz + sp.vroll * t.q + sp.vpitch * t.s;
+          let fd: number;
+          if (v >= 0) fd = Math.min((Ns * v) / 0.8, 0.95 * f);
+          else fd = Math.max(-v <= 0.5 ? -0.5 * Ns * -v : -Ns * v * v, -f);
+          N = Math.max(0, f + fd);
+        }
+        loads.set(t.i, N);
+        Fz += N;
+        Mr -= N * t.q;
+        Mp -= N * t.s;
+      }
+      sp.vz += ((Mg - Fz) / M) * hdt;
+      sp.vroll += (Mr / Iroll) * hdt;
+      sp.vpitch += (Mp / Ipitch) * hdt;
+      sp.z += sp.vz * hdt;
+      sp.roll += sp.vroll * hdt;
+      sp.pitch += sp.vpitch * hdt;
     }
+    for (const t of pts) wheels[t.i].load = loads.get(t.i) ?? 0;
   }
 
   /**
@@ -1155,7 +1192,7 @@ export class TruckVehicle {
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.axleSide.set(0, 0, 0);
     this.tireAcc.set(0, 0, 0);
-    Object.assign(this.sway, { x: 0, vx: 0, y: 0, vy: 0 });
+    Object.assign(this.spring, { z: 0, vz: 0, roll: 0, vroll: 0, pitch: 0, vpitch: 0 });
     this.hits.reset();
     this.reverseMode = false;
     this.brakeTime = 0;

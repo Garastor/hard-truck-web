@@ -111,9 +111,10 @@ export type WheelSlip = -1 | 0 | 1;
  * Поздовжні сили коліс («коло тертя» по одному напряму). drive — сила двигуна на всіх ведучих, Н (+ уперед за
  * передачею); pedal — гальмо 0…1; vFwd — швидкість уздовж курсу, м/с. Сила тяги ділиться між ведучими пропорційно
  * їхньому зчепленню (F_max = μ·N); гальмо — проти руху; сума колеса не більша за F_max: тяга більша — пробуксовка
- * (сила = F_max), гальмо більше — блокування (сила F_max проти руху). Повертає суму сил уздовж курсу (без кочення).
+ * (сила = F_max), гальмо більше — блокування (сила F_max проти руху). Повертає суму сил уздовж курсу (без кочення);
+ * per — додає сюди силу кожного колеса (для моменту рискання від нерівної тяги й гальм).
  */
-export function wheelForces(wheels: readonly KingWheel[], drive: number, pedal: number, vFwd: number, slip?: WheelSlip[]): number {
+export function wheelForces(wheels: readonly KingWheel[], drive: number, pedal: number, vFwd: number, slip?: WheelSlip[], per?: number[]): number {
   let grip = KING.driveEps;
   for (const w of wheels) if (w.ground && w.driven) grip += w.mu * w.load;
   const dir = Math.abs(vFwd) > 0.05 ? Math.sign(vFwd) : Math.sign(drive) || 1;
@@ -125,17 +126,17 @@ export function wheelForces(wheels: readonly KingWheel[], drive: number, pedal: 
     const d = w.driven ? (max * drive) / grip : 0;
     const b = pedal > KING.brakeFrom ? w.brake * pedal : 0;
     const net = d - b * dir;
-    if (Math.abs(net) <= max) {
-      total += net;
-      return;
-    }
-    if (Math.abs(d) >= b) {
-      total += Math.sign(net) * max;
+    let f: number;
+    if (Math.abs(net) <= max) f = net;
+    else if (Math.abs(d) >= b) {
+      f = Math.sign(net) * max;
       if (slip) slip[i] = 1;
     } else {
-      total -= dir * max;
+      f = -dir * max;
       if (slip && Math.abs(vFwd) > KING.lockSpeed) slip[i] = -1;
     }
+    total += f;
+    if (per) per[i] = (per[i] ?? 0) + f;
   });
   return total;
 }
