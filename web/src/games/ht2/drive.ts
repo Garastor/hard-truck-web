@@ -207,7 +207,7 @@ function cabAmbient(hour: number): number {
  * Підйом місця водія (разом із салоном) над `viewer` з vehicle.tech, м — на око, на прохання користувача: інакше
  * між задньою кромкою капота й панеллю приладів видно щілину (king.exe ставить око інакше — re/notes/ht2/weather.md).
  */
-const COCKPIT_LIFT = new THREE.Vector3(0, 0.2, 0);
+const COCKPIT_LIFT = new THREE.Vector3(0, 0.12, 0);
 /** Дальність видимості трафіку без туману в сцені, м. */
 const VIEW_FALLBACK = 900;
 /** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
