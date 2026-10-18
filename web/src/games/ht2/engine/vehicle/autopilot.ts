@@ -73,6 +73,13 @@ export class WayNet {
   }
 }
 
+/** Огляд перешкод попереду, м; зупинка за стільки до перешкоди (точки), м; розрахункове сповільнення, м/с². */
+const BLOCK_LOOK = 60;
+/** Перешкода «на курсі» — ближче за стільки вбік від осі машини (півширини обох + запас), м. */
+const STOP_SIDE = 2.6;
+const STOP_GAP = 10;
+const BLOCK_DECEL = 3;
+
 export class AutoPilot {
   readonly state: ControlState = { steer: 0, throttle: 0, brake: 0, handbrake: false };
   /** Бажана крейсерська швидкість, км/год. */
@@ -97,6 +104,16 @@ export class AutoPilot {
   lane = 0;
 
   constructor(private readonly net: WayNet) {}
+
+  /** Відстань до перешкоди попереду минулого кроку й швидкість зближення з нею, м і м/с. */
+  private prevBlock = Infinity;
+  private closing = 0;
+  /**
+   * Обгін зсувом убік на ходу (гонка, автопілот гравця). Далекобійники-боти не обганяють (як «обережні» водії
+   * king.exe): тягач з довгим причепом, кидаючись убік, чіпляв боком того, кого обʼїжджав, а зсуви між ботами й
+   * трафіком виглядали зигзагами; бот стоїть за перешкодою.
+   */
+  dodge = true;
 
   update(
     pos: THREE.Vector3,
@@ -137,20 +154,29 @@ export class AutoPilot {
     const target = this.net.advance(n.line, n.seg, n.t, look);
     // Машини попереду в «коридорі» → обгін зсувом убік, а якщо дуже близько — гальмуємо.
     const rightV = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+    // blockDist — у коридорі обгону (зі зсувом); stopDist — там, куди машина їде (з обгоном — той самий коридор).
     let blockDist = Infinity;
     let blockSide = 0;
+    let stopDist = Infinity;
     for (const o of others) {
       const rel = o.clone().sub(pos);
       const ahead = rel.dot(forward);
-      const lateral = rel.dot(rightV) - this.offset;
-      if (ahead > 0 && ahead < 25 && Math.abs(lateral) < 3) {
-        if (ahead < blockDist) {
-          blockDist = ahead;
-          blockSide = lateral >= 0 ? -1 : 1;
-        }
+      if (ahead <= 0 || ahead > BLOCK_LOOK) continue;
+      const side = rel.dot(rightV);
+      const lateral = side - this.offset;
+      if (Math.abs(this.dodge ? lateral : side) < STOP_SIDE) stopDist = Math.min(stopDist, ahead);
+      if (ahead < 25 && Math.abs(lateral) < 3 && ahead < blockDist) {
+        blockDist = ahead;
+        blockSide = lateral >= 0 ? -1 : 1;
       }
     }
-    const wantOffset = blockDist < 25 ? this.lane + blockSide * 3.2 : this.lane;
+    // Швидкість зближення з перешкодою на курсі (за зміною відстані, згладжена).
+    if (Number.isFinite(stopDist) && Number.isFinite(this.prevBlock) && dt > 0) {
+      const c = (this.prevBlock - stopDist) / dt;
+      if (Math.abs(c) < 60) this.closing += (c - this.closing) * Math.min(1, dt * 4);
+    } else this.closing = speedKmh / 3.6;
+    this.prevBlock = stopDist;
+    const wantOffset = this.dodge && blockDist < 25 ? this.lane + blockSide * 3.2 : this.lane;
     this.offset += THREE.MathUtils.clamp(wantOffset - this.offset, -2 * dt, 2 * dt);
     target.addScaledVector(rightV, this.offset);
     const far = this.net.advance(n.line, n.seg, n.t, 12 + speedKmh * 0.6);
@@ -166,11 +192,20 @@ export class AutoPilot {
     const want = this.cruise * (1 - Math.min(1 - this.bendFloor, bend * this.bendGain));
     s.throttle = speedKmh < want ? Math.min(1, (want - speedKmh) / 10 + 0.3) : 0;
     s.brake = speedKmh > want + 8 ? Math.min(1, (speedKmh - want) / 20) : 0;
-    if (blockDist < 9 && speedKmh > 8) {
-      s.throttle = 0;
-      s.brake = 0.6;
-    }
     s.handbrake = false;
+    // Перешкода попереду (порт): гальмувати за швидкістю зближення, щоб стати за STOP_GAP м (сповільнення до
+    // BLOCK_DECEL); ближче STOP_GAP — стоїть на ручному (утримання педалі на місці вмикає задній хід). Раніше гальмо
+    // 0,6 лише ближче 9 м і відпускалося нижче 8 км/год: бот на ходу чи «доповзаючи» вʼїжджав у гравця, що стоїть.
+    const v = speedKmh / 3.6;
+    const room = stopDist - STOP_GAP;
+    if (room < 0) {
+      s.throttle = 0;
+      s.brake = v > 0.5 ? 1 : 0;
+      s.handbrake = v <= 0.5;
+    } else if (this.closing > 0.5 && room < (this.closing * this.closing) / (2 * BLOCK_DECEL) + 4) {
+      s.throttle = 0;
+      s.brake = Math.min(1, Math.max(0.3, (this.closing * this.closing) / (2 * Math.max(1, room)) / BLOCK_DECEL));
+    }
     return s;
   }
 }

@@ -2860,7 +2860,8 @@ export class Ht2Drive {
     const me = [this.truck.visual.position, ...alongPoints(this.truck), ...(this.trailer?.points() ?? [])];
     const rigs = (this.truckers?.rigs ?? []).map((r) => [...alongPoints(r.truck), ...(r.trailer?.points() ?? [])]);
     this.traffic?.update(dt, this.truck.visual.position, [me, ...rigs]);
-    const obstacles = [this.truck.visual.position, ...(this.trailer?.points() ?? []), ...(this.traffic?.cars.map((c) => c.pos) ?? [])];
+    // Для автопілотів ботів гравець — точками вздовж машини (одна точка в центрі лишала передок і задок «невидимими»).
+    const obstacles = [...me, ...(this.traffic?.cars.map((c) => c.pos) ?? [])];
     this.updateSurface();
     this.acc += dt;
     const step = this.rapier.timestep;

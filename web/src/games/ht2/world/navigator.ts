@@ -23,11 +23,15 @@ export class Navigator {
   private dist: Map<RoadLine, number> | null = null;
   private targetKey = '';
 
-  constructor(private readonly roads: Ht2Roads) {
+  /** extra — додаткова «вартість» лінії, м (трафік: штраф за звивистість, traffic/driver.routePenalty). */
+  constructor(
+    private readonly roads: Ht2Roads,
+    extra?: (l: RoadLine) => number,
+  ) {
     for (const l of roads.lines) {
       let len = 0;
       for (let i = 1; i < l.pts.length; i++) len += l.pts[i].distanceTo(l.pts[i - 1]);
-      this.length.set(l, len);
+      this.length.set(l, len + (extra?.(l) ?? 0));
       for (const n of l.next) (this.prev.get(n as RoadLine) ?? this.prev.set(n as RoadLine, []).get(n as RoadLine)!).push(l);
     }
   }

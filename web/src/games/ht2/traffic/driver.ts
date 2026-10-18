@@ -380,6 +380,32 @@ export function setGoals(maps: Map<RoadLine, number>[]): void {
   goals = maps;
 }
 
+/** Штраф маршруту за поворот, м/рад (порт). */
+const TURN_COST = 25;
+const windings = new WeakMap<RoadLine, number>();
+
+/** Штраф лінії для маршрутів трафіку (Navigator): звивистість, м. */
+export function routePenalty(l: RoadLine): number {
+  return TURN_COST * winding(l);
+}
+
+/** Сума кутів повороту всередині лінії, рад. */
+function winding(l: RoadLine): number {
+  let w = windings.get(l);
+  if (w !== undefined) return w;
+  w = 0;
+  let prev: THREE.Vector3 | null = null;
+  for (let i = 1; i < l.pts.length; i++) {
+    const d = l.pts[i].clone().sub(l.pts[i - 1]).setY(0);
+    if (d.lengthSq() < 0.25) continue;
+    d.normalize();
+    if (prev) w += Math.acos(THREE.MathUtils.clamp(prev.dot(d), -1, 1));
+    prev = d;
+  }
+  windings.set(l, w);
+  return w;
+}
+
 function planNext(m: Mover): void {
   // Закриту завалом дорогу оминаємо, якщо є інша (world/obstacles.ts).
   const all = m.line.next as RoadLine[];
@@ -397,7 +423,10 @@ function planNext(m: Mover): void {
     let best: RoadLine | null = null;
     let bd = Infinity;
     for (const l of next) {
-      const d = (g.get(l) ?? Infinity) + l.length;
+      // Порт: звивистість — штраф TURN_COST м за радіан повороту на стику й усередині лінії. Без нього на базах
+      // ланцюжок паркувальних кишень (по 27 м з поворотом 94°) і пряма поруч майже однакові за довжиною — трафік
+      // навмання їхав кишенями й виписував зигзаги.
+      const d = (g.get(l) ?? Infinity) + l.length + TURN_COST * (Math.abs(turnAngle(m.line, l)) + winding(l));
       if (d < bd) {
         bd = d;
         best = l;

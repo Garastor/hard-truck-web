@@ -144,6 +144,7 @@ export class Truckers {
     this.drive.world.scene.add(truck.visual);
     const pilot = kingPilot(new AutoPilot(this.roads), truck.base);
     pilot.cruise = 50 + Math.random() * 25;
+    pilot.dodge = false;
     const trailer = rec.group === 'tractors' ? this.hitch(truck, rec) : null;
     // З напівпричепом — повільніше в поворотах, як автопілот гравця (drive: команда autopilot).
     if (trailer) Object.assign(pilot, { cruise: 45 + Math.random() * 10, bendGain: 5, bendFloor: 0.25 });
