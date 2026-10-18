@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { buildTruckModel, visibleBox, type TruckDef } from '../engine/vehicle/trucks';
-import { TIRE } from '../engine/vehicle/truckVehicle';
+import { TIP_OFF, TIP_ON, TIRE } from '../engine/vehicle/truckVehicle';
 import { HitMeter } from '../engine/vehicle/hitMeter';
 import { g2t } from '../engine/physics/world';
 import type { TechRecord } from '../formats/tech';
@@ -145,6 +145,10 @@ export class Trailer {
       this.ctrl.setWheelFrictionSlip(i, 1.4);
       // Бічні сили — як у тягача (lateral), без вбудованого тертя Rapier: воно слабшає під гальмами.
       this.ctrl.setWheelSideFrictionStiffness(i, 0);
+      // Шина перекинутого причепа (як у тягача, TruckVehicle TIP_ON): опора на колесо, а не на ребро кузова.
+      const tire = world.createCollider(RAPIER.ColliderDesc.ball(rec.wheelRadius).setTranslation(c.x, c.y - SUSP_ANCHOR, c.z).setDensity(0).setFriction(0.8).setRestitution(0.05), this.body);
+      tire.setEnabled(false);
+      this.tires.push(tire);
     });
     const joint = RAPIER.JointData.spherical(
       { x: this.saddle.x, y: this.saddle.y, z: this.saddle.z },
@@ -171,6 +175,8 @@ export class Trailer {
     this.body.setRotation(rotation, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.groundUp.set(0, 1, 0);
+    this.updateTip();
     this.hits.reset();
     this.savePrev();
   }
@@ -216,6 +222,7 @@ export class Trailer {
       this.ctrl.setWheelFrictionSlip(i, 0);
     }
     this.ctrl.updateVehicle(dt, undefined, undefined, (c) => c.parent()?.handle !== this.tractor.body.handle);
+    this.updateGroundUp();
     const n = new THREE.Vector3();
     for (let i = 0; i < this.wheels.length; i++) {
       const nr = this.ctrl.wheelIsInContact(i) ? this.ctrl.wheelContactNormal(i) : null;
@@ -288,10 +295,47 @@ export class Trailer {
     return Math.abs(this.articulation) > BREAK_FOLD || u1.dot(u2) < BREAK_TILT || u1.y < 0 || u2.y < 0 || this.gap > BREAK_GAP;
   }
 
+  /**
+   * Перекинутий (як тягач, TruckVehicle TIP_ON): промені підвіски нахиляються з кузовом і на крені ≈ 45° підпирали
+   * причіп з-під центру мас — він їхав боком на двох колесах. Кузов відхилився від нормалі ґрунту понад TIP_ON — колеса не
+   * тримають і не ведуть (без руху king.exe й бічних сил), опора — кулі-шини: причіп падає; знову на колесах — ближче TIP_OFF.
+   */
+  tipped = false;
+  private readonly tires: RAPIER.Collider[] = [];
+  private readonly groundUp = new THREE.Vector3(0, 1, 0);
+
+  private updateTip(): void {
+    const r = this.body.rotation();
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w));
+    const tipped = up.dot(this.groundUp) < Math.cos(this.tipped ? TIP_OFF : TIP_ON);
+    if (tipped === this.tipped) return;
+    this.tipped = tipped;
+    for (let i = 0; i < this.wheels.length; i++) this.ctrl.setWheelMaxSuspensionForce(i, tipped ? 0 : this.mass * 40);
+    for (const t of this.tires) t.setEnabled(tipped);
+  }
+
+  /** Після кроку підвіски на колесах: нормаль ґрунту — середня нормаль контактів. */
+  private updateGroundUp(): void {
+    if (this.tipped) return;
+    const n = new THREE.Vector3();
+    for (let i = 0; i < this.wheels.length; i++) {
+      const nr = this.ctrl.wheelIsInContact(i) ? this.ctrl.wheelContactNormal(i) : null;
+      if (nr) n.add(nr as THREE.Vector3Like);
+    }
+    if (n.lengthSq() > 1e-6) this.groundUp.copy(n.normalize());
+  }
+
   /** Крок фізики (до world.step): гальма й опір кочення; kinematic — рух king.exe (follow). */
   update(dt: number, brake: number, brakePower: number, kinematic = false): void {
     this.savePrev();
     this.kinematic = kinematic;
+    this.updateTip();
+    if (this.tipped) {
+      // Перекинутий: лише Rapier (шарнір тримає зчіпку), колеса не тримають.
+      this.ctrl.updateVehicle(dt, undefined, undefined, (c) => c.parent()?.handle !== this.tractor.body.handle);
+      this.updateGroundUp();
+      return;
+    }
     if (kinematic) {
       this.hits.begin(dt);
       this.follow(dt);
@@ -303,6 +347,7 @@ export class Trailer {
     for (let i = 0; i < n; i++) this.ctrl.setWheelBrake(i, force * dt);
     // Промені коліс причепа — повз тягач (і навпаки, див. drive.hitch).
     this.ctrl.updateVehicle(dt, undefined, undefined, (c) => c.parent()?.handle !== this.tractor.body.handle);
+    this.updateGroundUp();
     this.lateral(dt);
     this.hitchDamper(dt);
   }
