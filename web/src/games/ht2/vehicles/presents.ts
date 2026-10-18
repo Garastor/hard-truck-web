@@ -114,8 +114,11 @@ const FUEL_REACH = 150;
 /** Дорожні місії: період перевірки (с) і найменша відстань нового місця від гравця (м). */
 const MISSION_PERIOD = 7;
 const MISSION_MIN_DIST = 700;
-/** Місце вважається зайнятим, якщо ближче стоїть причіп, м (гіпотеза порту). */
-const OCCUPIED_R = 20;
+/**
+ * Місце вважається зайнятим, якщо ближче стоїть причіп, м (гіпотеза порту; найближчі місця бази — за 15,8 м, тож
+ * більший радіус лишав одне з них порожнім назавжди).
+ */
+const OCCUPIED_R = 8;
 /** Причіп має модель і колізію ближче цієї відстані від гравця, м. */
 const MODEL_RANGE = 350;
 /** Пошук present'а для зчіпки, м (0x56ffd0). */
@@ -189,6 +192,8 @@ export class Presents {
   private roads: { places: Place[]; limit: number; lot: (p: Place) => MissionLot | null } | null = null;
   private missionTimer = 0;
   private missionStart = true;
+  /** Перше поповнення (king.exe 0x434780, minDist = 0): порожні причепи на всіх вільних місцях, зокрема біля гравця. */
+  private baseStart = true;
 
   constructor(
     private readonly ctx: PresentsCtx,
@@ -238,7 +243,7 @@ export class Presents {
         ...(s.dents ? { dents: s.dents } : {}),
       });
     }
-    if (saved.length) this.missionStart = false;
+    if (saved.length) this.missionStart = this.baseStart = false;
   }
 
   /**
@@ -272,13 +277,17 @@ export class Presents {
       const p = this.list[i];
       if (p.dropped !== null && !p.order && time - p.dropped > STRAY_AGE && p.pos.distanceTo(player) > STRAY_FAR) this.remove(i);
     }
-    const based = this.list.filter((p) => p.place && !p.lot).length;
-    if (based < this.limit) {
+    // На старті — до ліміту будь-де (як у king.exe: бази одразу з причепами); далі — по одному поза зоною моделей,
+    // щоб причіп не зʼявлявся на очах.
+    const min = this.baseStart ? -1 : MODEL_RANGE;
+    for (let n = this.list.filter((p) => p.place && !p.lot).length; n < this.limit; n++) {
       const used = new Set(this.list.map((p) => p.place));
-      // Нове — лише поза полем зору гравця (поза зоною моделей), щоб причіп не зʼявлявся на очах.
-      const free = this.places.filter((pl) => !used.has(pl) && !this.occupied(pl) && pl.pos.distanceTo(player) > MODEL_RANGE);
-      if (free.length) this.spawn(free[Math.floor(this.rnd() * free.length)], compatible);
+      const free = this.places.filter((pl) => !used.has(pl) && !this.occupied(pl) && pl.pos.distanceTo(player) > min);
+      if (!free.length) break;
+      this.spawn(free[Math.floor(this.rnd() * free.length)], compatible);
+      if (!this.baseStart) break;
     }
+    this.baseStart = false;
     // Дорожні місії: раз на 7 с (0x41ed50), не ближче 700 м від гравця; на старті — до ліміту будь-де (0x434780).
     const r = this.roads;
     if (r && (this.missionStart || (this.missionTimer -= dt) <= 0)) {

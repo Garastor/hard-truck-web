@@ -140,6 +140,49 @@ describe('HT2: водій трафіку', () => {
     }
   });
 
+  it('машину після ДТП (стоїть без причини) обʼїжджає зустрічною; ту, що в черзі, — ні', () => {
+    for (const queued of [false, true]) {
+      const lanes = road(straight(1000), 1, 0);
+      const m = newMover(lanes[0], 0, 0, 20, 2);
+      const wreck = newMover(lanes[0], 20, 0, 0, 2);
+      Object.assign(wreck, { still: 10, queued });
+      const o: Obstacle = { pos: wreck.pos.clone(), vel: new THREE.Vector3(), half: 2, mover: wreck };
+      let passed = false;
+      run(m, 40, [o], () => (passed ||= m.pos.z < o.pos.z - 5));
+      expect(passed).toBe(!queued);
+    }
+  });
+
+  it('у тупику розвертається на зустрічну смугу (порт), а не стоїть', () => {
+    const [l] = road(straight(200), 1, 0);
+    // Зустрічна смуга — ліворуч від осі, у зворотний бік.
+    const back = straight(200).reverse().map((p) => p.clone().setX(-1.5));
+    const o: RoadLine = { ...l, name: 'back', pts: back, next: [], siblings: [] };
+    o.siblings.push(o);
+    l.opposite = [o];
+    o.opposite = [l];
+    const m = newMover(l, 10, 0, 15, 2);
+    run(m, 20);
+    expect(m.gone).toBe(false);
+    expect(m.line).toBe(o);
+    expect(m.heading.z).toBeGreaterThan(0.9);
+  });
+
+  it('гравця, що виїжджає поперек смуги, помічає наперед і пропускає', () => {
+    const lanes = road(straight(1000), 1, 0);
+    const m = newMover(lanes[0], 0, 0, 20, 2);
+    // Гравець за 18 м праворуч від смуги, 70 м уперед, їде вліво 6 м/с — у смузі за ≈ 2,6 с, коли машина за ≈ 18 м:
+    // помітивши його лише тоді, вона б не встигла загальмувати.
+    const player: Obstacle = { pos: new THREE.Vector3(19.5, 0, -70), vel: new THREE.Vector3(-6, 0, 0), half: 2.5 };
+    let closest = Infinity;
+    run(m, 15, [player], () => {
+      if (player.pos.x > -10) player.pos.x -= 6 / 30;
+      else player.vel.set(0, 0, 0);
+      closest = Math.min(closest, Math.hypot(player.pos.x - m.pos.x, player.pos.z - m.pos.z));
+    });
+    expect(closest).toBeGreaterThan(5);
+  });
+
   it('зустрічна зайнята — чекає', () => {
     const lanes = road(straight(1000), 1, 0);
     const m = newMover(lanes[0], 0, 0, 20, 2);

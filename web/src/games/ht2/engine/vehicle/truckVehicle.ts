@@ -209,6 +209,14 @@ const EXHAUST_GAS = 0.5;
 const EXHAUST_TIME = 2;
 /** Ковзання вбік (king.exe [0x19c4]): |sin α| понад це. */
 const SKID_SIN = 0.26;
+/**
+ * Перекидання (порт): промені підвіски Rapier нахиляються разом із кузовом, і на крені ≈ 45° точки опору зсуваються під
+ * центр мас — машина «стояла» й їхала на двох колесах. Кузов відхилився від нормалі ґрунту понад TIP_ON — колеса не
+ * тримають (сила пружин 0, без тяги й бічних сил): машина падає на бік або повертається на колеса; знову на колесах —
+ * ближче TIP_OFF. Поріг — трохи за статичною стійкістю вантажівки (півколія / висота центру мас ≈ 1 / 1,5 → 34°).
+ */
+const TIP_ON = (38 * Math.PI) / 180;
+const TIP_OFF = (25 * Math.PI) / 180;
 
 /** Габарити машини для світла фар (земля під машиною, передня й задня межі, ширина) — у системі моделі. */
 export interface LightGeometry {
@@ -253,8 +261,41 @@ export class TruckVehicle {
     const f = 1 + newtons / (this.mass * 9.81 * 0.5);
     for (let i = 2; i < this.wheels; i++) {
       this.ctrl.setWheelSuspensionStiffness(i, SUSPENSION.stiffness * f);
-      this.ctrl.setWheelMaxSuspensionForce(i, this.mass * 40 * f);
+      this.suspMax[i] = this.mass * 40 * f;
+      if (!this.tipped) this.ctrl.setWheelMaxSuspensionForce(i, this.suspMax[i]);
     }
+  }
+
+  /** Перекинута (див. TIP_ON): колеса не тримають. */
+  tipped = false;
+  /** Кулі-шини, увімкнені лише в перекинутої машини. */
+  private readonly tires: RAPIER.Collider[] = [];
+  /** Найбільша сила пружини коліс (відновлюється, коли машина знову на колесах). */
+  private readonly suspMax: number[] = [];
+  /** Нормаль ґрунту під колесами з останнього кроку, коли машина була на колесах. */
+  private readonly groundUp = new THREE.Vector3(0, 1, 0);
+
+  /** Перед кроком: чи перекинута (кут між віссю кузова вгору й нормаллю ґрунту, з гістерезисом). */
+  private updateTip(): void {
+    const r = this.body.rotation();
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w));
+    const cos = up.dot(this.groundUp);
+    const tipped = cos < Math.cos(this.tipped ? TIP_OFF : TIP_ON);
+    if (tipped === this.tipped) return;
+    this.tipped = tipped;
+    for (let i = 0; i < this.wheels; i++) this.ctrl.setWheelMaxSuspensionForce(i, tipped ? 0 : (this.suspMax[i] ?? this.mass * 40));
+    for (const t of this.tires) t.setEnabled(tipped);
+  }
+
+  /** Після кроку підвіски на колесах: нормаль ґрунту — середня нормаль контактів. */
+  private updateGroundUp(): void {
+    if (this.tipped) return;
+    const n = new THREE.Vector3();
+    for (let i = 0; i < this.wheels; i++) {
+      const nr = this.ctrl.wheelIsInContact(i) ? this.ctrl.wheelContactNormal(i) : null;
+      if (nr) n.add(nr as THREE.Vector3Like);
+    }
+    if (n.lengthSq() > 1e-6) this.groundUp.copy(n.normalize());
   }
 
   private readonly wheelRadius: number;
@@ -605,9 +646,15 @@ export class TruckVehicle {
       this.ctrl.setWheelSuspensionRelaxation(i, SUSPENSION.relaxation);
       this.ctrl.setWheelMaxSuspensionTravel(i, SUSPENSION.travel);
       this.ctrl.setWheelMaxSuspensionForce(i, mass * 40);
+      this.suspMax[i] = mass * 40;
       this.ctrl.setWheelFrictionSlip(i, TIRE_GRIP * this.grip);
       // Бічні сили шин рахуємо самі (applyTireLateral) — у Rapier вимикаємо.
       this.ctrl.setWheelSideFrictionStiffness(i, 0);
+      // Шина перекинутої машини (TIP_ON): опора на зовнішнє колесо, а не на ребро кузова-колайдера (він високо над
+      // дорогою — машина на ньому поверталась на колеса, як ванька-встанька). Без маси; на колесах — вимкнена.
+      const tire = world.createCollider(RAPIER.ColliderDesc.ball(this.wheelRadius).setTranslation(c.x, c.y - this.suspAnchor, c.z).setDensity(0).setFriction(0.8).setRestitution(0.05), this.body);
+      tire.setEnabled(false);
+      this.tires.push(tire);
     }
 
     // Бампери: корпус-колайдер високо (низ ≈ 1 м над дорогою), а колеса — промені, тож низькі предмети (ящики,
@@ -686,6 +733,7 @@ export class TruckVehicle {
   /** Крок фізики керування (до world.step). */
   update(dt: number, input: ControlState): void {
     this.savePrev();
+    this.updateTip();
     const tech = this.def.tech;
     // Швидкість уздовж напрямку «уперед» (−Z локально), м/с; + уперед.
     const lv = this.body.linvel();
@@ -774,6 +822,8 @@ export class TruckVehicle {
       this.ctrl.setWheelBrake(i, force * dt);
     }
     this.ctrl.updateVehicle(dt, undefined, undefined, this.rayFilter);
+    this.updateGroundUp();
+    if (this.tipped) return;
     this.applyBumpStops(dt);
     this.applyTireLateral(dt);
   }
@@ -810,6 +860,14 @@ export class TruckVehicle {
     ctrl.setWheelSteering(0, Math.sign(this.steerAngle) * (left ? inner : outer));
     ctrl.setWheelSteering(1, Math.sign(this.steerAngle) * (left ? outer : inner));
     ctrl.updateVehicle(dt, undefined, undefined, this.rayFilter);
+    this.updateGroundUp();
+    if (this.tipped) {
+      // Перекинута: колеса не тримають і не везуть — кузов падає (рух лише Rapier).
+      this.axleSide.set(0, 0, 0);
+      this.slip.fill(0);
+      this.skid.fill(false);
+      return;
+    }
     this.applyBumpStops(dt);
     // Швидкість — уже з імпульсами підвіски (їх не затирати: інакше кузов провалюється крізь дорогу).
     const lv = this.body.linvel();
@@ -1335,6 +1393,8 @@ export class TruckVehicle {
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.axleSide.set(0, 0, 0);
     this.tireAcc.set(0, 0, 0);
+    this.groundUp.set(0, 1, 0);
+    this.updateTip();
     Object.assign(this.spring, { z: 0, vz: 0, roll: 0, vroll: 0, pitch: 0, vpitch: 0 });
     this.hits.reset();
     this.reverseMode = false;

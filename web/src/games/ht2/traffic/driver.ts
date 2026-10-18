@@ -13,8 +13,14 @@ import type { RoadLine } from '../world/roads';
  *   між D і D + 20 — підлаштуватися під швидкість лідера, ближче — гальмувати (порт: плавно до зупинки за 3 м).
  * - Обʼїзд (0x4d57c0): обережні обʼїжджають лише того, хто стоїть чи повзе (≤ 5 м/с): у сусідню смугу свого
  *   напрямку, якщо вона вільна; інакше — по зустрічній (лише без бітів 4/8 в ATTR і коли вона вільна), інакше —
- *   узбіччям. Зустрічною й узбіччям порт обʼїжджає лише гравця, його причіп і суперників після BYPASS_WAIT с стоянки
- *   (інакше в обʼїзд кидається вся черга на стику — гіпотеза порту).
+ *   узбіччям. Зустрічною й узбіччям порт обʼїжджає гравця, його причіп, суперників і машини трафіку, що стоять без
+ *   причини (ДТП, застрягла: не в черзі за іншою, не на червоне й не пропускає) понад BYPASS_WAIT с, — після BYPASS_WAIT с
+ *   своєї стоянки (інакше в обʼїзд кидається вся черга на стику — гіпотеза порту).
+ * - Тупик (порт): машина розвертається на зустрічну смугу (у king.exe маршрут веде до цілі, тупиків на ньому немає;
+ *   у порту машина в тупику стояла, доки її видно, — на базах це блокувало рух).
+ * - Перешкода, що рухається не по смугах (гравець, суперник), — і там, де вона буде (траєкторія на PREDICT с, крок
+ *   PREDICT_STEP): лідер, якщо ми доїдемо до цієї точки шляху майже тоді ж (±CROSS_MARGIN с). Виїзд гравця з бази
+ *   поперек смуги трафік інакше помічав, лише коли той уже в смузі.
  * - Маршрут: на кожній лінії заздалегідь вибирається дорога після стику (у king.exe — маршрут до випадкової цілі,
  *   тож повороти так само випадкові); ближче 100 м до стику — перестроювання (changeLanes 0x420360): праворуч —
  *   у крайню праву смугу, ліворуч — у смугу біля осі, прямо — лишитись (іноді — випадкова смуга).
@@ -72,6 +78,10 @@ const BRAKE = 7;
 const PATH_HALF = 2.2;
 /** Скільки чекати за перешкодою, що стоїть, перш ніж обʼїжджати зустрічною чи узбіччям, с. */
 const BYPASS_WAIT = 3;
+/** Передбачення руху перешкоди не на смугах (гравець): на скільки, з яким кроком і допуском часу зустрічі, с. */
+const PREDICT = 3;
+const PREDICT_STEP = 0.25;
+const CROSS_MARGIN = 1.5;
 /** Зустрічна має бути вільна на стільки вперед, м. */
 const BYPASS_CLEAR = 120;
 /**
@@ -118,6 +128,9 @@ export interface Mover {
   bypass: THREE.Vector3 | null;
   /** Скільки стоїть за перешкодою, с. */
   waited: number;
+  /** Скільки стоїть (швидкість < 0,5 м/с), с, і чи з причини руху (черга за машиною, червоне, пропуск). */
+  still: number;
+  queued: boolean;
   /** Обганяє по зустрічній (bypass — машина, яку обганяє). */
   overtaking: boolean;
   /** Смуга, у яку повернутися після обгону сусідньою смугою (−1 — немає). */
@@ -181,11 +194,6 @@ function towardBlock(m: Mover): boolean {
   if (!m.line.closed) return false;
   if (!b) return true;
   return (b.x - m.pos.x) * m.heading.x + (b.z - m.pos.z) * m.heading.z > 0;
-}
-
-/** Попереду лише закриті продовження (дорогу перекрито завалом) — не справжній тупик. */
-function blockedAhead(line: RoadLine): boolean {
-  return line.next.length > 0 && (line.next as RoadLine[]).every((l) => l.closed);
 }
 
 /** Найближча точка лінії до p. */
@@ -279,6 +287,11 @@ function sameBody(a: Obstacle, b: Obstacle): boolean {
   return a === b || (a.group !== undefined && a.group === b.group);
 }
 
+/** Машина трафіку стоїть без причини (ДТП, застрягла) — її обʼїжджають, як гравця. */
+function stalled(o: Mover): boolean {
+  return o.still > BYPASS_WAIT && !o.queued;
+}
+
 /** Точка тіла перешкоди, найдальша вперед за курсом heading (кінець обʼїзду — коли минули її). */
 function frontOf(o: Obstacle, obstacles: readonly Obstacle[], heading: THREE.Vector3): THREE.Vector3 {
   let best = o.pos;
@@ -301,6 +314,8 @@ export function newMover(line: RoadLine, seg: number, t: number, cruise: number,
     latGoal: 0,
     bypass: null,
     waited: 0,
+    still: 0,
+    queued: false,
     overtaking: false,
     backLane: -1,
     waitJ: 0,
@@ -500,26 +515,38 @@ export function leaderOn(
   // Далі кінця шляху (з запасом) перешкода не на шляху.
   const reach = (path.s[path.s.length - 1] ?? 0) + 10;
   const ab = new THREE.Vector3();
+  const ahead = new THREE.Vector3();
   for (const o of obstacles) {
     if (o.mover === m) continue;
-    if (o.pos.distanceTo(m.pos) > reach) continue;
-    for (let i = 0; i + 1 < path.pts.length; i++) {
-      const a = path.pts[i];
-      ab.subVectors(path.pts[i + 1], a).setY(0);
-      const len = ab.length();
-      if (!len) continue;
-      ab.divideScalar(len);
-      const along = (o.pos.x - a.x) * ab.x + (o.pos.z - a.z) * ab.z;
-      if (along < -o.half || along > len + o.half) continue;
-      const s = path.s[i] + THREE.MathUtils.clamp(along, 0, len);
-      // Бічна відстань праворуч від шляху (вектор праворуч — (−z, x)) мінус наш зсув — запланований на мить, коли
-      // доїдемо до перешкоди (S-крива маневру), якщо не задано інший.
-      const side = Math.abs((o.pos.z - a.z) * ab.x - (o.pos.x - a.x) * ab.z - (lat ?? offAt(m, s / Math.max(2, m.speed))));
-      if (side > PATH_HALF) continue;
-      if (s <= 0.5) continue; // поруч чи позаду — не лідер
-      const gap = s - m.halfLen - o.half;
-      if (!best || gap < best.gap) best = { gap, speed: Math.max(0, o.vel.x * ab.x + o.vel.z * ab.z), obstacle: o };
-      break;
+    const dist = o.pos.distanceTo(m.pos);
+    if (dist > reach + PREDICT * o.vel.length()) continue;
+    // Перешкода не на смугах (гравець) — ще й на своїй траєкторії: точка через tau с — перешкода, якщо ми будемо там
+    // майже тоді ж.
+    const moving = !o.mover && o.vel.lengthSq() >= 1;
+    for (let tau = 0; tau <= (moving ? PREDICT : 0) + 1e-6; tau += PREDICT_STEP) {
+      const q = tau ? ahead.copy(o.pos).addScaledVector(o.vel, tau).setY(o.pos.y) : o.pos;
+      let hit = false;
+      for (let i = 0; i + 1 < path.pts.length; i++) {
+        const a = path.pts[i];
+        ab.subVectors(path.pts[i + 1], a).setY(0);
+        const len = ab.length();
+        if (!len) continue;
+        ab.divideScalar(len);
+        const along = (q.x - a.x) * ab.x + (q.z - a.z) * ab.z;
+        if (along < -o.half || along > len + o.half) continue;
+        const s = path.s[i] + THREE.MathUtils.clamp(along, 0, len);
+        // Бічна відстань праворуч від шляху (вектор праворуч — (−z, x)) мінус наш зсув — запланований на мить, коли
+        // доїдемо до перешкоди (S-крива маневру), якщо не задано інший.
+        const side = Math.abs((q.z - a.z) * ab.x - (q.x - a.x) * ab.z - (lat ?? offAt(m, s / Math.max(2, m.speed))));
+        if (side > PATH_HALF) continue;
+        if (s <= 0.5) continue; // поруч чи позаду — не лідер
+        if (tau && Math.abs(s / Math.max(2, m.speed) - tau) > CROSS_MARGIN) continue;
+        const gap = s - m.halfLen - o.half;
+        if (!best || gap < best.gap) best = { gap, speed: Math.max(0, o.vel.x * ab.x + o.vel.z * ab.z), obstacle: o };
+        hit = true;
+        break;
+      }
+      if (hit) break;
     }
   }
   return best;
@@ -656,8 +683,8 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
   const canShift = settled && !(m.seg === 0 && m.from);
   // Лідер повільніший за нас (порт: обгін рухомих; king.exe обʼїжджає лише тих, хто стоїть).
   const slow = !!leader && leader.gap < LEADER_GAP + FOLLOW_ZONE && (leader.speed <= SLOW_OBSTACLE || (!!leader.obstacle.mover && leader.speed < m.cruise - OVERTAKE_DV));
-  if (settled && leader && !leader.obstacle.mover && m.waited > BYPASS_WAIT) {
-    // Своя смуга заблокована гравцем чи суперником: сусідня смуга, інакше зустрічна, інакше узбіччя.
+  if (settled && leader && (!leader.obstacle.mover || stalled(leader.obstacle.mover)) && m.waited > BYPASS_WAIT) {
+    // Своя смуга заблокована гравцем, суперником чи машиною після ДТП: сусідня смуга, інакше зустрічна, інакше узбіччя.
     const w = m.line.laneWidth;
     const goals = [m.line.lane > 0 ? -w : null, m.line.lane < m.line.lanes - 1 ? w : null, m.line.flags & 12 ? null : -(m.line.lane + 1) * w, (m.line.lanes - m.line.lane) * w];
     for (const g of goals) {
@@ -722,7 +749,11 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
     }
   } else m.redStop = false;
   // Підповзати впритул (бажана швидкість, пропорційна залишку дистанції) — неприродно: менше 0,3 м/с — стоїть.
-  return want < 0.3 ? 0 : want;
+  if (want < 0.3) want = 0;
+  // Чи стоїть з причини руху (черга за машиною, червоне, пропуск) — інакше її обʼїжджають (stalled).
+  m.still = m.speed < 0.5 ? m.still + dt : 0;
+  m.queued = want < 1 && ((!!leader?.obstacle.mover && leader.gap < LEADER_GAP + FOLLOW_ZONE) || m.redStop || m.waitJ > 0);
+  return want;
 }
 
 function endBypass(m: Mover): void {
@@ -904,7 +935,7 @@ export function sync(m: Mover, p: THREE.Vector3, fwd: THREE.Vector3, speed: numb
     // За кінцем лінії — на заплановану наступну.
     if (best === m.line.pts.length - 2 && bestT >= 1) {
       const nx = nextLine(m.line, m.plan, m.line.lane);
-      if (!nx && blockedAhead(m.line) && turnBack(m)) continue;
+      if (!nx && turnBack(m)) continue;
       if (!nx) {
         m.gone = true;
         break;
@@ -974,7 +1005,8 @@ function advance(m: Mover, move: number): void {
     m.from = null;
     if (m.seg + 1 >= m.line.pts.length) {
       const nx = nextLine(m.line, m.plan, m.line.lane);
-      if (!nx && blockedAhead(m.line)) {
+      // Тупик чи дорогу перекрито завалом — розворот на зустрічну смугу (без неї — прибрати).
+      if (!nx) {
         m.seg = m.line.pts.length - 2;
         m.t = 1;
         place(m, 0);

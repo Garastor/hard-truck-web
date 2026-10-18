@@ -243,6 +243,10 @@ const HEAD_SHIFT = 3.2;
 const CAB_PARALLAX = 1 - 1.81 / 0.88;
 /** Дальність видимості трафіку без туману в сцені, м. */
 const VIEW_FALLBACK = 900;
+/** 911: найменша відстань місця відновлення до інших машин, крок і кількість кроків пошуку вздовж дороги, м. */
+const RESCUE_CLEAR = 6;
+const RESCUE_STEP = 15;
+const RESCUE_TRIES = 6;
 /** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
 /** Рація: радіус зв'язку, м; скільки після штрафу можна домовитися, с; перемирʼя з мафією, с (гіпотези). */
 /** Найманий прибув на склад ближче цього, м (гіпотеза порту). */
@@ -705,7 +709,7 @@ export class Ht2Drive {
     }
     if (!o.race) {
       const names = await o.source.read('names.sch').then(readSch).catch(() => []);
-      this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r), truckerKinds(vehicles, this.trucks), Math.round(4 * (o.settings?.traffic ?? 1)));
+      this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r), truckerKinds(vehicles, this.trucks), Math.round(4 * (o.settings?.traffic ?? 1)), this.semiTypes);
     }
     // Населення трафіку — `dumb N` і `ghost N` з playertypes GAME.CNF, насиченість — повзунок (TRUCK.INI trafs).
     const types = cnf ? (assoc(cnf, 'playertypes')?.slice(1) ?? []) : [];
@@ -1190,7 +1194,7 @@ export class Ht2Drive {
           ...(this.traffic?.cars.flatMap((c) => (c.vehicle ? [c.vehicle.body] : [])) ?? []),
           ...(this.police?.cops.map((c) => c.v.body) ?? []),
           ...(this.mafia?.hoods.map((h) => h.v.body) ?? []),
-          ...[...(this.truckers?.list ?? []), ...(this.truckers?.hired.values() ?? [])].map((r) => r.truck.body),
+          ...(this.truckers?.rigs ?? []).flatMap((r) => [r.truck.body, ...(r.trailer ? [r.trailer.body] : [])]),
         ];
         return cars.filter((b) => {
           const t = b.translation();
@@ -2442,14 +2446,50 @@ export class Ht2Drive {
   /**
    * 911 (king.exe 0x511c50 → 0x5119e0, re/notes/ht2/career-misc.md §3): одразу, на найближчій точці дороги біля місця
    * виклику (0x533590) — по дотичній до осі, праворуч від неї на 0,5·W − 1,5 м; оплата й ремонт — careerMode.pay911.
+   * Порт (на прохання користувача): місце має бути вільним від інших машин — після ДТП на найближчій точці стоїть
+   * той, з ким зіткнулись, і машина гравця з'являлась знову впритул до нього; тоді — далі вздовж дороги (RESCUE_STEP).
    */
   call911(): void {
     if (this.rescue) return;
     this.rescue = { left: 0, ready: Promise.resolve(this.roadside(this.truck.visual.position)), cost: 0 };
   }
 
-  /** Точка на дорозі біля p: вісь WAY, дотична в бік курсу машини, зсув праворуч на 0,5·W − 1,5 м. */
+  /** Точка на дорозі біля p, вільна від інших машин: спершу найближча, далі — уперед і назад уздовж дороги. */
   private roadside(p: THREE.Vector3): { position: THREE.Vector3; forward: THREE.Vector3 } | null {
+    const first = this.roadPoint(p, this.truck.forward());
+    if (!first) return null;
+    const others = this.otherVehicles();
+    // Машина гравця з напівпричепом — точки від переду назад (причіп ≈ 14 м за тягачем).
+    const back = this.trailer ? 20 : 8;
+    const free = (s: { position: THREE.Vector3; forward: THREE.Vector3 }) => {
+      for (let k = -back; k <= 5; k += 2.5) {
+        const q = s.position.clone().addScaledVector(s.forward, k);
+        if (others.some((o) => Math.hypot(o.x - q.x, o.z - q.z) < RESCUE_CLEAR && Math.abs(o.y - q.y) < 6)) return false;
+      }
+      return true;
+    };
+    if (free(first)) return first;
+    for (let i = 1; i <= RESCUE_TRIES; i++)
+      for (const sign of [1, -1]) {
+        const at = first.position.clone().addScaledVector(first.forward, sign * i * RESCUE_STEP);
+        const s = this.roadPoint(at, first.forward);
+        if (s && free(s)) return s;
+      }
+    return first;
+  }
+
+  /** Інші машини на дорозі (трафік, далекобійники з причепами, міліція, мафія) — точки для вільного місця 911. */
+  private otherVehicles(): THREE.Vector3[] {
+    return [
+      ...(this.traffic?.cars.map((c) => c.pos) ?? []),
+      ...(this.truckers?.rigs ?? []).flatMap((r) => [...alongPoints(r.truck), ...(r.trailer?.points() ?? [])]),
+      ...(this.police?.cops.map((c) => c.v.visual.position) ?? []),
+      ...(this.mafia?.hoods.map((h) => h.v.visual.position) ?? []),
+    ];
+  }
+
+  /** Точка на дорозі біля p: вісь WAY, дотична в бік курсу heading, зсув праворуч на 0,5·W − 1,5 м. */
+  private roadPoint(p: THREE.Vector3, heading: THREE.Vector3): { position: THREE.Vector3; forward: THREE.Vector3 } | null {
     // Закриту завалом дорогу оминаємо: найближча точка могла б опинитися в камінні (world/obstacles.ts).
     const n = this.roads.nearestAxis(p, true) ?? this.roads.nearestAxis(p);
     if (!n) return null;
@@ -2464,7 +2504,7 @@ export class Ht2Drive {
       }
     }
     const forward = pts[best + 1].clone().sub(pts[best]).setY(0).normalize();
-    if (forward.dot(this.truck.forward()) < 0) forward.negate();
+    if (forward.dot(heading) < 0) forward.negate();
     const right = new THREE.Vector3(-forward.z, 0, forward.x);
     const at = n.point.clone().addScaledVector(right, Math.max(0, 0.5 * n.axis.width - 1.5));
     return { position: this.groundAt(at), forward };
@@ -2804,10 +2844,11 @@ export class Ht2Drive {
     // Вантажівки для трафіку — точками по всій довжині (трафік бере півдовжину 2,5 м навколо кожної): одна точка в
     // центрі довгої машини, що стоїть навскіс чи частково в смузі, лишала задок або передок «невидимим» — трафік їхав
     // у нього й таранив знову після кожного здавання назад.
-    const trucks = [this.truck, ...(this.truckers?.list ?? []).map((r) => r.truck), ...[...(this.truckers?.hired.values() ?? [])].map((r) => r.truck)];
-    // Гравець (центр — та сама точка, що й player) разом із напівпричепом — одне тіло: обʼїжджають усе.
+    // Гравець (центр — та сама точка, що й player) разом із напівпричепом — одне тіло: обʼїжджають усе; так само
+    // далекобійники з напівпричепами.
     const me = [this.truck.visual.position, ...alongPoints(this.truck), ...(this.trailer?.points() ?? [])];
-    this.traffic?.update(dt, this.truck.visual.position, [me, ...trucks.slice(1).map(alongPoints)]);
+    const rigs = (this.truckers?.rigs ?? []).map((r) => [...alongPoints(r.truck), ...(r.trailer?.points() ?? [])]);
+    this.traffic?.update(dt, this.truck.visual.position, [me, ...rigs]);
     const obstacles = [this.truck.visual.position, ...(this.trailer?.points() ?? []), ...(this.traffic?.cars.map((c) => c.pos) ?? [])];
     this.updateSurface();
     this.acc += dt;
