@@ -449,6 +449,8 @@ export class Traffic {
         line = l;
         if ((r -= l.length) <= 0) break;
       }
+      // На території баз трафік не ставимо (порт; привидам там не дає зʼявитися біт 0x10).
+      if (line.base) continue;
       const seg = Math.floor(Math.random() * (line.pts.length - 1));
       if (line.pts[seg].distanceTo(player) < minDist) continue;
       this.all.push(this.newCar(line, seg, false));

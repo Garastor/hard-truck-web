@@ -382,11 +382,22 @@ export function setGoals(maps: Map<RoadLine, number>[]): void {
 
 /** Штраф маршруту за поворот, м/рад (порт). */
 const TURN_COST = 25;
+/**
+ * Штраф маршруту за проїзд територією бази, м (порт, на прохання користувача): база — для вантажівок, що
+ * вантажаться; трафік (легковики, автобуси) їде повз неї магістраллю, навіть якщо через базу коротше.
+ */
+const BASE_COST = 3000;
 const windings = new WeakMap<RoadLine, number>();
 
 /** Штраф лінії для маршрутів трафіку (Navigator): звивистість, м. */
 export function routePenalty(l: RoadLine): number {
-  return TURN_COST * winding(l);
+  return TURN_COST * winding(l) + (l.base ? BASE_COST : 0);
+}
+
+/** Продовження без вʼїзду на базу (world/roads markBases), якщо таке є. */
+function offBase(lines: RoadLine[]): RoadLine[] {
+  const out = lines.filter((l) => !l.base);
+  return out.length ? out : lines;
 }
 
 /** Сума кутів повороту всередині лінії, рад. */
@@ -410,7 +421,7 @@ function planNext(m: Mover): void {
   // Закриту завалом дорогу оминаємо, якщо є інша (world/obstacles.ts).
   const all = m.line.next as RoadLine[];
   const open = all.filter((l) => !l.closed);
-  const next = open.length ? open : all;
+  const next = offBase(open.length ? open : all);
   const roads = [...new Set(next.map((l) => l.road))];
   m.plan = roads.length ? roads[Math.floor(Math.random() * roads.length)] : null;
   if (goals.length) {
@@ -443,7 +454,7 @@ function planNext(m: Mover): void {
 
 /** Лівий поворот не з лівої смуги: інша дорога після стику — прямо чи праворуч, якщо така є; смуга — права. */
 function giveUpLeft(m: Mover): void {
-  const roads = [...new Set((m.line.next as RoadLine[]).map((l) => l.road))];
+  const roads = [...new Set(offBase(m.line.next as RoadLine[]).map((l) => l.road))];
   const ok = roads.filter((r) => {
     const to = nextLine(m.line, r, m.line.lane);
     return to && turnAngle(m.line, to) >= -0.35;

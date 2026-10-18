@@ -2863,6 +2863,8 @@ export class Ht2Drive {
     this.traffic?.update(dt, this.truck.visual.position, [me, ...rigs]);
     // Для автопілотів ботів гравець — точками вздовж машини (одна точка в центрі лишала передок і задок «невидимими»).
     const obstacles = [...me, ...(this.traffic?.cars.map((c) => c.pos) ?? [])];
+    // Зустрічні для розминання ботів: гравець і трафік (позиція й курс).
+    const oncoming = [{ pos: this.truck.visual.position, forward: this.truck.forward().setY(0).normalize() }, ...(this.traffic?.cars.map((c) => ({ pos: c.pos, forward: c.heading })) ?? [])];
     this.updateSurface();
     this.acc += dt;
     const step = this.rapier.timestep;
@@ -2871,7 +2873,7 @@ export class Ht2Drive {
       this.truck.update(step, state);
       this.trailer?.update(step, this.truck.brakePedal(state), this.def.tech.brakePower, this.truck.kinematic);
       this.race?.control(step);
-      this.truckers?.control(step, obstacles);
+      this.truckers?.control(step, obstacles, oncoming);
       this.traffic?.control(step);
       this.police?.control(step);
       this.mafia?.control(step);

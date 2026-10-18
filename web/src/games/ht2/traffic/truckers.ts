@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { kingCar, kingPilot } from '../vehicles/controls';
-import { AutoPilot } from '../engine/vehicle/autopilot';
+import { AutoPilot, type Oncoming } from '../engine/vehicle/autopilot';
 import { TruckVehicle } from '../engine/vehicle/truckVehicle';
 import { buildTruckModel } from '../engine/vehicle/trucks';
 import { isList, num, str, type SExpr } from '../formats/sexpr';
@@ -188,14 +188,19 @@ export class Truckers {
     r.truck.tow = null;
   }
 
-  /** Перед кроком фізики: автопілот кожного (оминає гравця, трафік і одне одного). */
-  control(dt: number, obstacles: readonly THREE.Vector3[]): void {
+  /**
+   * Перед кроком фізики: автопілот кожного (оминає гравця, трафік і одне одного); oncoming — інші машини з курсом
+   * (гравець, трафік), з якими розминатися, коли їдуть назустріч (боти — додаються тут).
+   */
+  control(dt: number, obstacles: readonly THREE.Vector3[], oncoming: readonly Oncoming[] = []): void {
     const rigs = this.rigs;
     const points = rigs.map(rigPoints);
+    const heads = rigs.map((r): Oncoming => ({ pos: r.truck.visual.position, forward: r.truck.forward().setY(0).normalize() }));
     rigs.forEach((r, i) => {
       const p = r.truck.body.translation();
       const others = [...obstacles, ...points.filter((_, j) => j !== i).flat()];
-      const state = r.pilot.update(new THREE.Vector3(p.x, p.y, p.z), r.truck.forward(), r.truck.speedKmh, dt, others);
+      const meet = [...oncoming, ...heads.filter((_, j) => j !== i)];
+      const state = r.pilot.update(new THREE.Vector3(p.x, p.y, p.z), r.truck.forward(), r.truck.speedKmh, dt, others, meet);
       r.truck.update(dt, state);
       r.trailer?.update(dt, r.truck.brakePedal(state), r.truck.def.tech.brakePower, r.truck.kinematic);
     });

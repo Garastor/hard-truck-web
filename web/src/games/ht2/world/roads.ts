@@ -29,6 +29,8 @@ const PAIR_DIST = 6;
 const PAIR_COS = 0.9;
 /** Крок розгортання кривої Безьє, м. */
 const BEZIER_STEP = 3;
+/** Лінія бази — ближче за стільки (у плані) від вузла місця причепа чи воріт складу, м (markBases). */
+const BASE_R = 30;
 
 export interface RoadLine extends WayLine {
   /** Повна ширина дороги W, м. */
@@ -52,6 +54,8 @@ export interface RoadLine extends WayLine {
   /** Вузли мережі на початку й кінці лінії (індекси `Ht2Roads.nodes`; в осі — за напрямком точок). */
   startNode: number;
   endNode: number;
+  /** Проїзд територією бази чи складу (порт, `markBases`): трафік туди не звертає, якщо є інший шлях. */
+  base?: boolean;
   /** Дорогу закрито завалом (world/obstacles.ts; king.exe прапорець 0x40 смуг): маршрути її оминають. */
   closed?: boolean;
   /** Де завал на закритій дорозі (Three.js): розвертаються лише ті, хто їде до нього. */
@@ -87,8 +91,11 @@ export class Ht2Roads {
   private readonly byRoad = new Map<string, RoadLine[]>();
 
   constructor(regions: Iterable<{ id: string; way: Way }>) {
+    // Вузли місць причепів і воріт складів — для markBases (regions може бути одноразовим ітератором).
+    const spots: THREE.Vector3[] = [];
     for (const { id, way } of regions)
-      for (const room of way.rooms)
+      for (const room of way.rooms) {
+        for (const n of room.nodes) if (/^(pos_base_|node_store_)/i.test(n.name)) spots.push(toThree(...n.pos));
         for (const s of room.segments) {
           const n = s.points.length / 3;
           if (n < 2) continue;
@@ -102,6 +109,7 @@ export class Ht2Roads {
           const road = this.axes.length;
           this.axes.push({ name: `${room.name}#${road}`, pts, next: [], width, region: id, road, lane: -1, lanes, laneWidth: hw / lanes, flags: s.type, cls: s.cls, length: polyLength(pts), siblings: [], startNode: -1, endNode: -1 });
         }
+      }
     for (const a of this.axes) for (const k of cellsOf(a.pts)) push(this.axisGrid, k, a);
     this.buildNodes();
 
@@ -163,6 +171,22 @@ export class Ht2Roads {
     for (const l of this.lines) {
       for (const k of cellsOf(l.pts)) push(this.grid, k, l);
       push(this.byRoad, String(l.road), l);
+    }
+    this.markBases(spots);
+  }
+
+  /**
+   * Територія баз і складів (порт): лінії з бітом 0x10, що проходять ближче BASE_R від вузлів `pos_base_*` (місця
+   * причепів) чи `node_store_*` (ворота складу) — петлі майданчиків біля складів. Сам біт 0x10 бази не позначає (він
+   * є й на міських дорогах, і на паркуванні легковиків біля аеропорту), а магістралі повз бази його не мають.
+   */
+  private markBases(spots: readonly THREE.Vector3[]): void {
+    if (!spots.length) return;
+    for (const a of this.axes) {
+      if (!(a.flags & 0x10)) continue;
+      if (!spots.some((p) => polyDist(a.pts, p) < BASE_R)) continue;
+      a.base = true;
+      for (const l of this.linesOf(a.road)) l.base = true;
     }
   }
 
@@ -413,6 +437,20 @@ function polyLength(pts: THREE.Vector3[]): number {
   let len = 0;
   for (let i = 1; i < pts.length; i++) len += pts[i].distanceTo(pts[i - 1]);
   return len;
+}
+
+/** Відстань у плані (без висоти) від точки до ламаної, м. */
+function polyDist(pts: THREE.Vector3[], p: THREE.Vector3): number {
+  let best = Infinity;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i];
+    const abx = pts[i + 1].x - a.x;
+    const abz = pts[i + 1].z - a.z;
+    const len2 = abx * abx + abz * abz;
+    const t = len2 ? THREE.MathUtils.clamp(((p.x - a.x) * abx + (p.z - a.z) * abz) / len2, 0, 1) : 0;
+    best = Math.min(best, Math.hypot(a.x + abx * t - p.x, a.z + abz * t - p.z));
+  }
+  return best;
 }
 
 /** Без повторних точок (нульові відрізки ламають дотичні). */

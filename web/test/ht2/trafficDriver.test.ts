@@ -274,4 +274,19 @@ describe('HT2: водій трафіку', () => {
     run(n, 3, [beside], () => beside.pos.z = n.pos.z);
     expect(n.line.lane).toBe(0);
   });
+
+  it('на територію бази не звертає, якщо є інший шлях (порт)', () => {
+    const a = road(straight(200), 1, 0);
+    const base = road([0, 1, 2, 3].map((i) => new THREE.Vector3(i * 20, 0, -200)), 1, 1);
+    const on = road(straight(200).map((p) => p.clone().setZ(p.z - 200)), 1, 2);
+    for (const l of base) l.base = true;
+    a[0].next.push(base[0], on[0]);
+    for (let s = 1; s <= 20; s++) {
+      vi.spyOn(Math, 'random').mockImplementation(seeded(s));
+      expect(newMover(a[0], 0, 0, 20, 2).plan).toBe(2);
+    }
+    // Іншого шляху немає — на базу (тупик інакше).
+    a[0].next.splice(1);
+    expect(newMover(a[0], 0, 0, 20, 2).plan).toBe(1);
+  });
 });

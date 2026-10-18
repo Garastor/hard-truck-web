@@ -79,6 +79,30 @@ const BLOCK_LOOK = 60;
 const STOP_SIDE = 2.6;
 const STOP_GAP = 10;
 const BLOCK_DECEL = 3;
+/**
+ * Розминання із зустрічною (порт, на прохання користувача: на базах боти стояли ніс у ніс): зустрічна машина
+ * (курси протилежні, cos < PASS_COS) попереду ближче PASS_LOOK і ближче PASS_SIDE вбік від осі → прийняти праворуч
+ * на PASS_SHIFT і їхати не швидше PASS_KMH; триматися ще PASS_HOLD с, як розминулися. Зустрічна-бот робить те саме,
+ * тож розходяться вдвох. Стати — за PASS_GAP (ближче STOP_GAP: розʼїжджаються впритул, повзучи). Лише там, де
+ * смуги вузькі (ширина ≤ PASS_LANE: на W12 внутрішні смуги по 3 м — тягачі зачіпали одне одного дзеркалами) чи на
+ * території бази (`base`, world/roads); пригальмовувати — лише на базі й на смугах, вужчих за SLOW_LANE (петлі баз —
+ * 2,5 м), на дорозі — лише прийняти праворуч.
+ */
+const PASS_LOOK = 70;
+const PASS_SIDE = 6;
+const PASS_COS = -0.5;
+const PASS_SHIFT = 2.5;
+const PASS_KMH = 20;
+const PASS_HOLD = 1.5;
+const PASS_GAP = 6;
+const PASS_LANE = 3.2;
+const SLOW_LANE = 2.8;
+
+/** Зустрічна машина для розминання: позиція й курс (одиничний, у площині). */
+export interface Oncoming {
+  pos: THREE.Vector3;
+  forward: THREE.Vector3;
+}
 
 export class AutoPilot {
   readonly state: ControlState = { steer: 0, throttle: 0, brake: 0, handbrake: false };
@@ -102,6 +126,8 @@ export class AutoPilot {
   private offset = 0;
   /** Своя смуга — сталий зсув від осі маршруту, м (+ праворуч; гонка: ряди решітки ±1,75 м). */
   lane = 0;
+  /** Скільки ще розминатися із зустрічною (прийняти праворуч), с. */
+  passing = 0;
 
   constructor(private readonly net: WayNet) {}
 
@@ -121,6 +147,7 @@ export class AutoPilot {
     speedKmh: number,
     dt = 1 / 60,
     others: readonly THREE.Vector3[] = [],
+    oncoming: readonly Oncoming[] = [],
   ): ControlState {
     const s = this.state;
     // Застряг (газ є, швидкості немає) → здати назад з протилежним кермом.
@@ -154,6 +181,19 @@ export class AutoPilot {
     const target = this.net.advance(n.line, n.seg, n.t, look);
     // Машини попереду в «коридорі» → обгін зсувом убік, а якщо дуже близько — гальмуємо.
     const rightV = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+    const flat = forward.clone().setY(0).normalize();
+    this.passing = Math.max(0, this.passing - dt);
+    // Лінії Ht2Roads (друга гра) несуть ширину смуги й позначку бази; у WayNet їх немає — там розминання немає.
+    const here = n.line as WayLine & { base?: boolean; laneWidth?: number };
+    const lw = here.laneWidth ?? Infinity;
+    const tight = !!here.base || lw < PASS_LANE;
+    const slow = !!here.base || lw < SLOW_LANE;
+    if (tight) for (const o of oncoming) {
+      if (o.forward.dot(flat) > PASS_COS) continue;
+      const rel = o.pos.clone().sub(pos);
+      const ahead = rel.dot(forward);
+      if (ahead > 0 && ahead < PASS_LOOK && Math.abs(rel.dot(rightV)) < PASS_SIDE) this.passing = PASS_HOLD;
+    }
     // blockDist — у коридорі обгону (зі зсувом); stopDist — там, куди машина їде (з обгоном — той самий коридор).
     let blockDist = Infinity;
     let blockSide = 0;
@@ -176,7 +216,7 @@ export class AutoPilot {
       if (Math.abs(c) < 60) this.closing += (c - this.closing) * Math.min(1, dt * 4);
     } else this.closing = speedKmh / 3.6;
     this.prevBlock = stopDist;
-    const wantOffset = this.dodge && blockDist < 25 ? this.lane + blockSide * 3.2 : this.lane;
+    const wantOffset = (this.dodge && blockDist < 25 ? this.lane + blockSide * 3.2 : this.lane) + (this.passing > 0 ? PASS_SHIFT : 0);
     this.offset += THREE.MathUtils.clamp(wantOffset - this.offset, -2 * dt, 2 * dt);
     target.addScaledVector(rightV, this.offset);
     const far = this.net.advance(n.line, n.seg, n.t, 12 + speedKmh * 0.6);
@@ -189,7 +229,8 @@ export class AutoPilot {
     // Кривизна попереду → зниження швидкості.
     const toFar = far.clone().sub(pos).setY(0).normalize();
     const bend = 1 - Math.max(0, toFar.dot(forward));
-    const want = this.cruise * (1 - Math.min(1 - this.bendFloor, bend * this.bendGain));
+    let want = this.cruise * (1 - Math.min(1 - this.bendFloor, bend * this.bendGain));
+    if (this.passing > 0 && slow) want = Math.min(want, PASS_KMH);
     s.throttle = speedKmh < want ? Math.min(1, (want - speedKmh) / 10 + 0.3) : 0;
     s.brake = speedKmh > want + 8 ? Math.min(1, (speedKmh - want) / 20) : 0;
     s.handbrake = false;
@@ -197,7 +238,7 @@ export class AutoPilot {
     // BLOCK_DECEL); ближче STOP_GAP — стоїть на ручному (утримання педалі на місці вмикає задній хід). Раніше гальмо
     // 0,6 лише ближче 9 м і відпускалося нижче 8 км/год: бот на ходу чи «доповзаючи» вʼїжджав у гравця, що стоїть.
     const v = speedKmh / 3.6;
-    const room = stopDist - STOP_GAP;
+    const room = stopDist - (this.passing > 0 && slow ? PASS_GAP : STOP_GAP);
     if (room < 0) {
       s.throttle = 0;
       s.brake = v > 0.5 ? 1 : 0;
