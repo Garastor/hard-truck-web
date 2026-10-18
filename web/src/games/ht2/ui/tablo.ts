@@ -64,6 +64,9 @@ const two = (n: number) => String(Math.max(0, Math.floor(n))).padStart(2, '0');
 
 export class Tablo {
   readonly el: HTMLCanvasElement;
+  /** Нерухомий шар під табло — металева рамка `m16\tablo.txr`; малюється лише при зміні розміру. */
+  private readonly bg: HTMLCanvasElement;
+  private bgDrawn = false;
   private readonly hit: HTMLDivElement;
   private readonly ctx: CanvasRenderingContext2D;
   private layout: Layout = { w: 1600, h: 50, tabloX: 0, origin: ORIGIN, pager: PAGER };
@@ -86,12 +89,14 @@ export class Tablo {
     this.el = document.createElement('canvas');
     this.el.className = 'pixel ht2-tablo';
     this.ctx = this.el.getContext('2d')!;
+    this.bg = document.createElement('canvas');
+    this.bg.className = 'pixel ht2-tablo';
     // Дотик до табло — пейджер з попереднім повідомленням (клавіша P в оригіналі). Полотно (разом з місцем
     // пейджера під табло) дотиків не ловить — лише смуга самого табло.
     this.hit = document.createElement('div');
     this.hit.className = 'ht2-tablo-hit';
     this.hit.addEventListener('pointerdown', () => this.previous());
-    parent.append(this.el, this.hit);
+    parent.append(this.bg, this.el, this.hit);
     this.resize();
   }
 
@@ -109,11 +114,14 @@ export class Tablo {
       // Вузький екран — під табло, ліворуч від середини даних (як у king.exe для 640 точок: 170 з 640).
       pager: inSlot ? [tabloX + PAGER[0], PAGER[1]] : [Math.max(0, Math.round(w / 2 - 150)), 50],
     };
-    this.el.width = this.layout.w;
-    this.el.height = this.layout.h;
+    for (const c of [this.bg, this.el]) {
+      c.width = this.layout.w;
+      c.height = this.layout.h;
+      c.style.width = `${window.innerWidth}px`;
+      c.style.height = `${this.layout.h * s}px`;
+    }
     this.drawn = '';
-    this.el.style.width = `${window.innerWidth}px`;
-    this.el.style.height = `${this.layout.h * s}px`;
+    this.bgDrawn = false;
     this.hit.style.height = `${50 * s}px`;
     document.body.style.setProperty('--ht2-tablo-h', `${Math.ceil(50 * s)}px`);
     document.body.style.setProperty('--ht2-pager-h', `${Math.ceil((this.layout.h - 50) * s)}px`);
@@ -155,21 +163,17 @@ export class Tablo {
       this.layout.w, this.layout.h, this.blink, s.position?.place, s.position?.of, t(s.timeLeft), s.licences?.count, t(s.licences?.left),
       Math.round(s.mph ? s.speed / 1.609 : s.speed), s.mph, s.handbrake, s.gear, s.automatic, Math.round(s.rpm / 100), s.trailer,
       Math.round(s.fuel * 10), s.fuel > 0.3, Math.round(s.condition * 10), s.condition > 0.3, s.nav, pager?.shown, pager?.icon,
-      this.art.matrix && this.art.icon ? 1 : 0, this.art.canvas('m16\\tablo.txr') ? 1 : 0,
+      this.art.matrix && this.art.icon ? 1 : 0,
     ].join('|');
+    if (!this.bgDrawn) this.drawFrame();
     if (key === this.drawn) return;
     this.drawn = key;
     const { ctx, art } = this;
     const L = this.layout;
     const m = art.matrix;
     const ic = art.icon;
+    // Верхній шар — лише текст, поділки й пейджер; рамка — у нерухомому шарі під ним (drawFrame).
     ctx.clearRect(0, 0, L.w, L.h);
-    const frame = art.canvas('m16\\tablo.txr');
-    if (frame) {
-      // Ширше за 1600 — рамка повторюється по краях (її краї — однакові металеві панелі).
-      for (let x = L.tabloX; x > -1600; x -= 1600) ctx.drawImage(frame, x, 0);
-      for (let x = L.tabloX + 1600; x < L.w; x += 1600) ctx.drawImage(frame, x, 0);
-    }
     if (!m || !ic) return;
     const o = L.origin;
     // y у king.exe — базова лінія: символ малюється від (y − висота клітинки).
@@ -210,6 +214,19 @@ export class Tablo {
     if (pager) this.drawPager(pager);
   }
 
+  /** Рамка в нижній шар (раз після зміни розміру; поки текстура не готова — пробує щокадру). */
+  private drawFrame(): void {
+    const frame = this.art.canvas('m16\\tablo.txr');
+    if (!frame) return;
+    const L = this.layout;
+    const ctx = this.bg.getContext('2d')!;
+    ctx.clearRect(0, 0, L.w, L.h);
+    // Ширше за 1600 — рамка повторюється по краях (її краї — однакові металеві панелі).
+    for (let x = L.tabloX; x > -1600; x -= 1600) ctx.drawImage(frame, x, 0);
+    for (let x = L.tabloX + 1600; x < L.w; x += 1600) ctx.drawImage(frame, x, 0);
+    this.bgDrawn = true;
+  }
+
   /** Підпис останнього намальованого кадру табло. */
   private drawn = '';
 
@@ -246,6 +263,7 @@ export class Tablo {
 
   dispose(): void {
     this.el.remove();
+    this.bg.remove();
     this.hit.remove();
     document.body.style.removeProperty('--ht2-tablo-h');
     document.body.style.removeProperty('--ht2-pager-h');
