@@ -67,7 +67,7 @@ King.exe рахує світло апаратним T&L Direct3D7 прямо в 
 | Смуги лісу (`forest*.txr`) | як світ: Lambert за нормалями (вертикальні стінки; бік від сонця — лише 0,31) | `sceneBuilder.ts` |
 | Самосвітні меші (формат 3) | без освітлення | `SceneAssembler.unlit()` |
 | Салон кабіни | лише сіре розсіяне 0,5 + 0,5·sin²(година·π/24), без сонця (0x4df4a8) | `drive.ts cabAmbient`, [cockpit.md](cockpit.md) |
-| Фари гравця | два SpotLight із Fara_FL/FR з маскою ближнього світла (`SpotLight.map`, без тіней): чітка межа на `LAMP_CUTOFF` = 80 м, вище неї (зустрічні машини) темно, дорога до межі освітлена рівномірно (вага маски t_c/t врівноважує cos падіння, decay 0); сила = `LAMP_ROAD` · межа / висота фари (освітленість дороги 0,56 незалежно від межі), промінь убік ±0,21…0,42 (тангенс), півкут 30° — **на око**, власна реалізація на прохання користувача | `drive.ts mountLamps`, `vehicles/headlights.ts` |
+| Фари гравця | два SpotLight із Fara_FL/FR з маскою ближнього світла (`SpotLight.map`, без тіней): межа на `LAMP_CUTOFF` = 80 м з «галочкою» (праворуч від осі фари піднімається під 15° на ≈1,1°) і плавним згасанням угору (≈0,7°), вище неї (зустрічні машини ліворуч) темно, дорога до межі освітлена рівномірно (вага маски t_c/t врівноважує cos падіння, decay 0); сила = `LAMP_ROAD` · межа / висота фари (освітленість дороги 0,56 незалежно від межі), промінь убік ±0,21…0,42 (тангенс), півкут 30° — **на око**, власна реалізація на прохання користувача | `drive.ts mountLamps`, `vehicles/headlights.ts` |
 | Задні ліхтарі-габарити | `StopFaraKeyX` стан 2 (`TailLight1R_0`) у даних з освітлюваними вершинами — уночі Lambert малював їх чорними; порт робить їх самосвітними, ×0,6 від стопа (**на око**, на прохання користувача) | `engine/vehicle/trucks.ts tailGlow` |
 | Ореоли ліхтарів | білборди `$$DynamicGlow` уночі | `world/trees.ts buildGlows`, `world.setNight` |
 | Нічні вікна | перемикачі `refer_ILLUM_LEVEL_00…15` за порогами години | `climate.ts illumOn`, `world.applyIllum` |
@@ -86,7 +86,7 @@ King.exe рахує світло апаратним T&L Direct3D7 прямо в 
 | Блиск кузовів | `sceneBuilder.ts` (гілка `MeshPhongMaterial`, k і shininess) |
 | Колір дерев | `world.ts` (`TREE_LIGHT`, 0,7) |
 | Світло в кабіні | `drive.ts cabAmbient` |
-| Фари: межа світла, сила, конус | `drive.ts` `LAMP_CUTOFF` / `LAMP_ROAD` / `LAMP_ANGLE`; форма плями (ширина вбік, різкість межі) — `vehicles/headlights.ts` `SIDE_FULL`/`SIDE_ZERO`/`EDGE_ROWS` |
+| Фари: межа світла, сила, конус | `drive.ts` `LAMP_CUTOFF` / `LAMP_ROAD` / `LAMP_ANGLE`; форма плями (ширина вбік, «галочка», плавність межі) — `vehicles/headlights.ts` `SIDE_FULL`/`SIDE_ZERO`/`RIGHT_RISE`/`RISE_SLOPE`/`EDGE_SOFT` |
 | Яскравість габариту задніх ліхтарів | `engine/vehicle/trucks.ts TAIL_GLOW` |
 | Фільтрацію текстур | `sceneBuilder.ts texture()`: зараз трилінійна + `anisotropy = 4` |
 
