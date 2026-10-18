@@ -239,11 +239,13 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
     }
     if (choice === 'single' && art) {
       // Екран одиночної гри оригіналу: нова гра / завантажити, режим, повзунки; круглі кнопки — інші розділи.
+      // Збереження — заново: у меню «Водії» його могли перейменувати чи стерти вже після того, як відкрилось меню.
+      const cur = loadCareer();
       const next = await new Promise<Choice | null>((resolve) => {
         let busy = false;
         const close = ht2SingleScreen(art, {
-          hasSave: !!saved,
-          saveText: saved ? `${saved.driver}\n${formatMoney(saved.money)}\nдоставок: ${saved.delivered}` : '',
+          hasSave: !!cur,
+          saveText: cur ? `${cur.driver}\n${formatMoney(cur.money)}\nдоставок: ${cur.delivered}` : '',
           settings,
           onNew: () => (close(), resolve('new')),
           onLoad: () => (close(), resolve('career')),

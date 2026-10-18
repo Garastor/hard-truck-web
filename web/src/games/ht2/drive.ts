@@ -364,6 +364,13 @@ export class Ht2Drive {
   private hudGroup: HTMLElement | null = null;
   private hudBurger: HTMLElement | null = null;
   private sidePanelOpen = false;
+  /**
+   * Застосунок згорнули чи закривають (на телефоні його можуть вивантажити без dispose) — зберегти кар'єру одразу, а
+   * не чекати автозбереження раз на 10 с (careerMode.update).
+   */
+  private readonly onHide = (e: Event) => {
+    if ((e.type === 'pagehide' || document.visibilityState === 'hidden') && !this.noSave) this.careerMode?.persist();
+  };
   /** Дотик поза бічною панеллю F1–F4 (не по кнопці) — закрити її; дотик проходить далі (кермо, педалі працюють). */
   private readonly onOutsideTap = (e: PointerEvent) => {
     if (this.fPanels?.open == null && !this.radio?.open) return;
@@ -493,11 +500,14 @@ export class Ht2Drive {
   private rainSound: ReturnType<EngineAudio['loopSound']> = null;
   private windSound: ReturnType<EngineAudio['loopSound']> = null;
   private tick = 0;
-  /** Фари: два прожектори на місцях Fara_FL/FR з vehicle.tech; вмикаються в сутінках і вночі або клавішею L. */
+  /**
+   * Фари: два прожектори на місцях Fara_FL/FR з vehicle.tech; лише клавішею L чи кнопкою (на прохання користувача —
+   * у сутінках самі не вмикаються).
+   */
   private readonly lamps: THREE.SpotLight[] = [];
-  private lightsManual: boolean | null = null;
-  /** Двірники вручну (W); null — самі в дощ. */
-  private wipersManual: boolean | null = null;
+  private lightsManual = false;
+  /** Двірники — лише вручну (W; на прохання користувача — у дощ самі не вмикаються). */
+  private wipersManual = false;
   /** Маса вантажу в кузові, кг (фізика: центр мас і загальна маса). */
   private cargoMass = 0;
   /** Бак, л (з покращенням), і витрата (vehicle.tech: × 10 = л/100 км; лише для найманих водіїв) вантажівки гравця. */
@@ -780,7 +790,7 @@ export class Ht2Drive {
       }
       if (cmd === 'lights') this.lightsManual = !this.lamps[0]?.visible;
       // Двірники — окрема дія гри («Wipers», W); у порту без натискання вмикаються в дощ.
-      if (cmd === 'wipers') this.wipersManual = !(this.glassRain?.wipersOn ?? this.wipersManual ?? this.raining);
+      if (cmd === 'wipers') this.wipersManual = !this.wipersManual;
       if (cmd === 'mirror') this.mirrorOn = !this.mirrorOn;
       if (cmd === 'attach') this.toggleTrailer();
       // «Відновитися» — те саме, що 911 у меню Esc (на прохання користувача).
@@ -851,6 +861,8 @@ export class Ht2Drive {
     this.hudGroup = group;
     this.hudBurger = burger;
     document.addEventListener('pointerdown', this.onOutsideTap, true);
+    document.addEventListener('visibilitychange', this.onHide);
+    window.addEventListener('pagehide', this.onHide);
     // У шарі overlay — під вікнами складу й СТО (вони теж там, вище).
     o.overlay.append(this.hud, this.bar);
     // Інтерфейс оригіналу — до першого кадру, щоб не блимав інтерфейс порту (графіка вже вантажиться зі start).
@@ -1615,7 +1627,7 @@ export class Ht2Drive {
     const quiet = this.weatherFlags.thund ? 1 : 1 - this.world.special.k;
     this.rainSound?.set(this.sheltered ? 0 : Math.min(quiet, c.rainVolume));
     this.windSound?.set(Math.min(quiet, c.windVolume));
-    const on = this.lightsManual ?? dusk;
+    const on = this.lightsManual;
     for (const l of this.lamps) l.visible = on;
     // Габарити вантажівки (SizeLightKey: 1 — горять) — разом з фарами.
     this.setTruckSwitch?.('refer_SizeLightKey', on ? 1 : 0);
@@ -1784,6 +1796,12 @@ export class Ht2Drive {
   routeLeft(target: THREE.Vector3): number | null {
     this.navigator ??= new Navigator(this.roads);
     return this.navigator.remaining(this.truck.visual.position, this.truck.forward(), target);
+  }
+
+  /** Точка через s метрів найкоротшим шляхом дорогами від pos до цілі (navigator.pointAlong). */
+  routePoint(pos: THREE.Vector3, heading: THREE.Vector3 | undefined, target: THREE.Vector3, s: number): THREE.Vector3 | null {
+    this.navigator ??= new Navigator(this.roads);
+    return this.navigator.pointAlong(pos, heading, target, s);
   }
 
   /** Навігатор: лише з покращенням і взятим замовленням (посібник). */
@@ -2789,7 +2807,7 @@ export class Ht2Drive {
       // ні двірників.
       const rainOn = this.weatherFlags.rain;
       this.glassRain.raining = this.raining && !this.sheltered && glassDrops() && rainOn;
-      this.glassRain.wipersOn = rainOn && (this.wipersManual ?? this.raining);
+      this.glassRain.wipersOn = rainOn && this.wipersManual;
       this.input.setToggle('wipers', this.glassRain.wipersOn);
       // Крок — справжній час кадру: з 1/30 на кадр двірники на 60 Гц ходили вдвічі, на 120 Гц — учетверо швидше.
       this.glassRain.update(dt, this.truck.speedKmh);
@@ -2958,7 +2976,7 @@ export class Ht2Drive {
     this.dents?.rearLights(this.truck.brakePedal(state) > 0, reverse, this.sizeLights);
     this.trailerDents?.rearLights(false, reverse, this.sizeLights);
     // Двірники — два стани (увімкнені / вимкнені): світяться, поки ввімкнені (і без скла кабіни — за вибором чи дощем).
-    this.input.setToggle('wipers', this.glassRain?.wipersOn ?? this.wipersManual ?? this.raining);
+    this.input.setToggle('wipers', this.glassRain?.wipersOn ?? this.wipersManual);
     this.input.setToggle('mirror', this.mirrorOn);
     // Причепити / відчепити — лише тягачем; світиться, поки причіп зчеплений.
     this.input.setToggle('attach', !!this.trailer, !this.hitched || !!this.race);
@@ -2979,8 +2997,9 @@ export class Ht2Drive {
       me: this.truck.visual.position,
       heading: this.truck.forward(),
       // Лише суперники в змаганні (king.exe 0x529890: прапорець 0x80 — гонка, конкуренти за вантаж); звичайні
-      // далекобійники й трафік на карті не показуються (career-misc.md §4). Конкуренти за вантаж у порту без позиції.
-      rivals: this.race ? this.race.racers.slice(1).map((r) => r.truck.visual.position) : [],
+      // далекобійники й трафік на карті не показуються (career-misc.md §4). Конкуренти за вантаж — на їхній частці
+      // маршруту гравця (careerMode.rivalMarks, порт: їдуть без моделей).
+      rivals: this.race ? this.race.racers.slice(1).map((r) => r.truck.visual.position) : (this.careerMode?.rivalMarks ?? []),
       target: this.careerMode?.target() ?? null,
       // Фініш гонки — значок I_race з написом mess.txt 88 «Кольцо».
       finish: this.race?.finishPos ?? null,
@@ -3247,6 +3266,8 @@ export class Ht2Drive {
     this.escMenu?.close();
     this.fPanels?.close();
     document.removeEventListener('pointerdown', this.onOutsideTap, true);
+    document.removeEventListener('visibilitychange', this.onHide);
+    window.removeEventListener('pagehide', this.onHide);
     document.body.classList.remove('ht2-side-open');
     this.tabMap?.dispose();
     this.mirror?.rt.dispose();

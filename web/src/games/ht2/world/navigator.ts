@@ -93,6 +93,36 @@ export class Navigator {
     return d + rest;
   }
 
+  /**
+   * Точка на найкоротшому шляху від pos до цілі через s метрів (суперники з тим самим вантажем на карті; null —
+   * pos далеко від доріг чи шляху немає). Шлях довший за s закінчується в останній точці мережі перед ціллю.
+   */
+  pointAlong(pos: THREE.Vector3, heading: THREE.Vector3 | undefined, target: THREE.Vector3, s: number): THREE.Vector3 | null {
+    const at = this.roads.nearest(pos, heading);
+    if (!at || at.dist > 80) return null;
+    const dist = this.distances(target);
+    if (!dist.has(at.line)) return null;
+    let line = at.line;
+    let seg = at.seg;
+    let from = line.pts[seg].clone().lerp(line.pts[seg + 1], at.t);
+    for (let guard = 0; guard < 500; guard++) {
+      for (; seg + 1 < line.pts.length; seg++) {
+        const to = line.pts[seg + 1];
+        const d = from.distanceTo(to);
+        if (s <= d) return from.lerp(to, d > 0 ? s / d : 0);
+        s -= d;
+        from = to.clone();
+      }
+      // Кінець лінії: ціль поруч (відстань 0) — тут і стоїть; інакше — найкоротшим продовженням.
+      const next = (line.next as RoadLine[]).filter((n) => dist.has(n));
+      if (!next.length || dist.get(line) === 0) return from;
+      line = next.reduce((a, b) => (dist.get(a)! + this.length.get(a)! <= dist.get(b)! + this.length.get(b)! ? a : b));
+      seg = 0;
+      from = line.pts[0].clone();
+    }
+    return from;
+  }
+
   /** Поворот на найближчій розвилці по шляху до цілі (null — розвилки поблизу немає чи шляху не знайдено). */
   turn(pos: THREE.Vector3, heading: THREE.Vector3, target: THREE.Vector3): NavTurn | null {
     const at = this.roads.nearest(pos, heading);

@@ -79,6 +79,8 @@ const SHARP_SLIDE = 0.3;
 const SHARP_SLIDE_OFF = 0.12;
 const SHARP_FORCE = 0.8;
 const SHARP_FORCE_OFF = 0.6;
+/** «Різко»: швидкість керма понад межею зчеплення до упору, 1/с (порт; з 0,4 до 1 — за ≈ 0,4 с). */
+const SHARP_STEER_RATE = 1.5;
 const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 export type Command = 'f1' |'f2' | 'f3' | 'f4' | 'f5' | 'menu' | 'camera' | 'reset' | 'horn' | 'autopilot' | 'tilt' | 'lights' | 'map' | 'engine' | 'wipers' | 'mirror' | 'cab' | 'swap' | 'attach';
@@ -336,7 +338,15 @@ export class Input {
       if (Math.abs(s) < 1e-3) s = 0;
     }
     // Межа — лише для керма, що зростає в бік клавіші (повернення до центру не обрізаємо вгору).
-    this.steerSmooth = target !== 0 && s * target > 0 ? Math.max(-c, Math.min(c, s)) : s;
+    s = target !== 0 && s * target > 0 ? Math.max(-c, Math.min(c, s)) : s;
+    // «Різко» понад межею зчеплення — кермо докручується до упору не швидше SHARP_STEER_RATE (порт, на прохання
+    // користувача): за формулою exe після довгого утримання клавіші швидкість ≈ 10 1/с, і кермо стрибало на упор.
+    const norm = this.steerLimit?.() ?? 1;
+    if (sharp && target !== 0 && s * target > norm) {
+      const from = Math.max(norm, this.steerSmooth * target);
+      s = target * Math.min(s * target, from + SHARP_STEER_RATE * this.steerSpeed * dt);
+    }
+    this.steerSmooth = s;
   }
 
   /**

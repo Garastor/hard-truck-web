@@ -210,6 +210,20 @@ const EXHAUST_TIME = 2;
 /** Ковзання вбік (king.exe [0x19c4]): |sin α| понад це. */
 const SKID_SIN = 0.26;
 /**
+ * Аварійний поворот з Ctrl (порт, власна логіка на прохання користувача — не з king.exe): кермо понад межею зчеплення
+ * на швидкості зриває передні колеса — машину несе вперед, лише трохи в бік повороту, і шини гасять швидкість; що
+ * повільніше, то більше колеса «ловлять» дорогу, і з повним кермом машина повертає дедалі різкіше. Жертвуємо
+ * швидкістю, щоб вписатися в поворот. Понад SHARP_SLIDE_KMH — повний знос, нижче SHARP_GRIP_KMH — зчеплення повне
+ * (між ними — плавно); SHARP_FRONT_GRIP — бічне зчеплення передніх коліс у зносі (частка), SHARP_SCRUB — гальмування
+ * шинами, частка μ·g. Ctrl вмикається й гасне плавно (SHARP_BLEND_ON / _OFF, 1/с).
+ */
+const SHARP_SLIDE_KMH = 70;
+const SHARP_GRIP_KMH = 45;
+const SHARP_FRONT_GRIP = 0.4;
+const SHARP_SCRUB = 0.45;
+const SHARP_BLEND_ON = 4;
+const SHARP_BLEND_OFF = 1.5;
+/**
  * Перекидання (порт): промені підвіски Rapier нахиляються разом із кузовом, і на крені ≈ 45° точки опору зсуваються під
  * центр мас — машина «стояла» й їхала на двох колесах. Кузов відхилився від нормалі ґрунту понад TIP_ON — колеса не
  * тримають (сила пружин 0, без тяги й бічних сил): машина падає на бік або повертається на колеса; знову на колесах —
@@ -417,6 +431,10 @@ export class TruckVehicle {
    */
   readonly skid: boolean[] = [];
   readonly skidAlpha: number[] = [];
+  /** «Різко» (Ctrl) з плавним вмиканням і згасанням 0…1 — межа керма й знос (SHARP_*). */
+  private sharpBlend = 0;
+  /** Знос передніх коліс аварійного повороту 0…1 (SHARP_*): бічне зчеплення передніх і гальмування шинами. */
+  sharpSlide = 0;
 
   /**
    * Колеса, що лишають слід шин (king.exe 0x502780 → [0x34d0+4i], 0x548250; wheel-effects.md): колесо на землі
@@ -863,9 +881,18 @@ export class TruckVehicle {
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
     const lv0 = this.body.linvel();
     // Кермо: δ = 45°·s, |s| — не більше межі зчеплення на цій швидкості; «різко» (Ctrl) — без межі, до упору
-    // (king.exe 0x500850: межу c при «різко» не застосовує — Input.steerExe).
-    const lim = sharp ? 1 : steerLimit(lv0.x * fwd.x + lv0.y * fwd.y + lv0.z * fwd.z, mu, this.base, K.steerK);
+    // (king.exe 0x500850: межу c при «різко» не застосовує — Input.steerExe). Межа знімається й вертається плавно
+    // (sharpBlend): кермо в кабіні не перескакує на упор і назад.
+    const vAlong = lv0.x * fwd.x + lv0.y * fwd.y + lv0.z * fwd.z;
+    this.sharpBlend = sharp ? Math.min(1, this.sharpBlend + SHARP_BLEND_ON * dt) : Math.max(0, this.sharpBlend - SHARP_BLEND_OFF * dt);
+    const normLim = steerLimit(vAlong, mu, this.base, K.steerK);
+    const lim = normLim + (1 - normLim) * this.sharpBlend;
     const shaped = Math.sign(steer) * K.steerScale * Math.abs(steer) ** K.steerPower;
+    // Аварійний поворот (SHARP_*): наскільки кермо понад звичайною межею × швидкість, на якій колеса ще не тримають.
+    const pastLim = normLim < 1 ? Math.max(0, Math.min(1, (Math.min(Math.abs(shaped), lim) - normLim) / (1 - normLim))) : 0;
+    const kmh = Math.abs(vAlong) * 3.6;
+    const x = Math.max(0, Math.min(1, (kmh - SHARP_GRIP_KMH) / (SHARP_SLIDE_KMH - SHARP_GRIP_KMH)));
+    this.sharpSlide = K.tires ? pastLim * x * x * (3 - 2 * x) : 0;
     const delta = KING.steerMax * Math.max(-lim, Math.min(lim, shaped));
     // Колеса на моделі: + — ліворуч; внутрішнє повертається більше (Аккерман — лише вигляд).
     this.steerAngle = -delta;
@@ -945,6 +972,8 @@ export class TruckVehicle {
     let force = wheelForces(wheels, drive, pedal, vFwd, this.slip, perWheel);
     if (handbrake && pedal <= KING.brakeFrom) force += wheelForces(wheels.map((w, i) => (i >= 2 ? w : { ...w, ground: false })), 0, 1, vFwd, undefined, perWheel);
     let resist = engineBraking ? Math.abs(this.engine.force) * Math.min(1, Math.abs(vFwd)) * (1 + this.engineBrake * Math.sqrt(pedal)) : 0;
+    // Знос аварійного повороту гасить швидкість (шини труться об дорогу).
+    resist += mass * mu * KING.g * SHARP_SCRUB * this.sharpSlide * Math.min(1, Math.abs(vFwd));
     for (const w of wheels) if (w.ground) resist += rollingForce(w.load, vFwd) * this.surfaceRoll;
     const over = Math.abs(vFwd) - this.surfaceMaxSpeed;
     if (over > 0) resist += mass * SOFT_DRAG * Math.min(1, over / SOFT_DRAG_SPAN);
@@ -1055,7 +1084,9 @@ export class TruckVehicle {
       const alpha = Math.atan2(Math.abs(lat), Math.abs(lon));
       // Колесо, що буксує (+1) чи заблоковане (−1), вбік не тримає (king.exe: у дампі такі колеса мають нульову
       // силу ковзання) — газ з Ctrl зриває задні ведучі, і задок заносить; гальмо блокує розвантажені колеса.
-      const size = this.slip[i] ? 0 : wheels[i].mu * sideMu * wheels[i].load * tireCurve(alpha, speed) * Math.min(1, Math.hypot(lat, lon));
+      // Аварійний поворот (SHARP_*): передні колеса в зносі тримають убік лише частку.
+      const slide = i < 2 ? 1 - (1 - SHARP_FRONT_GRIP) * this.sharpSlide : 1;
+      const size = this.slip[i] ? 0 : wheels[i].mu * sideMu * wheels[i].load * tireCurve(alpha, speed) * Math.min(1, Math.hypot(lat, lon)) * slide;
       // Сухе тертя (як 0x4f4110): імпульс колеса не більший, ніж гасить бічну швидкість його контакту, — з поділом на
       // число коліс (діють одночасно), щоб разом не перекинути знак.
       const arm = new THREE.Vector3().crossVectors(r, d).dot(n);

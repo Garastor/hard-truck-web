@@ -74,6 +74,8 @@ const LABEL: Record<EscCommand, string> = {
 
 export class EscMenu {
   private panel: SidePanel;
+  /** Відкрите підменю «Звук»/«Керування»: меню закрили без «ОК» чи «Скасувати» — зміни, що вже діють, зберегти. */
+  private unsaved = false;
   /** Дотик поза панеллю — закрити меню (на телефоні немає Esc). */
   private readonly catcher = document.createElement('div');
 
@@ -130,6 +132,7 @@ export class EscMenu {
   private sub(kind: 'sound' | 'control'): void {
     const s = this.o.settings!;
     const before = { ...s };
+    this.unsaved = true;
     this.panel.close();
     const p = new SidePanel(this.art, this.parent, kind === 'sound' ? 'm_16\\BackEscSnd.txr' : 'm_16\\BackEscCtrl.txr', 'left', VIEW);
     const list = kind === 'sound' ? SOUND : CONTROL;
@@ -143,6 +146,7 @@ export class EscMenu {
       p.button('m_16\\agear', 141, 700, 'Автоматична коробка передач', () => undefined, () => (s.automatic ? 'pp' : 'p')).el.classList.add('ht2-hit-wide');
     }
     const back = () => {
+      this.unsaved = false;
       p.close();
       this.panel = this.main();
     };
@@ -198,6 +202,8 @@ export class EscMenu {
   }
 
   close(): void {
+    if (this.unsaved && this.o.settings) this.o.apply?.(this.o.settings, true);
+    this.unsaved = false;
     this.panel.close();
     this.catcher.remove();
     document.body.classList.remove('ht2-esc-open');

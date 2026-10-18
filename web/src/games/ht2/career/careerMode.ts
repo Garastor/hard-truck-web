@@ -181,7 +181,7 @@ export class CareerMode {
   readonly races: CareerRaces;
 
   update(dt: number, throttle = 0): void {
-    this.races.update();
+    this.races.update(dt);
     if (this.forfeitCard && (this.forfeitCard.left -= dt) <= 0) {
       const amount = this.forfeitCard.amount;
       this.forfeitCard = null;
@@ -779,6 +779,9 @@ export class CareerMode {
     const to = this.stores.find((s) => s.id === o.to);
     const route = (to && this.drive.routeLeft(toThree(...to.center))) || o.distance;
     o.route = route;
+    const p = this.drive.truck.visual.position;
+    const f = this.drive.truck.forward();
+    o.start = [p.x, p.y, p.z, f.x, f.z];
     o.rivals = makeRivals(route, this.drive.truckers?.allNames ?? []);
     o.premium = o.rivals.length ? Math.round(o.pay * PREMIUM_SHARE) : 0;
     if (o.rivals.length) this.drive.say(`ЦЕЙ ВАНТАЖ ВЕЗУТЬ ЩЕ ${o.rivals.length}. ПРЕМІЯ ПЕРШОМУ $${o.premium}`);
@@ -789,6 +792,7 @@ export class CareerMode {
     const o = this.career.order;
     if (!o?.rivals?.length) {
       this.race = null;
+      this.rivalMarks = [];
       return;
     }
     for (const r of advance(o.rivals, dt)) {
@@ -804,6 +808,30 @@ export class CareerMode {
     const left = to ? this.drive.routeLeft(toThree(...to.center)) : null;
     const mine = left === null || !o.route ? 0 : Math.max(0, 1 - left / o.route);
     this.race = active(o.rivals).length ? place(o.rivals, mine) : null;
+    this.rivalMarks = this.rivalPositions(o);
+  }
+
+  /**
+   * Суперники з тим самим вантажем на карті (на прохання користувача; у king.exe — лише з прапорцем 0x80, ui/tabMap.ts):
+   * точка на найкоротшому шляху від місця, де гравець узяв вантаж, на частці шляху суперника. Ще не виїхали, доїхали
+   * чи зійшли — не показуються. Старі збереження без `start` — від складу відправлення.
+   */
+  rivalMarks: THREE.Vector3[] = [];
+
+  private rivalPositions(o: NonNullable<Ht2Career['order']>): THREE.Vector3[] {
+    const to = this.stores.find((s) => s.id === o.to);
+    const from = this.stores.find((s) => s.id === o.from);
+    if (!to || !o.route || !o.rivals) return [];
+    const st = o.start;
+    const pos = st ? new THREE.Vector3(st[0], st[1], st[2]) : from ? toThree(...from.center) : null;
+    if (!pos) return [];
+    const heading = st ? new THREE.Vector3(st[3], 0, st[4]) : undefined;
+    const target = toThree(...to.center);
+    return o.rivals.flatMap((r) => {
+      if (r.out || r.done || r.t <= 0) return [];
+      const q = this.drive.routePoint(pos, heading, target, (r.t / r.eta) * o.route!);
+      return q ? [q] : [];
+    });
   }
 
   /** Конкуренти поруч на дорозі (рація): у грі й з близькою часткою шляху (гіпотеза: «поруч» = ±10 % маршруту). */
