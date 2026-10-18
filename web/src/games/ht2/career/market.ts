@@ -9,6 +9,7 @@ import { drivable, truckDef, type Ht2Trucks } from '../vehicles/trucks';
 import { toThree } from '../world/world';
 import { ukName } from '../ui/uk';
 import { recolor } from '../traffic/traffic';
+import { hireOffer } from './company';
 
 /**
  * Ринки вантажівок HT2 — `parking` з `ENV/mod_<регіон>.sch`:
@@ -83,6 +84,8 @@ export interface ForSale {
   cluster?: number;
   /** Замовлена рацією. */
   ordered?: boolean;
+  /** Машина водія, що шукає роботу (найм, careerMode.salePanel). */
+  hire?: boolean;
 }
 
 export function parseMarkets(mods: Iterable<{ sch: SExpr[] }>, ways: Iterable<{ way: Way }>): Market[] {
@@ -221,6 +224,13 @@ export class Markets {
       const stolen = kind === 2;
       out.push({ rec, used, stolen, price: Math.round(rec.price * (used ? USED_DISCOUNT : stolen ? STOLEN_DISCOUNT : 1)), spot });
     });
+    // Водій, що шукає роботу, — на вільному звичайному місці ринку (не схованки й не місце-місто для замовлених).
+    if (!m.hidden) {
+      const free = m.flags.map((fl, i) => (fl & 4 || out.some((o) => o.spot === i) ? -1 : i)).filter((i) => i >= 0);
+      const offer = hireOffer(m.id, day, free, ['?']);
+      const rec = pool[Math.floor(rnd() * pool.length)];
+      if (offer && rec && !this.sold.has(`${m.id}:${day}:${offer.spot}`)) out.push({ rec, used: false, price: rec.price, spot: offer.spot, hire: true });
+    }
     return out;
   }
 

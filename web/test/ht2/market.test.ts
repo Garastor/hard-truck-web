@@ -34,8 +34,14 @@ describe('ринки й стоянки-схованки HT2 (parking у mod_*.sc
     const m = new Markets(null as never, null as never, trucks, list, () => 0, { forsale: 4, used: 2, stolen: 1 });
     for (const day of [0, 1, 7]) {
       const all = list.flatMap((mk) => m.stock(mk, day).map((s) => ({ s, f: mk.flags[s.spot], mk })));
-      const fresh = all.filter((x) => !x.s.used && !x.s.stolen);
+      const fresh = all.filter((x) => !x.s.used && !x.s.stolen && !x.s.hire);
       expect(fresh).toHaveLength(4);
+      // Шукач роботи — окрема машина на вільному звичайному місці ринку (не схованки, не місце-місто), щонайбільше одна.
+      for (const mk of list) {
+        const hire = m.stock(mk, day).filter((x) => x.hire);
+        expect(hire.length).toBeLessThanOrEqual(mk.hidden ? 0 : 1);
+        for (const h of hire) expect(mk.flags[h.spot] & 4).toBe(0);
+      }
       expect(fresh.every((x) => (x.f & 0x2c) === 0)).toBe(true);
       // Рівномірно: по дві на кожному ринку (місце-місто 4 не займають).
       expect(fresh.filter((x) => x.mk.id === 1)).toHaveLength(2);

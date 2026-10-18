@@ -700,9 +700,10 @@ export class Ht2Drive {
           scene: this.world.scene,
           rapier: this.rapier,
           trucks: this.trucks,
-          roadPoint: (p) => {
+          roadDir: (p) => {
             const n = this.roads.nearest(p);
-            return n ? n.line.pts[n.seg].clone().lerp(n.line.pts[n.seg + 1], n.t) : null;
+            const dir = n ? n.line.pts[n.seg + 1].clone().sub(n.line.pts[n.seg]).setY(0) : null;
+            return dir && dir.lengthSq() > 1e-6 ? dir.normalize() : null;
           },
         },
         this.semiTypes,

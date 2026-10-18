@@ -308,7 +308,10 @@ export class Ht2Roads {
     const all = line.next as RoadLine[];
     const passable = all.filter((n) => line.closed || !n.closed);
     const open = passable.filter((n) => !this.deadEnd(n));
-    const pool = open.length ? open : passable.length ? passable : all;
+    const pool0 = open.length ? open : passable.length ? passable : all;
+    // Паркувальні кишені бази — лише якщо іншого шляху немає (боти-автопілоти виписували ними зигзаги).
+    const roads = pool0.filter((n) => !isPocket(n));
+    const pool = roads.length ? roads : pool0;
     return pool[hashPick(line.name, pool.length)];
   }
 
@@ -338,6 +341,24 @@ export class Ht2Roads {
     }
     return cur;
   }
+}
+
+/**
+ * Паркувальна кишеня (порт): коротка (до 40 м) лінія бази (біт 0x10) з поворотом усередині понад 70° — заїзд на
+ * місце стоянки й виїзд (на базі біля аеропорту — ланцюжок кишень по 27 м з поворотом 94° поруч із прямою).
+ */
+export function isPocket(l: RoadLine): boolean {
+  if (!(l.flags & 0x10) || l.length > 40) return false;
+  let w = 0;
+  let prev: THREE.Vector3 | null = null;
+  for (let i = 1; i < l.pts.length; i++) {
+    const d = l.pts[i].clone().sub(l.pts[i - 1]).setY(0);
+    if (d.lengthSq() < 0.25) continue;
+    d.normalize();
+    if (prev) w += Math.acos(THREE.MathUtils.clamp(prev.dot(d), -1, 1));
+    prev = d;
+  }
+  return w > (70 * Math.PI) / 180;
 }
 
 /** Розвилка: продовження ведуть на різні дороги (а не лише в різні смуги однієї). */

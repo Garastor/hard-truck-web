@@ -29,6 +29,8 @@ const HIRED_OFF = 450;
 const SPAWN_MIN = 140;
 const SPAWN_MAX = 450;
 const DESPAWN = 650;
+/** Стоїть довше — застряг, с. */
+const STUCK_FOR = 30;
 
 export interface Rival {
   name: string;
@@ -37,6 +39,8 @@ export interface Rival {
   bad: number;
   /** Напівпричіп тягача (null — вантажівка з кузовом чи причіп відірвало). */
   trailer: Trailer | null;
+  /** Скільки стоїть (швидкість < 2 км/год), с. */
+  idle: number;
 }
 
 /** Точки вздовж тягача й причепа — одне тіло для обʼїзду. */
@@ -148,7 +152,7 @@ export class Truckers {
     const trailer = rec.group === 'tractors' ? this.hitch(truck, rec) : null;
     // З напівпричепом — повільніше в поворотах, як автопілот гравця (drive: команда autopilot).
     if (trailer) Object.assign(pilot, { cruise: 45 + Math.random() * 10, bendGain: 5, bendFloor: 0.25 });
-    return { name, truck, pilot, bad: 0, trailer };
+    return { name, truck, pilot, bad: 0, trailer, idle: 0 };
   }
 
   /** Напівпричіп тягача (як drive.hitch): тип — випадковий з presents, у «Шторма» — свій; вантаж — частка місткості. */
@@ -209,7 +213,10 @@ export class Truckers {
       const r = this.list[i];
       const up = new THREE.Vector3(0, 1, 0).applyQuaternion(r.truck.visual.quaternion).y;
       r.bad = up < 0.5 ? r.bad + dt : 0;
-      const far = r.truck.visual.position.distanceTo(player) > DESPAWN;
+      r.idle = r.truck.speedKmh < 2 ? r.idle + dt : 0;
+      // Застряг (уперся після удару, причіп зачепився) — прибрати, щойно не видно (як трафік; порт).
+      const stuck = r.idle > STUCK_FOR && !(this.drive.traffic?.view?.sees(r.truck.visual.position) ?? false);
+      const far = stuck || r.truck.visual.position.distanceTo(player) > DESPAWN;
       const line = this.roads.nearest(r.truck.visual.position);
       if (far || r.bad > 3 || (line && !this.loaded(line.line.region)) || r.truck.body.translation().y < -500) this.remove(i);
     }

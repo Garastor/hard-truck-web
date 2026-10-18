@@ -15,7 +15,8 @@ import type { ActiveOrder } from '../career/career';
  * - місця — вузли WAY `pos_base_*`; поки причепів менше за `semitrailers` з GAME.CNF (28), на вільному місці —
  *   зважений вибір (0x41eb80): 1 (Storm — 12) × вага типу (після кожного вибору ×0,75) × 2, якщо тягач гравця може
  *   його тягти × (цистерна ↔ «паливне» місце, інакше 0);
- * - причіп стоїть носом до найближчої точки дороги (вузли без ORTN, 0x41be60), на опорах (SupportKey 1);
+ * - причіп стоїть уздовж найближчої смуги (вузли без ORTN; порт за спостереженням оригіналу — див. spawn), на опорах
+ *   (SupportKey 1);
  * - причепити (VVK_ATTACH_SEMITRAILER): лише тягачем без причепа, present ближче 30 м; сідло тягача від шворня
  *   причепа ≤ 10 м, висоти — ≤ 0,3 м, курси — скалярний добуток ≥ 0,2 (0x55f000); відчепити — та сама клавіша,
  *   причіп лишається на місці present'ом («кинутий»; прибирається, коли старший 1200 с і далі 5000 м від гравця).
@@ -180,8 +181,8 @@ export interface PresentsCtx {
   scene: THREE.Scene;
   rapier: RAPIER.World;
   trucks: Ht2Trucks;
-  /** Найближча точка мережі доріг (Three.js) — курс причепа. */
-  roadPoint: (p: THREE.Vector3) => THREE.Vector3 | null;
+  /** Напрям найближчої смуги (Three.js, горизонтальний) — курс причепа вздовж дороги. */
+  roadDir: (p: THREE.Vector3) => THREE.Vector3 | null;
 }
 
 export class Presents {
@@ -335,8 +336,10 @@ export class Presents {
     const i = Math.max(0, w.findIndex((v) => (x -= v) < 0));
     const kind = this.kinds[i];
     this.weight.set(kind.id, (this.weight.get(kind.id) ?? 1) * WEIGHT_DECAY);
-    const road = place.forward ? null : this.ctx.roadPoint(place.pos);
-    const forward = place.forward ? place.forward.clone() : road ? road.clone().sub(place.pos).setY(0) : new THREE.Vector3(0, 0, -1);
+    // Без ORTN — уздовж найближчої смуги (як в оригіналі за спостереженням користувача: на базі старту причіп стоїть
+    // уздовж бази; за декомпіляцією 0x41be60 — носом до проєкції на вісь дороги, тобто впоперек, — розбіжність не
+    // зʼясована).
+    const forward = place.forward ? place.forward.clone() : (this.ctx.roadDir(place.pos) ?? new THREE.Vector3(0, 0, -1));
     if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
     this.list.push({ kind, place, pos: place.pos.clone(), forward: forward.normalize(), dropped: null, model: null });
   }

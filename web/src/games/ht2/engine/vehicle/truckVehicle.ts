@@ -287,9 +287,24 @@ export class TruckVehicle {
     for (const t of this.tires) t.setEnabled(tipped);
   }
 
+  /**
+   * Перекинута: нормаль ґрунту — променем униз з центру мас (повз власні тіла). Кузов, що ліг на схил кювету чи насипу
+   * паралельно до нього, знову «на колесах» (раніше порівнювався з нормаллю дороги до падіння — причіп так і висів
+   * нахиленим на узбіччі).
+   */
+  private probeGround(): void {
+    const c = this.body.worldCom();
+    const own = this.body.handle;
+    const hit = this.world.castRayAndGetNormal(new RAPIER.Ray({ x: c.x, y: c.y + 0.5, z: c.z }, { x: 0, y: -1, z: 0 }), 6, true, undefined, undefined, undefined, undefined, (col) => {
+      const p = col.parent();
+      return !p || (p.handle !== own && (!this.rayFilter || this.rayFilter(col)));
+    });
+    if (hit && hit.normal.y > 0.5) this.groundUp.set(hit.normal.x, hit.normal.y, hit.normal.z).normalize();
+  }
+
   /** Після кроку підвіски на колесах: нормаль ґрунту — середня нормаль контактів. */
   private updateGroundUp(): void {
-    if (this.tipped) return;
+    if (this.tipped) return this.probeGround();
     const n = new THREE.Vector3();
     for (let i = 0; i < this.wheels; i++) {
       const nr = this.ctrl.wheelIsInContact(i) ? this.ctrl.wheelContactNormal(i) : null;

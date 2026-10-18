@@ -57,12 +57,16 @@ export function hireTariff(price: number, share: number): number {
   return ((1 + 4 * share) * price) / 1024;
 }
 
-/** Пропозиція найму на місці ринку: одне місце на ринок на день (ймовірність 0,75 — GAME.CNF forhire 20 на 15 ринків). */
-export function hireOffer(market: number, day: number, spots: number, names: readonly string[]): { spot: number; name: string; photo: number } | null {
-  if (!names.length || spots < 2) return null;
+/**
+ * Пропозиція найму на ринку: один водій зі своєю машиною на ринок на день (ймовірність 0,75 — GAME.CNF forhire 20 на
+ * 15 ринків) — на одному з вільних місць free (без машини на продаж; у king.exe шукачі роботи — окремі машини, тож на
+ * ринку їх видно разом із тими, що продаються). Імʼя й фото — від ринку й дня, не від місця.
+ */
+export function hireOffer(market: number, day: number, free: readonly number[], names: readonly string[]): { spot: number; name: string; photo: number } | null {
+  if (!names.length || !free.length) return null;
   const h = Math.abs((market * 7919 + day * 104729) ^ 0x5bd1e995);
   if (h % 4 === 0) return null;
-  return { spot: h % spots, name: names[h % names.length], photo: 1 + (h % 51) };
+  return { spot: free[h % free.length], name: names[h % names.length], photo: 1 + (h % 51) };
 }
 
 /** Новий найманий: аванс 10·тариф (уже виплачений при наймі). */

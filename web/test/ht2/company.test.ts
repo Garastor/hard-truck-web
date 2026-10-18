@@ -4,11 +4,11 @@ import { driverCosts, hireOffer, hireTariff, hiredLoad, newDriver } from '@ht2/c
 import type { Goods, Store } from '@ht2/career/economy';
 
 describe('HT2: наймані водії', () => {
-  it('пропозиція найму — стала для ринку й дня, на одному з місць', () => {
-    const a = hireOffer(3, 10, 5, ['А', 'Б', 'В']);
-    expect(hireOffer(3, 10, 5, ['А', 'Б', 'В'])).toEqual(a);
-    if (a) expect(a.spot).toBeLessThan(5);
-    expect(hireOffer(3, 10, 1, ['А'])).toBeNull();
+  it('пропозиція найму — стала для ринку й дня, на одному з вільних місць', () => {
+    const a = hireOffer(3, 10, [1, 3, 4], ['А', 'Б', 'В']);
+    expect(hireOffer(3, 10, [1, 3, 4], ['А', 'Б', 'В'])).toEqual(a);
+    if (a) expect([1, 3, 4]).toContain(a.spot);
+    expect(hireOffer(3, 10, [], ['А'])).toBeNull();
   });
 
   it('тариф (1 + 4s)·ціна/1024 $/км; аванс 10·тариф; вичерпано — ще 10·тариф, нема чим — звільнення', () => {

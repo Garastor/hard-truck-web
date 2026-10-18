@@ -382,8 +382,8 @@ export class CareerMode {
     const tradeIn = Math.round((current?.price ?? 0) * 0.5);
     // На одному місці ринку — водій, що шукає роботу (зі своєю машиною).
     // Шукачі роботи — лише на ринках (стоянки-схованки — продавці вживаних і крадених).
-    const offer = m.hidden ? null : hireOffer(m.id, day, m.spots.length, this.drive.truckers?.allNames ?? []);
-    if (offer && offer.spot === near.spot) {
+    const offer = near.hire ? hireOffer(m.id, day, [near.spot], this.drive.truckers?.allNames ?? []) : null;
+    if (offer) {
       // Тариф — $/км (BackJob показує за км, 0x477350).
       const job = { ...offer, tariff: Math.round(hireTariff(this.drive.vehiclePrice(near.rec.carNode), this.marketShare()) * 10) / 10, model: near.rec.carNode, price: near.price, power: near.rec.horsePower, load: near.rec.cargoLoad };
       return this.openPanel(jobPanel(this.drive.escArt!, this.drive.overlay, job, () => this.hire(m, day, near, offer)));
