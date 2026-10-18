@@ -449,8 +449,9 @@ export class Traffic {
         line = l;
         if ((r -= l.length) <= 0) break;
       }
-      // На території баз трафік не ставимо (порт; привидам там не дає зʼявитися біт 0x10).
-      if (line.base) continue;
+      // На території баз і під'їздах заправок і СТО трафік не ставимо (порт; привидам там не дає зʼявитися біт 0x10),
+      // як і на смузі, з якої шлях лише на заправку.
+      if (line.base || line.station || (line.next.length && line.next.every((n) => (n as RoadLine).station))) continue;
       const seg = Math.floor(Math.random() * (line.pts.length - 1));
       if (line.pts[seg].distanceTo(player) < minDist) continue;
       this.all.push(this.newCar(line, seg, false));
@@ -488,7 +489,7 @@ export class Traffic {
       const a = Math.random() * Math.PI * 2;
       const at = player.clone().add(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)).multiplyScalar(2 * GHOST_NEAR));
       const n = this.roads.nearestAxis(at);
-      if (!n || n.axis.flags & 0x50 || n.point.distanceTo(player) < GHOST_NEAR || !this.loaded(n.axis.region)) continue;
+      if (!n || n.axis.flags & 0x50 || n.axis.station || n.point.distanceTo(player) < GHOST_NEAR || !this.loaded(n.axis.region)) continue;
       // Порт: не на очах гравця — інша спроба.
       if (this.sees(n.point)) continue;
       const p = Math.sqrt(n.axis.width / 14) * (n.axis.cls === 2 ? 0.5 : n.axis.cls === 3 ? 0.25 : 1);

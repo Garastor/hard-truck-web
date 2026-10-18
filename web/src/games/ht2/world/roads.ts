@@ -31,6 +31,10 @@ const PAIR_COS = 0.9;
 const BEZIER_STEP = 3;
 /** Лінія бази — ближче за стільки (у плані) від вузла місця причепа чи воріт складу, м (markBases). */
 const BASE_R = 30;
+/** Під'їзд заправки чи СТО — вісь з бітом 0x20 ближче за стільки (у плані) від вузла колонки чи СТО, м (markStations). */
+const STATION_R = 10;
+/** Під'їзд вужчий за вулицю (3–8 м); ширша вісь біля колонки — вулиця повз заправку (ar_048, aj_032: 12 м), м. */
+const STATION_W = 10;
 
 export interface RoadLine extends WayLine {
   /** Повна ширина дороги W, м. */
@@ -56,6 +60,8 @@ export interface RoadLine extends WayLine {
   endNode: number;
   /** Проїзд територією бази чи складу (порт, `markBases`): трафік туди не звертає, якщо є інший шлях. */
   base?: boolean;
+  /** Під'їзд заправки чи СТО (порт, `markStations`): трафік і боти туди не звертають, якщо є інший шлях. */
+  station?: boolean;
   /** Дорогу закрито завалом (world/obstacles.ts; king.exe прапорець 0x40 смуг): маршрути її оминають. */
   closed?: boolean;
   /** Де завал на закритій дорозі (Three.js): розвертаються лише ті, хто їде до нього. */
@@ -93,9 +99,12 @@ export class Ht2Roads {
   constructor(regions: Iterable<{ id: string; way: Way }>) {
     // Вузли місць причепів і воріт складів — для markBases (regions може бути одноразовим ітератором).
     const spots: THREE.Vector3[] = [];
+    // Вузли колонок заправок і СТО — для markStations.
+    const stations: THREE.Vector3[] = [];
     for (const { id, way } of regions)
       for (const room of way.rooms) {
         for (const n of room.nodes) if (/^(pos_base_|node_store_)/i.test(n.name)) spots.push(toThree(...n.pos));
+        for (const n of room.nodes) if (/^(sto_|node_car_fuel)/i.test(n.name)) stations.push(toThree(...n.pos));
         for (const s of room.segments) {
           const n = s.points.length / 3;
           if (n < 2) continue;
@@ -173,6 +182,52 @@ export class Ht2Roads {
       push(this.byRoad, String(l.road), l);
     }
     this.markBases(spots);
+    this.markStations(stations);
+  }
+
+  /**
+   * Під'їзди заправок і СТО (порт, на прохання користувача): осі з бітом 0x20, вужчі за STATION_W, що проходять ближче
+   * STATION_R від вузлів `node_car_fuel*` (колонки) чи `sto_*`, і їхні продовження з бітом 0x20 через вузли без розвилок — уся петля від
+   * перехрестя до перехрестя, і вузькі гілки 0x20, що ведуть лише до неї. Сам біт 0x20 станції не позначає (930 осей, зокрема міські вулиці); заправка просто на
+   * магістралі (STO_AA, біт 0x20 відсутній) не позначається — там трафік їде дорогою.
+   */
+  private markStations(spots: readonly THREE.Vector3[]): void {
+    if (!spots.length) return;
+    const atNode = new Map<string, RoadLine[]>();
+    for (const a of this.axes) for (const n of [a.startNode, a.endNode]) if (n >= 0) push(atNode, String(n), a);
+    const todo = this.axes.filter((a) => a.flags & 0x20 && a.width < STATION_W && spots.some((p) => polyDist(a.pts, p) < STATION_R));
+    const seen = new Set(todo);
+    const narrow = (a: RoadLine) => !!(a.flags & 0x20) && a.width < STATION_W;
+    for (let changed = true; changed; ) {
+      while (todo.length) {
+        const a = todo.pop()!;
+        for (const n of [a.startNode, a.endNode]) {
+          if (n < 0 || this.nodes[n].degree !== 2) continue;
+          for (const b of atNode.get(String(n)) ?? [])
+            if (b.flags & 0x20 && !seen.has(b)) {
+              seen.add(b);
+              todo.push(b);
+            }
+        }
+      }
+      // Гілка, що веде лише до станції (СТО db: 100 м від перехрестя до петлі СТО), — теж під'їзд.
+      changed = false;
+      for (const a of this.axes) {
+        if (seen.has(a) || !narrow(a)) continue;
+        const spur = [a.startNode, a.endNode].some((n) => {
+          const other = (atNode.get(String(n)) ?? []).filter((b) => b !== a);
+          return other.length > 0 && other.every((b) => seen.has(b));
+        });
+        if (!spur) continue;
+        seen.add(a);
+        todo.push(a);
+        changed = true;
+      }
+    }
+    for (const a of seen) {
+      a.station = true;
+      for (const l of this.linesOf(a.road)) l.station = true;
+    }
   }
 
   /**
@@ -333,8 +388,9 @@ export class Ht2Roads {
     const passable = all.filter((n) => line.closed || !n.closed);
     const open = passable.filter((n) => !this.deadEnd(n));
     const pool0 = open.length ? open : passable.length ? passable : all;
-    // Паркувальні кишені бази — лише якщо іншого шляху немає (боти-автопілоти виписували ними зигзаги).
-    const roads = pool0.filter((n) => !isPocket(n));
+    // Паркувальні кишені бази й під'їзди заправок і СТО — лише якщо іншого шляху немає (боти-автопілоти виписували
+    // кишенями зигзаги).
+    const roads = pool0.filter((n) => !isPocket(n) && !n.station);
     const pool = roads.length ? roads : pool0;
     return pool[hashPick(line.name, pool.length)];
   }

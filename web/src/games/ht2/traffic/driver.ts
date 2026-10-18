@@ -387,16 +387,21 @@ const TURN_COST = 25;
  * вантажаться; трафік (легковики, автобуси) їде повз неї магістраллю, навіть якщо через базу коротше.
  */
 const BASE_COST = 3000;
+/**
+ * Штраф за під'їзд заправки чи СТО, м (порт, на прохання користувача): трафік туди не заїжджає ніколи, якщо є хоч
+ * якийсь інший шлях. 3000 м мало: петля СТО db — розворот, що скорочує маршрут на кілометри.
+ */
+const STATION_COST = 100_000;
 const windings = new WeakMap<RoadLine, number>();
 
 /** Штраф лінії для маршрутів трафіку (Navigator): звивистість, м. */
 export function routePenalty(l: RoadLine): number {
-  return TURN_COST * winding(l) + (l.base ? BASE_COST : 0);
+  return TURN_COST * winding(l) + (l.base ? BASE_COST : 0) + (l.station ? STATION_COST : 0);
 }
 
-/** Продовження без вʼїзду на базу (world/roads markBases), якщо таке є. */
+/** Продовження без вʼїзду на базу, заправку чи СТО (world/roads markBases, markStations), якщо таке є. */
 function offBase(lines: RoadLine[]): RoadLine[] {
-  const out = lines.filter((l) => !l.base);
+  const out = lines.filter((l) => !l.base && !l.station);
   return out.length ? out : lines;
 }
 

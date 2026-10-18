@@ -289,4 +289,16 @@ describe('HT2: водій трафіку', () => {
     a[0].next.splice(1);
     expect(newMover(a[0], 0, 0, 20, 2).plan).toBe(1);
   });
+
+  it("на під'їзд заправки чи СТО не звертає, якщо є інший шлях (порт)", () => {
+    const a = road(straight(200), 1, 0);
+    const gas = road([0, 1, 2, 3].map((i) => new THREE.Vector3(i * 20, 0, -200)), 1, 1);
+    const on = road(straight(200).map((p) => p.clone().setZ(p.z - 200)), 1, 2);
+    for (const l of gas) l.station = true;
+    a[0].next.push(gas[0], on[0]);
+    for (let s = 1; s <= 20; s++) {
+      vi.spyOn(Math, 'random').mockImplementation(seeded(s));
+      expect(newMover(a[0], 0, 0, 20, 2).plan).toBe(2);
+    }
+  });
 });
