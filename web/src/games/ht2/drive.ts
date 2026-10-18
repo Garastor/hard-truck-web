@@ -2964,10 +2964,8 @@ export class Ht2Drive {
   private readonly cabBase = new THREE.Matrix4();
   private readonly cabSway = new THREE.Matrix4();
   private readonly cabTilt = new WindowAvg(0.3);
-  private readonly cabSeatUp = new WindowAvg(1.0);
   private readonly cabSeatFwd = new WindowAvg(0.5);
   private cabClock = 0;
-  private cabVy = NaN;
 
   /**
    * Гойдання салону (king.exe 0x4decc0; канали — зважене середнє за останні T с, вага 1 − вік/T, 0x4eaf98):
@@ -2977,18 +2975,17 @@ export class Ht2Drive {
    *   уперед — (g − a) уперед ·0,048, так само, канал 0,5 с.
    * Рух задає камеру салону відносно салону; у порту салон рухається навпаки відносно камери.
    * Гіпотези порту: вхід крену симетричний (у exe гілки для + і − різні), складові від кутової швидкості
-   * (|ω|·плече ока) не перенесено, (g − a) по вертикалі — з прискорення тіла.
+   * (|ω|·плече ока) і сидіння вгору-вниз не перенесено.
    */
   private updateCabSway(dt: number): void {
     const now = (this.cabClock += dt);
     const lean = this.truck.leanAngles;
     const roll = this.cabTilt.add(now, THREE.MathUtils.clamp(0.64 * -lean.side, -0.2618, 0.2618));
     const pitch = THREE.MathUtils.clamp(0.5 * lean.fwd, -0.1309, 0.08);
-    const vy = this.truck.body.linvel().y;
-    const ay = Number.isFinite(this.cabVy) && dt > 0 ? (vy - this.cabVy) / dt : 0;
-    this.cabVy = vy;
     const sq = (x: number, k: number) => THREE.MathUtils.clamp(x * k * Math.abs(x * k), -0.2, 0.2);
-    const up = this.cabSeatUp.add(now, sq(-ay, 0.06));
+    // Сидіння вгору-вниз (канал 1 с) не перенесено: (g − a) по вертикалі в порту — з поштовхів контактів фізики
+    // (до 0,1 м за кадр), салон від цього трусився окремо від капота.
+    const up = 0;
     const fwd = THREE.MathUtils.clamp(this.cabSeatFwd.add(now, sq(this.truck.feltFwd, 0.048)), -0.2, 0.2);
     const clamp1 = (x: number) => THREE.MathUtils.clamp(x, -0.1, 0.1);
     // Осі гри (x праворуч, y уперед, z угору) → three (x, z, −y); поворот навколо осі «уперед» гри = навколо −z.
