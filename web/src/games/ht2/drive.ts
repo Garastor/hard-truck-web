@@ -211,6 +211,11 @@ const COCKPIT_LIFT = new THREE.Vector3(0, 0.08, 0);
 /** Межі кутів голови в кабіні (king.exe 0x535a70: 0x64f3b0, 0x64f3a8), рад — 2,5° уперед-назад і 5° убік. */
 const HEAD_PITCH_MAX = 0.0436;
 const HEAD_SIDE_MAX = 0.0873;
+/**
+ * Зсув салону на частку зсуву голови: 1 − d/D, де d — відстань від ока до верху панелі (одиниці CABINES, 1,81) і D — до
+ * кромки капота на тому самому промені (0,88 м, ZilR; виміряно в порту) — тоді шов капота з панеллю стоїть на місці.
+ */
+const CAB_PARALLAX = 1 - 1.81 / 0.88;
 /** Дальність видимості трафіку без туману в сцені, м. */
 const VIEW_FALLBACK = 900;
 /** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
@@ -2960,15 +2965,16 @@ export class Ht2Drive {
       this.headB = f1 * this.headB + (1 - f1) * B;
       const a = this.headA;
       const b = this.headB;
-      // Око — на місці водія моделі (з нахилом кузова), салон там само: салон і капот — одне ціле. Тряска — лише
-      // поворотом погляду навколо ока: орієнтація кузова без нахилу (king.exe — матриця машини +0x204, тож капот і
-      // салон хиляться в кадрі разом), кивок голови на A і крен на 0,1·B. Зсув голови (4B; 4A) не перенесено: салон
-      // CABINES задано не в метрах, і від зсуву камери капот їхав відносно салону.
+      // Око — на місці водія моделі (з нахилом кузова); погляд — з орієнтації кузова без нахилу (king.exe — матриця
+      // машини +0x204, тож капот і салон хиляться в кадрі разом), кивок голови на A і крен на 0,1·B. Голова
+      // зсувається на (4B; угору −4(A² + B²); уперед 4A), а салон — на CAB_PARALLAX від цього зсуву: салон CABINES
+      // задано не в метрах, і без поправки капот їхав відносно салону.
       const eye = this.cockpit.clone().applyQuaternion(v.quaternion).add(v.position);
-      this.camera.position.copy(eye);
+      const head = new THREE.Vector3(4 * b, -4 * (a * a + b * b), -4 * a).applyQuaternion(this.truck.bodyQuat);
+      this.camera.position.copy(eye).add(head);
       const nod = new THREE.Quaternion().setFromEuler(new THREE.Euler(-a, 0, -0.1 * b, 'XYZ'));
       this.camera.quaternion.copy(this.truck.bodyQuat).multiply(nod).multiply(tilt);
-      this.cabBase.compose(eye, v.quaternion.clone().multiply(tilt), new THREE.Vector3(1, 1, 1));
+      this.cabBase.compose(eye.clone().addScaledVector(head, CAB_PARALLAX), v.quaternion.clone().multiply(tilt), new THREE.Vector3(1, 1, 1));
       this.camera.near = 0.2;
       this.camera.fov = viewFov(this.opts.settings?.xpyramid ?? 1.6);
       this.camera.updateProjectionMatrix();
