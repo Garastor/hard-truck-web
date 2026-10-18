@@ -100,6 +100,12 @@ const CHASE_BACK = 8.8;
  * (S/M/L/H — 170…480 px: розмір за роздільністю, гіпотеза; ≈ 30 % ширини екрана — тут найдетальніша H, масштабована).
  * Вікно рамки H — x 10…469, y 10…159. Кут огляду — підібраний (у king.exe не знайдено).
  */
+/** Режим «Баланс» (оптимізація для телефона, як типовий у першій грі): частота кадрів і щільність пікселів. */
+const MAX_FPS = 60;
+const BALANCE_DPR = 1.5;
+/** Дзеркало оновлюється не частіше (к/с): друге малювання світу — найдорожча частина виду з кабіни. */
+const MIRROR_FPS = 20;
+
 const MIRROR_MASK = 'm16\\mirrth.msk';
 const MIRROR_W = 480;
 const MIRROR_H = 170;
@@ -225,7 +231,7 @@ const HEAD_CALM_SPAN = 45;
 /** Частка крену кузова у вигляді з кабіни (на прохання користувача — на 30 % менше). */
 const COCKPIT_ROLL = 0.7;
 /** Зсув глибини стрілок приладів до ока, м (на прохання користувача — стрілки не ховаються за циферблатом). */
-const NEEDLE_BIAS = 0.02;
+const NEEDLE_BIAS = 0.1;
 /** Зсув голови на одиницю кута, м/рад: у king.exe 4 (0x64c408), у порту на 20 % менше — на прохання користувача. */
 const HEAD_SHIFT = 3.2;
 /**
@@ -2474,8 +2480,10 @@ export class Ht2Drive {
     const w = window.innerWidth;
     const h = window.innerHeight;
     // Роздільність з меню «Графіка»: висота кадру 480…1200 (не більше за фізичну).
+    // Не задано — режим «Баланс» (як типовий у першій грі): щільність пікселів не вище BALANCE_DPR — кількість
+    // пікселів найбільше гріє телефон.
     const res = this.opts.settings?.resolution;
-    if (res !== undefined) this.opts.renderer.setPixelRatio(Math.min(window.devicePixelRatio, RESOLUTION_H[res] / h));
+    this.opts.renderer.setPixelRatio(Math.min(window.devicePixelRatio, res !== undefined ? RESOLUTION_H[res] / h : BALANCE_DPR));
     this.opts.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
@@ -2489,6 +2497,9 @@ export class Ht2Drive {
 
   private frame(): void {
     const now = performance.now();
+    // Не частіше за MAX_FPS: екрани 90/120 Гц інакше малюють у півтора-два рази частіше (допуск 2 мс — щоб 60 Гц
+    // не губили кадри через тремтіння таймера).
+    if (now - this.last < 1000 / MAX_FPS - 2) return;
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.update(dt);
@@ -2529,12 +2540,18 @@ export class Ht2Drive {
 
   /** Дзеркало: вид назад з місця водія, віддзеркалений зліва направо, у вікні рамки оригіналу під табло. */
   private renderMirror(r: THREE.WebGLRenderer): void {
-    const size = r.getSize(new THREE.Vector2());
+    const size = r.getSize(this.mirrorSize);
     const k = Math.round(size.x * MIRROR_SHARE) / MIRROR_W;
     const fw = Math.round(MIRROR_W * k);
     const fh = Math.round(MIRROR_H * k);
     const fx = Math.round((size.x - fw) / 2);
-    const fy = Math.round(parseFloat(getComputedStyle(document.body).getPropertyValue('--ht2-tablo-h')) || 0);
+    // Висота табло (CSS-змінна) — раз на пів секунди: getComputedStyle щокадру перераховує стилі.
+    const now = performance.now();
+    if (now - this.tabloHAt > 500) {
+      this.tabloHAt = now;
+      this.tabloH = Math.round(parseFloat(getComputedStyle(document.body).getPropertyValue('--ht2-tablo-h')) || 0);
+    }
+    const fy = this.tabloH;
     const x = Math.round(fx + MIRROR_IN[0] * k);
     const y = Math.round(fy + MIRROR_IN[1] * k);
     const w = Math.round((MIRROR_IN[2] - MIRROR_IN[0] + 1) * k);
@@ -2555,20 +2572,13 @@ export class Ht2Drive {
     }
     const m = this.mirror;
     const ratio = r.getPixelRatio();
-    if (m.rt.width !== Math.round(w * ratio) || m.rt.height !== Math.round(h * ratio)) m.rt.setSize(Math.round(w * ratio), Math.round(h * ratio));
-    m.cam.aspect = w / h;
-    m.cam.far = this.camera.far;
-    m.cam.updateProjectionMatrix();
-    // Погляд назад з місця водія: орієнтація машини, розвернута на 180° навколо вертикалі.
-    m.cam.position.copy(this.camera.position);
-    m.cam.quaternion.copy(this.truck.visual.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI));
-    m.cam.updateMatrixWorld();
-    // Дзеркало дивиться назад — свої видимі кімнати (наступний кадр рахує їх для камери знову).
-    this.world.visibility.update(m.cam);
-    r.setRenderTarget(m.rt);
-    r.clear();
-    this.renderWorld(r, m.cam);
-    r.setRenderTarget(null);
+    let fresh = now - this.mirrorAt >= 1000 / MIRROR_FPS - 2;
+    if (m.rt.width !== Math.round(w * ratio) || m.rt.height !== Math.round(h * ratio)) {
+      m.rt.setSize(Math.round(w * ratio), Math.round(h * ratio));
+      fresh = true;
+    }
+    // Світ у дзеркалі — MIRROR_FPS разів на секунду; між оновленнями — та сама картинка (рамка — щокадру).
+    if (fresh) this.drawMirror(r, m, w / h);
     const auto = r.autoClear;
     r.autoClear = false;
     r.setScissorTest(true);
@@ -2579,7 +2589,36 @@ export class Ht2Drive {
     r.setViewport(0, 0, size.x, size.y);
     r.autoClear = auto;
     m.frame.hidden = false;
-    Object.assign(m.frame.style, { left: `${fx}px`, top: `${fy}px`, width: `${fw}px`, height: `${fh}px` });
+    const css = `${fx},${fy},${fw},${fh}`;
+    if (css !== this.mirrorCss) {
+      this.mirrorCss = css;
+      Object.assign(m.frame.style, { left: `${fx}px`, top: `${fy}px`, width: `${fw}px`, height: `${fh}px` });
+    }
+  }
+
+  private readonly mirrorSize = new THREE.Vector2();
+  private tabloH = 0;
+  private tabloHAt = -Infinity;
+  private mirrorAt = -Infinity;
+  private mirrorCss = '';
+  private static readonly BACK = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+
+  /** Вид назад у текстуру дзеркала. */
+  private drawMirror(r: THREE.WebGLRenderer, m: NonNullable<typeof this.mirror>, aspect: number): void {
+    this.mirrorAt = performance.now();
+    m.cam.aspect = aspect;
+    m.cam.far = this.camera.far;
+    m.cam.updateProjectionMatrix();
+    // Погляд назад з місця водія: орієнтація машини, розвернута на 180° навколо вертикалі.
+    m.cam.position.copy(this.camera.position);
+    m.cam.quaternion.copy(this.truck.visual.quaternion).multiply(Ht2Drive.BACK);
+    m.cam.updateMatrixWorld();
+    // Дзеркало дивиться назад — свої видимі кімнати (наступний кадр рахує їх для камери знову).
+    this.world.visibility.update(m.cam);
+    r.setRenderTarget(m.rt);
+    r.clear();
+    this.renderWorld(r, m.cam);
+    r.setRenderTarget(null);
   }
 
   /** Інтер'єр кабіни `<prefixCab>Cab` (CABINES.B3D, текстури CABINES.RES) — вантажиться при першому вигляді з кабіни. */
@@ -2612,7 +2651,7 @@ export class Ht2Drive {
         return found;
       };
       this.cabParts = { rule: bySpace('rulespace'), speed: bySpace('speedspace'), tacho: bySpace('tachospace') };
-      // Стрілки — на 2 см ближче до ока (лише глибина): у моделях вони майже на циферблаті й місцями ховалися за ним.
+      // Стрілки — на 10 см ближче до ока (лише глибина): на малій швидкості їх перекривала текстура панелі зліва.
       for (const n of [this.cabParts.speed, this.cabParts.tacho]) if (n) biasTowardCamera(n, NEEDLE_BIAS);
       // Скло (GlassKey, група 1) — завжди: його текстуру (краплі) малює GlassRain, суха — прозора.
       dyn.setSwitch('GlassKey', 1);
