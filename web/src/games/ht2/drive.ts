@@ -16,7 +16,7 @@ import { Ht2World, toThree, yieldTask, type LoadedRegion } from './world/world';
 import { noFarClip } from './engine/render/farClip';
 import { AutoPilot } from './engine/vehicle/autopilot';
 import { Ht2Roads } from './world/roads';
-import { Traffic, recolor, trafficKinds } from './traffic/traffic';
+import { Traffic, recolor, spotShare, trafficKinds } from './traffic/traffic';
 import { Accidents } from './traffic/accidents';
 import { TrafficLights } from './world/trafficLights';
 import { CareerMode } from './career/careerMode';
@@ -52,6 +52,7 @@ import { decodeCp1251 } from './engine/formats/binary';
 import { RaceMode } from './race';
 import { Trailer } from './vehicles/trailer';
 import { headlightMask } from './vehicles/headlights';
+import { setPoolLight } from './traffic/headPools';
 import { Truckers, truckerKinds, truckerNames } from './traffic/truckers';
 import { parseUpgrades, tireGrip, tuning, type Tuning } from './career/upgrades';
 import { parseServices, parseTowns } from './career/economy';
@@ -206,6 +207,9 @@ const LAMP_ROAD = 0.56;
 const CAR_LAMP_CUTOFF = 50;
 /** Висота фар легковика над дорогою для маски, м — на око (у трафіку різні машини, маска одна). */
 const CAR_LAMP_HEIGHT = 0.8;
+/** Колір світла фар (гравця й трафіку). */
+const LAMP_COLOR = new THREE.Color(0xfff2d0);
+const POOL_BASE = new THREE.Color();
 /** Опір кочення поза твердим покриттям, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
 const OFFROAD_ROLL = 5;
 /**
@@ -1603,6 +1607,9 @@ export class Ht2Drive {
   private updateCarLamp(on: boolean): void {
     const t = this.traffic!;
     const b = this.truckers;
+    // Нічне світло дороги: розсіяне + місяць під ~45° (cos ≈ 0,7); сила фари — у тих самих одиницях (÷ π).
+    POOL_BASE.copy(this.world.moonColor).multiplyScalar(0.7).add(this.world.ambientColor);
+    setPoolLight(LAMP_COLOR, LAMP_ROAD / Math.PI, POOL_BASE);
     t.spotWanted = on;
     if (b) b.spotWanted = on;
     t.spotLimit = b?.spot?.dist ?? Infinity;
@@ -1613,7 +1620,7 @@ export class Ht2Drive {
     if (!this.carLamps.length) {
       const mask = headlightMask(CAR_LAMP_HEIGHT, CAR_LAMP_CUTOFF, LAMP_ANGLE);
       for (let i = 0; i < 2; i++) {
-        const lamp = new THREE.SpotLight(0xfff2d0, 0, CAR_LAMP_CUTOFF * 2, LAMP_ANGLE, 0.15, 0);
+        const lamp = new THREE.SpotLight(LAMP_COLOR, 0, CAR_LAMP_CUTOFF * 2, LAMP_ANGLE, 0.15, 0);
         lamp.map = mask;
         this.world.scene.add(lamp, lamp.target);
         this.carLamps.push(lamp);
@@ -1621,9 +1628,11 @@ export class Ht2Drive {
     }
     const s = t.spot ?? b?.spot ?? null;
     if (b) b.spotTaken = !t.spot && !!b.spot;
+    // Пляма й прожектори перетікають одне в одне (spotShare), колір плями — як від прожектора (setPoolLight).
+    const share = s ? spotShare(s.dist) : 0;
     this.carLamps.forEach((lamp, i) => {
       lamp.visible = true;
-      lamp.intensity = s ? LAMP_ROAD : 0;
+      lamp.intensity = LAMP_ROAD * share;
       if (!s) return;
       lamp.position.copy(i ? s.right : s.left);
       lamp.target.position.copy(lamp.position).addScaledVector(s.dir, 20);

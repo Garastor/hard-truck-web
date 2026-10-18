@@ -69,6 +69,10 @@ const BLINK_SIZE = 0.55;
 export const SPOT_RANGE = 90;
 /** Зустрічна: курс машини на гравця, косинус кута не менший за SPOT_FACING. */
 export const SPOT_FACING = 0.7;
+/** Перехід пляма → прожектори на останніх SPOT_BLEND м до SPOT_RANGE (без помітної підміни). */
+export const SPOT_BLEND = 30;
+/** Частка прожекторів (0…1) на відстані d; пляма — 1 − частка. */
+export const spotShare = (d: number): number => THREE.MathUtils.clamp((SPOT_RANGE - d) / SPOT_BLEND, 0, 1);
 const GROUND_EVERY = 0.12;
 /** Нова машина на багатосмуговій дорозі — у крайній правій з такою імовірністю (порт). */
 const KEEP_RIGHT = 0.8;
@@ -199,7 +203,7 @@ export class Traffic {
    * Справжні прожектори фар — найближчій зустрічній машині з фарами (точки лівої й правої фари й напрям, Three.js),
    * інакше null; її пляма схована (світять прожектори). Оновлюється в update.
    */
-  spot: { left: THREE.Vector3; right: THREE.Vector3; dir: THREE.Vector3 } | null = null;
+  spot: { left: THREE.Vector3; right: THREE.Vector3; dir: THREE.Vector3; dist: number } | null = null;
   /** Чи шукати машину для прожектора (повзунки графіки, drive.ts) і не далі за кого (ближчий бот-далекобійник). */
   spotWanted = false;
   spotLimit = Infinity;
@@ -351,13 +355,13 @@ export class Traffic {
         host.add(c.pool);
       }
       if (c === best) {
-        setPoolFade(c.pool, 0);
+        setPoolFade(c.pool, 1 - spotShare(bestD));
         // Точки покажчиків на краях фар — на 0,15 м усередину, тобто майже в самих фарах.
         const y = pts[0].y + lift;
         const left = host.localToWorld(new THREE.Vector3(pts[0].x, y, front));
         const right = host.localToWorld(new THREE.Vector3(pts[2].x, y, front));
         const dir = host.localToWorld(new THREE.Vector3(pts[0].x, y, front - 20)).sub(left).normalize();
-        this.spot = { left, right, dir };
+        this.spot = { left, right, dir, dist: bestD };
         continue;
       }
       const d = c.pos.distanceTo(player);

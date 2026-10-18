@@ -7,16 +7,27 @@ import * as THREE from 'three';
  * площині машини перед нею, що множить колір під собою: результат = під · (1 + яскравість), тобто дорога світлішає
  * пропорційно своєму кольору, як від світла (а не сіріє, як від додавання). Ціна — лише пікселі самої плями.
  *
- * Плям дві — від кожної фари: множення щонайбільше подвоює колір (вихід кадру ≤ 1), а нічний асфальт темний, тож
- * одна пляма ледь помітна; посередині дві перекриваються (до ×4), як світло двох фар.
+ * Плям дві — від кожної фари, посередині перекриваються. Колір плями — не сірий: під плямою колір = альбедо · нічне
+ * світло (синювате розсіяне + місяць), а фара додає альбедо · тепле світло, тож множник = 1 + світло фари / нічне
+ * світло окремо для кожного каналу (setPoolLight) — інакше пляма підсилювала синяву й світилася, як неон, і
+ * відрізнялася від прожекторів (drive.ts carLamps), що змінюють її на найближчій зустрічній.
  *
  * Обмеження: світить лише в площині машини (стіни й інші машини не освітлює); на перегині дороги дальній край
  * ховається під асфальт чи трохи висить — тому пляма коротка (POOL_LENGTH).
  */
 const POOL_LENGTH = 26;
 const POOL_WIDTH = 7;
-/** Яскравість плями однієї фари (0…1: множник 1 + POOL_GAIN · маска) — на око. */
-const POOL_GAIN = 1;
+/** Додаток кольору плями однієї фари (множник 1 + tint · маска; 0…1 — вихід кадру не більший за 1). */
+const tint = new THREE.Color(0.5, 0.5, 0.5);
+
+/**
+ * Світло плями: lamp — колір фари, power — освітленість від неї (у тих самих одиницях, що й розсіяне світу:
+ * Lambert ділить силу прямого світла на π), base — нічне світло дороги під плямою (розсіяне + місяць).
+ */
+export function setPoolLight(lamp: THREE.Color, power: number, base: THREE.Color): void {
+  const ch = (l: number, b: number) => Math.min(1, (power * l) / Math.max(b, 0.02));
+  tint.setRGB(ch(lamp.r, base.r), ch(lamp.g, base.g), ch(lamp.b, base.b));
+}
 /** Підйом над дорогою, м — щоб не мерехтіла з асфальтом (плюс зсув глибини). */
 const POOL_LIFT = 0.08;
 
@@ -64,7 +75,7 @@ function texture(): THREE.Texture {
 export function makePool(ground: number, front: number, left: number, right: number): THREE.Group {
   const mat = new THREE.MeshBasicMaterial({
     map: texture(),
-    color: new THREE.Color(POOL_GAIN, POOL_GAIN, POOL_GAIN),
+    color: tint.clone(),
     blending: THREE.CustomBlending,
     blendEquation: THREE.AddEquation,
     blendSrc: THREE.DstColorFactor,
@@ -92,7 +103,7 @@ export function makePool(ground: number, front: number, left: number, right: num
 /** Згасання плям з відстанню до гравця (fade 0…1: 1 — повна, 0 — сховані). */
 export function setPoolFade(pool: THREE.Group, fade: number): void {
   pool.visible = fade > 0.01;
-  ((pool.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial).color.setScalar(POOL_GAIN * fade);
+  ((pool.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial).color.copy(tint).multiplyScalar(fade);
 }
 
 export function disposePool(pool: THREE.Group): void {

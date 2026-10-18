@@ -355,6 +355,11 @@ export class Ht2World {
     }
   }
 
+  /** Колір місячного світла пори доби (плями фар трафіку, traffic/headPools.ts). */
+  get moonColor(): THREE.Color {
+    return this.moon.color;
+  }
+
   /** Колір розсіяного світла пори доби (для кабіни, що малюється окремою сценою). */
   get ambientColor(): THREE.Color {
     return this.ambient.color;

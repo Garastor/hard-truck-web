@@ -7,7 +7,7 @@ import { isList, num, str, type SExpr } from '../formats/sexpr';
 import { drivable, truckDef, type Ht2Trucks } from '../vehicles/trucks';
 import { Trailer } from '../vehicles/trailer';
 import type { SemiKind } from '../vehicles/presents';
-import { recolor, SPOT_FACING, SPOT_RANGE } from './traffic';
+import { recolor, SPOT_FACING, SPOT_RANGE, spotShare } from './traffic';
 import { disposePool, makePool, setPoolFade } from './headPools';
 import { g2t } from '../engine/physics/world';
 import type { Ht2Roads, RoadLine } from '../world/roads';
@@ -314,7 +314,7 @@ export class Truckers {
     }
     this.spot = best;
     // Прожектори світять за пляму: її сховати (drive вирішує, чи віддати їх боту, — spotTaken з минулого кадру).
-    if (best && this.spotTaken && best.rig.pool) setPoolFade(best.rig.pool, 0);
+    if (best && this.spotTaken && best.rig.pool) setPoolFade(best.rig.pool, 1 - spotShare(best.dist));
   }
 
   private remove(i: number): void {
