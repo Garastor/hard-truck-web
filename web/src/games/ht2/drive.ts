@@ -215,9 +215,11 @@ const HEAD_SIDE_MAX = 0.0873;
  * Ослаблення гойдання в кабіні зі швидкістю (на прохання користувача: бічне прискорення росте як v·ω, і на ходу
  * голову й крен розгойдувало надміру): 1 / (1 + v / 25 м/с) — 30 км/год ×0,75, 72 — ×0,56, 100 — ×0,47.
  */
-function cockpitCalm(kmh: number): number {
-  return 1 / (1 + Math.abs(kmh) / 3.6 / 25);
+function cockpitCalm(kmh: number, span = 25): number {
+  return 1 / (1 + Math.abs(kmh) / 3.6 / span);
 }
+/** Те саме для голови — слабше ослаблення (45 м/с): на прохання користувача голова на 60 км/год ≈ 0,56°. */
+const HEAD_CALM_SPAN = 45;
 /** Частка крену кузова у вигляді з кабіни (на прохання користувача — на 30 % менше). */
 const COCKPIT_ROLL = 0.7;
 /** Зсув голови на одиницю кута, м/рад: у king.exe 4 (0x64c408), у порту на 20 % менше — на прохання користувача. */
@@ -2976,7 +2978,7 @@ export class Ht2Drive {
       // На швидкості — ще слабше й плавніше (cockpitCalm; згладжування 0,85 на місці → ≈ 0,92 на ходу, як 0x535a70
       // робить для висоти голови).
       const ms = Math.abs(this.truck.speedKmh) / 3.6;
-      const calm = cockpitCalm(this.truck.speedKmh);
+      const calm = cockpitCalm(this.truck.speedKmh, HEAD_CALM_SPAN);
       const f1 = (0.92 - 0.07 * (5 / (ms + 5))) ** (10 * dt);
       const soft = (x: number, max: number) => max * Math.tanh(x / max);
       const A = soft(0.005 * calm * this.truck.feltFwd, HEAD_PITCH_MAX);
