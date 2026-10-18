@@ -66,9 +66,9 @@ const PHYS_SPEED = 18;
 const BLINK_HZ = 1.5;
 const BLINK_SIZE = 0.55;
 /** Справжній прожектор фар (drive.ts) — найближчій зустрічній машині з фарами ближче за SPOT_RANGE, м. */
-const SPOT_RANGE = 90;
+export const SPOT_RANGE = 90;
 /** Зустрічна: курс машини на гравця, косинус кута не менший за SPOT_FACING. */
-const SPOT_FACING = 0.7;
+export const SPOT_FACING = 0.7;
 const GROUND_EVERY = 0.12;
 /** Нова машина на багатосмуговій дорозі — у крайній правій з такою імовірністю (порт). */
 const KEEP_RIGHT = 0.8;
@@ -200,8 +200,9 @@ export class Traffic {
    * інакше null; її пляма схована (світять прожектори). Оновлюється в update.
    */
   spot: { left: THREE.Vector3; right: THREE.Vector3; dir: THREE.Vector3 } | null = null;
-  /** Чи шукати машину для прожектора (повзунки графіки, drive.ts). */
+  /** Чи шукати машину для прожектора (повзунки графіки, drive.ts) і не далі за кого (ближчий бот-далекобійник). */
   spotWanted = false;
+  spotLimit = Infinity;
 
   /** Що бачить гравець: дальність (кінець туману, м) і чи видно точку з камери. Без нього — без перевірок. */
   view: { range(): number; sees(p: THREE.Vector3): boolean } | null = null;
@@ -319,7 +320,7 @@ export class Traffic {
     for (const c of this.cars) if (c.lit !== this.lights) this.relight(c);
     const R = this.view?.range() ?? VISIBLE_ON;
     let best: Car | null = null;
-    let bestD = SPOT_RANGE;
+    let bestD = Math.min(SPOT_RANGE, this.spotLimit);
     if (this.spotWanted)
       for (const c of this.cars) {
         if (!c.lit) continue;

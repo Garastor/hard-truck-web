@@ -1596,10 +1596,16 @@ export class Ht2Drive {
     }
   }
 
-  /** Прожектори фар найближчої зустрічної машини: точки й напрям — з Traffic.spot (оновлює traffic.update). */
+  /**
+   * Прожектори фар найближчої зустрічної машини: точки й напрям — з Traffic.spot чи Truckers.spot (оновлюють
+   * traffic.update і truckers.after), ближча з двох; трафік не бере машин, далших за бота-кандидата.
+   */
   private updateCarLamp(on: boolean): void {
     const t = this.traffic!;
+    const b = this.truckers;
     t.spotWanted = on;
+    if (b) b.spotWanted = on;
+    t.spotLimit = b?.spot?.dist ?? Infinity;
     if (!on) {
       for (const l of this.carLamps) l.visible = false;
       return;
@@ -1613,7 +1619,8 @@ export class Ht2Drive {
         this.carLamps.push(lamp);
       }
     }
-    const s = t.spot;
+    const s = t.spot ?? b?.spot ?? null;
+    if (b) b.spotTaken = !t.spot && !!b.spot;
     this.carLamps.forEach((lamp, i) => {
       lamp.visible = true;
       lamp.intensity = s ? LAMP_ROAD : 0;
@@ -1696,6 +1703,7 @@ export class Ht2Drive {
     // Фари чужих машин — ще й за повзунками графіки (g > 0,5 і d > 0,5, ui/effects.ts).
     if (this.traffic) {
       this.traffic.lights = trafficLights(hour) && trafficHeadlights();
+      if (this.truckers) this.truckers.lights = this.traffic.lights;
       this.updateCarLamp(this.traffic.lights && trafficLamp());
     }
     this.rainSound ??= this.audio?.loopSound('rain') ?? null;
