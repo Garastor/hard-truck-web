@@ -363,8 +363,13 @@ const CLUSTERS_LEAFY: readonly (readonly [number, number])[] = [
   [0, 2],
 ];
 const clustersOf = (shape: number) => (shape === 3 || shape === 4 || shape === 6 ? CLUSTERS_LEAFY : CLUSTERS_CONIFER);
-/** Шар гілок видно ближче 100 м; кожна гілка проявляється (росте) у своїй смузі відстаней (0x005c6580). */
-const BRANCH_FAR = 100;
+/**
+ * Шкала відстаней шару гілок. В оригіналі (0x005c6580, лише сталі 0,01 і 0,25 — без dtl і xpyramid) гілок немає
+ * далі 100 м, а ромби «виростають» між ≈ 92 і 28 м — зблизька це помітно. На прохання користувача порт розтягує
+ * шкалу втричі: гілки з 300 м, ростуть між ≈ 275 і 85 м, де ромб завбільшки 1–3 м — кілька пікселів.
+ */
+const BRANCH_RANGE = 3;
+const BRANCH_FAR = 100 * BRANCH_RANGE;
 
 /** Рамка в рядковій нотації Direct3D (v' = v·R + t), як у king.exe. */
 interface Frame {
@@ -491,7 +496,7 @@ function branchGeometry(shape: number): THREE.BufferGeometry {
 
 /**
  * Матеріал шару гілок: ромб росте від своєї основи з наближенням камери (масштаб (a − поріг) · 30, a = 1 − max(0,
- * d/100 − 0,25), далі 100 м — нічого), піднятий на 0,5 м, зсув погойдування — як у основи (bend за висотою ромба).
+ * d/100 − 0,25; у порту d — поділене на BRANCH_RANGE), далі BRANCH_FAR — нічого), піднятий на 0,5 м, зсув погойдування — як у основи (bend за висотою ромба).
  * Колір — як у основи: текстура × градієнт × TREE_LIGHT.
  */
 function branchMaterial(map: THREE.Texture, base: number): THREE.MeshBasicMaterial {
@@ -502,7 +507,7 @@ function branchMaterial(map: THREE.Texture, base: number): THREE.MeshBasicMateri
       '#include <project_vertex>',
       `mat4 lfM = modelViewMatrix * instanceMatrix;
       float lfD = length((lfM * vec4(0.0, 0.0, ${base.toFixed(4)}, 1.0)).xyz);
-      float lfA = lfD > ${BRANCH_FAR.toFixed(1)} ? -1.0 : 1.0 - max(0.0, lfD * 0.01 - 0.25);
+      float lfA = lfD > ${BRANCH_FAR.toFixed(1)} ? -1.0 : 1.0 - max(0.0, lfD * ${(0.01 / BRANCH_RANGE).toFixed(6)} - 0.25);
       float lfK = clamp((lfA - leaf.w) * 30.0, 0.0, 1.0);
       vec3 lfP = leaf.xyz + (transformed - leaf.xyz) * lfK;
       float bz = clamp(leaf.z, 0.0, 1.0);
@@ -523,7 +528,7 @@ function branchMaterial(map: THREE.Texture, base: number): THREE.MeshBasicMateri
 
 /**
  * Шар гілок (біт 0 i1): меш інстансів на кімнату × вид × форму; щокадру в нього потрапляють лише дерева ближче
- * 100 м від камери (решта гілок однаково не видно), з поточним погойдуванням.
+ * BRANCH_FAR від камери (решта гілок однаково не видно), з поточним погойдуванням.
  */
 function buildBranches(spots: BranchSpot[], rmp: RmpArchive, palette: Uint8Array | null): { meshes: THREE.InstancedMesh[]; update(cam: THREE.Vector3): void } {
   const meshes: THREE.InstancedMesh[] = [];
