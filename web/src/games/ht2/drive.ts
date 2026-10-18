@@ -51,6 +51,7 @@ import { iniGet, iniNum, parseIni } from './engine/formats/ini';
 import { decodeCp1251 } from './engine/formats/binary';
 import { RaceMode } from './race';
 import { Trailer } from './vehicles/trailer';
+import { headlightMask } from './vehicles/headlights';
 import { Truckers, truckerKinds, truckerNames } from './traffic/truckers';
 import { parseUpgrades, tireGrip, tuning, type Tuning } from './career/upgrades';
 import { parseServices, parseTowns } from './career/economy';
@@ -194,6 +195,13 @@ function flashLevel(t: number): number {
 
 /** Колір туману, якщо в сцені його немає (дощ — world/precipitation.ts). */
 const FOG_FALLBACK = new THREE.Color(0.5, 0.5, 0.5);
+/**
+ * Фари гравця (mountLamps): межа ближнього світла попереду, м; півкут конуса; освітленість дороги від однієї фари
+ * (сила = LAMP_ROAD · cutoff / h — з маскою дорога отримує силу · h / cutoff) — на око.
+ */
+const LAMP_CUTOFF = 80;
+const LAMP_ANGLE = (30 * Math.PI) / 180;
+const LAMP_ROAD = 0.56;
 /** Опір кочення поза твердим покриттям, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
 const OFFROAD_ROLL = 5;
 /**
@@ -511,6 +519,7 @@ export class Ht2Drive {
    * у сутінках самі не вмикаються).
    */
   private readonly lamps: THREE.SpotLight[] = [];
+  private lampMask: THREE.Texture | null = null;
   private lightsManual = false;
   /** Двірники — лише вручну (W; на прохання користувача — у дощ самі не вмикаються). */
   private wipersManual = false;
@@ -1539,18 +1548,24 @@ export class Ht2Drive {
 
   /**
    * Фари — прожектори в системі машини: точки Fara_FL/FR (vehicle.tech, система моделі: x, вперед, угору), світять
-   * уперед і трохи вниз. Сцена HT2 освітлюється (Lambert), тож світло лягає на дорогу без власних шейдерів.
-   * Параметри (сила 350 кд, дальність 80 м, конус 26°, згасання d^1,5) — на око.
+   * уперед. Сцена HT2 освітлюється (Lambert), тож світло лягає на дорогу без власних шейдерів.
+   * Ближнє світло (на прохання користувача): маска vehicles/headlights.ts — чітка межа на LAMP_CUTOFF м попереду,
+   * вище неї (зустрічні машини) не світить, дорога до межі освітлена рівномірно. Вісь — горизонтально, без
+   * згасання з відстанню (його врівноважує маска); освітленість LAMP_ROAD і межа — на око.
    */
   private mountLamps(): void {
     this.lamps.length = 0;
+    this.lampMask?.dispose();
     const rec = this.trucks.records.find((r) => r.carNode === this.def.carNode);
     const spots = rec ? [rec.faraFL, rec.faraFR] : [[-0.8, 2.4, 0.2], [0.8, 2.4, 0.2]];
+    const h = g2t(spots[0] as [number, number, number]).y - this.truck.lightGeometry.groundY;
+    this.lampMask = headlightMask(h, LAMP_CUTOFF, LAMP_ANGLE);
     for (const f of spots) {
       const p = g2t(f as [number, number, number]);
-      const lamp = new THREE.SpotLight(0xfff2d0, 350, 80, (26 * Math.PI) / 180, 0.45, 1.5);
+      const lamp = new THREE.SpotLight(0xfff2d0, (LAMP_ROAD * LAMP_CUTOFF) / Math.max(h, 0.1), LAMP_CUTOFF * 2, LAMP_ANGLE, 0.15, 0);
+      lamp.map = this.lampMask;
       lamp.position.copy(p);
-      lamp.target.position.copy(p).add(new THREE.Vector3(0, -1.2, -20));
+      lamp.target.position.copy(p).add(new THREE.Vector3(0, 0, -20));
       lamp.visible = false;
       this.truck.visual.add(lamp, lamp.target);
       this.lamps.push(lamp);

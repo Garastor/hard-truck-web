@@ -198,11 +198,22 @@ export function buildTruckModel(asm: SceneAssembler, def: TruckDef, dynamic = fa
     wheels.push(w);
     wheelBase.push(m.clone());
   }
+  // Габарит задніх ліхтарів (`StopFaraKeyX` стан 2, `TailLight1R_0`) у даних — з освітлюваними вершинами: уночі
+  // Lambert малював його чорним, і ззаду горіли лише жовті габарити. На прохання користувача — світиться сам,
+  // тьмяніше за стоп (TAIL_GLOW; стоп — вершини формату 3, повна яскравість).
+  const tail = new Set<THREE.Object3D>();
+  root.traverse((o) => {
+    if (/^StopFaraKey[LR]#2$/.test(o.name)) o.traverse((c) => tail.add(c));
+  });
   // Моделі вантажівок — без зворотного боку полігонів (як в оригіналі): інакше крізь прозорі вирізи
   // крил видно внутрішній чорний бік (чорне над колесами Renault).
   root.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh) return;
+    if (tail.has(mesh)) {
+      mesh.material = Array.isArray(mesh.material) ? mesh.material.map(tailGlow) : tailGlow(mesh.material);
+      return;
+    }
     const one = (m: THREE.Material) => {
       let c = FRONT_ONLY.get(m);
       if (!c) {
@@ -223,6 +234,33 @@ export function buildTruckModel(asm: SceneAssembler, def: TruckDef, dynamic = fa
   const shadowAt = asm.b3d.materials.findIndex((m) => m.toLowerCase() === 'effect_shadow');
   const shadowMaterial = shadowAt >= 0 ? shadowMat(asm.lib.material(shadowAt)) : undefined;
   return { root, body, wheels, wheelBase, setSwitch: dyn?.setSwitch, switchStates: dyn?.states, shadowMaterial };
+}
+
+/** Яскравість габариту задніх ліхтарів відносно стопа — на око. */
+const TAIL_GLOW = 0.6;
+const TAIL_MATS = new WeakMap<THREE.Material, THREE.Material>();
+
+/** Неосвітлювана копія матеріалу габариту задніх ліхтарів (колір — текстура × TAIL_GLOW). */
+function tailGlow(src: THREE.Material): THREE.Material {
+  let m = TAIL_MATS.get(src);
+  if (m) return m;
+  const s = src as THREE.MeshLambertMaterial;
+  m = new THREE.MeshBasicMaterial({
+    map: s.map,
+    color: (s.color?.clone() ?? new THREE.Color(1, 1, 1)).multiplyScalar(TAIL_GLOW),
+    side: THREE.FrontSide,
+    transparent: s.transparent,
+    opacity: s.opacity,
+    alphaTest: s.alphaTest,
+    depthWrite: s.depthWrite,
+    polygonOffset: s.polygonOffset,
+    polygonOffsetFactor: s.polygonOffsetFactor,
+    polygonOffsetUnits: s.polygonOffsetUnits,
+  });
+  m.name = s.name;
+  m.userData = { ...s.userData, unlit: true };
+  TAIL_MATS.set(src, m);
+  return m;
 }
 
 /** Спільна копія матеріалу тіні: без запису глибини й зі зсувом глибини над дорогою (king.exe ставить +0x20 |= 0x40200). */
