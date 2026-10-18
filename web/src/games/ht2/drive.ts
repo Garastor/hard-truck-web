@@ -208,6 +208,9 @@ function cabAmbient(hour: number): number {
  * між задньою кромкою капота й панеллю приладів видно щілину (king.exe ставить око інакше — re/notes/ht2/weather.md).
  */
 const COCKPIT_LIFT = new THREE.Vector3(0, 0.08, 0);
+/** Межі кутів голови в кабіні (king.exe 0x535a70: 0x64f3b0, 0x64f3a8), рад — 2,5° уперед-назад і 5° убік. */
+const HEAD_PITCH_MAX = 0.0436;
+const HEAD_SIDE_MAX = 0.0873;
 /** Дальність видимості трафіку без туману в сцені, м. */
 const VIEW_FALLBACK = 900;
 /** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
@@ -2637,7 +2640,7 @@ export class Ht2Drive {
     this.updateRadarLamp(dt, radar);
     if (!inside) return;
     const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (this.def.tech.viewerTilt * Math.PI) / 180);
-    this.cab.position.copy(this.camera.position);
+    this.cab.position.copy(this.cabEye);
     this.cab.quaternion.copy(this.truck.visual.quaternion).multiply(tilt);
     const rot = (o: THREE.Object3D | undefined, axis: THREE.Vector3, angle: number) => {
       if (!o) return;
@@ -2939,6 +2942,10 @@ export class Ht2Drive {
   private camPitch = 0;
   private chaseJump = false;
 
+  /** Згладжені кути голови в кабіні (рад): уперед і вбік (king.exe 0x535a70); місце водія без гойдання. */
+  private headA = 0;
+  private headB = 0;
+  private readonly cabEye = new THREE.Vector3();
   private updateCamera(dt: number): void {
     const v = this.truck.visual;
     const fwd = this.truck.forward();
@@ -2946,8 +2953,21 @@ export class Ht2Drive {
     if (this.camMode === 'cockpit') {
       this.camYaw = NaN;
       const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (this.def.tech.viewerTilt * Math.PI) / 180);
-      this.camera.position.copy(this.cockpit).applyQuaternion(v.quaternion).add(v.position);
-      this.camera.quaternion.copy(v.quaternion).multiply(tilt);
+      // Голова-маятник (king.exe 0x535a70): кути A = 0,005·(g − a) уперед (≤ 2,5°) і B = 0,005·(g − a) праворуч
+      // (≤ 5°), згладжені 0,8^(10·dt) (τ ≈ 0,45 с); зсув (4B; угору −4(A² + B²); уперед 4A), нахил голови на A
+      // і крен на 0,1·B. Салон стоїть на місці водія — голова рухається відносно нього.
+      const f1 = 0.8 ** (10 * dt);
+      const A = THREE.MathUtils.clamp(0.005 * this.truck.feltFwd, -HEAD_PITCH_MAX, HEAD_PITCH_MAX);
+      const B = THREE.MathUtils.clamp(0.005 * this.truck.feltSide, -HEAD_SIDE_MAX, HEAD_SIDE_MAX);
+      this.headA = f1 * this.headA + (1 - f1) * A;
+      this.headB = f1 * this.headB + (1 - f1) * B;
+      const a = this.headA;
+      const b = this.headB;
+      const head = new THREE.Vector3(4 * b, -4 * (a * a + b * b), -4 * a);
+      this.cabEye.copy(this.cockpit).applyQuaternion(v.quaternion).add(v.position);
+      this.camera.position.copy(this.cockpit).add(head).applyQuaternion(v.quaternion).add(v.position);
+      const nod = new THREE.Quaternion().setFromEuler(new THREE.Euler(-a, 0, -0.1 * b, 'XYZ'));
+      this.camera.quaternion.copy(v.quaternion).multiply(nod).multiply(tilt);
       this.camera.near = 0.2;
       this.camera.fov = viewFov(this.opts.settings?.xpyramid ?? 1.6);
       this.camera.updateProjectionMatrix();

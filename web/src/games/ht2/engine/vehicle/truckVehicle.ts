@@ -1072,6 +1072,8 @@ export class TruckVehicle {
 
   /** Відбійники підвіски (див. SUSPENSION.bump_*): сила вгору в точці кріплення колеса, коли стиснення велике. */
   private applyBumpStops(dt: number): void {
+    this.feltFwd = d.dot(ft);
+    this.feltSide = -d.dot(left);
     const S = SUSPENSION;
     const r = this.body.rotation();
     const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
@@ -1100,6 +1102,13 @@ export class TruckVehicle {
    * повороті на швидкості — перекидання.
    * Форма кривої — гіпотеза під опис поведінки оригіналу (відгук користувача), межа тертя — 0,84 з оригіналу.
    */
+  /**
+   * Відчутне прискорення (g − a) у площині ґрунту, м/с² (lean): уперед (+ — гальмування) і праворуч (+ — поворот
+   * ліворуч); вхід гойдання голови в кабіні (king.exe 0x535a70, поля 0x33b0 / 0x33ac).
+   */
+  feltFwd = 0;
+  feltSide = 0;
+
   private applyTireLateral(dt: number): void {
     const r = this.body.rotation();
     const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
