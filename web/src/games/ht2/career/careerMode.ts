@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { modal } from '../engine/ui/modal';
 import { isList, str, type SExpr } from '../formats/sexpr';
-import { findStores, makeOrders, orderValue as orderValueOf, parseGoods, type Goods, type Order, type Store, type Town } from './economy';
-import { FUEL_PRICE, REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type Ht2Career } from './career';
+import { cargoHit, findStores, makeOrders, orderValue as orderValueOf, parseGoods, type Goods, type Order, type Store, type Town } from './economy';
+import { FUEL_PRICE, REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type ActiveOrder, type Ht2Career } from './career';
 import { toThree } from '../world/world';
 import { install, type Upgrade } from './upgrades';
 import { USED_DAMAGE, type ForSale, type Market } from './market';
@@ -200,12 +200,20 @@ export class CareerMode {
     const wear = this.drive.hitWear;
     this.drive.hitWear = 0;
     if (wear > 0) c.damage = Math.min(1, c.damage + wear * (this.drive.arcade ? 0.5 : 1));
-    if (dv > HIT_MIN) {
-      // Пневмопідвіска: удар для вантажу ×0,3 (0x554bb0).
-      if (c.order) c.order.integrity = Math.max(0, c.order.integrity - dv * 0.01 * this.drive.tuning.cargo);
-      if (c.order && c.order.integrity <= 0) this.orderLost();
-      this.recountGuilt();
+    // Пробій підвіски (приземлення після трампліна, яма): у king.exe — один точковий імпульс, що йде в той самий
+    // обробник удару (physics.md, 0x4e7b4d → 0x554c20), а відбійники порту гасять швидкість кілька кадрів поспіль.
+    // Тож серія кадрів з відбійником складається в один удар (гіпотеза порту); гасіння пружиною — не удар, як і в
+    // king.exe (там імпульс лише при d < 0).
+    const bump = this.drive.truck.bumpDv;
+    this.drive.truck.bumpDv = 0;
+    if (bump > 0) this.bump += bump;
+    else if (this.bump > 0) {
+      if (c.order) this.cargoHit(c.order, this.bump);
+      this.bump = 0;
     }
+    const hit = Math.hypot(this.drive.hitDv.x, this.drive.hitDv.z);
+    if (c.order) this.cargoHit(c.order, hit);
+    if (dv > HIT_MIN) this.recountGuilt();
     const p = this.drive.truck.visual.position;
     const gx = p.x;
     const gy = -p.z;
@@ -274,11 +282,32 @@ export class CareerMode {
     }
   }
 
-  /** Вантаж розбито вщент (Ms.sch ORDER_LOST): замовлення анульовано, неустойка — половина цінності (гіпотеза). */
+  /**
+   * Удар по вантажу (king.exe hitPlayer 0x446d20, `cargoHit`): сила — зміна швидкості від зіткнення разом із
+   * вертикаллю (приземлення після трампліна, падіння), × посилена рама; пневмопідвіска ×0,3. Після шкідливого удару —
+   * пейджер X_DAMAGED з відсотком пошкодження; якість нижче 1 % — вантаж розбито.
+   */
+  /** Пробій підвіски, що триває: сума зміни швидкості від відбійників за серію кадрів, м/с. */
+  private bump = 0;
+
+  private cargoHit(o: ActiveOrder, dv: number): void {
+    const t = this.drive.tuning;
+    const q = cargoHit(o.integrity, o.goods.durability ?? o.goods.ratio, dv * t.damage, t.cargo);
+    if (q === null) return;
+    o.integrity = q;
+    if (q < 0.01) return this.orderLost();
+    if (q < 1) this.drive.say(this.msg('X_DAMAGED', 'ПОШКОДЖЕННЯ ВАНТАЖУ: %g%%', Math.trunc((1 - q) * 100)));
+  }
+
+  /**
+   * Вантаж розбито вщент (Ms.sch ORDER_LOST, king.exe 0x429e40): лот з якістю < 0,01 знято, неустойка
+   * (1 − якість)·10·√(ціна·кількість) (0x4713f0).
+   */
   private orderLost(): void {
     const c = this.career;
     if (!c.order) return;
-    const forfeit = Math.round(c.order.value * 0.5);
+    const o = c.order;
+    const forfeit = Math.round((1 - o.integrity) * 10 * Math.sqrt(o.goods.price * o.units));
     c.money = Math.max(0, c.money - forfeit);
     c.order = null;
     this.drive.setCargo(0);

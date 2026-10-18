@@ -429,6 +429,11 @@ export class TruckVehicle {
   private readonly axleSide = new THREE.Vector3();
   /** Удари king — зміна швидкості від зіткнень, без власного кінематичного кроку (hitMeter.ts). */
   readonly hits: HitMeter;
+  /**
+   * Пробій підвіски: зміна швидкості, яку відбійники дали кузову з останнього забору (м/с, Σ імпульсів / маса) —
+   * аналог точкового імпульсу пробою king.exe (d < 0, physics.md): приземлення після трампліна, глибока яма.
+   */
+  bumpDv = 0;
   /** Стан коліс king: 1 — пробуксовка, −1 — заблоковане. */
   readonly slip: WheelSlip[];
   /**
@@ -1306,6 +1311,7 @@ export class TruckVehicle {
       const closing = -(v.x * up.x + v.y * up.y + v.z * up.z); // > 0 — кузов іде вниз, підвіска стискається
       const force = (this.mass / this.wheels) * (S.bump_stiffness * excess + S.bump_damping * Math.max(0, closing));
       this.body.applyImpulseAtPoint({ x: up.x * force * dt, y: up.y * force * dt, z: up.z * force * dt }, at, true);
+      this.bumpDv += (force * dt) / this.mass;
     }
   }
 

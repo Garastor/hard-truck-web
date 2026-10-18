@@ -30,7 +30,7 @@ describe('HT2: наймані водії', () => {
   });
 
   it('вантаж на складі: 85 % місткості, оплата 12·(0,115·L + основа), з причепом ×1,5', () => {
-    const g: Goods = { id: 'BREAD', name: 'Хліб', mass: 25, volume: 0.1, price: 70, ratio: 0.85, illegal: false, forMafia: false, trucks: true, fuel: false, cars: false, guilt: 0 };
+    const g: Goods = { id: 'BREAD', name: 'Хліб', mass: 25, volume: 0.1, price: 70, ratio: 0.85, durability: 0.85, illegal: false, forMafia: false, trucks: true, fuel: false, cars: false, guilt: 0 };
     const a: Store = { id: 1, region: 'aj', town: 'А', goods: ['BREAD'], docks: [[0, 0, 0]], center: [0, 0, 0] };
     const b: Store = { id: 2, region: 'am', town: 'Б', goods: [], docks: [[1000, 0, 0]], center: [1000, 0, 0] };
     const t = hiredLoad(a, [a, b], [g], { mass: 10000, volume: 100 }, false, () => 1000, () => 0)!;

@@ -22,6 +22,11 @@ export interface Goods {
   volume: number;
   price: number;
   ratio: number;
+  /**
+   * Міцність 0…1 — число після внутрішнього списку (`+0x40` запису товару king.exe; яйця 0,21, скло 0,23, вата 0,96,
+   * нелегальне 1): шкода вантажу від удару ∝ 1 − міцність (hitPlayer 0x446d20, `cargoHit`).
+   */
+  durability: number;
   illegal: boolean;
   forMafia: boolean;
   /**
@@ -103,6 +108,7 @@ export function parseGoods(sch: SExpr[]): Goods[] {
       volume: num(e[3]),
       price: num(inner[1]),
       ratio: num(inner[2], 0.8),
+      durability: num(e[5], num(inner[2], 0.8)),
       illegal: classes.includes('illegal'),
       forMafia: classes.includes('formafia'),
       trucks: classes.includes('trucks'),
@@ -183,6 +189,23 @@ export function findStores(ways: Iterable<{ id: string; way: Way }>, towns: Map<
 /** Відстань маршруту — пряма × 1,35 (гіпотеза: дороги петляють; точний маршрут — пошуком по мережі, пізніше). */
 export function routeLength(a: Store, b: Store): number {
   return Math.hypot(a.center[0] - b.center[0], a.center[1] - b.center[1]) * 1.35;
+}
+
+/**
+ * Удар по вантажу (king.exe: обробник колізії 0x554c20 → слот +0xb4 0x554bb0 → hitPlayer 0x446d20). dv — сила удару,
+ * м/с (зміна швидкості від зіткнення, з вертикаллю — приземлення після стрибка), уже помножена на коефіцієнт рами
+ * (посилена рама ×0,3); suspension — пневмопідвіска ×0,3. Удар слабший за 2 — нічого (той самий поріг, що й для
+ * вмʼятин); далі H = dv·suspension, і якщо H > 2 — частка d = (1 − міцність)·H·0,02 (≥ 1 → 1, < 0,01 → 0), якість
+ * ×(1 − d). Повертає нову якість або null, якщо удар до вантажу не дійшов (повідомлення X_DAMAGED не показується).
+ */
+export function cargoHit(quality: number, durability: number, dv: number, suspension: number): number | null {
+  if (dv < 2) return null;
+  const h = dv * suspension;
+  if (h <= 2) return null;
+  let d = (1 - durability) * h * 0.02;
+  if (d > 1) d = 1;
+  else if (d < 0.01) d = 0;
+  return quality * (1 - d);
 }
 
 export function orderValue(g: Goods, units: number): number {

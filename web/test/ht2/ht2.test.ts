@@ -19,7 +19,7 @@ import { decodeCp1251 } from '@ht2/engine/formats/binary';
 import { HT2_FILES, HT2_REGIONS, HT2_REQUIRED } from '@ht2/files';
 import { detectGame } from '@app/registry';
 import { HT2_DIR } from '../gameDirs';
-import { findStores, hideIllegal, orderPay, parseGoods, parseServices, parseTowns } from '@ht2/career/economy';
+import { cargoHit, findStores, hideIllegal, orderPay, parseGoods, parseServices, parseTowns } from '@ht2/career/economy';
 import { HT2_MOD_REGIONS } from '@ht2/files';
 import { install, parseUpgrades, tireGrip, tuning } from '@ht2/career/upgrades';
 import { parseMarkets } from '@ht2/career/market';
@@ -228,8 +228,22 @@ describe.skipIf(!has)('HT2: економіка', () => {
     expect(stores.every((s) => s.docks.length === 5)).toBe(true);
     expect(stores.find((s) => s.id === 3)!.town).toBe('Південний');
   });
+  it('удар по вантажу за king.exe: міцність з merchandise.sch, поріг 2, d = (1 − міцність)·H·0,02', () => {
+    const goods = parseGoods(readSch(read('merchandise.sch')));
+    const by = new Map(goods.map((x) => [x.id, x]));
+    expect(by.get('EGGS')!.durability).toBe(0.21);
+    expect(by.get('COTTONWOOL')!.durability).toBe(0.96);
+    expect(by.get('RDIAMOND')!.durability).toBe(0.95); // відрізняється від внутрішнього 0,6
+    expect(by.get('AKM')!.durability).toBe(1);
+    expect(cargoHit(1, 0.21, 1.9, 1)).toBeNull(); // слабший за поріг вмʼятин
+    expect(cargoHit(1, 0.21, 10, 1)).toBeCloseTo(1 - 0.79 * 10 * 0.02);
+    expect(cargoHit(1, 0.21, 6, 0.3)).toBeNull(); // пневмопідвіска: 6·0,3 = 1,8 ≤ 2
+    expect(cargoHit(0.5, 0.96, 10, 1)).toBe(0.5); // d = 0,008 < 0,01 — без шкоди
+    expect(cargoHit(1, 0.21, 80, 1)).toBe(0); // d > 1 — розбито
+    expect(cargoHit(1, 1, 30, 1)).toBe(1); // нелегальне не псується
+  });
   it('оплата гравцю за king.exe: ×14,4, з причепом ×21,6', () => {
-    const g = { id: 'X', name: 'X', mass: 10, volume: 0.1, price: 100, ratio: 0.8, illegal: false, forMafia: false, trucks: true, fuel: false, cars: false, guilt: 0 };
+    const g = { id: 'X', name: 'X', mass: 10, volume: 0.1, price: 100, ratio: 0.8, durability: 0.8, illegal: false, forMafia: false, trucks: true, fuel: false, cars: false, guilt: 0 };
     expect(orderPay(g, 100, 5000, false)).toBe(Math.round((5000 * 0.115 + 0.4 * 100) * 14.4));
     expect(orderPay(g, 100, 5000, true)).toBe(Math.round((5000 * 0.115 + 0.4 * 100) * 21.6));
   });
