@@ -4,6 +4,7 @@ import { parseMaterial, type Material, type RmpArchive } from '../formats/rmp';
 import { parseTxr } from '../formats/txr';
 import { parsePlm } from '../formats/plm';
 import { noFarClip } from './farClip';
+import { revealChild } from './visibleMatrices';
 
 /**
  * Перетворює B3D + RMP у граф Three.js.
@@ -309,8 +310,8 @@ export class SideSwitch extends THREE.Object3D {
     // Група 0 — камера з боку нормалі (n·p + d ≥ 0), як у деревах колізій. Перевірено на відблисках задніх
     // ліхтарів: їх видно ззаду машини (нормаль площини ліхтаря дивиться назад).
     const front = this.plane.x * p.x + this.plane.y * p.y + this.plane.z * p.z + this.plane.w >= 0;
-    if (this.children[0]) this.children[0].visible = front;
-    if (this.children[1]) this.children[1].visible = !front;
+    revealChild(this.children[0], front);
+    revealChild(this.children[1], !front);
   }
 
   override copy(source: this, recursive?: boolean): this {
@@ -344,8 +345,8 @@ export class DistanceSwitch extends THREE.Object3D {
     // HT1: група 0 — камера ДАЛІ за r, група 1 — ближче (перевірено: з протилежним вибором зникали дорога й машини).
     const near = Math.hypot(p.x - this.sphere.x, p.y - this.sphere.y, p.z - this.sphere.z) < this.sphere.w;
     const n = this.nearGroup;
-    if (this.children[n]) this.children[n].visible = near;
-    if (this.children[1 - n]) this.children[1 - n].visible = !near;
+    revealChild(this.children[n], near);
+    revealChild(this.children[1 - n], !near);
   }
 
   override copy(source: this, recursive?: boolean): this {

@@ -65,7 +65,9 @@ import { EscArt } from './ui/escArt';
 import { ukMessage, ukSign } from './ui/uk';
 import { Obstacles, closedAxes, parseObstacles, type Obstacle } from './world/obstacles';
 import { EscMenu, type EscCommand } from './ui/escMenu';
+import { biasTowardCamera } from './engine/render/nearBias';
 import { FPanels, type FPanel } from './ui/fPanels';
+import { updateVisibleMatrices } from './engine/render/visibleMatrices';
 import { TabMap } from './ui/tabMap';
 import { Radio, type RadioAsk, type RadioContact } from './ui/radio';
 import type { RivalRun } from './career/competition';
@@ -222,6 +224,8 @@ function cockpitCalm(kmh: number, span = 25): number {
 const HEAD_CALM_SPAN = 45;
 /** Частка крену кузова у вигляді з кабіни (на прохання користувача — на 30 % менше). */
 const COCKPIT_ROLL = 0.7;
+/** Зсув глибини стрілок приладів до ока, м (на прохання користувача — стрілки не ховаються за циферблатом). */
+const NEEDLE_BIAS = 0.02;
 /** Зсув голови на одиницю кута, м/рад: у king.exe 4 (0x64c408), у порту на 20 % менше — на прохання користувача. */
 const HEAD_SHIFT = 3.2;
 /**
@@ -2491,7 +2495,7 @@ export class Ht2Drive {
     const r = this.opts.renderer;
     // Лише кімнати, видимі крізь портали з камери (world/roomVisibility.ts).
     this.world.visibility.update(this.camera);
-    r.render(this.world.scene, this.camera);
+    this.renderWorld(r, this.camera);
     if (this.cab?.visible) {
       // Кабіна — другим проходом з близькою площиною відсікання поверх світу.
       const near = this.camera.near;
@@ -2509,6 +2513,18 @@ export class Ht2Drive {
     }
     if (this.mirrorOn && this.camMode === 'cockpit') this.renderMirror(r);
     else if (this.mirror) this.mirror.frame.hidden = true;
+  }
+
+  /**
+   * Світ — з матрицями лише видимих гілок (engine/render/visibleMatrices.ts): рендерер не обходить сховані вузли
+   * (кімнати поза порталами, варіанти й пошкодження моделей), яких у сцені ~85 %.
+   */
+  private renderWorld(r: THREE.WebGLRenderer, camera: THREE.Camera): void {
+    const scene = this.world.scene;
+    updateVisibleMatrices(scene);
+    scene.matrixWorldAutoUpdate = false;
+    r.render(scene, camera);
+    scene.matrixWorldAutoUpdate = true;
   }
 
   /** Дзеркало: вид назад з місця водія, віддзеркалений зліва направо, у вікні рамки оригіналу під табло. */
@@ -2551,7 +2567,7 @@ export class Ht2Drive {
     this.world.visibility.update(m.cam);
     r.setRenderTarget(m.rt);
     r.clear();
-    r.render(this.world.scene, m.cam);
+    this.renderWorld(r, m.cam);
     r.setRenderTarget(null);
     const auto = r.autoClear;
     r.autoClear = false;
@@ -2596,6 +2612,8 @@ export class Ht2Drive {
         return found;
       };
       this.cabParts = { rule: bySpace('rulespace'), speed: bySpace('speedspace'), tacho: bySpace('tachospace') };
+      // Стрілки — на 2 см ближче до ока (лише глибина): у моделях вони майже на циферблаті й місцями ховалися за ним.
+      for (const n of [this.cabParts.speed, this.cabParts.tacho]) if (n) biasTowardCamera(n, NEEDLE_BIAS);
       // Скло (GlassKey, група 1) — завжди: його текстуру (краплі) малює GlassRain, суха — прозора.
       dyn.setSwitch('GlassKey', 1);
       this.cabSwitch = dyn.setSwitch;

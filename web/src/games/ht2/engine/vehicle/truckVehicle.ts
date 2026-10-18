@@ -293,7 +293,7 @@ export class TruckVehicle {
     for (const i of [0, 1]) if (!this.ctrl.wheelIsInContact(i)) return [];
     const local = this.def.tech.vaporPoints;
     if (local?.length === 2) {
-      this.visual.updateMatrixWorld();
+      this.visual.updateWorldMatrix(true, false);
       for (const q of local) {
         const p = this.visual.localToWorld(g2t(q));
         out.push(new THREE.Vector3(p.x, -p.z, p.y));
@@ -386,7 +386,7 @@ export class TruckVehicle {
   exhaustPoints(): { p: THREE.Vector3; v: THREE.Vector3 }[] {
     const t = this.def.tech;
     if (t.mass <= 4000 || /^daf/i.test(this.def.carNode)) return [];
-    this.visual.updateMatrixWorld();
+    this.visual.updateWorldMatrix(true, false);
     const q = this.visual.getWorldQuaternion(new THREE.Quaternion());
     const out: { p: THREE.Vector3; v: THREE.Vector3 }[] = [];
     for (const { pos, dir } of t.smoke ?? []) {
