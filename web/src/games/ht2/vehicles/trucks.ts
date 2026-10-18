@@ -20,13 +20,18 @@ export interface Ht2Trucks {
   asm: SceneAssembler;
 }
 
+/** Множник радіусів перемикачів типу 10 у моделях машин (оригінал — 1; власне рішення на прохання користувача). */
+const LOD_SCALE = 4;
+
 export async function loadTrucks(source: FileSource, palette: Uint8Array | null): Promise<Ht2Trucks> {
   const [tech, b3d, res] = await Promise.all([
     source.read('vehicle.tech'),
     source.read('COMMON/TRUCKS.B3D'),
     readTextures(source, 'COMMON/TRUCKS.RES'),
   ]);
-  const asm = new SceneAssembler(parseB3d(b3d), parseRmp(res), { lit: true, colorKey: true, palette: palette ?? undefined, nearGroup: 0 });
+  // Перемикачі за відстанню в машинах (колеса, бампер, двигун — r = 10 м) king.exe перемикає за r без множника
+  // (0x5f88d0), і з зовнішньої камери (≈ 10 м) машина вже спрощена. На прохання користувача — радіуси ×LOD_SCALE.
+  const asm = new SceneAssembler(parseB3d(b3d), parseRmp(res), { lit: true, colorKey: true, palette: palette ?? undefined, nearGroup: 0, lodScale: LOD_SCALE });
   return { records: parseTech(tech).records, asm };
 }
 
@@ -89,6 +94,7 @@ export function truckDef(t: Ht2Trucks, r: TechRecord): TruckDef | null {
       viewer: r.viewer,
       viewerTilt: r.viewerTilt,
       wheelThickness: [r.frontWheelThickness, r.rearWheelThickness],
+      shadowCorners: r.cornerMarksW,
       smoke: [
         { pos: r.smokePosition, dir: r.smokeDirection },
         { pos: r.smokePosition2, dir: r.smokeDirection2 },

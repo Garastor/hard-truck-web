@@ -35,6 +35,11 @@ export interface BuildOptions {
    * інакше зникали поруч з камерою).
    */
   nearGroup?: 0 | 1;
+  /**
+   * Множник радіуса перемикачів за відстанню (10). Оригінал — 1 (king.exe 0x5f88d0: відстань камери проти r без
+   * множників); більше — детальні групи видно далі (машини HT2 — на прохання користувача, див. vehicles/trucks.ts).
+   */
+  lodScale?: number;
   /** HT2: блок 4 — деталі в просторі name1 (кабіни: кермо в ZilRuleSpace, стрілки в ZilSpeedSpace…). */
   type4Space?: boolean;
 }
@@ -315,7 +320,11 @@ export class SideSwitch extends THREE.Object3D {
   }
 }
 
-/** Тип 10 (форма 1 — сфера [x, y, z, r]): HT1 — група 0, коли камера далі за r від центру, група 1 — ближче. */
+/**
+ * Тип 10 (форма 1 — сфера [x, y, z, r]): HT1 — група 0, коли камера далі за r від центру, група 1 — ближче.
+ * HT2 (king.exe 0x5f8f10 → 0x5f88d0): група 0, коли камера (переставлення оберненої model-view, 0x5ae580) не далі
+ * за r у координатах моделі; r — без множника деталізації.
+ */
 export class DistanceSwitch extends THREE.Object3D {
   readonly isLOD = true;
   autoUpdate = true;
@@ -379,6 +388,7 @@ export class SceneAssembler {
   private buildingRooms = false;
   private readonly lit: boolean;
   private readonly nearGroup: 0 | 1;
+  private readonly lodScale: number;
   private readonly type4Space: boolean;
   private readonly fallback: SceneAssembler | null;
 
@@ -391,6 +401,7 @@ export class SceneAssembler {
     this.lib = new MaterialLibrary(b3d, rmp, opts.lit, opts.palette ?? null, opts.colorKey);
     this.lit = opts.lit ?? false;
     this.nearGroup = opts.nearGroup ?? 1;
+    this.lodScale = opts.lodScale ?? 1;
     this.type4Space = opts.type4Space ?? false;
     this.fallback = opts.fallback ?? null;
     for (const b of b3d.blocks) if (b.name) this.topByName.set(b.name.toLowerCase(), b);
@@ -785,7 +796,8 @@ export class SceneAssembler {
     } else if (d.t === 10 && d.shape.kind === 1 && block.groups.length >= 2 && !this.buildingRooms) {
       // Перемикач за відстанню: група 0 — камера далі за r від центру сфери, група 1 — ближче (LOD машин і
       // обʼєктів трас; з протилежним вибором зникали дорога й машини).
-      const sw = new DistanceSwitch(d.shape.v as [number, number, number, number], this.nearGroup);
+      const [sx, sy, sz, sr] = d.shape.v as [number, number, number, number];
+      const sw = new DistanceSwitch([sx, sy, sz, sr * this.lodScale], this.nearGroup);
       for (const [gi, g] of block.groups.slice(0, 2).entries()) {
         const go = new THREE.Group();
         const b: Batches = new Map();
