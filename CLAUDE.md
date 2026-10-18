@@ -39,7 +39,8 @@
   оригіналу `Docs/ht1/gameplay.md`, аналіз файлів `Docs/ht1/analysis.md`, мережева гра `Docs/ht1/multiplayer.md`
 - Друга гра: план `Docs/ht2/plan.md`, журнал `Docs/ht2/progress.md`, формати `Docs/ht2/formats.md`, правила й
   інтерфейс оригіналу (міліція, мафія, рація, найм, гелікоптери) `Docs/ht2/gameplay.md`, світло/туман/небо
-  (формули, звідки числа, де крутити) `Docs/ht2/lighting.md`, вид із кабіни `Docs/ht2/cockpit.md`, вид із кабіни (крени, зсуви голови, світло салону) `Docs/ht2/cockpit.md`
+  (формули, звідки числа, де крутити) `Docs/ht2/lighting.md`, вид із кабіни `Docs/ht2/cockpit.md`, вид із кабіни (крени, зсуви голови, світло салону) `Docs/ht2/cockpit.md`, дим/пара/частинки (як народжуються
+  клуби, умови вихлопу й пари, як додати й перевірити ефект) `Docs/ht2/effects.md`
 - Спільне: формат B3D `Docs/formats/b3d.md`, архітектура `Docs/03-architecture.md`, структура
   `Docs/09-structure-plan.md`, реверс `Docs/07-reverse-engineering.md`, гра на телефоні `Docs/play-on-phone.md`
 
