@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { SceneAssembler } from '../engine/render/sceneBuilder';
 import { TREE_LIGHT } from './trees';
+import { Billboards } from './billboards';
 
 /**
  * Листя на вітрі — задача CWindDebris king.exe (0x4c9970, кадр 0x4c9a10; частинка 0xcc: 0x59e2f0, 0x59e490;
@@ -15,7 +16,8 @@ import { TREE_LIGHT } from './trees';
  *   (1 + rnd)·π рад/с.
  * Як у exe (перевірено кодом): випуск і зсув кружляння — щокадру, без dt (тож залежать від частоти кадрів); більшість
  * листків за вітром вилітає з кадру, поруч кружляють ті, кому випав малий множник швидкості. Гіпотези: такт
- * планувальника exe = кадр; освітлення — як у дерев (TREE_LIGHT).
+ * планувальника exe = кадр; освітлення — як у дерев (TREE_LIGHT). Малювання — пакетами інстансів (world/billboards.ts),
+ * не окремими спрайтами: телефон.
  */
 const LIFE = 4;
 const DRAG = 3;
@@ -23,7 +25,9 @@ const MAX = 600;
 const NO_LEAVES = new Set(['aa', 'tr', 'db', 'ac']);
 
 interface Leaf {
-  sprite: THREE.Sprite;
+  /** Розмір (м) і поворот текстури в площині екрана. */
+  size: number;
+  rot: number;
   /** Позиція й швидкість у координатах гри. */
   p: THREE.Vector3;
   v: THREE.Vector3;
@@ -41,10 +45,11 @@ export class WindDebris {
   readonly group = new THREE.Group();
   private readonly maps: THREE.Texture[] = [];
   private readonly leaves: Leaf[] = [];
-  private readonly free: THREE.Sprite[] = [];
+  private readonly bb = new Billboards(TREE_LIGHT, MAX);
 
   constructor(asm: SceneAssembler) {
     this.group.name = 'windDebris';
+    this.group.add(this.bb.group);
     const mats = asm.b3d.materials.map((m) => m.toLowerCase());
     for (let i = 1; ; i++) {
       const idx = mats.indexOf(`leave${String(i).padStart(2, '0')}`);
@@ -56,11 +61,17 @@ export class WindDebris {
 
   /**
    * anchor — точка землі під вантажівкою (three.js), look — напрям погляду камери, wind — вітер (Climate.wind),
-   * w — показник погоди, region — регіон машини.
+   * w — показник погоди, region — регіон машини, cam — позиція камери (порядок прозорих листків).
    */
-  update(dt: number, anchor: THREE.Vector3 | null, look: THREE.Vector3, wind: number, w: number, region: string | null): void {
+  update(dt: number, anchor: THREE.Vector3 | null, look: THREE.Vector3, wind: number, w: number, region: string | null, cam: THREE.Vector3): void {
     if (this.maps.length && anchor && wind > 5 && w < 0.7 && !(region && NO_LEAVES.has(region.slice(0, 2)))) this.emit(anchor, look, wind);
     this.step(dt);
+    this.bb.begin();
+    for (const l of this.leaves) {
+      const map = this.maps[Math.min(this.maps.length - 1, l.frame0 + Math.floor(l.age))];
+      this.bb.push(map, false, l.p.x, l.p.z, -l.p.y, l.size, l.rot);
+    }
+    this.bb.end(cam);
   }
 
   private emit(anchor: THREE.Vector3, look: THREE.Vector3, wind: number): void {
@@ -87,12 +98,9 @@ export class WindDebris {
       const f2 = (1 + 1.5 * (rnd() - rnd())) * 2.5 * rnd();
       const v = new THREE.Vector3(rnd() * f2, wind * (1 + rnd()) * f1, 0.25 * f1 - rnd() * f2);
       const size = (0.2 + 0.05 * k) * (1 + 0.1 * (rnd() * 2 - 1));
-      const sprite = this.free.pop() ?? new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, fog: true }));
-      sprite.scale.setScalar(size);
-      sprite.visible = true;
-      this.group.add(sprite);
       this.leaves.push({
-        sprite,
+        size,
+        rot: rnd() * Math.PI * 2,
         p: new THREE.Vector3(x, y, rz),
         v,
         z0: rz,
@@ -112,9 +120,6 @@ export class WindDebris {
       const speed = l.v.length();
       const next = speed - DRAG * dt;
       if (l.age > LIFE || next <= 0) {
-        l.sprite.visible = false;
-        this.group.remove(l.sprite);
-        this.free.push(l.sprite);
         this.leaves.splice(i, 1);
         continue;
       }
@@ -126,23 +131,13 @@ export class WindDebris {
       l.p.x += l.v.x * dt + (l.v.y / h) * r * Math.cos(l.phi);
       l.p.y += l.v.y * dt - (l.v.x / h) * r * Math.cos(l.phi);
       l.p.z = Math.max(l.z0 + 0.25, l.p.z + l.v.z * dt + r * Math.sin(l.phi));
-      const m = l.sprite.material;
-      const map = this.maps[Math.min(this.maps.length - 1, l.frame0 + Math.floor(l.age))];
-      if (m.map !== map) {
-        m.map = map;
-        m.needsUpdate = true;
-      }
-      m.rotation += l.spin * dt;
-      m.color.copy(TREE_LIGHT.value);
-      l.sprite.position.set(l.p.x, l.p.z, -l.p.y);
+      l.rot += l.spin * dt;
     }
   }
 
   dispose(): void {
-    for (const l of this.leaves) l.sprite.material.dispose();
-    for (const s of this.free) s.material.dispose();
+    this.bb.dispose();
     this.leaves.length = 0;
-    this.free.length = 0;
     this.group.removeFromParent();
   }
 }

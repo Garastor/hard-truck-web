@@ -111,6 +111,7 @@ export class Tablo {
     };
     this.el.width = this.layout.w;
     this.el.height = this.layout.h;
+    this.drawn = '';
     this.el.style.width = `${window.innerWidth}px`;
     this.el.style.height = `${this.layout.h * s}px`;
     this.hit.style.height = `${50 * s}px`;
@@ -147,6 +148,17 @@ export class Tablo {
       this.blinkTime = 0;
       this.blink = !this.blink;
     }
+    const pager = this.pagerStep(dt);
+    // Показання, що видно на табло; без змін — canvas не перемальовуємо (телефон: щокадру це ~0,3 мс на ПК).
+    const t = (v: number | null | undefined) => (v == null ? -1 : Math.floor(Math.max(0, v) / 60));
+    const key = [
+      this.layout.w, this.layout.h, this.blink, s.position?.place, s.position?.of, t(s.timeLeft), s.licences?.count, t(s.licences?.left),
+      Math.round(s.mph ? s.speed / 1.609 : s.speed), s.mph, s.handbrake, s.gear, s.automatic, Math.round(s.rpm / 100), s.trailer,
+      Math.round(s.fuel * 10), s.fuel > 0.3, Math.round(s.condition * 10), s.condition > 0.3, s.nav, pager?.shown, pager?.icon,
+      this.art.matrix && this.art.icon ? 1 : 0, this.art.canvas('m16\\tablo.txr') ? 1 : 0,
+    ].join('|');
+    if (key === this.drawn) return;
+    this.drawn = key;
     const { ctx, art } = this;
     const L = this.layout;
     const m = art.matrix;
@@ -195,29 +207,41 @@ export class Tablo {
     if (s.condition > 0.3 || this.blink) icon(o + 553, 40, `O${level(s.condition)}`);
     // Стрілка навігатора блимає (king.exe: спільний прапорець блимання).
     if (s.nav && this.blink) icon(o + 608, 40, s.nav === 'left' ? ';' : s.nav === 'right' ? '=' : '<');
-    this.drawPager(dt);
+    if (pager) this.drawPager(pager);
   }
 
-  private drawPager(dt: number): void {
-    const text0 = this.pages[this.page];
-    if (!text0 || (this.typed >= text0.length && (this.hold -= dt) <= 0)) return;
-    const { ctx, art } = this;
-    const [px, py] = this.layout.pager;
-    const strip = art.canvas('m16\\pager_p.msk');
-    if (strip) ctx.drawImage(strip, px, py);
+  /** Підпис останнього намальованого кадру табло. */
+  private drawn = '';
+
+  /** Крок пейджера (друк, утримання, значок нового): що показати, null — схований. */
+  private pagerStep(dt: number): { shown: string; icon: boolean } | null {
     const text = this.pages[this.page];
-    const m = art.matrix;
+    if (!text || (this.typed >= text.length && (this.hold -= dt) <= 0)) return null;
+    let icon = false;
     if (this.fresh > 0) {
       this.fresh -= dt;
-      const iconImg = art.canvas('m16\\pager_a.msk');
-      if (iconImg && this.blink) ctx.drawImage(iconImg, px + 5, py + 6);
+      icon = this.blink;
     }
-    if (!text || !m) return;
+    const m = this.art.matrix;
+    if (!m) return { shown: '', icon };
     this.typed = Math.min(text.length, this.typed + dt * TYPE_RATE);
     let shown = text.slice(0, Math.floor(this.typed));
     // Довше за 247 пікселів — видно кінець (текст «повзе» вліво, як в оригіналі).
     while (shown.length && m.measure(shown) > 247) shown = shown.slice(1);
-    m.draw(ctx, shown, px + 34, py + 23 - m.height, INK);
+    return { shown, icon };
+  }
+
+  private drawPager(p: { shown: string; icon: boolean }): void {
+    const { ctx, art } = this;
+    const [px, py] = this.layout.pager;
+    const strip = art.canvas('m16\\pager_p.msk');
+    if (strip) ctx.drawImage(strip, px, py);
+    if (p.icon) {
+      const iconImg = art.canvas('m16\\pager_a.msk');
+      if (iconImg) ctx.drawImage(iconImg, px + 5, py + 6);
+    }
+    const m = art.matrix;
+    if (m && p.shown) m.draw(ctx, p.shown, px + 34, py + 23 - m.height, INK);
   }
 
   dispose(): void {

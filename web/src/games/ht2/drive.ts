@@ -1511,7 +1511,7 @@ export class Ht2Drive {
     const anchor = wind > 5 ? this.groundAt(p.clone()) : null;
     if (anchor) anchor.y -= 2.5;
     this.camera.getWorldDirection(this.debrisLook);
-    this.debris.update(dt, anchor, this.debrisLook, wind, w, this.world.regionAt(p.x, -p.z));
+    this.debris.update(dt, anchor, this.debrisLook, wind, w, this.world.regionAt(p.x, -p.z), this.camera.position);
   }
 
   /** Дощ і сніг частинками (world/precipitation.ts): що падає — за висотою камери, сила — показник погоди w. */
@@ -2909,9 +2909,18 @@ export class Ht2Drive {
       // Табло оригіналу: швидкість, передача, пальне, стан і час замовлення — на ньому; у рядку — решта.
       this.drawTablo(dt, state.handbrake);
       this.cards?.update(dt);
-      this.bar.textContent = (this.careerMode ? this.careerMode.hud(true) : this.race ? this.race.hud() : '') + who;
-    } else this.bar.textContent = (this.careerMode ? `${drive}\n${this.careerMode.hud()}${this.race ? `\n${this.race.hud()}` : ''}` : this.race ? `${drive}\n${this.race.hud()}` : drive) + who;
+      this.setBar((this.careerMode ? this.careerMode.hud(true) : this.race ? this.race.hud() : '') + who);
+    } else this.setBar((this.careerMode ? `${drive}\n${this.careerMode.hud()}${this.race ? `\n${this.race.hud()}` : ''}` : this.race ? `${drive}\n${this.race.hud()}` : drive) + who);
   }
+
+  /** Рядок табло — у DOM лише при зміні (запис textContent щокадру перераховує розкладку сторінки). */
+  private setBar(text: string): void {
+    if (this.barText === text) return;
+    this.barText = text;
+    this.bar.textContent = text;
+  }
+
+  private barText = '';
 
   /** Повідомлення гравцю: на пейджер (з оригінальним інтерфейсом) чи в рядок табло на time с. */
   /** Звук з набору гри (гонка: `alarm` світлофора). */
