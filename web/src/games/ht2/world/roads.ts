@@ -382,7 +382,8 @@ export class Ht2Roads {
     return [...new Set(nearCells(this.grid, p))];
   }
 
-  nearest(p: THREE.Vector3, heading?: THREE.Vector3): { line: RoadLine; seg: number; t: number; dist: number } | null {
+  /** bias — надбавка до відстані лінії, м (автопілот за маршрутом: лінії поза маршрутом — далі). */
+  nearest(p: THREE.Vector3, heading?: THREE.Vector3, bias?: (l: RoadLine) => number): { line: RoadLine; seg: number; t: number; dist: number } | null {
     let best: { line: RoadLine; seg: number; t: number; dist: number } | null = null;
     const ab = new THREE.Vector3();
     const ap = new THREE.Vector3();
@@ -397,6 +398,7 @@ export class Ht2Roads {
         let dist = q.copy(a).addScaledVector(ab, t).distanceTo(p);
         // Лінії проти руху штрафуємо — їдемо своєю смугою, не розвертаємось.
         if (heading && ab.setY(0).normalize().dot(heading) < 0.2) dist += 30;
+        if (bias) dist += bias(line);
         if (!best || dist < best.dist) best = { line, seg: i, t, dist };
       }
     }
@@ -456,16 +458,16 @@ export class Ht2Roads {
 
   /**
    * Точка на відстані `ahead` уздовж мережі; на розвилках — випадкова гілка, але стала для лінії (без смикання), крім
-   * тупикових (deadEnd), якщо є інші.
+   * тупикових (deadEnd), якщо є інші; choose — своє продовження (маршрут бота, world/navigator next), null — як завжди.
    */
-  advance(line: RoadLine, seg: number, t: number, ahead: number): THREE.Vector3 {
+  advance(line: RoadLine, seg: number, t: number, ahead: number, choose?: (l: RoadLine) => RoadLine | null): THREE.Vector3 {
     let cur = line.pts[seg].clone().lerp(line.pts[seg + 1], t);
     let left = ahead;
     let l: RoadLine = line;
     let i = seg + 1;
     for (let guard = 0; guard < 400; guard++) {
       if (i >= l.pts.length) {
-        const n = this.pick(l);
+        const n = choose?.(l) ?? this.pick(l);
         if (!n) return cur;
         l = n;
         // Проміжок між смугами на стику — навпростець до другої точки наступної лінії.

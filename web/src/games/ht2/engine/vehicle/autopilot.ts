@@ -29,7 +29,8 @@ export class WayNet {
   }
 
   /** Найближча точка мережі: лінія, індекс сегмента, параметр. */
-  nearest(p: THREE.Vector3, heading?: THREE.Vector3): { line: WayLine; seg: number; t: number; dist: number } | null {
+  /** bias — надбавка до відстані лінії, м (автопілот за маршрутом: лінії поза маршрутом — далі). */
+  nearest(p: THREE.Vector3, heading?: THREE.Vector3, bias?: (l: WayLine) => number): { line: WayLine; seg: number; t: number; dist: number } | null {
     let best: { line: WayLine; seg: number; t: number; dist: number } | null = null;
     const ab = new THREE.Vector3();
     const ap = new THREE.Vector3();
@@ -43,22 +44,24 @@ export class WayNet {
         let dist = a.clone().addScaledVector(ab, t).distanceTo(p);
         // Лінії проти руху штрафуємо, щоб не розвертатися.
         if (heading && ab.clone().setY(0).normalize().dot(heading) < -0.2) dist += 30;
+        if (bias) dist += bias(line);
         if (!best || dist < best.dist) best = { line, seg: i, t, dist };
       }
     }
     return best;
   }
 
-  /** Точка на відстані `ahead` уздовж мережі від позиції (line, seg, t). */
-  advance(line: WayLine, seg: number, t: number, ahead: number): THREE.Vector3 {
+  /** Точка на відстані `ahead` уздовж мережі від позиції (line, seg, t); choose — продовження на розвилці. */
+  advance(line: WayLine, seg: number, t: number, ahead: number, choose?: (l: WayLine) => WayLine | null): THREE.Vector3 {
     let cur = line.pts[seg].clone().lerp(line.pts[seg + 1], t);
     let left = ahead;
     let l = line;
     let i = seg + 1;
     for (let guard = 0; guard < 200; guard++) {
       if (i >= l.pts.length) {
-        if (!l.next.length) return cur;
-        l = l.next[0];
+        const n = choose?.(l) ?? l.next[0];
+        if (!n) return cur;
+        l = n;
         i = 1;
         cur = l.pts[0].clone();
         continue;
@@ -97,6 +100,19 @@ const PASS_HOLD = 1.5;
 const PASS_GAP = 6;
 const PASS_LANE = 3.2;
 const SLOW_LANE = 2.8;
+/**
+ * Зупинка в точці (бот біля місця складу, traffic/truckers.ts): точка попереду ближче HALT_LOOK і ближче HALT_SIDE
+ * вбік від осі → швидкість не більше √(2·HALT_DECEL·залишок), стати центром машини за HALT_AT від неї.
+ */
+const HALT_LOOK = 60;
+const HALT_SIDE = 4;
+const HALT_DECEL = 1.2;
+const HALT_AT = 0.5;
+/**
+ * Їдучи за маршрутом (choose), «де я» — лінія маршруту (поточна чи її продовження), якщо інша ближча не більше ніж на
+ * стільки, м: на стику лінії петлі й виїзду починаються в одній точці, і найближчою бувала петля — бот кружляв базою.
+ */
+const OFF_ROUTE = 3;
 /** Від борту до стіни при розминанні — щонайменше: зсув праворуч ≤ wallRight − PASS_EDGE (півширини 1,25 + запас), м. */
 const PASS_EDGE = 1.7;
 
@@ -130,6 +146,15 @@ export class AutoPilot {
   lane = 0;
   /** Скільки ще розминатися із зустрічною (прийняти праворуч), с. */
   passing = 0;
+  /**
+   * Продовження лінії на розвилці (маршрут бота до складу, world/navigator next); null чи немає — стала випадкова
+   * гілка мережі (`pick`).
+   */
+  choose: ((l: WayLine) => WayLine | null) | null = null;
+  /** Де стати (місце складу); null — їхати далі. */
+  halt: THREE.Vector3 | null = null;
+  /** Лінія, на якій машина була минулого кроку (маршрут: її продовження — своє). */
+  private cur: WayLine | null = null;
 
   constructor(private readonly net: WayNet) {}
 
@@ -173,14 +198,18 @@ export class AutoPilot {
       s.brake = 1;
       return s;
     }
-    const n = this.net.nearest(pos, forward);
+    const cur = this.choose ? this.cur : null;
+    const onward = cur && this.choose!(cur);
+    const n = this.net.nearest(pos, forward, cur ? (l) => (l === cur || l === onward ? 0 : OFF_ROUTE) : undefined);
+    this.cur = n?.line ?? null;
     if (!n) {
       s.throttle = 0;
       s.brake = 1;
       return s;
     }
     const look = 5 + speedKmh * 0.18;
-    const target = this.net.advance(n.line, n.seg, n.t, look);
+    const choose = this.choose ?? undefined;
+    const target = this.net.advance(n.line, n.seg, n.t, look, choose);
     // Машини попереду в «коридорі» → обгін зсувом убік, а якщо дуже близько — гальмуємо.
     const rightV = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
     const flat = forward.clone().setY(0).normalize();
@@ -221,7 +250,7 @@ export class AutoPilot {
     const wantOffset = (this.dodge && blockDist < 25 ? this.lane + blockSide * 3.2 : this.lane) + (this.passing > 0 ? Math.min(PASS_SHIFT, Math.max(0, (here.wallRight ?? Infinity) - PASS_EDGE)) : 0);
     this.offset += THREE.MathUtils.clamp(wantOffset - this.offset, -2 * dt, 2 * dt);
     target.addScaledVector(rightV, this.offset);
-    const far = this.net.advance(n.line, n.seg, n.t, 12 + speedKmh * 0.6);
+    const far = this.net.advance(n.line, n.seg, n.t, 12 + speedKmh * 0.6, choose);
     const to = target.clone().sub(pos).setY(0);
     const angle = Math.atan2(to.dot(rightV), to.dot(forward));
     if (this.kinematicBase > 0) {
@@ -233,6 +262,17 @@ export class AutoPilot {
     const bend = 1 - Math.max(0, toFar.dot(forward));
     let want = this.cruise * (1 - Math.min(1 - this.bendFloor, bend * this.bendGain));
     if (this.passing > 0 && slow) want = Math.min(want, PASS_KMH);
+    // Точка зупинки попереду на осі: доповзти й стати.
+    let halted = false;
+    if (this.halt) {
+      const rel = this.halt.clone().sub(pos).setY(0);
+      const ahead = rel.dot(flat);
+      if (ahead < HALT_LOOK && Math.abs(rel.dot(rightV)) < HALT_SIDE && ahead > -HALT_SIDE) {
+        const left = ahead - HALT_AT;
+        if (left <= 0) halted = true;
+        else want = Math.min(want, Math.max(3, 3.6 * Math.sqrt(2 * HALT_DECEL * left)));
+      }
+    }
     s.throttle = speedKmh < want ? Math.min(1, (want - speedKmh) / 10 + 0.3) : 0;
     s.brake = speedKmh > want + 8 ? Math.min(1, (speedKmh - want) / 20) : 0;
     s.handbrake = false;
@@ -241,7 +281,7 @@ export class AutoPilot {
     // 0,6 лише ближче 9 м і відпускалося нижче 8 км/год: бот на ходу чи «доповзаючи» вʼїжджав у гравця, що стоїть.
     const v = speedKmh / 3.6;
     const room = stopDist - (this.passing > 0 && slow ? PASS_GAP : STOP_GAP);
-    if (room < 0) {
+    if (room < 0 || halted) {
       s.throttle = 0;
       s.brake = v > 0.5 ? 1 : 0;
       s.handbrake = v <= 0.5;

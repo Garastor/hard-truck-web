@@ -53,6 +53,8 @@ export interface Store {
   goods: string[];
   /** Місця завантаження (координати гри). */
   docks: [number, number, number][];
+  /** Номер місця кожного з docks (MM у `node_store_NNMM`: 00 — розвантаження, 01…04 — замовлення). */
+  places?: number[];
   center: [number, number, number];
 }
 
@@ -177,8 +179,9 @@ export function findStores(ways: Iterable<{ id: string; way: Way }>, towns: Map<
         if (!m) continue;
         const sid = Number(m[1]);
         const t = towns.get(sid);
-        const s = byId.get(sid) ?? byId.set(sid, { id: sid, region, town: t?.name || TOWNS[region] || `База ${m[1]}`, goods: t?.goods ?? [], docks: [], center: [0, 0, 0] }).get(sid)!;
+        const s = byId.get(sid) ?? byId.set(sid, { id: sid, region, town: t?.name || TOWNS[region] || `База ${m[1]}`, goods: t?.goods ?? [], docks: [], places: [], center: [0, 0, 0] }).get(sid)!;
         s.docks.push(n.pos);
+        s.places!.push(Number(m[2]));
       }
   // Склади з одним місцем (11, 13, 14) — допоміжні (гіпотеза: точки сценаріїв), у торгівлі не беруть участі.
   const stores = [...byId.values()].filter((s) => s.docks.length >= 3 && !NO_GROUND.has(s.region));

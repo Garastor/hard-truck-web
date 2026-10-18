@@ -45,7 +45,8 @@ import { driverCosts, hiredLoad, upgradeDriver } from './career/company';
 import { routeLength } from './career/economy';
 import { terrainCollider } from './world/terrain';
 import { parseMsk } from './engine/formats/msk';
-import { findStores } from './career/economy';
+import { findStores, parseGoods } from './career/economy';
+import { Freight } from './traffic/freight';
 import { Climate, sunHeight, trafficLights } from './world/climate';
 import { iniGet, iniNum, parseIni } from './engine/formats/ini';
 import { decodeCp1251 } from './engine/formats/binary';
@@ -760,8 +761,11 @@ export class Ht2Drive {
       if (o.career.presents) this.presents.restore(o.career.presents);
     }
     if (!o.race) {
-      const names = await o.source.read('names.sch').then(readSch).catch(() => []);
-      this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r), truckerKinds(vehicles, this.trucks), Math.round(4 * (o.settings?.traffic ?? 1)), this.semiTypes);
+      const [names, merch] = await Promise.all(['names.sch', 'merchandise.sch'].map((f) => o.source.read(f).then(readSch).catch((): SExpr[] => [])));
+      // Рейси ботів: склади (вузли node_store_*, міста mod_*.sch) і товари merchandise.sch (traffic/freight.ts).
+      const goods = parseGoods(merch);
+      const freight = goods.length ? new Freight(this.roads, findStores(this.world.regions.values(), parseTowns(regionMods)), goods) : null;
+      this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r), truckerKinds(vehicles, this.trucks), Math.round(4 * (o.settings?.traffic ?? 1)), this.semiTypes, freight);
     }
     // Населення трафіку — `dumb N` і `ghost N` з playertypes GAME.CNF, насиченість — повзунок (TRUCK.INI trafs).
     const types = cnf ? (assoc(cnf, 'playertypes')?.slice(1) ?? []) : [];

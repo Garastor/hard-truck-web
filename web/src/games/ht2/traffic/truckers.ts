@@ -10,6 +10,8 @@ import type { SemiKind } from '../vehicles/presents';
 import { recolor, SPOT_FACING, SPOT_RANGE, spotShare } from './traffic';
 import { disposePool, makePool, setPoolFade } from './headPools';
 import { g2t } from '../engine/physics/world';
+import { Freight, type FreightCapacity, type FreightJob } from './freight';
+import { makeOrders } from '../career/economy';
 import type { Ht2Roads, RoadLine } from '../world/roads';
 import type { Ht2Drive } from '../drive';
 
@@ -21,8 +23,9 @@ import type { Ht2Drive } from '../drive';
  * що й гравець (клавіша P): зʼявляються на дорогах завантажених регіонів за SPAWN_MIN…SPAWN_MAX від гравця, зникають
  * далі за DESPAWN або перекинувшись. Це повноцінні тіла фізики: зіткнення з ними — як з гравцем. Тягач — одразу з
  * напівпричепом (тип — як presents: SEMITRAILER1–6, SEMITANK1–4, у «Шторма» — URAGAN_SEMITRAILER; гіпотеза порту: у
- * king.exe ШІ бере причіп сам, як гравець) і вантажем 30–100 % вантажопідйомності. Замовлень і торгівлі вони поки не
- * ведуть (гіпотеза: у грі — конкуренти за вантажі).
+ * king.exe ШІ бере причіп сам, як гравець). Возять вантажі, як далекобійники ІІ king.exe (traffic/freight.ts): порожній —
+ * до найближчого складу на місце з замовленням, там вантажиться, везе за маршрутом мережі до складу призначення,
+ * розвантажується й бере наступне; на старті — половина вже з вантажем.
  */
 const MAX = 4;
 /** Найманий водій гравця стає машиною ближче HIRED_ON і знову абстрактним далі HIRED_OFF, м (career/hired.ts). */
@@ -31,6 +34,8 @@ const HIRED_OFF = 450;
 const SPAWN_MIN = 140;
 const SPAWN_MAX = 450;
 const DESPAWN = 650;
+/** Частка ботів, що зʼявляються вже з вантажем (порт). */
+const START_LOADED = 0.5;
 /** Стоїть довше — застряг, с. */
 const STUCK_FOR = 30;
 
@@ -49,6 +54,10 @@ export interface Rival {
   faras: [THREE.Vector3, THREE.Vector3];
   lit: boolean;
   pool: THREE.Group | null;
+  /** Рейс (null — найманий чи без даних складів: стала випадкова гілка на розвилках). */
+  job: FreightJob | null;
+  /** Запис vehicle.tech машини (місткість кузова для замовлень). */
+  rec: ReturnType<typeof drivable>[number];
 }
 
 /** Точки вздовж тягача й причепа — одне тіло для обʼїзду. */
@@ -93,6 +102,8 @@ export class Truckers {
     private readonly max = MAX,
     /** Типи напівпричепів (evehicles.sch, presents.semiKinds) — для тягачів. */
     private readonly semis: SemiKind[] = [],
+    /** Склади й товари для рейсів (null — без рейсів, вантаж — випадкова частка місткості). */
+    readonly freight: Freight | null = null,
   ) {}
 
   /** Моделі машин далекобійників (evehicles.sch, клас trucker; за кожен варіант фарбування) — частка X. */
@@ -154,7 +165,7 @@ export class Truckers {
   }
 
   /** Машина далекобійника з автопілотом у точці дороги. */
-  private make(rec: ReturnType<typeof drivable>[number], variant: number, at: THREE.Vector3, forward: THREE.Vector3, name: string): Rival | null {
+  make(rec: ReturnType<typeof drivable>[number], variant: number, at: THREE.Vector3, forward: THREE.Vector3, name: string): Rival | null {
     const def = truckDef(this.drive.trucksData, rec);
     const model = def && buildTruckModel(this.drive.trucksData.asm, def, true);
     if (!def || !model) return null;
@@ -169,7 +180,7 @@ export class Truckers {
     // З напівпричепом — повільніше в поворотах, як автопілот гравця (drive: команда autopilot).
     if (trailer) Object.assign(pilot, { cruise: 45 + Math.random() * 10, bendGain: 5, bendFloor: 0.25 });
     const faras: [THREE.Vector3, THREE.Vector3] = [g2t(rec.faraFL), g2t(rec.faraFR)];
-    return { name, truck, pilot, bad: 0, trailer, idle: 0, setSwitch: model.setSwitch, faras, lit: false, pool: null };
+    return { name, truck, pilot, bad: 0, trailer, idle: 0, setSwitch: model.setSwitch, faras, lit: false, pool: null, job: null, rec };
   }
 
   /** Напівпричіп тягача (як drive.hitch): тип — випадковий з presents, у «Шторма» — свій; вантаж — частка місткості. */
@@ -181,7 +192,8 @@ export class Truckers {
     const tr = kind && trucks.records.find((r) => r.carNode.toLowerCase() === kind.carNode.toLowerCase());
     const def = tr && truckDef(trucks, tr);
     if (!kind || !tr || !def) return null;
-    const cargo = Math.min(tr.cargoLoad, rec.cargoLoad || tr.cargoLoad) * (0.3 + 0.7 * Math.random());
+    // З рейсами вантаж ставить startJob; без них — випадкова частка місткості.
+    const cargo = this.freight ? 0 : Math.min(tr.cargoLoad, rec.cargoLoad || tr.cargoLoad) * (0.3 + 0.7 * Math.random());
     const paint = kind.cluster > 0 ? (root: THREE.Object3D) => recolor(root, trucks, kind.cluster + 1) : undefined;
     const trailer = new Trailer(this.drive.rapierWorld, trucks.asm, def, tr, { body: truck.body, saddle: rec.lowSaddle }, cargo, paint);
     this.drive.world.scene.add(trailer.visual);
@@ -191,6 +203,51 @@ export class Truckers {
     truck.setTowLoad(trailer.kingpinLoad);
     truck.tow = { mass: trailer.mass, wheels: trailer.wheelCount };
     return trailer;
+  }
+
+  /** Місткість машини бота для замовлень: причіп (якщо є) чи кузов. */
+  capacity(r: Rival): FreightCapacity {
+    const t = r.trailer?.rec ?? r.rec;
+    return { mass: t.cargoLoad, volume: Math.max(1, t.bodySquare * t.bodyHeight), tanker: r.trailer?.rec.trailerType === 3, trailer: !!r.trailer };
+  }
+
+  /**
+   * Перший рейс нового бота: з імовірністю START_LOADED — уже з вантажем випадкового складу до іншого (вантаж у причепі),
+   * інакше порожній — до найближчого складу (порт: king.exe розставляє своїх 50 далекобійників на початку гри, ми — довкола
+   * гравця).
+   */
+  startJob(r: Rival): void {
+    const f = this.freight;
+    if (!f) return;
+    const cap = this.capacity(r);
+    // Від тіла: візуал новоствореної машини ще не синхронізовано.
+    const t = r.truck.body.translation();
+    const pos = new THREE.Vector3(t.x, t.y, t.z);
+    let job: FreightJob | null = null;
+    if (Math.random() < START_LOADED && f.stores.length > 1) {
+      const from = f.stores[Math.floor(Math.random() * f.stores.length)];
+      const order = makeOrders(from, f.stores, f.goodsList, cap, Math.random, 1, cap.tanker, 0, cap.trailer)[0];
+      job = order ? f.sendLoaded(order) : null;
+      if (job) this.loadCargo(r, order.goods.mass * order.units);
+    }
+    this.setJob(r, job ?? f.sendEmpty(pos, cap));
+  }
+
+  /** Рейс боту: маршрут автопілота й точка зупинки (місце складу). */
+  setJob(r: Rival, job: FreightJob): void {
+    r.job = job;
+    // Лінії мережі другої гри (RoadLine) — ті самі обʼєкти, що бачить автопілот (WayLine).
+    r.pilot.choose = this.freight?.route(job) as AutoPilot['choose'];
+    r.pilot.halt = job.goal;
+  }
+
+  /** Вантаж у машині бота, кг: у причепі — маса й вага на сідлі тягача (кузов вантажівки — без зміни маси, порт). */
+  private loadCargo(r: Rival, mass: number): void {
+    const t = r.trailer;
+    if (!t) return;
+    t.setCargo(mass);
+    r.truck.setTowLoad(t.kingpinLoad);
+    r.truck.tow = { mass: t.mass, wheels: t.wheelCount };
   }
 
   /** Відчепити й прибрати напівпричіп (розрив зчіпки чи машина зникає). */
@@ -232,6 +289,14 @@ export class Truckers {
       r.trailer?.syncVisual(alpha);
     }
     this.updateLights(player);
+    // Рейси: прибуття на місце складу, вантаження й розвантаження, наступний рейс.
+    if (this.freight)
+      for (const r of this.list) {
+        if (!r.job) continue;
+        const { job, event } = this.freight.step(r.job, r.truck.visual.position, r.truck.speedKmh, dt, this.capacity(r));
+        if (event) this.loadCargo(r, event.cargo);
+        if (job !== r.job) this.setJob(r, job);
+      }
     for (let i = this.list.length - 1; i >= 0; i--) {
       const r = this.list[i];
       const up = new THREE.Vector3(0, 1, 0).applyQuaternion(r.truck.visual.quaternion).y;
@@ -268,7 +333,10 @@ export class Truckers {
       const forward = b.clone().sub(a).setY(0).normalize();
       const name = this.names.length ? this.names[this.nameIndex++ % this.names.length] : rec.carNode;
       const r = this.make(rec, variant, a, forward, name);
-      if (r) this.list.push(r);
+      if (r) {
+        this.list.push(r);
+        this.startJob(r);
+      }
       return;
     }
   }

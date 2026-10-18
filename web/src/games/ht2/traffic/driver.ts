@@ -405,6 +405,14 @@ function offBase(lines: RoadLine[]): RoadLine[] {
   return out.length ? out : lines;
 }
 
+/**
+ * Штраф лінії для маршрутів ботів-далекобійників (traffic/freight.ts): звивистість і під'їзди заправок і СТО; територія
+ * баз — без штрафу (бот туди й їде вантажитись).
+ */
+export function freightPenalty(l: RoadLine): number {
+  return TURN_COST * winding(l) + (l.station ? STATION_COST : 0);
+}
+
 /** Сума кутів повороту всередині лінії, рад. */
 function winding(l: RoadLine): number {
   let w = windings.get(l);

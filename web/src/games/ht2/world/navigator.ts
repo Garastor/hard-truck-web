@@ -14,19 +14,25 @@ export type NavTurn = 'left' | 'straight' | 'right';
 const NEAR = 400;
 /** Лінії, що проходять ближче за це до цілі, — кінцеві, м. */
 const ARRIVE = 80;
+/** Скільки цілей памʼятати (боти-далекобійники їдуть до різних місць складів). */
+const CACHE = 32;
 /** Кут, менший за цей, — «прямо», рад. */
 const STRAIGHT = THREE.MathUtils.degToRad(25);
 
 export class Navigator {
   private readonly prev = new Map<RoadLine, RoadLine[]>();
   private readonly length = new Map<RoadLine, number>();
-  private dist: Map<RoadLine, number> | null = null;
-  private targetKey = '';
+  /** Відстані до останніх цілей (ключ — ціль, arrive і версія завалів), не більше CACHE. */
+  private readonly cache = new Map<string, Map<RoadLine, number>>();
 
-  /** extra — додаткова «вартість» лінії, м (трафік: штраф за звивистість, traffic/driver.routePenalty). */
+  /**
+   * extra — додаткова «вартість» лінії, м (трафік: штраф за звивистість, traffic/driver.routePenalty); end — чи може
+   * лінія біля цілі бути кінцевою (боти: не тупикова — з місця складу треба виїхати).
+   */
   constructor(
     private readonly roads: Ht2Roads,
     extra?: (l: RoadLine) => number,
+    private readonly end: (l: RoadLine) => boolean = () => true,
   ) {
     for (const l of roads.lines) {
       let len = 0;
@@ -36,10 +42,14 @@ export class Navigator {
     }
   }
 
-  /** Відстані від кожної лінії до цілі (по мережі, з кінця лінії). */
-  distances(target: THREE.Vector3): Map<RoadLine, number> {
-    const key = `${Math.round(target.x)},${Math.round(target.z)},${this.roads.closedVersion}`;
-    if (this.dist && key === this.targetKey) return this.dist;
+  /**
+   * Відстані від кожної лінії до цілі (по мережі, з кінця лінії); кінцеві — лінії ближче arrive м від цілі (місце складу
+   * для ботів — лише відрізок, на якому воно стоїть).
+   */
+  distances(target: THREE.Vector3, arrive = ARRIVE): Map<RoadLine, number> {
+    const key = `${Math.round(target.x)},${Math.round(target.z)},${arrive},${this.roads.closedVersion}`;
+    const hit = this.cache.get(key);
+    if (hit) return hit;
     const dist = new Map<RoadLine, number>();
     const heap: [number, RoadLine][] = [];
     const push = (d: number, l: RoadLine) => {
@@ -69,7 +79,7 @@ export class Navigator {
       }
       return top;
     };
-    for (const l of this.roads.lines) if (!l.closed && l.pts.some((p) => Math.hypot(p.x - target.x, p.z - target.z) < ARRIVE)) push(0, l);
+    for (const l of this.roads.lines) if (!l.closed && l.pts.some((p) => Math.hypot(p.x - target.x, p.z - target.z) < arrive) && this.end(l)) push(0, l);
     while (heap.length) {
       const [d, l] = pop();
       if (dist.has(l)) continue;
@@ -77,9 +87,26 @@ export class Navigator {
       // Попередня лінія доходить до цілі через цю: + довжина цієї.
       for (const p of this.prev.get(l) ?? []) if (!dist.has(p) && !p.closed) push(d + this.length.get(l)!, p);
     }
-    this.dist = dist;
-    this.targetKey = key;
+    if (this.cache.size >= CACHE) this.cache.delete(this.cache.keys().next().value!);
+    this.cache.set(key, dist);
     return dist;
+  }
+
+  /**
+   * Продовження лінії найкоротшим шляхом до цілі (автопілот ботів-далекобійників, traffic/truckers.ts); null — з кінця
+   * лінії шляху до цілі немає.
+   */
+  next(line: RoadLine, target: THREE.Vector3, arrive = ARRIVE): RoadLine | null {
+    const dist = this.distances(target, arrive);
+    let best: RoadLine | null = null;
+    let bd = Infinity;
+    for (const n of line.next as RoadLine[]) {
+      const d = dist.get(n);
+      if (d === undefined || (n.closed && !line.closed)) continue;
+      const c = d + this.length.get(n)!;
+      if (c < bd) (bd = c), (best = n);
+    }
+    return best;
   }
 
   /** Скільки лишилось дорогами до цілі, м (null — машина далеко від доріг чи шляху немає). */

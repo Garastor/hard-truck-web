@@ -50,9 +50,15 @@ const ROLL_RETURN = 5;
 export class Trailer {
   readonly body: RAPIER.RigidBody;
   readonly visual = new THREE.Group();
-  readonly mass: number;
+  /** Маса з вантажем, кг (змінює setCargo). */
+  mass: number;
   /** Вага на шворні в спокої, Н (за положенням центру мас між шворнем і віссю коліс). */
-  readonly kingpinLoad: number;
+  kingpinLoad: number;
+  /** Колайдер кузова (маса й центр мас) і що потрібно, щоб перерахувати їх з новим вантажем (setCargo). */
+  private readonly hull: RAPIER.Collider;
+  private readonly hullSize: THREE.Vector3;
+  private readonly hullCenter: THREE.Vector3;
+  private readonly axleZ: number;
   private readonly ctrl: RAPIER.DynamicRayCastVehicleController;
   private readonly joint: RAPIER.ImpulseJoint;
   private readonly wheels: { obj: THREE.Object3D; base: THREE.Matrix4 }[];
@@ -108,31 +114,24 @@ export class Trailer {
       RAPIER.RigidBodyDesc.dynamic().setTranslation(position.x, position.y, position.z).setRotation(rotation).setAngularDamping(0.5).setCanSleep(false),
     );
     this.hits = new HitMeter(this.body, world);
-    const mass = rec.mass + rec.bodyMass + cargoMass;
-    this.mass = mass;
-    // Центр мас порожнього — CenterMassInB3D (STrailerM (0; −3,22; −0,5) — над середньою віссю: порожній причіп
-    // стоїть на своїх колесах); вантаж — над дном кузова (center_of_cargo_bottom, у STrailerM — середина) на
-    // половині висоти кузова, тож завантажений тисне на сідло.
-    const empty = rec.mass + rec.bodyMass;
-    const cargoAt = g2t(rec.cargoBottom).add(new THREE.Vector3(0, rec.bodyHeight / 2, 0));
-    const com = g2t(rec.centerMass).multiplyScalar(empty).addScaledVector(cargoAt, cargoMass).divideScalar(mass).sub(center);
-    world.createCollider(
+    this.hullSize = size;
+    this.hullCenter = center;
+    // Центр візка коліс уздовж причепа (z Three, + назад): частка ваги на шворні — важіль до центру мас.
+    const axleZ = model.wheelBase.reduce((s, m) => s + g2t(new THREE.Vector3().setFromMatrixPosition(m)).z, 0) / model.wheelBase.length;
+    this.axleZ = axleZ;
+    this.axle.set(0, this.kingpin.y, axleZ);
+    const props = this.massProps(cargoMass);
+    this.mass = props.mass;
+    this.kingpinLoad = props.kingpinLoad;
+    this.hull = world.createCollider(
       RAPIER.ColliderDesc.cuboid(size.x / 2, (size.y / 2) * 0.8, size.z / 2)
         .setTranslation(center.x, center.y, center.z)
-        .setMassProperties(mass, { x: com.x, y: com.y, z: com.z }, {
-          x: (mass * (size.y ** 2 + size.z ** 2)) / 12,
-          y: (mass * (size.x ** 2 + size.z ** 2)) / 12,
-          z: (mass * (size.x ** 2 + size.y ** 2)) / 12,
-        }, { w: 1, x: 0, y: 0, z: 0 })
+        .setMassProperties(props.mass, props.com, props.inertia, { w: 1, x: 0, y: 0, z: 0 })
         .setFriction(0.3)
         .setRestitution(0.1),
       this.body,
     );
-    // Центр візка коліс і центр мас уздовж причепа (z Three, + назад): частка ваги на шворні — важіль.
-    const axleZ = model.wheelBase.reduce((s, m) => s + g2t(new THREE.Vector3().setFromMatrixPosition(m)).z, 0) / model.wheelBase.length;
-    this.axle.set(0, this.kingpin.y, axleZ);
-    const comZ = com.z + center.z;
-    this.kingpinLoad = mass * 9.81 * THREE.MathUtils.clamp((axleZ - comZ) / (axleZ - this.kingpin.z), 0, 1);
+    const mass = props.mass;
     this.ctrl = world.createVehicleController(this.body);
     model.wheelBase.forEach((m, i) => {
       const c = g2t(new THREE.Vector3().setFromMatrixPosition(m));
@@ -157,6 +156,41 @@ export class Trailer {
     this.joint = world.createImpulseJoint(joint, tractor.body, this.body, true);
     this.joint.setContactsEnabled(false);
     this.syncVisual();
+  }
+
+  /**
+   * Маса, центр мас (від центру колайдера) і інерція з вантажем cargo кг; вага на шворні. Центр мас порожнього —
+   * CenterMassInB3D (STrailerM (0; −3,22; −0,5) — над середньою віссю: порожній причіп стоїть на своїх колесах); вантаж —
+   * над дном кузова (center_of_cargo_bottom, у STrailerM — середина) на половині висоти кузова, тож завантажений тисне
+   * на сідло.
+   */
+  private massProps(cargo: number) {
+    const rec = this.rec;
+    const size = this.hullSize;
+    const empty = rec.mass + rec.bodyMass;
+    const mass = empty + cargo;
+    const cargoAt = g2t(rec.cargoBottom).add(new THREE.Vector3(0, rec.bodyHeight / 2, 0));
+    const com = g2t(rec.centerMass).multiplyScalar(empty).addScaledVector(cargoAt, cargo).divideScalar(mass).sub(this.hullCenter);
+    const inertia = {
+      x: (mass * (size.y ** 2 + size.z ** 2)) / 12,
+      y: (mass * (size.x ** 2 + size.z ** 2)) / 12,
+      z: (mass * (size.x ** 2 + size.y ** 2)) / 12,
+    };
+    const comZ = com.z + this.hullCenter.z;
+    const kingpinLoad = mass * 9.81 * THREE.MathUtils.clamp((this.axleZ - comZ) / (this.axleZ - this.kingpin.z), 0, 1);
+    return { mass, com: { x: com.x, y: com.y, z: com.z }, inertia, kingpinLoad };
+  }
+
+  /**
+   * Новий вантаж, кг (боти-далекобійники вантажаться й розвантажуються на складі, traffic/truckers.ts): маса й центр
+   * мас кузова, сила пружин; вагу на шворні й масу для тягача (setTowLoad, tow) оновлює власник.
+   */
+  setCargo(cargo: number): void {
+    const p = this.massProps(Math.max(0, cargo));
+    this.mass = p.mass;
+    this.kingpinLoad = p.kingpinLoad;
+    this.hull.setMassProperties(p.mass, p.com, p.inertia, { w: 1, x: 0, y: 0, z: 0 });
+    if (!this.tipped) for (let i = 0; i < this.wheels.length; i++) this.ctrl.setWheelMaxSuspensionForce(i, p.mass * 40);
   }
 
   /** Поза причепа на одній лінії з тягачем: шкворінь — у сідлі. */
