@@ -1,24 +1,33 @@
 import type { FileSource } from '@shared/source';
 import { HT2_MUSIC } from '../files';
-import { MUTED } from '../engine/audio/engineAudio';
+import { MUTED, sharedContext } from '../engine/audio/engineAudio';
 
 /**
  * Музика Дальнобойщиків 2 (`MUSIC/track01l…12l.mp3`, тека з TRUCK.INI [INSTALL] MUSIC): треки по черзі з випадкового,
- * поки їдемо. Гучність — [EFFECTS] midivol=20 з TRUCK.INI як частка (гіпотеза: шкала 0…100), але не тихіше 0,35 —
- * на телефоні 0,2 майже не чути. Файлів немає (не імпортовано) — тиша.
+ * поки їдемо. Гучність — з налаштувань (ui/settings.ts, меню Esc «Звук»). Гучність — вузлом Web Audio, не
+ * `audio.volume`: Safari на iPhone `volume` ігнорує (музика грала на повну, повзунок не діяв). Файлів немає
+ * (не імпортовано) — тиша.
  */
 export class Music {
   private readonly audio = new Audio();
   private url: string | null = null;
   private index = Math.floor(Math.random() * HT2_MUSIC.length);
   private failures = 0;
+  private readonly gain: GainNode | null = null;
   on = true;
 
   constructor(
     private readonly source: FileSource,
-    volume = 0.35,
+    volume = 0.21,
   ) {
-    this.audio.volume = MUTED ? 0 : volume;
+    try {
+      const ctx = sharedContext();
+      this.gain = ctx.createGain();
+      ctx.createMediaElementSource(this.audio).connect(this.gain).connect(ctx.destination);
+    } catch {
+      /* без Web Audio — гучність елемента */
+    }
+    this.setVolume(volume);
     this.audio.addEventListener('ended', () => void this.next());
   }
 
@@ -44,7 +53,9 @@ export class Music {
 
   /** Гучність (меню Esc «Звук»), 0…1. */
   setVolume(v: number): void {
-    this.audio.volume = MUTED ? 0 : Math.max(0, Math.min(1, v));
+    const g = MUTED ? 0 : Math.max(0, Math.min(1, v));
+    if (this.gain) this.gain.gain.value = g;
+    else this.audio.volume = g;
   }
 
   toggle(): boolean {
@@ -59,6 +70,7 @@ export class Music {
   dispose(): void {
     this.audio.pause();
     this.audio.src = '';
+    this.gain?.disconnect();
     if (this.url) URL.revokeObjectURL(this.url);
   }
 }

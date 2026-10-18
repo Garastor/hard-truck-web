@@ -51,9 +51,18 @@ export interface Ht2Settings {
   detail: number;
   /** Перепризначені клавіші з меню «Керування»: дія → KeyboardEvent.code (engine/input Input.bind). */
   keys?: Partial<Record<Action | Command, string>>;
+  /** Версія збережених налаштувань (REV). */
+  rev?: number;
 }
 
 const KEY = 'ht2.settings.v1';
+/** Типова гучність музики — на 40 % тихіша за колишню (на прохання користувача). */
+const MUSIC_QUIET = 0.6;
+/**
+ * Версія збережених налаштувань: 1 — музику зменшено на 40 %. Збережене раніше (без `rev`) — гучність музики ×0,6,
+ * щоб зміна дійшла й до тих, хто вже натискав «ОК» у меню «Звук».
+ */
+const REV = 1;
 
 export function defaultSettings(ini: Ini | null): Ht2Settings {
   const pct = (key: string, def: number) => Math.min(1, Math.max(0, (ini ? iniNum(ini, 'EFFECTS', key, def) : def) / 100));
@@ -63,8 +72,9 @@ export function defaultSettings(ini: Ini | null): Ht2Settings {
     dayLength: pct('days', 50),
     weather: pct('weats', 60),
     sfx: pct('sfxvol', 54),
-    // Музика: TRUCK.INI midivol=20 на телефоні майже не чути — не тихіше 35 (як раніше в music.ts).
-    music: Math.max(0.35, pct('midivol', 20)),
+    // Музика: TRUCK.INI midivol=20 на телефоні майже не чути — було не тихіше 0,35; на прохання користувача — на 40 %
+    // тихіше (0,21).
+    music: MUSIC_QUIET * Math.max(0.35, pct('midivol', 20)),
     engine: pct('engvol', 90),
     skid: pct('skivol', 90),
     steerSpeed: pct('sens', 50),
@@ -74,6 +84,7 @@ export function defaultSettings(ini: Ini | null): Ht2Settings {
     xpyramid: Math.min(2, Math.max(1.2, ini ? iniNum(ini, 'EFFECTS', 'xpyramid', 1.6) : 1.6)),
     effects: pct('grf', 100),
     detail: pct('dtl', 100),
+    rev: REV,
   };
 }
 
@@ -81,7 +92,10 @@ export function loadSettings(ini: Ini | null): Ht2Settings {
   const def = defaultSettings(ini);
   try {
     const s = localStorage.getItem(KEY);
-    return s ? { ...def, ...(JSON.parse(s) as Partial<Ht2Settings>) } : def;
+    if (!s) return def;
+    const saved = JSON.parse(s) as Partial<Ht2Settings>;
+    if ((saved.rev ?? 0) < 1 && saved.music != null) saved.music = Math.round(saved.music * MUSIC_QUIET * 100) / 100;
+    return { ...def, ...saved, rev: REV };
   } catch {
     return def;
   }

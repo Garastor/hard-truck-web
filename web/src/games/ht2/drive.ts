@@ -232,6 +232,8 @@ const HEAD_CALM_SPAN = 45;
 const COCKPIT_ROLL = 0.7;
 /** Зсув глибини стрілок приладів до ока, м (на прохання користувача — стрілки не ховаються за циферблатом). */
 const NEEDLE_BIAS = 0.1;
+/** Розмір стрілок спідометра й тахометра (на прохання користувача — на 30 % менші за модель). */
+const NEEDLE_SIZE = 0.7;
 /** Зсув голови на одиницю кута, м/рад: у king.exe 4 (0x64c408), у порту на 20 % менше — на прохання користувача. */
 const HEAD_SHIFT = 3.2;
 /**
@@ -2713,9 +2715,11 @@ export class Ht2Drive {
     this.updateRadarLamp(dt, radar);
     if (!inside) return;
     this.cabBase.decompose(this.cab.position, this.cab.quaternion, this.cab.scale);
-    const rot = (o: THREE.Object3D | undefined, axis: THREE.Vector3, angle: number) => {
+    const rot = (o: THREE.Object3D | undefined, axis: THREE.Vector3, angle: number, size = 1) => {
       if (!o) return;
       o.matrix.copy(o.userData.baseMatrix as THREE.Matrix4).multiply(new THREE.Matrix4().makeRotationAxis(axis, angle));
+      // Довжина стрілки — у площині циферблата (x, z простору стрілки), навколо осі.
+      if (size !== 1) o.matrix.multiply(new THREE.Matrix4().makeScale(size, 1, size));
     };
     const deg = Math.PI / 180;
     const needle = (v: number, [max, angle]: [number, number]) => (Math.min(Math.max(v, 0), max * 1.05) / max) * angle * deg;
@@ -2723,8 +2727,8 @@ export class Ht2Drive {
     // кут коліс, уже з межею й формою керма (а не натискання клавіші).
     // Вісь — z простору керма (0x5ac0c0); навколо y кермо ставало ребром і зникало в панелі.
     rot(this.cabParts.rule, new THREE.Vector3(0, 0, 1), 2 * this.truck.steerAngle);
-    rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), needle(this.truck.speedKmh, this.def.speedScale));
-    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle(this.truck.rpm / 60, this.def.tachScale));
+    rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), needle(this.truck.speedKmh, this.def.speedScale), NEEDLE_SIZE);
+    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle(this.truck.rpm / 60, this.def.tachScale), NEEDLE_SIZE);
   }
 
   /**
