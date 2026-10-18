@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { GROUP_BUMPER, GROUP_MOVABLE, g2t, groups } from '../physics/world';
 import type { ControlState } from '../input/input';
 import { visibleBox, type TruckDef, type TruckModel } from './trucks';
-import { Engine, GEAR_R, type EngineProfile } from './engine';
+import { Engine, GEAR_N, GEAR_R, type EngineProfile } from './engine';
 import { HitMeter } from './hitMeter';
 import { KING, ROUGH_ASPHALT, roadBump, type Roughness, rollingForce, steerLimit, tireCurve, wheelForces, yawRate, type KingWheel, type WheelSlip } from './kingModel';
 
@@ -168,7 +168,7 @@ export interface TruckSetup {
   /** Кут коліс ∝ |кермо|^steerPower (перша гра — 1, лінійно). */
   steerPower?: number;
   /** Педаль гальма за часом утримання, с (0…1), і множник сили гальм — замість t/(t + 1) першої гри. */
-  brake?: { pedal: (t: number) => number; scale: number };
+  brake?: { pedal: (t: number, sharp?: boolean) => number; scale: number };
   /** Рух за формулами king.exe (kingModel.ts) замість шин Rapier — Дальнобойщики 2. */
   king?: KingSetup;
 }
@@ -204,6 +204,9 @@ const SHADOW_LIFT = 0.04;
 const SHADOW_RAY = 30;
 /** Колесо, що ковзає вбік, лишає слід понад цей кут ковзання, рад (10° — king.exe 0x502780, 0x64daa0). */
 const TRACE_ALPHA = 0.174533;
+/** Вихлоп king.exe: газ понад це протягом перших EXHAUST_TIME с утримання газу (з памʼяті гри). */
+const EXHAUST_GAS = 0.5;
+const EXHAUST_TIME = 2;
 /** Ковзання вбік (king.exe [0x19c4]): |sin α| понад це. */
 const SKID_SIN = 0.26;
 
@@ -273,6 +276,27 @@ export class TruckVehicle {
   /** Скільки утримується гальмо на місці (для вмикання задньої). */
   private reverseHold = 0;
   private brakeTime = 0;
+  /** Педаль гальма останнього кроку, 0…1. */
+  private pedalNow = 0;
+  /** Швидкість уперед останнього кроку, м/с (+ — уперед). */
+  private vNow = 0;
+
+  /**
+   * Пара з-під передніх коліс при різкому гальмуванні (king.exe 0x4ff800 → подія [ph+0x3c18] → 0x548250, біт 0x8000
+   * [car+0x27b4] → 0x551970 → 0x4baf90): педаль > 0,5, швидкість уперед > 0,5 м/с, обидва передні колеса на землі —
+   * дві точки внизу передніх коліс (координати гри). Інакше — порожньо.
+   */
+  brakeVaporPoints(): THREE.Vector3[] {
+    if (!this.king || this.pedalNow <= 0.5 || this.vNow <= 0.5) return [];
+    const out: THREE.Vector3[] = [];
+    for (const i of [0, 1]) {
+      if (!this.ctrl.wheelIsInContact(i)) return [];
+      const p = this.ctrl.wheelContactPoint(i);
+      if (!p) return [];
+      out.push(new THREE.Vector3(p.x, -p.z, p.y));
+    }
+    return out;
+  }
   private readonly mass: number;
   private readonly grip: number;
   /** Пошкодження гальм: множник сили (1 — справні). */
@@ -293,7 +317,7 @@ export class TruckVehicle {
   private readonly rollLift: number | undefined;
   private readonly steerLimit: ((speed: number) => number) | undefined;
   private readonly steerPower: number;
-  private readonly brakeProfile: { pedal: (t: number) => number; scale: number } | undefined;
+  private readonly brakeProfile: { pedal: (t: number, sharp?: boolean) => number; scale: number } | undefined;
   /** Рух king.exe (null — шини й тертя Rapier, як у першій грі). */
   private readonly king: KingSetup | null;
   /**
@@ -339,6 +363,16 @@ export class TruckVehicle {
    * машини з масою tech > 4000 кг, car_node яких не починається з «daf» (0x5427a0, прапорець 2 [car+0x51a4]).
    * Координати гри (x, y, z — угору).
    */
+  /**
+   * Чи йде дим з вихлопу (біт 0x400 [car+0x27b4] = [car+0x51a0] king.exe; запису поля в коді не знайдено — умова з
+   * памʼяті гри, re/notes/ht2/wheel-effects.md §2): газ > 0,5, поки від натискання газу минуло менше 2 с — на
+   * звичайному газі це 0,86…2 с розгону, з Ctrl — майже одразу; оберти й передача не важать.
+   */
+  exhaustOn(): boolean {
+    const e = this.engine;
+    return this.engineOn && e.gear !== GEAR_N && e.throttle > EXHAUST_GAS && e.gasTime < EXHAUST_TIME;
+  }
+
   exhaustPoints(): { p: THREE.Vector3; v: THREE.Vector3 }[] {
     const t = this.def.tech;
     if (t.mass <= 4000 || /^daf/i.test(this.def.carNode)) return [];
@@ -480,6 +514,24 @@ export class TruckVehicle {
         parentInv: o.parent.matrixWorld.clone().invert(),
       };
     });
+    // Тінь Дальнобойщиків 2 — не вузол моделі (блоки `<машина>Shadow` у TRUCKS.B3D king.exe не вживає), а квад
+    // матеріалу effect_Shadow по точках Corner_Mark_W з tech, спроєктований на дорогу під колесами (0x552940 →
+    // 0x4bb270 → 0x57c490). Кладемо його тією самою placeShadow.
+    const corners = def.tech.shadowCorners;
+    if (!this.shadow && model.shadowMaterial && corners && corners.length >= 4) {
+      const pts = corners.slice(0, 4).map(([x, y]) => g2t([x, y, 0]));
+      const center = pts.reduce((a, p) => a.add(p), new THREE.Vector3()).divideScalar(4);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pts.flatMap((p) => [p.x - center.x, 0, p.z - center.z]), 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 1, 1], 2));
+      geo.setIndex([0, 2, 1, 1, 2, 3]);
+      const mesh = new THREE.Mesh(geo, model.shadowMaterial);
+      mesh.name = 'effect_Shadow';
+      mesh.matrixAutoUpdate = false;
+      mesh.renderOrder = 1;
+      this.visual.add(mesh);
+      this.shadow = { obj: mesh, local: new THREE.Matrix4(), center, mid: center.clone(), parentInv: new THREE.Matrix4() };
+    }
     const box = visibleBox(model.body);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
@@ -630,6 +682,7 @@ export class TruckVehicle {
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w));
     const v = lv.x * fwd.x + lv.y * fwd.y + lv.z * fwd.z;
     this.speedKmh = Math.abs(v) * 3.6;
+    this.vNow = v;
 
     // Кермо як в оригіналі (s6): межа залежить від швидкості 1,04/(1 + 0,056·v) ≤ 0,913,
     // кут колеса = 0,684 × кермо; внутрішнє колесо повертається більше (Аккерман, cot o − cot i = 0,208).
@@ -665,7 +718,8 @@ export class TruckVehicle {
     // Гальмо з клавіатури наростає як t/(t + 1) (поле [0x33a] оригіналу; телеметрія s6).
     this.brakeTime = brake > 0 ? this.brakeTime + dt : 0;
     const bp = this.brakeProfile;
-    const brakePedal = brake > 0 ? brake * (bp ? bp.pedal(this.brakeTime) : this.brakeTime / (this.brakeTime + 1)) : 0;
+    const brakePedal = brake > 0 ? brake * (bp ? bp.pedal(this.brakeTime, !!input.sharp) : this.brakeTime / (this.brakeTime + 1)) : 0;
+    this.pedalNow = brakePedal;
     if (this.king) {
       this.hits.begin(dt);
       this.updateKing(dt, input.steer, brakePedal, !!input.handbrake, !!input.sharp);

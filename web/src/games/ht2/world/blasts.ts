@@ -48,6 +48,8 @@ interface Puff {
   fdur?: number;
   /** Зупинився (гальмування g) — далі підіймається з цією швидкістю, м/с (вихлоп 0x59c510). */
   rise?: number;
+  /** Розмір s1·(1 − q²), q — частка життя, що лишилась (пара 0x59d590), замість лінійного s0 → s1. */
+  ease?: boolean;
 }
 
 /**
@@ -124,6 +126,8 @@ export class Blasts {
   private readonly fires = new Map<unknown, THREE.Vector3>();
   /** Труби вихлопу цього кадру (точка й напрям, гра) — клуби щотакту (exhaust). */
   private exhaustPts: { p: THREE.Vector3; v: THREE.Vector3 }[] = [];
+  /** Точки пари з-під передніх коліс цього кадру (гра) — brakeVapor. */
+  private vaporPts: THREE.Vector3[] = [];
   /** Вибухи машин (_Blow): точка гри й вік, с. */
   private readonly carBlows: { p: THREE.Vector3; age: number }[] = [];
 
@@ -210,6 +214,15 @@ export class Blasts {
     this.exhaustPts = points;
   }
 
+  /**
+   * Пара з-під передніх коліс при різкому гальмуванні (king.exe 0x4baf90 ← 0x551970; objects.md «Ефекти машин» §5):
+   * щокадру клуб mvapor у кожній точці, на місці, 1,28 с, кадри mvapor00…03 по 0,32 с, розмір 2·(1 − q²) м (s = 0,5,
+   * 0 → 4·s; q — частка життя, що лишилась). Бічний дрейф після 10-го клубу (лічильник +0x6c) не перенесено [Г].
+   */
+  brakeVapor(points: THREE.Vector3[]): void {
+    this.vaporPts = points;
+  }
+
   update(dt: number, wind: number): void {
     this.acc = Math.min(this.acc + dt, 0.2);
     while (this.acc >= TICK) {
@@ -223,6 +236,11 @@ export class Blasts {
 
   private emit(): void {
     for (const e of this.exhaustPts) this.spawnWorld(e.p.clone(), e.v.clone(), 'smoke', 0.5, 4, 3, 0.75, undefined, 0.5);
+    for (const p of this.vaporPts) {
+      this.spawnWorld(p.clone(), new THREE.Vector3(), 'vapor', 0, 2, 0, 1.28);
+      const q = this.puffs[this.puffs.length - 1];
+      if (q && q.born.equals(p)) q.ease = true;
+    }
     for (let i = this.blows.length - 1; i >= 0; i--) {
       const b = this.blows[i];
       // Уламки колонки (mnBlow3): 5 одразу з точки P, v = M·(4s₁·X + 4s₂·Y + (2 + 2r)·Z).
@@ -420,7 +438,7 @@ export class Blasts {
       m.rotation += q.omega * (1 - u) * (1 - u) * dt;
       if (m.blending !== THREE.AdditiveBlending) m.color.copy(TREE_LIGHT.value);
       else m.color.setRGB(1, 1, 1);
-      q.s.scale.setScalar(q.s0 + (q.s1 - q.s0) * u);
+      q.s.scale.setScalar(q.ease ? q.s1 * (1 - (1 - u) * (1 - u)) : q.s0 + (q.s1 - q.s0) * u);
       toThree(q.p.x, q.p.y, q.p.z, q.s.position);
     }
   }

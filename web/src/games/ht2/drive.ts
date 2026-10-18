@@ -294,8 +294,6 @@ export class Ht2Drive {
   private blasts: Blasts | null = null;
 
   private tracks: TireTracks | null = null;
-  /** Керування машиною гравця цього кадру (для вихлопу). */
-  private lastState: { throttle: number; sharp?: boolean } | null = null;
 
   /**
    * Ефекти коліс і двигуна гравця щокадру: сліди шин (world/tireTracks.ts) на покриттях TRACE_SURFACE і вихлоп
@@ -308,10 +306,8 @@ export class Ht2Drive {
     }
     this.tracks.beginFrame();
     if (TRACE_SURFACE.has(this.surface)) for (const w of this.truck.traceWheels()) this.tracks.add(w.i, w.p, w.n, w.w, w.type);
-    // Умова вихлопу king.exe — біт 0x400 [car+0x27b4] = [car+0x51a0] ≠ 0 (запису поля в коді не знайдено); гіпотеза
-    // порту за спостереженням користувача — газ з Ctrl («різко»).
-    const st = this.lastState;
-    this.blastFx().exhaust(st?.sharp && st.throttle > 0 ? this.truck.exhaustPoints() : []);
+    this.blastFx().exhaust(this.truck.exhaustOn() ? this.truck.exhaustPoints() : []);
+    this.blastFx().brakeVapor(this.truck.brakeVaporPoints());
   }
 
   private blastFx(): Blasts {
@@ -2709,7 +2705,6 @@ export class Ht2Drive {
     const me = [this.truck.visual.position, ...alongPoints(this.truck), ...(this.trailer?.points() ?? [])];
     this.traffic?.update(dt, this.truck.visual.position, [me, ...trucks.slice(1).map(alongPoints)]);
     const obstacles = [this.truck.visual.position, ...(this.trailer?.points() ?? []), ...(this.traffic?.cars.map((c) => c.pos) ?? [])];
-    this.lastState = state;
     this.updateSurface();
     this.acc += dt;
     const step = this.rapier.timestep;

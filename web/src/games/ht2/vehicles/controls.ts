@@ -75,7 +75,8 @@ export const HT2_KING: KingSetup = { mu: 0.71, rain: 0.6, steerK: 8.8, steerScal
  * педаль у межах μ·N (kingModel.ts). Так сповільнення ≈ 5 м/с² за 0,5 с і ≈ 7 за 1 с — як у записі ZilR (на 0,1 с у
  * записі ≈ 3, тут ≈ 1,3).
  */
-export const HT2_KING_BRAKE = { pedal: (t: number) => (t + 0.001) / (t + 1), scale: 1 };
+// З Ctrl («різко», [0x2716] = 2) — (t + 0,001)/(t + 0,1): понад 0,5 вже за 0,1 с.
+export const HT2_KING_BRAKE = { pedal: (t: number, sharp?: boolean) => (t + 0.001) / (t + (sharp ? 0.1 : 1)), scale: 1 };
 
 /** Рух king.exe для машини з vehicle.tech (гравець, трафік, суперники, далекобійники); travel — хід підвіски. */
 export function kingCar(travel?: readonly number[]): { engine: EngineProfile; brake: typeof HT2_KING_BRAKE; king: KingSetup } {

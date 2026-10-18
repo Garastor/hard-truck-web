@@ -44,6 +44,8 @@ export interface TruckTech {
   /** Точка очей водія (OV) у системі вантажівки та нахил погляду (tangViewer, градуси). */
   viewer: [number, number, number];
   viewerTilt: number;
+  /** Кути тіні машини в системі моделі (Corner_Mark_W%d vehicle.tech, king.exe 0x5455d0 → 0x552940). */
+  shadowCorners?: [number, number, number][];
   /** Товщина передніх і задніх коліс, м (front/rear_wheel_thickness vehicle.tech) — ширина сліду шин. */
   wheelThickness?: [number, number];
   /** Труби вихлопу: точка й напрям у системі моделі (SmokePosition/SmokeDirection, …2; немає — z = 20). */
@@ -134,6 +136,8 @@ export interface TruckModel {
   /** Перемикачі моделі (лише для dynamic: вмʼятини `Damage*Key`); кількість станів перемикача. */
   setSwitch?: (name: string, state: number) => void;
   switchStates?: (name: string) => number;
+  /** Матеріал тіні машини (`effect_Shadow` архіву вантажівок; king.exe 0x4b9080). */
+  shadowMaterial?: THREE.Material;
 }
 
 /** Односторонні копії матеріалів моделей вантажівок (спільні для всіх екземплярів). */
@@ -212,7 +216,26 @@ export function buildTruckModel(asm: SceneAssembler, def: TruckDef, dynamic = fa
     };
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(one) : one(mesh.material);
   });
-  return { root, body, wheels, wheelBase, setSwitch: dyn?.setSwitch, switchStates: dyn?.states };
+  const shadowAt = asm.b3d.materials.findIndex((m) => m.toLowerCase() === 'effect_shadow');
+  const shadowMaterial = shadowAt >= 0 ? shadowMat(asm.lib.material(shadowAt)) : undefined;
+  return { root, body, wheels, wheelBase, setSwitch: dyn?.setSwitch, switchStates: dyn?.states, shadowMaterial };
+}
+
+/** Спільна копія матеріалу тіні: без запису глибини й зі зсувом глибини над дорогою (king.exe ставить +0x20 |= 0x40200). */
+const SHADOW_MATS = new WeakMap<THREE.Material, THREE.Material>();
+function shadowMat(m: THREE.Material): THREE.Material {
+  let c = SHADOW_MATS.get(m);
+  if (!c) {
+    c = m.clone();
+    c.transparent = true;
+    c.depthWrite = false;
+    c.side = THREE.DoubleSide;
+    c.polygonOffset = true;
+    c.polygonOffsetFactor = -2;
+    c.polygonOffsetUnits = -4;
+    SHADOW_MATS.set(m, c);
+  }
+  return c;
 }
 
 /**

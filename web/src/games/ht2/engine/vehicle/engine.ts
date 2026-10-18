@@ -91,7 +91,8 @@ export class Engine {
   /** Передатні числа «двигун → колесо» за передачами (з головною передачею). */
   readonly ratios: number[];
 
-  private gasTime = 0;
+  /** Скільки утримується газ, с (king.exe: зараз − [0x17d8]). */
+  gasTime = 0;
   private shift: { target: number; t: number; dur: number; nStart: number; from: number } | null = null;
   /** Час після завершення перемикання (для «зчеплення»). */
   private sinceShift = Infinity;
