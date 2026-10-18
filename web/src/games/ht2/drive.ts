@@ -58,7 +58,7 @@ import { Music } from './ui/music';
 import { SceneAssembler } from './engine/render/sceneBuilder';
 import { parseB3d } from './engine/formats/b3d';
 import { parseRmp } from './engine/formats/rmp';
-import { REPAIR_PER_PERCENT, type Ht2Career } from './career/career';
+import { REPAIR_PER_PERCENT, restoreCareer, savedCareerRaw, type Ht2Career } from './career/career';
 import { HT2_MOD_REGIONS, readTextures } from './files';
 import { saveSettings, steerGain, timeScale, type Ht2Settings } from './ui/settings';
 import { EscArt } from './ui/escArt';
@@ -481,8 +481,14 @@ export class Ht2Drive {
   private navTimer = 0;
   /** Виклик 911: відлік до відновлення (машина на гальмах), куди перенести, ціна. */
   private rescue: { left: number; done?: boolean; ready: Promise<{ position: THREE.Vector3; forward: THREE.Vector3 } | null>; cost: number } | null = null;
-  /** Вихід без збереження («не зберігати», «завантажити гру»). */
+  /** Вихід без збереження («не зберігати», «завантажити гру», кінець гри). */
   private noSave = false;
+  /**
+   * Збереження на момент старту чи останнього «Зберегти гру» (рядок JSON; null — не було). Автозапис раз на 10 с і
+   * після подій пише поточний стан (на телефоні вкладку можуть вивантажити без dispose), тож вихід без збереження
+   * повертає цей знімок — інакше «не зберігати» й «завантажити гру» давали стан останнього автозапису.
+   */
+  private checkpoint: string | null = null;
   /** Ігровий час вільної їзди, с від півночі (кар'єра — свій); старт — 10:00 (TRUCK.INI timestart=10). */
   private freeTime = 10 * 3600;
   /** Доба й погода як у king.exe (climate.ts): показник погоди, дощ, грім, вітер; дощ — слизька дорога. */
@@ -649,6 +655,7 @@ export class Ht2Drive {
         o.source.read('restable.sch').then(readSch).catch(() => []),
         o.source.read('names.sch').then(readSch).catch(() => []),
       ]);
+      this.checkpoint = savedCareerRaw();
       this.careerMode = new CareerMode(this, o.career, merch, messages, parseUpgrades(restable, true), parseTowns(regionMods), parseServices(regionMods));
       this.copBribes = copsTakeBribes(names);
       this.police = new Police(parseAmbushes(regionMods, this.world.regions.values()), {
@@ -2467,6 +2474,7 @@ export class Ht2Drive {
   private escCommand(c: EscCommand, save?: boolean): void {
     if (c === 'save') {
       this.careerMode?.persist();
+      this.checkpoint = savedCareerRaw();
       this.closeEsc();
       return this.say('ГРУ ЗБЕРЕЖЕНО');
     }
@@ -3261,7 +3269,10 @@ export class Ht2Drive {
   }
 
   dispose(): void {
-    if (!this.noSave) this.careerMode?.persist();
+    if (this.careerMode) {
+      if (this.noSave) restoreCareer(this.checkpoint);
+      else this.careerMode.persist();
+    }
     this.careerMode?.dispose();
     this.escMenu?.close();
     this.fPanels?.close();

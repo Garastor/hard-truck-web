@@ -28,6 +28,15 @@ type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files'
 /** Контекст запуску від оболонки (app/main.ts). */
 export type Ht2Context = GameContext;
 
+/**
+ * Верхній екран меню: «Водії», «Графіка» тощо відкриваються поверх головного окремим `.ht2-menu`, і вікно, додане до
+ * першого з них (головного), лишалося під екраном — невидиме й ненатискне («Видалити водія»).
+ */
+function topMenu(): HTMLElement {
+  const all = document.querySelectorAll<HTMLElement>('.ht2-menu');
+  return all[all.length - 1]!;
+}
+
 async function devAvailable(): Promise<boolean> {
   try {
     const r = await fetch('/game2/vehicle.tech', { method: 'HEAD' });
@@ -181,7 +190,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
                 saveCareer(cur);
               },
               onDelete: () => {
-                void modal(document.querySelector('.ht2-menu') as HTMLElement, 'Видалити водія', 'Стерти збережену кар\'єру цього водія?', ['Видалити', 'Ні']).then((i) => {
+                void modal(topMenu(), 'Видалити водія', 'Стерти збережену кар\'єру цього водія?', ['Видалити', 'Ні']).then((i) => {
                   if (i !== 0) return;
                   clearCareer();
                   done(null);
@@ -206,7 +215,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
             onRound: (key) => {
               if (busy) return;
               busy = true;
-              void round(key, document.querySelector('.ht2-menu') as HTMLElement).then((c) => {
+              void round(key, topMenu()).then((c) => {
                 busy = false;
                 if (!c) return;
                 close();
@@ -257,7 +266,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           onRound: (key) => {
             if (busy || key === 'singl') return;
             busy = true;
-            void round(key, document.querySelector('.ht2-menu') as HTMLElement).then((c) => {
+            void round(key, topMenu()).then((c) => {
               busy = false;
               if (!c) return;
               close();

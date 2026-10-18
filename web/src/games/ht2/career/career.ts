@@ -115,6 +115,24 @@ export function saveCareer(c: Ht2Career): void {
   }
 }
 
+/** Збереження як є (рядок JSON) чи null — щоб повернути його після виходу без збереження (restoreCareer). */
+export function savedCareerRaw(): string | null {
+  try {
+    return localStorage.getItem(KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function restoreCareer(raw: string | null): void {
+  try {
+    if (raw === null) localStorage.removeItem(KEY);
+    else localStorage.setItem(KEY, raw);
+  } catch {
+    /* приватний режим */
+  }
+}
+
 export function clearCareer(): void {
   try {
     localStorage.removeItem(KEY);
