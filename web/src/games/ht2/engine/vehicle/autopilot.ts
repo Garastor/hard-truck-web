@@ -97,6 +97,8 @@ const PASS_HOLD = 1.5;
 const PASS_GAP = 6;
 const PASS_LANE = 3.2;
 const SLOW_LANE = 2.8;
+/** Від борту до стіни при розминанні — щонайменше: зсув праворуч ≤ wallRight − PASS_EDGE (півширини 1,25 + запас), м. */
+const PASS_EDGE = 1.7;
 
 /** Зустрічна машина для розминання: позиція й курс (одиничний, у площині). */
 export interface Oncoming {
@@ -184,7 +186,7 @@ export class AutoPilot {
     const flat = forward.clone().setY(0).normalize();
     this.passing = Math.max(0, this.passing - dt);
     // Лінії Ht2Roads (друга гра) несуть ширину смуги й позначку бази; у WayNet їх немає — там розминання немає.
-    const here = n.line as WayLine & { base?: boolean; laneWidth?: number };
+    const here = n.line as WayLine & { base?: boolean; laneWidth?: number; wallRight?: number };
     const lw = here.laneWidth ?? Infinity;
     const tight = !!here.base || lw < PASS_LANE;
     const slow = !!here.base || lw < SLOW_LANE;
@@ -216,7 +218,7 @@ export class AutoPilot {
       if (Math.abs(c) < 60) this.closing += (c - this.closing) * Math.min(1, dt * 4);
     } else this.closing = speedKmh / 3.6;
     this.prevBlock = stopDist;
-    const wantOffset = (this.dodge && blockDist < 25 ? this.lane + blockSide * 3.2 : this.lane) + (this.passing > 0 ? PASS_SHIFT : 0);
+    const wantOffset = (this.dodge && blockDist < 25 ? this.lane + blockSide * 3.2 : this.lane) + (this.passing > 0 ? Math.min(PASS_SHIFT, Math.max(0, (here.wallRight ?? Infinity) - PASS_EDGE)) : 0);
     this.offset += THREE.MathUtils.clamp(wantOffset - this.offset, -2 * dt, 2 * dt);
     target.addScaledVector(rightV, this.offset);
     const far = this.net.advance(n.line, n.seg, n.t, 12 + speedKmh * 0.6);

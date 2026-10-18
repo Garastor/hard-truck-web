@@ -327,6 +327,8 @@ export class Ht2Drive {
   /** Згладжена висота машини для камери ззаду. */
   private camBaseY = NaN;
   private readonly colliders = new Map<string, RAPIER.Collider[]>();
+  /** Регіони, чиї лінії баз ще не відсунуто від стін (`roads.clearWalls` — після кроку фізики з їхніми колайдерами). */
+  private readonly wallsPending: string[] = [];
   /** Колайдери гілок перемикачів світу (регіон → `<Ключ>#<гілка>` → колайдери): обвали, ремонт мосту. */
   private readonly switchColliders = new Map<string, Map<string, RAPIER.Collider[]>>();
   /** Стани перемикачів світу, які задає гра (ключ без `refer_` → гілка); решта — початкові з B3D. */
@@ -1055,7 +1057,19 @@ export class Ht2Drive {
       if (c) cs.push(c);
     }
     this.objects.addRegion(reg.id, reg.built.root, reg.poles, reg.movables);
+    this.wallsPending.push(reg.id);
   }
+
+  /**
+   * Відстань від точки лінії до стіни вбік (side), м: брусок завдовжки 2·half уздовж лінії й заввишки 0,6–3 м над
+   * дорогою — ловить і рампи складів, і тонкі колони навісів, між якими промінь проскакує. Ґрунт (похила нормаль) і
+   * тіла (причепи баз, машини) не рахуються.
+   */
+  private wallProbe = (p: THREE.Vector3, along: THREE.Vector3, side: THREE.Vector3, half: number, max: number): number => {
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(-along.z, along.x));
+    const hit = this.rapier.castShape({ x: p.x, y: p.y + 1.8, z: p.z }, q, side, new RAPIER.Cuboid(half, 1.2, 0.05), 0, max, true, undefined, undefined, undefined, undefined, (c) => !c.parent());
+    return hit && Math.abs(hit.normal1.y) < 0.6 ? hit.time_of_impact : Infinity;
+  };
 
   private removeRegion(id: string): void {
     for (const c of this.colliders.get(id) ?? []) {
@@ -2971,6 +2985,8 @@ export class Ht2Drive {
     this.acc += dt;
     const step = this.rapier.timestep;
     this.objects.before();
+    const walls = this.wallsPending.splice(0);
+    const stepped = this.acc >= step;
     while (this.acc >= step) {
       this.truck.update(step, state);
       this.trailer?.update(step, this.truck.brakePedal(state), this.def.tech.brakePower, this.truck.kinematic);
@@ -2987,6 +3003,9 @@ export class Ht2Drive {
         this.say('ПРИЧІП ВІДІРВАЛО');
       }
     }
+    // Лінії баз — від стін (колайдери нових регіонів у запитах лише після кроку).
+    if (stepped) for (const id of walls) if (this.world.loaded.has(id)) this.roads.clearWalls(id, this.wallProbe);
+    if (!stepped) this.wallsPending.push(...walls);
     // Частка кроку фізики, що «не дійшла» до наступного, — модель між станами кроків (без ривків при 120 Гц).
     const alpha = this.acc / step;
     // Збиті знаки й стовпи, рухомі предмети (world/objects.ts) — до обліку ударів.

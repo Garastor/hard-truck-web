@@ -35,6 +35,15 @@ const BASE_R = 30;
 const STATION_R = 10;
 /** Під'їзд вужчий за вулицю (3–8 м); ширша вісь біля колонки — вулиця повз заправку (ar_048, aj_032: 12 м), м. */
 const STATION_W = 10;
+/** Від центру смуги бази чи вузької петлі до стіни праворуч — щонайменше, м (clearWalls; вантажівка — 2,5 м). */
+const WALL_CLEAR = 3;
+/** Найбільший зсув лінії від стіни, м. */
+const WALL_SHIFT = 1.5;
+/** Смуга, вужча за це, — петля майданчика (петлі баз — по 2,5 м), м. */
+const NARROW_LANE = 2.8;
+
+/** Відстань від точки p лінії до стіни в бік side (брусок 2·half уздовж along), м; Infinity — далі за max. */
+export type WallProbe = (p: THREE.Vector3, along: THREE.Vector3, side: THREE.Vector3, half: number, max: number) => number;
 
 export interface RoadLine extends WayLine {
   /** Повна ширина дороги W, м. */
@@ -62,6 +71,8 @@ export interface RoadLine extends WayLine {
   base?: boolean;
   /** Під'їзд заправки чи СТО (порт, `markStations`): трафік і боти туди не звертають, якщо є інший шлях. */
   station?: boolean;
+  /** Від центру смуги до стіни праворуч після `clearWalls`, м (розминання автопілота не заїжджає далі). */
+  wallRight?: number;
   /** Дорогу закрито завалом (world/obstacles.ts; king.exe прапорець 0x40 смуг): маршрути її оминають. */
   closed?: boolean;
   /** Де завал на закритій дорозі (Three.js): розвертаються лише ті, хто їде до нього. */
@@ -242,6 +253,54 @@ export class Ht2Roads {
       if (!spots.some((p) => polyDist(a.pts, p) < BASE_R)) continue;
       a.base = true;
       for (const l of this.linesOf(a.road)) l.base = true;
+    }
+  }
+
+  /**
+   * Лінії баз і вузьких петель майданчиків — від стін (порт, на прохання користувача): на базі ap смуга вздовж складу
+   * йшла за 2,2 м від рампи (петля ap_049 — за 1,35 м), тягачі з причепами чіпляли рампу й колони навісу. Шматками
+   * ≤ 2 м міряємо стіну праворуч (probe, по колайдерах регіону); ближче WALL_CLEAR — точки лінії зсуваються ліворуч
+   * (до осі петлі), не більше WALL_SHIFT і не далі половини вільного місця ліворуч. Звичайні дороги не чіпаємо: до
+   * бордюру чи огорожі від крайньої смуги W12 — ті самі 2,4 м, і там їздять без зачіпань.
+   */
+  clearWalls(region: string, probe: WallProbe): void {
+    const right = new THREE.Vector3();
+    const left = new THREE.Vector3();
+    for (const l of this.lines) {
+      if (l.region !== region || !(l.base || l.laneWidth < NARROW_LANE)) continue;
+      const n = l.pts.length;
+      const need = new Array<number>(n).fill(0);
+      let wall = Infinity;
+      for (let i = 0; i + 1 < n; i++) {
+        const a = l.pts[i];
+        const b = l.pts[i + 1];
+        const along = b.clone().sub(a).setY(0);
+        const len = along.length();
+        if (len < 0.01) continue;
+        along.divideScalar(len);
+        right.set(-along.z, 0, along.x);
+        left.copy(right).negate();
+        const pieces = Math.ceil(len / 2);
+        for (let k = 0; k < pieces; k++) {
+          const p = a.clone().lerp(b, (k + 0.5) / pieces);
+          const r = probe(p, along, right, len / pieces / 2, WALL_CLEAR + 1);
+          if (r >= WALL_CLEAR) continue;
+          const room = probe(p, along, left, len / pieces / 2, WALL_CLEAR + WALL_SHIFT);
+          const s = Math.min(WALL_CLEAR - r, WALL_SHIFT, Math.max(0, (room - r) / 2));
+          need[i] = Math.max(need[i], s);
+          need[i + 1] = Math.max(need[i + 1], s);
+          wall = Math.min(wall, r + s);
+        }
+      }
+      if (!need.some((s) => s > 0) && !Number.isFinite(wall)) continue;
+      l.wallRight = Math.min(l.wallRight ?? Infinity, wall);
+      // Зсув — по нормалі в точці (середня з сусідніх відрізків).
+      const moved = l.pts.map((p, i) => {
+        if (!need[i]) return p;
+        const d = l.pts[Math.min(n - 1, i + 1)].clone().sub(l.pts[Math.max(0, i - 1)]).setY(0).normalize();
+        return p.clone().add(new THREE.Vector3(d.z, 0, -d.x).multiplyScalar(need[i]));
+      });
+      for (let i = 0; i < n; i++) l.pts[i] = moved[i];
     }
   }
 
