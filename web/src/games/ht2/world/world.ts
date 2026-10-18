@@ -8,7 +8,7 @@ import { parseWay, type Way } from '../formats/way';
 import { SKY_LIGHT, SceneAssembler, buildSceneAsync, type BuiltScene } from '../engine/render/sceneBuilder';
 import { HT2_REGIONS, readTextures, regionFiles, type TexLevel } from '../files';
 import { DAY_TIME_HOUR, Weather, WeatherCycle, type DayTime, type Sky } from './weather';
-import { TREE_LIGHT, buildGlows, buildTrees, type TreeSway } from './trees';
+import { TREE_LIGHT, buildGlows, buildTrees, type TreeUpdate } from './trees';
 import { illumOn, sunDirection, sunHeight } from './climate';
 import { LensFlare } from './lensFlare';
 import { mergeStatic } from './mergeStatic';
@@ -340,9 +340,9 @@ export class Ht2World {
     r.built.assembler.setSwitch(n, on ? 1 : 0);
   }
 
-  /** Погойдування дерев усіх завантажених регіонів: вітер 0…6 (Climate.wind). */
-  updateTrees(dt: number, wind: number): void {
-    for (const r of this.loaded.values()) (r.built.root.getObjectByName('trees')?.userData.sway as TreeSway | undefined)?.update(dt, wind);
+  /** Погойдування дерев усіх завантажених регіонів: вітер 0…6 (Climate.wind); шар гілок — за положенням камери. */
+  updateTrees(dt: number, wind: number, camera?: THREE.Vector3): void {
+    for (const r of this.loaded.values()) (r.built.root.getObjectByName('trees')?.userData.sway as TreeUpdate | undefined)?.update(dt, wind, camera);
   }
 
   /** Ніч і сутінки: ореоли ліхтарів ($$DynamicGlow) у всіх завантажених регіонах. */

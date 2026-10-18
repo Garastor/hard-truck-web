@@ -1504,7 +1504,7 @@ export class Ht2Drive {
       this.camera.far = far;
       this.camera.updateProjectionMatrix();
     }
-    this.world.updateTrees(dt, c.wind);
+    this.world.updateTrees(dt, c.wind, this.camera.position);
     this.updateDebris(dt, c.wind, c.w());
     this.updatePrecip(dt, c.wind, c.w());
     this.blastFx().update(dt, c.wind);

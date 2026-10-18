@@ -6,7 +6,7 @@ import { parseTxr } from '../engine/formats/txr';
 /**
  * Дерева Дальнобойщиків 2 — генератор `$$TreeGenerator1` (блок 40): центр і радіус обмежувальної сфери, `i1`.
  * Поведінка — за king.exe (re/notes/ht2/trees.md): біти `i1` 4–7 — вид N (атлас `tree<2⌊N/2⌋><2⌊N/2⌋+1>`), 8–11 —
- * форма (0…6), біт 0 — шар гілок зблизька (`tree<N>`, ще не в порту), біт 1 — тінь.
+ * форма (0…6), біт 0 — шар гілок зблизька (`tree<N>`, buildBranches), біт 1 — тінь.
  *
  * Основа — площина з атласу, що повертається до камери навколо осі стовбура (циліндричний білборд, як в оригіналі;
  * у порту — у вершинному шейдері). Форми 3 і 4 беруть увесь атлас (листяне дерево `tree23`, кущ `tree45`), площина
@@ -21,6 +21,8 @@ interface TreeSpot {
   r: number;
   /** Вид (біти 4–7 i1). */
   kind: number;
+  /** Шар гілок зблизька (біт 0 i1). */
+  branches: boolean;
   /** Форма (біти 8–11 i1). */
   shape: number;
   /** Кімната (блок 19), у якій генератор; '' — поза кімнатами. */
@@ -42,7 +44,7 @@ export function collectTrees(b3d: B3d): TreeSpot[] {
     if (d.t !== 40 || d.name2 !== '$$TreeGenerator1') continue;
     const [x, y, z, r] = d.bound;
     if (r <= 0) continue;
-    out.push({ x, y, z, r, kind: (d.i1 >> 4) & 15, shape: (d.i1 >> 8) & 15, room });
+    out.push({ x, y, z, r, kind: (d.i1 >> 4) & 15, branches: (d.i1 & 1) !== 0, shape: (d.i1 >> 8) & 15, room });
   }
   return out;
 }
@@ -248,6 +250,7 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const sways: TreeSway[] = [];
+  const branchSpots: BranchSpot[] = [];
   const mats = new Map<THREE.Texture, THREE.MeshBasicMaterial>();
   /**
    * Стовбур — у площині крони: без зсуву пікселі мерехтіли (крона й стовбур на однаковій глибині; знімки
@@ -275,7 +278,10 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
     const swayAttr = new THREE.InstancedBufferAttribute(new Float32Array(g.list.length * 2), 2);
     swayAttr.setUsage(THREE.DynamicDrawUsage);
     const st = new Float32Array(g.list.length * 7);
-    g.list.forEach((t, i) => (st[i * 7] = t.r / 3));
+    g.list.forEach((t, i) => {
+      st[i * 7] = t.r / 3;
+      if (t.branches) branchSpots.push({ spot: t, sway: swayAttr.array as Float32Array, index: i });
+    });
     sways.push(new TreeSway(st, swayAttr));
     for (const [pi, geo] of parts.entries()) {
       geo.setAttribute('sway', swayAttr);
@@ -296,8 +302,297 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
       group.add(mesh);
     }
   }
-  group.userData.sway = { update: (dt: number, wind: number) => sways.forEach((s) => s.update(dt, wind)) } satisfies Pick<TreeSway, 'update'>;
+  const branches = buildBranches(branchSpots, rmp, palette);
+  for (const b of branches.meshes) group.add(b);
+  group.userData.sway = {
+    update: (dt: number, wind: number, camera?: THREE.Vector3) => {
+      sways.forEach((s) => s.update(dt, wind));
+      if (camera) branches.update(group.worldToLocal(tmpCam.copy(camera)));
+    },
+  } satisfies TreeUpdate;
   return group;
+}
+
+/** Оновлення дерев регіону щокадру: погойдування; шар гілок — за положенням камери (світові координати). */
+export interface TreeUpdate {
+  update(dt: number, wind: number, camera?: THREE.Vector3): void;
+}
+
+const tmpCam = new THREE.Vector3();
+
+/** Дерево з шаром гілок: його погойдування — у атрибуті `sway` групи основи (індекс index). */
+interface BranchSpot {
+  spot: TreeSpot;
+  sway: Float32Array;
+  index: number;
+}
+
+/**
+ * Вісь шару гілок за формою (king.exe 0x005c8ae0, перший switch): початок і довжина — частки висоти дерева (радіуса
+ * сфери). Вісь ділиться на три відрізки p0…p3 (погойдуються, як і основа).
+ */
+const BRANCH_AXIS: readonly (readonly [number, number])[] = [
+  [0, 1],
+  [0.5, 2 / 3],
+  [0.2083, 1.0417],
+  [0.2167, 0.8333],
+  [0, 0.9],
+  [0.625, 0.625],
+  [0.3125, 0.75],
+];
+/** Ділник розміру гілок (0x005c8ae0 → 0x005c6580): форми 0–2 — 2, решта — 1. */
+const branchDiv = (shape: number) => (shape <= 2 ? 2 : 1);
+/** Межа градієнта тіні гілок (0x005cbcb0, як основи 0x005c6ac0): форми 0, 1 — 0,2; 2–4 — 0,3; 5 — 0,5; 6 — 0,4. */
+const BRANCH_SPLIT = [0.2, 0.2, 0.3, 0.3, 0.3, 0.5, 0.4];
+/**
+ * Кластери гілок (0x005ccb20): точка на осі (у відрізках p0…p3, 0…3) і множник розміру c. Розмір кластера
+ * L = (довжина осі / 3) · c / ділник; кожен кластер на 0,5 м вище своєї точки (0x005cca60).
+ */
+const CLUSTERS_CONIFER: readonly (readonly [number, number])[] = [
+  [2.2, 0.8],
+  [1.85, 1.30625],
+  [1.3, 1.5125],
+  [0.65, 1.75625],
+  [0.1, 1.9625],
+];
+const CLUSTERS_LEAFY: readonly (readonly [number, number])[] = [
+  [2, 1.5125],
+  [1.5, 1.85625],
+  [1, 1.9625],
+  [0.5, 2],
+  [0, 2],
+];
+const clustersOf = (shape: number) => (shape === 3 || shape === 4 || shape === 6 ? CLUSTERS_LEAFY : CLUSTERS_CONIFER);
+/** Шар гілок видно ближче 100 м; кожна гілка проявляється (росте) у своїй смузі відстаней (0x005c6580). */
+const BRANCH_FAR = 100;
+
+/** Рамка в рядковій нотації Direct3D (v' = v·R + t), як у king.exe. */
+interface Frame {
+  r: number[];
+  t: [number, number, number];
+}
+
+function mulFrame(a: Frame, b: Frame): Frame {
+  const r = new Array<number>(9);
+  for (let i = 0; i < 3; i++)
+    for (let j = 0; j < 3; j++) r[i * 3 + j] = a.r[i * 3] * b.r[j] + a.r[i * 3 + 1] * b.r[3 + j] + a.r[i * 3 + 2] * b.r[6 + j];
+  const t: [number, number, number] = [0, 0, 0];
+  for (let j = 0; j < 3; j++) t[j] = a.t[0] * b.r[j] + a.t[1] * b.r[3 + j] + a.t[2] * b.r[6 + j] + b.t[j];
+  return { r, t };
+}
+
+const rotY = (a: number): Frame => ({ r: [Math.cos(a), 0, -Math.sin(a), 0, 1, 0, Math.sin(a), 0, Math.cos(a)], t: [0, 0, 0] });
+const rotZ = (a: number): Frame => ({ r: [Math.cos(a), Math.sin(a), 0, -Math.sin(a), Math.cos(a), 0, 0, 0, 1], t: [0, 0, 0] });
+const IDENTITY: Frame = { r: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 0, 0] };
+
+/**
+ * Скелет гілок (king.exe 0x005cc930, 0x005cba00, 0x005cc6b0) — спільний для всіх дерев (один генератор на гру, вузли
+ * створюються випадково один раз). Вузол: «сила» (корінь 1…1,5; нащадок — сила батька − 0…0,75; від'ємна — нащадків
+ * немає) і випадкова частка кута 0…1. Рекурсія глибиною 4, на вузол дві гілки: рамка нащадка = поворот навколо z на
+ * 45°, навколо y на ±(45° + 10° · частка) (у оригіналі частка ще колишеться ±0,1 · cos(час) — ±1°, у порту без цього),
+ * зсув уздовж z на 0,95 довжини вузла (довжина кореня — 0,01 L: гілки практично з однієї точки). На кінцях — ромб
+ * розміром 0,75 L (0x005cbcb0). Повертає рамки кінців для L = 1 (rand — як у MSVC, затравка 1 — гіпотеза: стан rand
+ * оригіналу залежить від усієї гри).
+ */
+function branchLeaves(): Frame[] {
+  let seed = 1;
+  const rand = () => ((seed = (seed * 214013 + 2531011) >>> 0) >>> 16) & 0x7fff;
+  interface Seg {
+    power: number;
+    frac: number;
+    len: number;
+    kids: (Seg | null)[];
+  }
+  const seg = (parent: Seg | null, len: number): Seg => {
+    const frac = rand() * 3.0518509e-5;
+    rand(); // +0x24 (0…0,1) — у квад не йде
+    const power = parent ? parent.power - rand() * 3.0518509e-5 * 0.75 : rand() * 1.5259255e-5 + 1;
+    return { power, frac, len, kids: [] };
+  };
+  const child = (s: Seg, i: number, len: number) => {
+    if (s.power < 0) return null;
+    return (s.kids[i] ??= seg(s, len));
+  };
+  const out: Frame[] = [];
+  const deg = Math.PI / 180;
+  const walk = (depth: number, frame: Frame, s: Seg | null) => {
+    if (depth >= 4 || !s) {
+      if (out.length < 100) out.push(frame);
+      return;
+    }
+    const len = s.len * 0.95;
+    const t: Frame = { r: IDENTITY.r, t: [0, 0, len] };
+    const left = mulFrame(mulFrame(mulFrame(rotZ(45 * deg), rotY((45 + 10 * s.frac) * deg)), t), frame);
+    walk(depth + 1, left, child(s, 0, len));
+    const right = mulFrame(mulFrame(mulFrame(rotZ(45 * deg), rotY(-(45 + 10 * (1 - s.frac)) * deg)), t), frame);
+    walk(depth + 1, right, child(s, 1, len));
+  };
+  walk(0, IDENTITY, seg(null, 0.01));
+  return out;
+}
+
+let leavesCache: Frame[] | null = null;
+
+/**
+ * Геометрія шару гілок форми (одиниця — висота дерева): кластери з ромбів-квадів `tree<N>` у світових осях — не
+ * повертаються до камери, тому дерево зблизька обʼємне. Атрибут `leaf` — початок ромба (x, y, z) і поріг появи w
+ * (0x005c6580: n-й ромб дерева — (10 + n mod 20) / 30), `leafBase` — початок осі (від нього відстань до камери).
+ */
+function branchGeometry(shape: number): THREE.BufferGeometry {
+  const leaves = (leavesCache ??= branchLeaves());
+  const [start, len] = BRANCH_AXIS[shape] ?? BRANCH_AXIS[0];
+  const split = BRANCH_SPLIT[shape] ?? 0.2;
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const col: number[] = [];
+  const leaf: number[] = [];
+  const index: number[] = [];
+  const c = new THREE.Color();
+  let n = 0;
+  for (const [at, k] of clustersOf(shape)) {
+    const size = ((len / 3) * k) / branchDiv(shape);
+    const z0 = start + (at / 3) * len;
+    for (const f of leaves) {
+      if (n >= 100) break;
+      const s = 0.75;
+      // Ромб у площині xz рамки: основа, ліво, верх, право; uv — кути текстури (0x005cbcb0).
+      const quad: [number, number, number, number][] = [
+        [0, 0, 1, 0],
+        [-0.5 * s, 0.5 * s, 0, 0],
+        [0, s, 0, 1],
+        [0.5 * s, 0.5 * s, 1, 1],
+      ];
+      const ox = f.t[0] * size, oy = f.t[1] * size, oz = z0 + f.t[2] * size;
+      const v0 = pos.length / 3;
+      for (const [x, z, u, v] of quad) {
+        const px = ox + size * (x * f.r[0] + z * f.r[6]);
+        const py = oy + size * (x * f.r[1] + z * f.r[7]);
+        const pz = oz + size * (x * f.r[2] + z * f.r[8]);
+        pos.push(px, py, pz);
+        uv.push(u, v);
+        const sh = treeShade(Math.min(1, Math.max(0, (pz - start) / len)), split);
+        c.setRGB(sh, sh, sh, THREE.SRGBColorSpace);
+        col.push(c.r, c.g, c.b);
+        leaf.push(ox, oy, oz, (10 + (n % 20)) / 30);
+      }
+      index.push(v0, v0 + 1, v0 + 2, v0, v0 + 2, v0 + 3);
+      n++;
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setAttribute('leaf', new THREE.Float32BufferAttribute(leaf, 4));
+  g.setIndex(index);
+  g.userData.base = start;
+  return g;
+}
+
+/**
+ * Матеріал шару гілок: ромб росте від своєї основи з наближенням камери (масштаб (a − поріг) · 30, a = 1 − max(0,
+ * d/100 − 0,25), далі 100 м — нічого), піднятий на 0,5 м, зсув погойдування — як у основи (bend за висотою ромба).
+ * Колір — як у основи: текстура × градієнт × TREE_LIGHT.
+ */
+function branchMaterial(map: THREE.Texture, base: number): THREE.MeshBasicMaterial {
+  const mat = new THREE.MeshBasicMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide, vertexColors: true });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.treeLight = TREE_LIGHT;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec2 sway;\nattribute vec4 leaf;').replace(
+      '#include <project_vertex>',
+      `mat4 lfM = modelViewMatrix * instanceMatrix;
+      float lfD = length((lfM * vec4(0.0, 0.0, ${base.toFixed(4)}, 1.0)).xyz);
+      float lfA = lfD > ${BRANCH_FAR.toFixed(1)} ? -1.0 : 1.0 - max(0.0, lfD * 0.01 - 0.25);
+      float lfK = clamp((lfA - leaf.w) * 30.0, 0.0, 1.0);
+      vec3 lfP = leaf.xyz + (transformed - leaf.xyz) * lfK;
+      float bz = clamp(leaf.z, 0.0, 1.0);
+      float bend = bz < 0.3333 ? bz * 0.5 : (bz < 0.6667 ? bz * 1.5 - 0.3333 : bz * 1.5 - 0.5);
+      vec4 lfW = instanceMatrix * vec4(lfP, 1.0);
+      lfW.xy += sway * bend;
+      lfW.z += 0.5;
+      vec4 mvPosition = modelViewMatrix * lfW;
+      gl_Position = projectionMatrix * mvPosition;`,
+    );
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 treeLight;')
+      .replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( diffuse * treeLight, opacity );');
+  };
+  mat.customProgramCacheKey = () => `ht2-tree-branches-${base.toFixed(4)}`;
+  return mat;
+}
+
+/**
+ * Шар гілок (біт 0 i1): меш інстансів на кімнату × вид × форму; щокадру в нього потрапляють лише дерева ближче
+ * 100 м від камери (решта гілок однаково не видно), з поточним погойдуванням.
+ */
+function buildBranches(spots: BranchSpot[], rmp: RmpArchive, palette: Uint8Array | null): { meshes: THREE.InstancedMesh[]; update(cam: THREE.Vector3): void } {
+  const meshes: THREE.InstancedMesh[] = [];
+  const lists = new Map<string, BranchSpot[]>();
+  for (const b of spots) {
+    const key = `${b.spot.room}:${b.spot.kind}:${b.spot.shape}`;
+    let l = lists.get(key);
+    if (!l) lists.set(key, (l = []));
+    l.push(b);
+  }
+  const textures = new Map<number, THREE.Texture | null>();
+  const geometries = new Map<number, THREE.BufferGeometry>();
+  const materials = new Map<string, THREE.MeshBasicMaterial>();
+  const sets: { mesh: THREE.InstancedMesh; list: BranchSpot[]; sway: THREE.InstancedBufferAttribute; base: number }[] = [];
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const p = new THREE.Vector3();
+  const s = new THREE.Vector3();
+  for (const [key, list] of lists) {
+    const { kind, shape, room } = list[0].spot;
+    if (!textures.has(kind)) textures.set(kind, atlasTexture(rmp, new RegExp(`(^|/)tree${kind}\\.txr$`, 'i'), palette));
+    const tex = textures.get(kind);
+    if (!tex) continue;
+    let geo = geometries.get(shape);
+    if (!geo) geometries.set(shape, (geo = branchGeometry(shape)));
+    const base = geo.userData.base as number;
+    const mk = `${kind}:${base}`;
+    let mat = materials.get(mk);
+    if (!mat) {
+      materials.set(mk, (mat = branchMaterial(tex, base)));
+      mat.name = `tree branches ${tex.name}`;
+    }
+    // Своя копія геометрії: атрибут інстансів `sway` у кожного меша свій.
+    const g = geo.clone();
+    const sway = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 2), 2);
+    sway.setUsage(THREE.DynamicDrawUsage);
+    g.setAttribute('sway', sway);
+    const mesh = new THREE.InstancedMesh(g, mat, list.length);
+    mesh.name = `tree branches ${key}`;
+    mesh.userData.room = room;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    list.forEach((b, i) => mesh.setMatrixAt(i, m.compose(p.set(b.spot.x, b.spot.y, b.spot.z), q, s.setScalar(b.spot.r))));
+    // Сфера — з усіх дерев (кількість інстансів далі змінюється щокадру).
+    mesh.computeBoundingSphere();
+    if (mesh.boundingSphere) mesh.boundingSphere.radius += 50;
+    mesh.count = 0;
+    meshes.push(mesh);
+    sets.push({ mesh, list, sway, base });
+  }
+  const update = (cam: THREE.Vector3) => {
+    for (const { mesh, list, sway, base } of sets) {
+      const arr = sway.array as Float32Array;
+      let n = 0;
+      for (const b of list) {
+        const t = b.spot;
+        const dx = t.x - cam.x, dy = t.y - cam.y, dz = t.z + base * t.r - cam.z;
+        if (dx * dx + dy * dy + dz * dz > BRANCH_FAR * BRANCH_FAR) continue;
+        mesh.setMatrixAt(n, m.compose(p.set(t.x, t.y, t.z), q, s.setScalar(t.r)));
+        arr[n * 2] = b.sway[b.index * 2];
+        arr[n * 2 + 1] = b.sway[b.index * 2 + 1];
+        n++;
+      }
+      if (n === 0 && mesh.count === 0) continue;
+      mesh.count = n;
+      mesh.instanceMatrix.needsUpdate = true;
+      sway.needsUpdate = true;
+    }
+  };
+  return { meshes, update };
 }
 
 /**
