@@ -29,7 +29,7 @@ const TICK = 1 / 30;
 const PART_SIZE = 0.25;
 const PART_G = 1.81;
 const TRAIL_STEP = 0.1;
-const MAX = 700;
+const MAX = 1000;
 
 interface Puff {
   s: THREE.Sprite;
@@ -224,6 +224,16 @@ export class Blasts {
   }
 
   update(dt: number, wind: number): void {
+    // Вихлоп і пара — щокадру, як у king.exe (0x551970 на кожен кадр машини; пул пари — 500 клубів): на частому
+    // кадрі клуби накладаються в суцільні смуги.
+    if (dt > 0) {
+      for (const e of this.exhaustPts) this.spawnWorld(e.p.clone(), e.v.clone(), 'smoke', 0.5, 4, 3, 0.75, undefined, 0.5);
+      for (const p of this.vaporPts) {
+        this.spawnWorld(p.clone(), new THREE.Vector3(), 'vapor', 0, 2, 0, 1.28);
+        const q = this.puffs[this.puffs.length - 1];
+        if (q && q.born.equals(p)) q.ease = true;
+      }
+    }
     this.acc = Math.min(this.acc + dt, 0.2);
     while (this.acc >= TICK) {
       this.acc -= TICK;
@@ -235,12 +245,6 @@ export class Blasts {
   }
 
   private emit(): void {
-    for (const e of this.exhaustPts) this.spawnWorld(e.p.clone(), e.v.clone(), 'smoke', 0.5, 4, 3, 0.75, undefined, 0.5);
-    for (const p of this.vaporPts) {
-      this.spawnWorld(p.clone(), new THREE.Vector3(), 'vapor', 0, 2, 0, 1.28);
-      const q = this.puffs[this.puffs.length - 1];
-      if (q && q.born.equals(p)) q.ease = true;
-    }
     for (let i = this.blows.length - 1; i >= 0; i--) {
       const b = this.blows[i];
       // Уламки колонки (mnBlow3): 5 одразу з точки P, v = M·(4s₁·X + 4s₂·Y + (2 + 2r)·Z).
