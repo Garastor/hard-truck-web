@@ -94,7 +94,6 @@ export function truckDef(t: Ht2Trucks, r: TechRecord): TruckDef | null {
       viewer: r.viewer,
       viewerTilt: r.viewerTilt,
       wheelThickness: [r.frontWheelThickness, r.rearWheelThickness],
-      shadowCorners: r.cornerMarksW,
       smoke: [
         { pos: r.smokePosition, dir: r.smokeDirection },
         { pos: r.smokePosition2, dir: r.smokeDirection2 },
