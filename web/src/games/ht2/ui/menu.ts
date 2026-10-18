@@ -198,7 +198,7 @@ const SINGLE = {
   load: [323, 355],
   cancel: [323, 485],
 } as const;
-/** Рядки повзунків: y центру; стрілки — центри x 365 і 524 (29×29), бігунок (12×22) — від x 385 (0) до 502 (1). */
+/** Рядки повзунків: y центру; стрілки 29×29 — ARROW_X, бігунок (12×22) — від x 385 (0) до 502 (1). */
 const SLIDERS: [keyof Pick<Ht2Settings, 'traffic' | 'dayLength' | 'weather'>, number][] = [
   ['traffic', 225],
   ['dayLength', 255],
@@ -212,6 +212,11 @@ const SAVE_ARROWS = [
   [315, 409],
   [315, 440],
 ] as const;
+/**
+ * Лівий край стрілок повзунків (29×29) — найкращий збіг картинки з гніздом фону `s/backSing` (раніше від центрів
+ * 365/524 — на 1 і 3 px правіше гнізд).
+ */
+const ARROW_X = [350, 507] as const;
 const RUN_X0 = 385;
 const RUN_X1 = 502;
 
@@ -272,8 +277,8 @@ export function ht2SingleScreen(art: Ht2MenuArt, o: SingleScreen): () => void {
     };
     // Стрілки: на межі — недоступні (_f).
     painters.push(
-      texButton(art, stage, 'aleft', 365 - 14, y - 14, `${key}: менше`, { ext: '.msk', disabled: () => s[key] <= 0, action: () => set(s[key] - 0.1) }),
-      texButton(art, stage, 'aright', 524 - 14, y - 14, `${key}: більше`, { ext: '.msk', disabled: () => s[key] >= 1, action: () => set(s[key] + 0.1) }),
+      texButton(art, stage, 'aleft', ARROW_X[0], y - 14, `${key}: менше`, { ext: '.msk', disabled: () => s[key] <= 0, action: () => set(s[key] - 0.1) }),
+      texButton(art, stage, 'aright', ARROW_X[1], y - 14, `${key}: більше`, { ext: '.msk', disabled: () => s[key] >= 1, action: () => set(s[key] + 0.1) }),
     );
     // Смуга — зона дотику (перетягування бігунка), бігунок — маска runner.
     const track = document.createElement('div');
