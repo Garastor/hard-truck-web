@@ -210,17 +210,23 @@ const EXHAUST_TIME = 2;
 /** Ковзання вбік (king.exe [0x19c4]): |sin α| понад це. */
 const SKID_SIN = 0.26;
 /**
- * Аварійний поворот з Ctrl (порт, власна логіка на прохання користувача — не з king.exe): кермо понад межею зчеплення
- * на швидкості зриває передні колеса — машину несе вперед, лише трохи в бік повороту, і шини гасять швидкість; що
- * повільніше, то більше колеса «ловлять» дорогу, і з повним кермом машина повертає дедалі різкіше. Жертвуємо
- * швидкістю, щоб вписатися в поворот. Понад SHARP_SLIDE_KMH — повний знос, нижче SHARP_GRIP_KMH — зчеплення повне
- * (між ними — плавно); SHARP_FRONT_GRIP — бічне зчеплення передніх коліс у зносі (частка), SHARP_SCRUB — гальмування
- * шинами, частка μ·g. Ctrl вмикається й гасне плавно (SHARP_BLEND_ON / _OFF, 1/с).
+ * Аварійний поворот з Ctrl (порт, власна логіка на прохання користувача — не з king.exe): швидкістю жертвуємо, щоб
+ * вписатися в поворот, коли сповільнитись уже нема часу. Кермо понад звичайною межею зчеплення (pastLim):
+ * - шини труться й гасять швидкість — SHARP_SCRUB·μ·g, газ при цьому тягне лише частку (SHARP_GAS);
+ * - машина повертає крутіше, ніж без Ctrl: курс тягнеться до кінематичного v·sin δ / L, а швидкість — за курсом, з
+ *   бічним прискоренням до SHARP_LAT·μ·g (більше, ніж дають шини моделі);
+ * - на великій швидкості колеса тримають лише частину (SHARP_SLIDE_GRIP понад SHARP_SLIDE_KMH): машину несе вперед, але
+ *   вже в бік повороту; що повільніше (до SHARP_GRIP_KMH), то сильніше колеса «ловлять» дорогу й поворот різкішає.
+ * Ctrl вмикається й гасне плавно (SHARP_BLEND_ON / _OFF, 1/с).
  */
-const SHARP_SLIDE_KMH = 70;
-const SHARP_GRIP_KMH = 45;
-const SHARP_FRONT_GRIP = 0.4;
-const SHARP_SCRUB = 0.45;
+const SHARP_SLIDE_KMH = 90;
+const SHARP_GRIP_KMH = 50;
+const SHARP_SLIDE_GRIP = 0.45;
+const SHARP_LAT = 1.6;
+/** Як швидко курс тягнеться до кінематичного, 1/с. */
+const SHARP_YAW = 5;
+const SHARP_SCRUB = 0.4;
+const SHARP_GAS = 0.3;
 const SHARP_BLEND_ON = 4;
 const SHARP_BLEND_OFF = 1.5;
 /**
@@ -433,8 +439,9 @@ export class TruckVehicle {
   readonly skidAlpha: number[] = [];
   /** «Різко» (Ctrl) з плавним вмиканням і згасанням 0…1 — межа керма й знос (SHARP_*). */
   private sharpBlend = 0;
-  /** Знос передніх коліс аварійного повороту 0…1 (SHARP_*): бічне зчеплення передніх і гальмування шинами. */
-  sharpSlide = 0;
+  /** Аварійний поворот (SHARP_*): кермо понад звичайною межею 0…1 і зчеплення в ньому 0…1 (1 — тримає повністю). */
+  sharpTurn = 0;
+  sharpGrip = 1;
 
   /**
    * Колеса, що лишають слід шин (king.exe 0x502780 → [0x34d0+4i], 0x548250; wheel-effects.md): колесо на землі
@@ -888,11 +895,11 @@ export class TruckVehicle {
     const normLim = steerLimit(vAlong, mu, this.base, K.steerK);
     const lim = normLim + (1 - normLim) * this.sharpBlend;
     const shaped = Math.sign(steer) * K.steerScale * Math.abs(steer) ** K.steerPower;
-    // Аварійний поворот (SHARP_*): наскільки кермо понад звичайною межею × швидкість, на якій колеса ще не тримають.
+    // Аварійний поворот (SHARP_*): наскільки кермо понад звичайною межею; зчеплення — за швидкістю.
     const pastLim = normLim < 1 ? Math.max(0, Math.min(1, (Math.min(Math.abs(shaped), lim) - normLim) / (1 - normLim))) : 0;
-    const kmh = Math.abs(vAlong) * 3.6;
-    const x = Math.max(0, Math.min(1, (kmh - SHARP_GRIP_KMH) / (SHARP_SLIDE_KMH - SHARP_GRIP_KMH)));
-    this.sharpSlide = K.tires ? pastLim * x * x * (3 - 2 * x) : 0;
+    const x = Math.max(0, Math.min(1, (Math.abs(vAlong) * 3.6 - SHARP_GRIP_KMH) / (SHARP_SLIDE_KMH - SHARP_GRIP_KMH)));
+    this.sharpTurn = K.tires ? pastLim * this.sharpBlend : 0;
+    this.sharpGrip = 1 - (1 - SHARP_SLIDE_GRIP) * x * x * (3 - 2 * x);
     const delta = KING.steerMax * Math.max(-lim, Math.min(lim, shaped));
     // Колеса на моделі: + — ліворуч; внутрішнє повертається більше (Аккерман — лише вигляд).
     this.steerAngle = -delta;
@@ -972,8 +979,15 @@ export class TruckVehicle {
     let force = wheelForces(wheels, drive, pedal, vFwd, this.slip, perWheel);
     if (handbrake && pedal <= KING.brakeFrom) force += wheelForces(wheels.map((w, i) => (i >= 2 ? w : { ...w, ground: false })), 0, 1, vFwd, undefined, perWheel);
     let resist = engineBraking ? Math.abs(this.engine.force) * Math.min(1, Math.abs(vFwd)) * (1 + this.engineBrake * Math.sqrt(pedal)) : 0;
-    // Знос аварійного повороту гасить швидкість (шини труться об дорогу).
-    resist += mass * mu * KING.g * SHARP_SCRUB * this.sharpSlide * Math.min(1, Math.abs(vFwd));
+    // Аварійний поворот гасить швидкість (шини труться об дорогу), газ тягне лише частку.
+    if (this.sharpTurn > 0) {
+      resist += mass * mu * KING.g * SHARP_SCRUB * this.sharpTurn * Math.min(1, Math.abs(vFwd));
+      if (drive > 0) {
+        const cut = drive * (1 - SHARP_GAS) * this.sharpTurn;
+        force -= cut;
+        perWheel.forEach((f, i) => (perWheel[i] = f * (1 - (1 - SHARP_GAS) * this.sharpTurn)));
+      }
+    }
     for (const w of wheels) if (w.ground) resist += rollingForce(w.load, vFwd) * this.surfaceRoll;
     const over = Math.abs(vFwd) - this.surfaceMaxSpeed;
     if (over > 0) resist += mass * SOFT_DRAG * Math.min(1, over / SOFT_DRAG_SPAN);
@@ -998,6 +1012,7 @@ export class TruckVehicle {
     if (K.tires) {
       const av0 = this.body.angvel();
       tireOmega = this.tireStep(dt, next, n, ft, delta, wheels, Math.abs(vFwd), av0.x * n.x + av0.y * n.y + av0.z * n.z, perWheel);
+      if (this.sharpTurn > 0) tireOmega = this.sharpAssist(dt, next, n, ft, delta, tireOmega, mu);
       // Прискорення від сил коліс (без ваги) — для перенесення навантаження наступного кроку.
       this.tireAcc.addScaledVector(ft, force / mass);
     }
@@ -1084,9 +1099,7 @@ export class TruckVehicle {
       const alpha = Math.atan2(Math.abs(lat), Math.abs(lon));
       // Колесо, що буксує (+1) чи заблоковане (−1), вбік не тримає (king.exe: у дампі такі колеса мають нульову
       // силу ковзання) — газ з Ctrl зриває задні ведучі, і задок заносить; гальмо блокує розвантажені колеса.
-      // Аварійний поворот (SHARP_*): передні колеса в зносі тримають убік лише частку.
-      const slide = i < 2 ? 1 - (1 - SHARP_FRONT_GRIP) * this.sharpSlide : 1;
-      const size = this.slip[i] ? 0 : wheels[i].mu * sideMu * wheels[i].load * tireCurve(alpha, speed) * Math.min(1, Math.hypot(lat, lon)) * slide;
+      const size = this.slip[i] ? 0 : wheels[i].mu * sideMu * wheels[i].load * tireCurve(alpha, speed) * Math.min(1, Math.hypot(lat, lon));
       // Сухе тертя (як 0x4f4110): імпульс колеса не більший, ніж гасить бічну швидкість його контакту, — з поділом на
       // число коліс (діють одночасно), щоб разом не перекинути знак.
       const arm = new THREE.Vector3().crossVectors(r, d).dot(n);
@@ -1102,6 +1115,25 @@ export class TruckVehicle {
     this.tireAcc.copy(dv).divideScalar(dt);
     w += dw;
     return w;
+  }
+
+  /**
+   * Аварійний поворот з Ctrl (SHARP_*): курс тягнеться до кінематичного v·sin δ / L, але не крутіше, ніж дозволяє бічне
+   * прискорення A = SHARP_LAT·μ·g·зчеплення; бічна швидкість гаситься тим самим A — машина йде за курсом. На великій
+   * швидкості зчеплення мале — несе вперед, лише трохи в бік повороту. Змінює next, повертає кутову швидкість.
+   */
+  private sharpAssist(dt: number, next: THREE.Vector3, n: THREE.Vector3, ft: THREE.Vector3, delta: number, omega: number, mu: number): number {
+    const k = this.sharpTurn;
+    const A = SHARP_LAT * mu * KING.g * this.sharpGrip;
+    const vLon = next.dot(ft);
+    const speed = Math.max(1, Math.abs(vLon));
+    const want = THREE.MathUtils.clamp(-yawRate(vLon, delta, this.base), -A / speed, A / speed);
+    // Лише докручувати в бік керма: шини, що вже повертають сильніше, не стримуємо.
+    if (Math.abs(want) > Math.abs(omega) || Math.sign(want) !== Math.sign(omega)) omega += (want - omega) * Math.min(1, k * SHARP_YAW * dt);
+    const side = new THREE.Vector3().crossVectors(n, ft);
+    const lat = next.dot(side);
+    next.addScaledVector(side, -Math.sign(lat) * Math.min(Math.abs(lat), A * k * dt));
+    return omega;
   }
 
   /** Прискорення від сил коліс минулого кроку (світ, м/с²) і стан кузова на пружинах (tireLoads). */
