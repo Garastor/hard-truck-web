@@ -211,6 +211,8 @@ const COCKPIT_LIFT = new THREE.Vector3(0, 0.08, 0);
 /** Межі кутів голови в кабіні (king.exe 0x535a70: 0x64f3b0, 0x64f3a8), рад — 2,5° уперед-назад і 5° убік. */
 const HEAD_PITCH_MAX = 0.0436;
 const HEAD_SIDE_MAX = 0.0873;
+/** Зсув голови на одиницю кута, м/рад: у king.exe 4 (0x64c408), у порту на 20 % менше — на прохання користувача. */
+const HEAD_SHIFT = 3.2;
 /**
  * Зсув салону на частку зсуву голови: 1 − d/D, де d — відстань від ока до верху панелі (одиниці CABINES, 1,81) і D — до
  * кромки капота на тому самому промені (0,88 м, ZilR; виміряно в порту) — тоді шов капота з панеллю стоїть на місці.
@@ -2958,9 +2960,12 @@ export class Ht2Drive {
       const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (this.def.tech.viewerTilt * Math.PI) / 180);
       // Голова-маятник (king.exe 0x535a70): кути A = 0,005·(g − a) уперед (≤ 2,5°) і B = 0,005·(g − a) праворуч
       // (≤ 5°), згладжені 0,8^(10·dt) (τ ≈ 0,45 с); у порту — лише кивок на A і крен на 0,1·B (див. нижче).
-      const f1 = 0.8 ** (10 * dt);
-      const A = THREE.MathUtils.clamp(0.005 * this.truck.feltFwd, -HEAD_PITCH_MAX, HEAD_PITCH_MAX);
-      const B = THREE.MathUtils.clamp(0.005 * this.truck.feltSide, -HEAD_SIDE_MAX, HEAD_SIDE_MAX);
+      // На прохання користувача: плавніше (0,85 замість 0,8 — τ ≈ 0,6 с), зсув на 20 % менший (HEAD_SHIFT) і м'яка
+      // межа: що ближче до краю, то повільніше росте кут (tanh замість обрізання).
+      const f1 = 0.85 ** (10 * dt);
+      const soft = (x: number, max: number) => max * Math.tanh(x / max);
+      const A = soft(0.005 * this.truck.feltFwd, HEAD_PITCH_MAX);
+      const B = soft(0.005 * this.truck.feltSide, HEAD_SIDE_MAX);
       this.headA = f1 * this.headA + (1 - f1) * A;
       this.headB = f1 * this.headB + (1 - f1) * B;
       const a = this.headA;
@@ -2970,7 +2975,8 @@ export class Ht2Drive {
       // зсувається на (4B; угору −4(A² + B²); уперед 4A), а салон — на CAB_PARALLAX від цього зсуву: салон CABINES
       // задано не в метрах, і без поправки капот їхав відносно салону.
       const eye = this.cockpit.clone().applyQuaternion(v.quaternion).add(v.position);
-      const head = new THREE.Vector3(4 * b, -4 * (a * a + b * b), -4 * a).applyQuaternion(this.truck.bodyQuat);
+      const k = HEAD_SHIFT;
+      const head = new THREE.Vector3(k * b, -k * (a * a + b * b), -k * a).applyQuaternion(this.truck.bodyQuat);
       this.camera.position.copy(eye).add(head);
       const nod = new THREE.Quaternion().setFromEuler(new THREE.Euler(-a, 0, -0.1 * b, 'XYZ'));
       this.camera.quaternion.copy(this.truck.bodyQuat).multiply(nod).multiply(tilt);
