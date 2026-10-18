@@ -56,6 +56,8 @@ export interface TechRecord {
   /** Нахил погляду, градуси. */
   viewerTilt: number;
   inertia: Vec3;
+  /** rs0…rs3 (+0x1a8): точки коліс у системі моделі; у ZilR — запасні (±0,6; ±1; −0,2), king.exe бере з них точки пари. */
+  wheelPoints: Vec3[];
   suspension: number[];
   ks: number[];
   cs: number[];
@@ -166,7 +168,7 @@ function readRecord(r: BinReader, index: number): TechRecord {
   const viewer = v3();
   const viewerTilt = r.f32() * RAD;
   const inertia = v3();
-  r.skip(48); // rs0..rs3
+  const wheelPoints = vs(4); // rs0..rs3
   r.skip(244);
   r.skip(32); // buffer
   const suspension = f(8);
@@ -228,7 +230,7 @@ function readRecord(r: BinReader, index: number): TechRecord {
     tank, fuelTimeEndurance, gears, fuelConsumption, kilometrage, airPressCoeff, airResistCoeff, airSideResistCoeff,
     frontWheelThickness, rearWheelThickness, maxRotMomentum, brakePower, rearAxleCoeff, reverseCoeff, tachMaxPower,
     cargoLoad, bodyMass, bodyHeight, bodySquare, cargoBottom, drivingWheels, steeringWheels, touchingWheels, viewer,
-    viewerTilt, inertia, suspension, ks, cs, collisionRadius, collisionCenter, rubberCollisionCoeff,
+    viewerTilt, inertia, wheelPoints, suspension, ks, cs, collisionRadius, collisionCenter, rubberCollisionCoeff,
     slideCollisionCoeff, cornerMarks, addCollisionPoints, cornerMarksW, collisionPlanes: planes.slice(0, nPlanes),
     tvCameras: cams.slice(0, nCams), smokePosition, smokeDirection, smokePosition2, smokeDirection2, flamePlace, faraFL, faraFR, faraBL, faraBR,
     faraBLs, faraBRs, horsePower, price, lowSaddle, topSaddle, towHook, coupler, shiftSaddle, couplerLength,

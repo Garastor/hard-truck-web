@@ -284,13 +284,23 @@ export class TruckVehicle {
   /**
    * Пара з-під передніх коліс при різкому гальмуванні (king.exe 0x4ff800 → подія [ph+0x3c18] → 0x548250, біт 0x8000
    * [car+0x27b4] → 0x551970 → 0x4baf90): педаль > 0,5, швидкість уперед > 0,5 м/с, обидва передні колеса на землі —
-   * дві точки внизу передніх коліс (координати гри). Інакше — порожньо.
+   * дві точки rs0, rs1 з tech мінус радіус колеса в матриці машини (у ZilR — (±0,6; 1; −0,7): під кузовом, 1 м
+   * позаду передньої осі, 0,34 м над дорогою; без них — низ передніх коліс), координати гри. Інакше — порожньо.
    */
   brakeVaporPoints(): THREE.Vector3[] {
     if (!this.king || this.pedalNow <= 0.5 || this.vNow <= 0.5) return [];
     const out: THREE.Vector3[] = [];
+    for (const i of [0, 1]) if (!this.ctrl.wheelIsInContact(i)) return [];
+    const local = this.def.tech.vaporPoints;
+    if (local?.length === 2) {
+      this.visual.updateMatrixWorld();
+      for (const q of local) {
+        const p = this.visual.localToWorld(g2t(q));
+        out.push(new THREE.Vector3(p.x, -p.z, p.y));
+      }
+      return out;
+    }
     for (const i of [0, 1]) {
-      if (!this.ctrl.wheelIsInContact(i)) return [];
       const p = this.ctrl.wheelContactPoint(i);
       if (!p) return [];
       out.push(new THREE.Vector3(p.x, -p.z, p.y));

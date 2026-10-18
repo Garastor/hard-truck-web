@@ -44,6 +44,8 @@ export interface TruckTech {
   /** Точка очей водія (OV) у системі вантажівки та нахил погляду (tangViewer, градуси). */
   viewer: [number, number, number];
   viewerTilt: number;
+  /** Точки пари з-під коліс при гальмуванні в системі моделі (rs0, rs1 vehicle.tech мінус радіус колеса; 0x551970). */
+  vaporPoints?: [number, number, number][];
   /** Кути тіні машини в системі моделі (Corner_Mark_W%d vehicle.tech, king.exe 0x5455d0 → 0x552940). */
   shadowCorners?: [number, number, number][];
   /** Товщина передніх і задніх коліс, м (front/rear_wheel_thickness vehicle.tech) — ширина сліду шин. */
