@@ -249,7 +249,11 @@ export class MaterialLibrary {
             const c = (colorKey - 1) * 3;
             const kr = this.palette[c] >> 3, kg = this.palette[c + 1] >> 2, kb = this.palette[c + 2] >> 3;
             for (let i = 0; i < d.length; i += 4) if (d[i] >> 3 === kr && d[i + 1] >> 2 === kg && d[i + 2] >> 3 === kb) d[i + 3] = 0;
-          } else for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] <= 12) d[i + 3] = 0;
+          } else {
+            // Ключ Direct3D — точний збіг із чорним у 565, без допуску: цифри знаків обмеження швидкості
+            // (zspl60 тощо) — темно-сині 0,4,8, з порогом «сума ≤ 12» вони ставали прозорими.
+            for (let i = 0; i < d.length; i += 4) if (d[i] >> 3 === 0 && d[i + 1] >> 2 === 0 && d[i + 2] >> 3 === 0) d[i + 3] = 0;
+          }
           img.hasAlpha = true;
         }
         const t = new THREE.DataTexture(img.data, img.width, img.height, THREE.RGBAFormat);
