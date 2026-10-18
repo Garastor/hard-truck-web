@@ -651,6 +651,7 @@ export class TruckVehicle {
       this.visual.position.lerpVectors(this.prevPos, this.visual.position, alpha);
       this.visual.quaternion.slerpQuaternions(this.prevQuat, this.visual.quaternion.clone(), alpha);
     }
+    this.bodyQuat.copy(this.visual.quaternion);
     // Нахил кузова king (косметичний): верх кузова хилиться праворуч на leanSide і вперед на leanFwd.
     if (!this.king) return;
     const q = this.visual.quaternion;
@@ -1085,6 +1086,8 @@ export class TruckVehicle {
     const left = new THREE.Vector3().crossVectors(n, ft);
     const d = gt.clone().addScaledVector(ft, -along).addScaledVector(left, -lateral);
     const len = d.length();
+    this.feltFwd = d.dot(ft);
+    this.feltSide = -d.dot(left);
     const theta = Math.min(LEAN_MAX, LEAN_K * len);
     if (len > 0.01) d.divideScalar(len);
     const f = 0.5 ** (10 * dt);
@@ -1113,6 +1116,19 @@ export class TruckVehicle {
   private readonly bumps: { h: number; u: number }[] = [];
   private bumpLift = 0;
 
+  /**
+   * Відчутне прискорення (g − a) у площині ґрунту, м/с² (lean): уперед (+ — гальмування) і праворуч (+ — поворот
+   * ліворуч); вхід гойдання голови в кабіні (king.exe 0x535a70, поля 0x33b0 / 0x33ac).
+   */
+  feltFwd = 0;
+  feltSide = 0;
+  /** Орієнтація кузова без косметичного нахилу (як матриця машини +0x204 king.exe — на ній стоїть камера кабіни). */
+  readonly bodyQuat = new THREE.Quaternion();
+  /** Нахил кузова (рад): верх праворуч і вперед — вхід гойдання салону (king.exe 0x4decc0, поля +0xd20, +0xd2c). */
+  get leanAngles(): { side: number; fwd: number } {
+    return { side: this.leanSide, fwd: this.leanFwd };
+  }
+
   /** Згладжений нахил кузова king (рад): у бік праворуч і вперед (lean). */
   private leanSide = 0;
   private leanFwd = 0;
@@ -1126,8 +1142,6 @@ export class TruckVehicle {
 
   /** Відбійники підвіски (див. SUSPENSION.bump_*): сила вгору в точці кріплення колеса, коли стиснення велике. */
   private applyBumpStops(dt: number): void {
-    this.feltFwd = d.dot(ft);
-    this.feltSide = -d.dot(left);
     const S = SUSPENSION;
     const r = this.body.rotation();
     const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
@@ -1156,13 +1170,6 @@ export class TruckVehicle {
    * повороті на швидкості — перекидання.
    * Форма кривої — гіпотеза під опис поведінки оригіналу (відгук користувача), межа тертя — 0,84 з оригіналу.
    */
-  /**
-   * Відчутне прискорення (g − a) у площині ґрунту, м/с² (lean): уперед (+ — гальмування) і праворуч (+ — поворот
-   * ліворуч); вхід гойдання голови в кабіні (king.exe 0x535a70, поля 0x33b0 / 0x33ac).
-   */
-  feltFwd = 0;
-  feltSide = 0;
-
   private applyTireLateral(dt: number): void {
     const r = this.body.rotation();
     const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
