@@ -1566,7 +1566,7 @@ export class Ht2Drive {
     this.updateDebris(dt, c.wind, c.w());
     this.updatePrecip(dt, c.wind, c.w());
     this.updateWheelFx();
-    this.blastFx().update(dt, c.wind);
+    this.blastFx().update(dt, c.wind, this.camera.position);
     const dusk = sunHeight(hour) < 0.2;
     this.world.setNight(dusk);
     this.cabLight?.color.setScalar(cabAmbient(hour));

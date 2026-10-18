@@ -3,6 +3,7 @@ import type { SceneAssembler } from '../engine/render/sceneBuilder';
 import { TREE_LIGHT } from './trees';
 import { toThree } from './world';
 import { fireLight, smokeChance } from '../ui/effects';
+import { Billboards } from './billboards';
 
 /**
  * Вибух колонки заправки й полумʼя — задачі king.exe `mnBlow3` і `mnFire` (car.cpp; re/notes/ht2/objects.md,
@@ -23,6 +24,7 @@ import { fireLight, smokeChance } from '../ui/effects';
  * Гіпотези порту: «щокадру» — 30 разів на секунду (у exe — справжні кадри, тож кількість залежить від FPS); не більше
  * MAX клубів (телефони); вогонь — адитивний, дим — прозорість текстури; уламки (5 шт., crPart) не відтворено;
  * затухання світла 1/(1 + 0,01·d²) до 70 м — гіпотеза агента; освітлення клубів — як дерев (TREE_LIGHT).
+ * Малювання — пакетами інстансів (world/billboards.ts), не окремими спрайтами: телефон.
  */
 const TICK = 1 / 30;
 /** Уламки: розмір квадрата, м; гравітація, м/с² (0x651180 — саме 1,81); крок сліду, м. */
@@ -31,8 +33,15 @@ const PART_G = 1.81;
 const TRAIL_STEP = 0.1;
 const MAX = 1000;
 
-interface Puff {
-  s: THREE.Sprite;
+/** Вигляд білборда: текстура-кадр, змішування, поворот у площині екрана, розмір (м). */
+interface Look {
+  map: THREE.Texture;
+  additive: boolean;
+  rot: number;
+  size: number;
+}
+
+interface Puff extends Look {
   /** Позиція, швидкість (гра), точка народження. */
   p: THREE.Vector3;
   v: THREE.Vector3;
@@ -57,8 +66,7 @@ interface Puff {
  * текстурою (перший кадр), що обертається всередині квадрата з ω = 2π·s; v −= 1,81·Z·dt, p += v·dt, без опору й
  * зіткнень; зникає, щойно опуститься нижче висоти народження. trail — димний слід: клуб кожні 0,1 м шляху.
  */
-interface Part {
-  s: THREE.Sprite;
+interface Part extends Look {
   p: THREE.Vector3;
   v: THREE.Vector3;
   bornZ: number;
@@ -113,7 +121,8 @@ function flickerTable(): number[] {
 export class Blasts {
   readonly group = new THREE.Group();
   private readonly puffs: Puff[] = [];
-  private readonly free: THREE.Sprite[] = [];
+  private readonly bb = new Billboards(TREE_LIGHT, MAX);
+  private readonly at = new THREE.Vector3();
   private readonly blows: Blow[] = [];
   private readonly flames: Flame[] = [];
   private readonly parts: Part[] = [];
@@ -148,6 +157,7 @@ export class Blasts {
     // Лампа — одна на всю гру (як ThrowLamp) і вже в сцені: нове світло перекомпільовувало б усі шейдери.
     this.lamp.color.setRGB(1, 0.6, 0.3);
     this.group.add(this.lamp);
+    this.group.add(this.bb.group);
   }
 
   /** Вибух колонки k станції з матрицею m (координати гри). */
@@ -223,7 +233,8 @@ export class Blasts {
     this.vaporPts = points;
   }
 
-  update(dt: number, wind: number): void {
+  /** Крок; cam — позиція камери (Three.js) для порядку прозорих клубів. */
+  update(dt: number, wind: number, cam: THREE.Vector3): void {
     // Вихлоп і пара — щокадру, як у king.exe (0x551970 на кожен кадр машини; пул пари — 500 клубів): на частому
     // кадрі клуби накладаються в суцільні смуги.
     if (dt > 0) {
@@ -242,6 +253,28 @@ export class Blasts {
     this.step(dt, wind);
     this.stepParts(dt);
     this.updateLamp(dt);
+    this.draw(cam);
+  }
+
+  /** Клуби й уламки — у пакети білбордів. */
+  private draw(cam: THREE.Vector3): void {
+    const bb = this.bb;
+    const at = this.at;
+    bb.begin();
+    for (const q of this.puffs) {
+      toThree(q.p.x, q.p.y, q.p.z, at);
+      bb.push(q.map, q.additive, at.x, at.y, at.z, q.size, q.rot);
+    }
+    for (const q of this.parts) {
+      toThree(q.p.x, q.p.y, q.p.z, at);
+      bb.push(q.map, q.additive, at.x, at.y, at.z, q.size, q.rot);
+    }
+    bb.end(cam);
+  }
+
+  /** Клубів і уламків у кадрі (налагодження). */
+  get count(): number {
+    return this.puffs.length + this.parts.length;
   }
 
   private emit(): void {
@@ -344,17 +377,7 @@ export class Blasts {
 
   private spawnPart(p: THREE.Vector3, v: THREE.Vector3, map: THREE.Texture | undefined, trail: boolean, additive: boolean, size = PART_SIZE): Part | null {
     if (!map || this.puffs.length + this.parts.length >= MAX) return null;
-    const s = this.free.pop() ?? new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, fog: true }));
-    const m = s.material;
-    m.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
-    m.map = map;
-    m.needsUpdate = true;
-    m.rotation = rnd() * Math.PI * 2;
-    m.color.setRGB(1, 1, 1);
-    s.scale.setScalar(size);
-    s.visible = true;
-    this.group.add(s);
-    const q: Part = { s, p: p.clone(), v: v.clone(), bornZ: p.z, omega: 2 * Math.PI * sym(), trail, acc: 0 };
+    const q: Part = { map, additive, rot: rnd() * Math.PI * 2, size, p: p.clone(), v: v.clone(), bornZ: p.z, omega: 2 * Math.PI * sym(), trail, acc: 0 };
     this.parts.push(q);
     return q;
   }
@@ -367,9 +390,6 @@ export class Blasts {
       const old = q.p.clone();
       q.p.addScaledVector(q.v, dt);
       if (q.spark ? (q.spark.age += dt) > 3 : q.p.z < q.bornZ) {
-        q.s.visible = false;
-        this.group.remove(q.s);
-        this.free.push(q.s);
         this.parts.splice(i, 1);
         continue;
       }
@@ -383,8 +403,7 @@ export class Blasts {
         }
         q.acc = (q.acc + path) % TRAIL_STEP;
       }
-      q.s.material.rotation += q.omega * dt;
-      toThree(q.p.x, q.p.y, q.p.z, q.s.position);
+      q.rot += q.omega * dt;
     }
   }
 
@@ -396,15 +415,7 @@ export class Blasts {
   private spawnWorld(p: THREE.Vector3, v: THREE.Vector3, kind: string, s0: number, s1: number, g: number, life: number, fdur?: number, rise?: number): void {
     const frames = this.tex.get(kind) ?? [];
     if (!frames.length || this.puffs.length >= MAX) return;
-    const s = this.free.pop() ?? new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, fog: true }));
-    const m = s.material;
-    m.blending = kind === 'burn' ? THREE.AdditiveBlending : THREE.NormalBlending;
-    m.map = frames[0];
-    m.needsUpdate = true;
-    m.rotation = rnd() * Math.PI * 2;
-    s.visible = true;
-    this.group.add(s);
-    this.puffs.push({ s, p, v, born: p.clone(), g, age: 0, life, s0, s1, frames, omega: sym() * 2 * Math.PI, fdur, rise });
+    this.puffs.push({ map: frames[0], additive: kind === 'burn', rot: rnd() * Math.PI * 2, size: s0, p, v, born: p.clone(), g, age: 0, life, s0, s1, frames, omega: sym() * 2 * Math.PI, fdur, rise });
   }
 
   private step(dt: number, wind: number): void {
@@ -412,9 +423,6 @@ export class Blasts {
       const q = this.puffs[i];
       q.age += dt;
       if (q.age >= q.life) {
-        q.s.visible = false;
-        this.group.remove(q.s);
-        this.free.push(q.s);
         this.puffs.splice(i, 1);
         continue;
       }
@@ -433,17 +441,10 @@ export class Blasts {
         q.p.z += q.v.z * dt;
       }
       const u = q.age / q.life;
-      const m = q.s.material;
-      const frame = q.frames[Math.min(q.frames.length - 1, Math.floor(q.fdur ? q.age / q.fdur : u * q.frames.length))];
-      if (m.map !== frame) {
-        m.map = frame;
-        m.needsUpdate = true;
-      }
-      m.rotation += q.omega * (1 - u) * (1 - u) * dt;
-      if (m.blending !== THREE.AdditiveBlending) m.color.copy(TREE_LIGHT.value);
-      else m.color.setRGB(1, 1, 1);
-      q.s.scale.setScalar(q.ease ? q.s1 * (1 - (1 - u) * (1 - u)) : q.s0 + (q.s1 - q.s0) * u);
-      toThree(q.p.x, q.p.y, q.p.z, q.s.position);
+      q.map = q.frames[Math.min(q.frames.length - 1, Math.floor(q.fdur ? q.age / q.fdur : u * q.frames.length))];
+      q.rot += q.omega * (1 - u) * (1 - u) * dt;
+      // Колір непрозоро-змішаних — TREE_LIGHT (спільний uniform пакетів), адитивних — білий.
+      q.size = q.ease ? q.s1 * (1 - (1 - u) * (1 - u)) : q.s0 + (q.s1 - q.s0) * u;
     }
   }
 
@@ -476,12 +477,9 @@ export class Blasts {
   }
 
   dispose(): void {
-    for (const q of this.puffs) q.s.material.dispose();
-    for (const q of this.parts) q.s.material.dispose();
-    for (const s of this.free) s.material.dispose();
+    this.bb.dispose();
     this.puffs.length = 0;
     this.parts.length = 0;
-    this.free.length = 0;
     this.group.removeFromParent();
   }
 }
