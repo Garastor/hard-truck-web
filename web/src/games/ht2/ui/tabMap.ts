@@ -42,6 +42,9 @@ const REF_H = 768;
 const AVOID_GAP = 10;
 /** Мінікарта порту трохи менша за прямокутник king.exe (на прохання користувача): ширина й висота × 0,85. */
 const MINI_SHRINK = 0.85;
+/** Запас canvas мінікарти навколо рамки для значків і підписів (CSS px при масштабі 1); праворуч — довгі назви. */
+const PAD = 24;
+const PAD_RIGHT = 140;
 
 export interface TabMapScene {
   me: THREE.Vector3;
@@ -71,6 +74,14 @@ export class TabMap {
   /** Межі кнопок порту, з-під яких зсувається мінікарта. */
   private avoid: DOMRect[] = [];
   private avoidAt = -1;
+  /** Висота табло (CSS px) і коли її перечитано. */
+  private top = 0;
+  private topAt = -1;
+  /** Підпис останнього намальованого кадру й розміщення canvas (CSS). */
+  private sig = '';
+  private css = '';
+  private cache: { canvas: HTMLCanvasElement; k: number; dpr: number; w: number; h: number; x0: number; y0: number } | null = null;
+  private readonly v2 = new THREE.Vector2();
 
   constructor(
     private readonly art: EscArt,
@@ -124,6 +135,7 @@ export class TabMap {
   show(state: TabMapState): TabMapState {
     this.state = state;
     this.canvas.hidden = state === 0;
+    this.sig = '';
     return state;
   }
 
@@ -131,6 +143,11 @@ export class TabMap {
     this.show(0);
   }
 
+  /**
+   * Кадр карти. Оптимізація порту (телефон): canvas — лише розміром показаної області (мінікарта — її прямокутник,
+   * не весь екран); дороги — з кешу (roadCache), не обведення всього Path2D щокадру; кадр перемальовується лише
+   * тоді, коли змінилося щось видиме (зсув карти на піксель пристрою, кадр анімації, значки).
+   */
   draw(dt: number, s: TabMapScene): void {
     this.time += dt;
     if (this.state === 0) return;
@@ -138,17 +155,14 @@ export class TabMap {
     const dpr = window.devicePixelRatio || 1;
     const W = window.innerWidth;
     const H = window.innerHeight;
-    if (this.canvas.width !== Math.round(W * dpr) || this.canvas.height !== Math.round(H * dpr)) {
-      this.canvas.width = Math.round(W * dpr);
-      this.canvas.height = Math.round(H * dpr);
+    // Висота табло (CSS-змінна) — раз на пів секунди: getComputedStyle щокадру перераховує стилі.
+    if (this.time - this.topAt > 0.5 || this.topAt > this.time) {
+      this.topAt = this.time;
+      this.top = parseFloat(getComputedStyle(document.body).getPropertyValue('--ht2-tablo-h')) || 0;
     }
-    const ctx = this.ctx;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, W, H);
-    ctx.imageSmoothingEnabled = false;
     // Огляд — під табло порту (у king.exe табло 50 px перекриває відступ 40).
-    const top = parseFloat(getComputedStyle(document.body).getPropertyValue('--ht2-tablo-h')) || 0;
-    const size = this.bounds.getSize(new THREE.Vector2());
+    const top = this.top;
+    const size = this.bounds.getSize(this.v2);
     let k = Math.min((W - MARGIN_X) / size.x, (H - top - MARGIN_Y) / size.y);
     let ox = OFFSET - this.bounds.min.x * k;
     let oy = top + OFFSET - this.bounds.min.y * k;
@@ -162,27 +176,69 @@ export class TabMap {
       ox = (box.x0 + box.x1) / 2 - s.me.x * k;
       oy = (box.y0 + box.y1) / 2 - s.me.z * k;
     }
+    // Область canvas на екрані (CSS px): мінікарта — прямокутник із рамкою і запасом для значків і підписів біля
+    // краю (вони виходять за рамку, як в оригіналі), огляд — увесь екран.
+    const u = hudScale();
+    const pad = Math.ceil(PAD * u);
+    const rx = zoom ? Math.max(0, box.x0 - pad) : 0;
+    const ry = zoom ? Math.max(0, box.y0 - pad) : 0;
+    const rw = zoom ? Math.min(W, box.x1 + 1 + Math.ceil(PAD_RIGHT * u)) - rx : W;
+    const rh = zoom ? Math.min(H, box.y1 + 1 + pad) - ry : H;
     const at = (p: THREE.Vector3) => [ox + p.x * k, oy + p.z * k] as const;
     const inside = (x: number, y: number) => !zoom || (x >= box.x0 && x <= box.x1 && y >= box.y0 && y <= box.y1);
+    const phase = Math.floor(this.time / FRAME_TIME) % 6;
+    const len = Math.hypot(s.heading.x, s.heading.z) || 1;
+    // Напрям: сектор 15° від півночі карти (−z) за годинниковою стрілкою, з відкиданням дробу, як у king.exe.
+    let sector = Math.floor((Math.acos(Math.max(-1, Math.min(1, -s.heading.z / len))) * 12) / Math.PI);
+    if (s.heading.x < 0) sector = 24 - sector;
+
+    // Підпис кадру: усе, від чого залежить картинка; без змін — canvas не чіпаємо.
+    const sig = [rx, ry, rw, rh, dpr, Math.round(ox * dpr), Math.round(oy * dpr), Math.round(k * 1e4), phase, sector];
+    const pos = (p: THREE.Vector3) => sig.push(Math.round(p.x * k * dpr), Math.round(p.z * k * dpr));
+    if (s.target) pos(s.target);
+    if (s.finish) pos(s.finish);
+    for (const list of [s.trailers, s.mine, s.rivals, s.debris]) {
+      sig.push(list?.length ?? 0);
+      list?.forEach(pos);
+    }
+    const key = sig.join(',');
+    if (key === this.sig) return;
+    this.sig = key;
+
+    const cw = Math.round(rw * dpr);
+    const ch = Math.round(rh * dpr);
+    if (this.canvas.width !== cw || this.canvas.height !== ch) {
+      this.canvas.width = cw;
+      this.canvas.height = ch;
+    }
+    const css = `${rx},${ry},${rw},${rh}`;
+    if (css !== this.css) {
+      this.css = css;
+      Object.assign(this.canvas.style, { left: `${rx}px`, top: `${ry}px`, width: `${rw}px`, height: `${rh}px`, right: 'auto', bottom: 'auto' });
+    }
+    const ctx = this.ctx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.imageSmoothingEnabled = false;
+    // Дороги: кеш навколо видимої області, на ціле зміщення пікселя пристрою (без перемасштабування).
+    const cache = this.roadCache(k, ox, oy, rx, ry, rw, rh, dpr, zoom ? 3 : 1);
+    ctx.save();
+    if (zoom) {
+      ctx.beginPath();
+      ctx.rect((box.x0 + 1 - rx) * dpr, (box.y0 + 1 - ry) * dpr, (box.x1 - box.x0 - 1) * dpr, (box.y1 - box.y0 - 1) * dpr);
+      ctx.clip();
+    }
+    ctx.drawImage(cache.canvas, Math.round((ox + cache.x0 * k - rx) * dpr), Math.round((oy + cache.y0 * k - ry) * dpr));
+    ctx.restore();
+    // Далі — у CSS px екрана.
+    ctx.setTransform(dpr, 0, 0, dpr, -rx * dpr, -ry * dpr);
     if (zoom) {
       ctx.strokeStyle = FRAME;
       ctx.lineWidth = 1;
       ctx.strokeRect(box.x0 + 0.5, box.y0 + 0.5, box.x1 - box.x0, box.y1 - box.y0);
     }
-    ctx.save();
-    if (zoom) {
-      ctx.beginPath();
-      ctx.rect(box.x0 + 1, box.y0 + 1, box.x1 - box.x0 - 1, box.y1 - box.y0 - 1);
-      ctx.clip();
-    }
-    ctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * ox, dpr * oy);
-    ctx.strokeStyle = ROAD;
-    ctx.lineWidth = 1 / k;
-    ctx.stroke(this.roads);
-    ctx.restore();
 
     // Значки: масштаб інтерфейсу (на телефоні 1:1), лівий верхній кут — (x − 5, y − 5).
-    const u = hudScale();
     const icon = (name: string, p: THREE.Vector3) => {
       const [x, y] = at(p);
       if (!inside(x, y)) return;
@@ -199,7 +255,6 @@ export class TabMap {
       font.draw(ctx, text, 0, -font.height, LABEL);
       ctx.restore();
     };
-    const phase = Math.floor(this.time / FRAME_TIME) % 6;
     const blink = phase <= 3 ? phase : 6 - phase;
     const isTarget = (p: THREE.Vector3) => !!s.target && p.distanceTo(s.target) < 30;
     for (const pt of this.points) {
@@ -217,11 +272,39 @@ export class TabMap {
     for (const m of s.mine ?? []) icon('I_tr_myc', m);
     for (const r of s.rivals) icon('I_tr_opp', r);
     for (const d of s.debris ?? []) icon('I_debris', d);
-    // Напрям: сектор 15° від півночі карти (−z) за годинниковою стрілкою, з відкиданням дробу, як у king.exe.
-    const len = Math.hypot(s.heading.x, s.heading.z) || 1;
-    let sector = Math.floor((Math.acos(Math.max(-1, Math.min(1, -s.heading.z / len))) * 12) / Math.PI);
-    if (s.heading.x < 0) sector = 24 - sector;
     icon(`I_tr_my${String(sector % 24).padStart(2, '0')}_${phase}`, s.me);
+  }
+
+  /**
+   * Кеш доріг: canvas у пікселях пристрою з масштабом k, що покриває видиму область (rx, ry, rw × rh CSS px) із
+   * запасом `margin` (мінікарта — утричі більша за прямокутник: перебудова, лише коли гравець виїде з середини).
+   * x0, y0 — світові координати (x, z) лівого верхнього кута.
+   */
+  private roadCache(k: number, ox: number, oy: number, rx: number, ry: number, rw: number, rh: number, dpr: number, margin: number): { canvas: HTMLCanvasElement; x0: number; y0: number } {
+    // Видима область у світі.
+    const vx0 = (rx - ox) / k;
+    const vy0 = (ry - oy) / k;
+    const vx1 = (rx + rw - ox) / k;
+    const vy1 = (ry + rh - oy) / k;
+    const c = this.cache;
+    const fits = c && c.k === k && c.dpr === dpr && c.w >= rw * margin && c.h >= rh * margin && vx0 >= c.x0 && vy0 >= c.y0 && vx1 <= c.x0 + c.w / k && vy1 <= c.y0 + c.h / k;
+    if (fits) return c;
+    const w = Math.ceil(rw * margin);
+    const h = Math.ceil(rh * margin);
+    const canvas = c?.canvas ?? document.createElement('canvas');
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    // Центр кешу — центр видимої області.
+    const x0 = (vx0 + vx1) / 2 - w / k / 2;
+    const y0 = (vy0 + vy1) / 2 - h / k / 2;
+    const ctx = canvas.getContext('2d')!;
+    ctx.setTransform(dpr * k, 0, 0, dpr * k, -x0 * k * dpr, -y0 * k * dpr);
+    ctx.clearRect(x0, y0, w / k, h / k);
+    ctx.strokeStyle = ROAD;
+    ctx.lineWidth = 1 / k;
+    ctx.stroke(this.roads);
+    this.cache = { canvas, k, dpr, w, h, x0, y0 };
+    return this.cache;
   }
 
   dispose(): void {
