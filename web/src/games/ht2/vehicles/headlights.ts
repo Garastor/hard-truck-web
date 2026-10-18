@@ -4,12 +4,12 @@ import * as THREE from 'three';
  * Ближнє світло фар гравця — маска прожектора (`SpotLight.map`, працює без тіней): власна реалізація на прохання
  * користувача (оригінальний механізм фар king.exe не перенесено, Docs/ht2/lighting.md).
  *
- * Вісь фари — горизонтально вперед. Маска в площині проєкції (тангенси кутів від осі):
+ * Вісь фари — горизонтально вперед, згасання з відстанню немає (decay 0), а освітленість не залежить від кута
+ * падіння (installHeadlightShading): дорога, стіни й машини нижче межі освітлені однаково — сила × маска. Інакше або
+ * дорога вдалині темна (світло ковзає під кутом h / x), або, з підсиленням маски біля межі, вертикальні предмети
+ * пересвічені в десятки разів. Маска в площині проєкції (тангенси кутів від осі):
  * - вище лінії відсічки (кут atan(h / cutoff) нижче горизонту) — темно: дорога світиться до відстані cutoff, а
- *   зустрічні машини й усе, що вище цієї площини, — ні (чітка межа, як у справжньої ближньої фари);
- * - нижче — вага t_c / t (t — тангенс кута вниз, t_c — на межі). Точка дороги на відстані x видна під t = h / x і
- *   отримує (без згасання з відстанню, decay 0) освітленість ∝ вага · cos = (t_c / t) · t = t_c — тобто однакову від
- *   капота до межі, без яскравої плями біля машини;
+ *   зустрічні машини й усе, що вище цієї площини, — ні (межа, як у справжньої ближньої фари); нижче — повна сила;
  * - асиметрія («галочка», як у європейських фар): ліворуч від осі межа рівна, праворуч від осі піднімається під
  *   RISE_SLOPE (15°) на RIGHT_RISE вище — праве узбіччя й знаки світяться далі, зустрічних ліворуч не сліпить;
  * - убік — повна сила до |tx| < SIDE_FULL, далі плавно до нуля на SIDE_ZERO.
@@ -50,7 +50,7 @@ export function headlightMask(h: number, cutoff: number, angle: number): THREE.T
       const t = -((1 - (j + 0.5) / H) - 0.5) * span;
       const e = Math.min(1, Math.max(0, (t - cut) / EDGE_SOFT + 1));
       const edge = e * e * (3 - 2 * e);
-      const v = Math.round(255 * edge * Math.min(1, tc / Math.max(t, tc)) * side);
+      const v = Math.round(255 * edge * side);
       const k = (j * W + i) * 4;
       img.data[k] = img.data[k + 1] = img.data[k + 2] = v;
       img.data[k + 3] = 255;
@@ -63,4 +63,24 @@ export function headlightMask(h: number, cutoff: number, angle: number): THREE.T
   tex.magFilter = THREE.LinearFilter;
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
   return tex;
+}
+
+/**
+ * Освітлення фарами без залежності від кута падіння: у гілці прожектора з маскою (у HT2 так світять лише фари
+ * гравця) колір ділиться на cos кута між нормаллю й напрямком на фару — Lambert/Phong множать його назад. Поверхні,
+ * повернуті від фари, лишаються темними; поріг 0,01 — щоб не ділити на нуль на дотичних полігонах. Шматки шейдерів
+ * спільні для всіх матеріалів (як vertexFog), першу гру не зачіпає: вихід до вибору гри перезавантажує сторінку.
+ */
+export function installHeadlightShading(): void {
+  const c = THREE.ShaderChunk as unknown as Record<string, string>;
+  const from = 'directLight.color = inSpotLightMap ? directLight.color * spotColor.rgb : directLight.color;';
+  if (!c.lights_fragment_begin.includes(from)) throw new Error('headlights: шматок шейдера прожектора змінився');
+  c.lights_fragment_begin = c.lights_fragment_begin.replace(
+    from,
+    `${from}
+			{
+				float hlCos = dot( geometryNormal, directLight.direction );
+				directLight.color *= hlCos > 0.0 ? 1.0 / max( hlCos, 0.01 ) : 0.0;
+			}`,
+  );
 }

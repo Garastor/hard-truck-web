@@ -196,8 +196,8 @@ function flashLevel(t: number): number {
 /** Колір туману, якщо в сцені його немає (дощ — world/precipitation.ts). */
 const FOG_FALLBACK = new THREE.Color(0.5, 0.5, 0.5);
 /**
- * Фари гравця (mountLamps): межа ближнього світла попереду, м; півкут конуса; освітленість дороги від однієї фари
- * (сила = LAMP_ROAD · cutoff / h — з маскою дорога отримує силу · h / cutoff) — на око.
+ * Фари гравця (mountLamps): межа ближнього світла попереду, м; півкут конуса; освітленість від однієї фари (вона ж
+ * сила: без згасання й залежності від кута, vehicles/headlights.ts) — на око.
  */
 const LAMP_CUTOFF = 80;
 const LAMP_ANGLE = (30 * Math.PI) / 180;
@@ -1548,10 +1548,9 @@ export class Ht2Drive {
 
   /**
    * Фари — прожектори в системі машини: точки Fara_FL/FR (vehicle.tech, система моделі: x, вперед, угору), світять
-   * уперед. Сцена HT2 освітлюється (Lambert), тож світло лягає на дорогу без власних шейдерів.
-   * Ближнє світло (на прохання користувача): маска vehicles/headlights.ts — чітка межа на LAMP_CUTOFF м попереду,
-   * вище неї (зустрічні машини) не світить, дорога до межі освітлена рівномірно. Вісь — горизонтально, без
-   * згасання з відстанню (його врівноважує маска); освітленість LAMP_ROAD і межа — на око.
+   * уперед. Ближнє світло (на прохання користувача): маска vehicles/headlights.ts — межа на LAMP_CUTOFF м попереду,
+   * вище неї (зустрічні машини) не світить. Вісь — горизонтально, без згасання з відстанню й без залежності від кута
+   * падіння (installHeadlightShading): дорога й вертикальні предмети освітлені однаково; LAMP_ROAD і межа — на око.
    */
   private mountLamps(): void {
     this.lamps.length = 0;
@@ -1562,7 +1561,7 @@ export class Ht2Drive {
     this.lampMask = headlightMask(h, LAMP_CUTOFF, LAMP_ANGLE);
     for (const f of spots) {
       const p = g2t(f as [number, number, number]);
-      const lamp = new THREE.SpotLight(0xfff2d0, (LAMP_ROAD * LAMP_CUTOFF) / Math.max(h, 0.1), LAMP_CUTOFF * 2, LAMP_ANGLE, 0.15, 0);
+      const lamp = new THREE.SpotLight(0xfff2d0, LAMP_ROAD, LAMP_CUTOFF * 2, LAMP_ANGLE, 0.15, 0);
       lamp.map = this.lampMask;
       lamp.position.copy(p);
       lamp.target.position.copy(p).add(new THREE.Vector3(0, 0, -20));
