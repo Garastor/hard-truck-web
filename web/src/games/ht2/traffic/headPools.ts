@@ -21,11 +21,19 @@ const POOL_WIDTH = 7;
 const tint = new THREE.Color(0.5, 0.5, 0.5);
 
 /**
+ * Частка поканальної поправки кольору (0 — рівне підсилення за яскравістю, 1 — точно «фара / нічне світло» по
+ * каналах): чиста поправка давала помаранчеву пляму (у місячному світлі майже немає червоного), рівне підсилення —
+ * синю «неонову»; 0,2 — на око.
+ */
+const TINT_HUE = 0.2;
+
+/**
  * Світло плями: lamp — колір фари, power — освітленість від неї (у тих самих одиницях, що й розсіяне світу:
  * Lambert ділить силу прямого світла на π), base — нічне світло дороги під плямою (розсіяне + місяць).
  */
 export function setPoolLight(lamp: THREE.Color, power: number, base: THREE.Color): void {
-  const ch = (l: number, b: number) => Math.min(1, (power * l) / Math.max(b, 0.02));
+  const lum = Math.max(0.02, 0.2126 * base.r + 0.7152 * base.g + 0.0722 * base.b);
+  const ch = (l: number, b: number) => Math.min(1, (1 - TINT_HUE) * ((power * l) / lum) + TINT_HUE * ((power * l) / Math.max(b, 0.02)));
   tint.setRGB(ch(lamp.r, base.r), ch(lamp.g, base.g), ch(lamp.b, base.b));
 }
 /** Підйом над дорогою, м — щоб не мерехтіла з асфальтом (плюс зсув глибини). */
