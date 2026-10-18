@@ -60,7 +60,7 @@ import { parseB3d } from './engine/formats/b3d';
 import { parseRmp } from './engine/formats/rmp';
 import { REPAIR_PER_PERCENT, restoreCareer, savedCareerRaw, type Ht2Career } from './career/career';
 import { HT2_MOD_REGIONS, readTextures } from './files';
-import { saveSettings, steerGain, timeScale, type Ht2Settings } from './ui/settings';
+import { SFX_REF, saveSettings, steerGain, timeScale, type Ht2Settings } from './ui/settings';
 import { EscArt } from './ui/escArt';
 import { ukMessage, ukSign } from './ui/uk';
 import { Obstacles, closedAxes, parseObstacles, type Obstacle } from './world/obstacles';
@@ -2453,13 +2453,15 @@ export class Ht2Drive {
   }
 
   /**
-   * Звук і керування з меню Esc: загальна гучність — усе, крім музики (двигун — ще й своїм повзунком), музика,
+   * Звук і керування з меню Esc: загальна гучність — множник усього звуку, і музики теж (раніше музику не чіпала, і
+   * повзунок здавався непрацюючим: музика грала як грала); музика — відносно типової загальної (SFX_REF), щоб за неї
+   * звучала як раніше; двигун і музика — ще й своїми повзунками,
    * чутливість і повернення керма (множники 0,5…1,5; середина — як у телеметрії, гіпотеза). Гальмування й віддача —
    * лише зберігаються (таких звуків і керма з віддачею в порті немає).
    */
   private applySettings(s: Ht2Settings, save: boolean): void {
     this.audio?.setVolumes(s.engine * s.sfx, s.sfx);
-    this.music?.setVolume(s.music);
+    this.music?.setVolume((s.music * s.sfx) / SFX_REF);
     this.input.steerSpeed = steerGain(s.steerSpeed);
     this.input.steerCenter = steerGain(s.steerCenter);
     if (save) saveSettings(s);

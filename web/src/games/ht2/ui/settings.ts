@@ -58,6 +58,8 @@ export interface Ht2Settings {
 const KEY = 'ht2.settings.v1';
 /** Типова гучність музики — на 40 % тихіша за колишню (на прохання користувача). */
 const MUSIC_QUIET = 0.6;
+/** Типова загальна гучність (TRUCK.INI sfxvol=54): за неї музика звучить на своєму повзунку без поправки. */
+export const SFX_REF = 0.54;
 /**
  * Версія збережених налаштувань: 1 — музику зменшено на 40 %. Збережене раніше (без `rev`) — гучність музики ×0,6,
  * щоб зміна дійшла й до тих, хто вже натискав «ОК» у меню «Звук».
@@ -71,7 +73,7 @@ export function defaultSettings(ini: Ini | null): Ht2Settings {
     traffic: pct('trafs', 100),
     dayLength: pct('days', 50),
     weather: pct('weats', 60),
-    sfx: pct('sfxvol', 54),
+    sfx: pct('sfxvol', SFX_REF * 100),
     // Музика: TRUCK.INI midivol=20 на телефоні майже не чути — було не тихіше 0,35; на прохання користувача — на 40 %
     // тихіше (0,21).
     music: MUSIC_QUIET * Math.max(0.35, pct('midivol', 20)),
