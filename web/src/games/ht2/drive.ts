@@ -211,6 +211,13 @@ const COCKPIT_LIFT = new THREE.Vector3(0, 0.08, 0);
 /** Межі кутів голови в кабіні (king.exe 0x535a70: 0x64f3b0, 0x64f3a8), рад — 2,5° уперед-назад і 5° убік. */
 const HEAD_PITCH_MAX = 0.0436;
 const HEAD_SIDE_MAX = 0.0873;
+/**
+ * Ослаблення гойдання в кабіні зі швидкістю (на прохання користувача: бічне прискорення росте як v·ω, і на ходу
+ * голову й крен розгойдувало надміру): 1 / (1 + v / 25 м/с) — 30 км/год ×0,75, 72 — ×0,56, 100 — ×0,47.
+ */
+function cockpitCalm(kmh: number): number {
+  return 1 / (1 + Math.abs(kmh) / 3.6 / 25);
+}
 /** Частка крену кузова у вигляді з кабіни (на прохання користувача — на 30 % менше). */
 const COCKPIT_ROLL = 0.7;
 /** Зсув голови на одиницю кута, м/рад: у king.exe 4 (0x64c408), у порту на 20 % менше — на прохання користувача. */
@@ -2614,7 +2621,7 @@ export class Ht2Drive {
   private updateCab(dt: number): void {
     const inside = this.camMode === 'cockpit';
     // Крен кузова в поворотах з кабіни — на 30 % менший (на прохання користувача; капот і салон хиляться разом).
-    this.truck.rollScale = inside ? COCKPIT_ROLL : 1;
+    this.truck.rollScale = inside ? COCKPIT_ROLL * cockpitCalm(this.truck.speedKmh) : 1;
     if (inside && !this.cab) void this.loadCab();
     // Модель машини з кабіни не ховається (king.exe: режим кабіни, 0x548120 → +0x2590, вимикає лише плями фар на
     // дорозі, 0x552940): крізь скло видно капот, а оболонку кабіни зсередини відсікають однобічні полігони.
@@ -2966,10 +2973,14 @@ export class Ht2Drive {
       // (≤ 5°), згладжені 0,8^(10·dt) (τ ≈ 0,45 с); у порту — лише кивок на A і крен на 0,1·B (див. нижче).
       // На прохання користувача: плавніше (0,85 замість 0,8 — τ ≈ 0,6 с), зсув на 20 % менший (HEAD_SHIFT) і м'яка
       // межа: що ближче до краю, то повільніше росте кут (tanh замість обрізання).
-      const f1 = 0.85 ** (10 * dt);
+      // На швидкості — ще слабше й плавніше (cockpitCalm; згладжування 0,85 на місці → ≈ 0,92 на ходу, як 0x535a70
+      // робить для висоти голови).
+      const ms = Math.abs(this.truck.speedKmh) / 3.6;
+      const calm = cockpitCalm(this.truck.speedKmh);
+      const f1 = (0.92 - 0.07 * (5 / (ms + 5))) ** (10 * dt);
       const soft = (x: number, max: number) => max * Math.tanh(x / max);
-      const A = soft(0.005 * this.truck.feltFwd, HEAD_PITCH_MAX);
-      const B = soft(0.005 * this.truck.feltSide, HEAD_SIDE_MAX);
+      const A = soft(0.005 * calm * this.truck.feltFwd, HEAD_PITCH_MAX);
+      const B = soft(0.005 * calm * this.truck.feltSide, HEAD_SIDE_MAX);
       this.headA = f1 * this.headA + (1 - f1) * A;
       this.headB = f1 * this.headB + (1 - f1) * B;
       const a = this.headA;
