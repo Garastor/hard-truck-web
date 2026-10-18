@@ -29,7 +29,7 @@ import { Radars } from './traffic/radars';
 import { showGameOver, showVictory, type LoseScreen } from './ui/gameOver';
 import { playVideo } from './engine/video/player';
 import { sharedContext } from './engine/audio/engineAudio';
-import { glassDrops, precipitation, trafficHeadlights } from './ui/effects';
+import { glassDrops, precipitation, trafficHeadlights, trafficLamp } from './ui/effects';
 import { WeatherRooms } from './world/weatherRooms';
 import { WIN_SHARE } from './career/share';
 import { Signs } from './world/signs';
@@ -202,6 +202,10 @@ const FOG_FALLBACK = new THREE.Color(0.5, 0.5, 0.5);
 const LAMP_CUTOFF = 80;
 const LAMP_ANGLE = (30 * Math.PI) / 180;
 const LAMP_ROAD = 0.56;
+/** Прожектори найближчої зустрічної машини трафіку (по одному в кожній фарі): межа світла, м. */
+const CAR_LAMP_CUTOFF = 50;
+/** Висота фар легковика над дорогою для маски, м — на око (у трафіку різні машини, маска одна). */
+const CAR_LAMP_HEIGHT = 0.8;
 /** Опір кочення поза твердим покриттям, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
 const OFFROAD_ROLL = 5;
 /**
@@ -520,6 +524,8 @@ export class Ht2Drive {
    */
   private readonly lamps: THREE.SpotLight[] = [];
   private lampMask: THREE.Texture | null = null;
+  /** Прожектори фар зустрічної машини (Traffic.spot): увесь час у сцені вночі, без машини — сила 0 (без перекомпіляції шейдерів). */
+  private readonly carLamps: THREE.SpotLight[] = [];
   private lightsManual = false;
   /** Двірники — лише вручну (W; на прохання користувача — у дощ самі не вмикаються). */
   private wipersManual = false;
@@ -774,7 +780,12 @@ export class Ht2Drive {
     };
     // Фізичні машини трафіку поруч з гравцем — та сама модель руху king.exe, що й у гравця, з їхнім vehicle.tech.
     this.traffic.physics = {
-      make: (kind, pos, forward, speed) => this.makeCar(kind.model, kind.variant, pos, forward, speed),
+      make: (kind, pos, forward, speed, lights) => this.makeCar(kind.model, kind.variant, pos, forward, speed, true, lights),
+      setLights: (v, on) => {
+        const sw = this.carSwitches.get(v);
+        sw?.('refer_HeadLightKey', on ? 1 : 0);
+        sw?.('refer_SizeLightKey', on ? 1 : 0);
+      },
       remove: (v) => this.removeCar(v),
     };
     if (!o.race) {
@@ -1571,6 +1582,34 @@ export class Ht2Drive {
     }
   }
 
+  /** Прожектори фар найближчої зустрічної машини: точки й напрям — з Traffic.spot (оновлює traffic.update). */
+  private updateCarLamp(on: boolean): void {
+    const t = this.traffic!;
+    t.spotWanted = on;
+    if (!on) {
+      for (const l of this.carLamps) l.visible = false;
+      return;
+    }
+    if (!this.carLamps.length) {
+      const mask = headlightMask(CAR_LAMP_HEIGHT, CAR_LAMP_CUTOFF, LAMP_ANGLE);
+      for (let i = 0; i < 2; i++) {
+        const lamp = new THREE.SpotLight(0xfff2d0, 0, CAR_LAMP_CUTOFF * 2, LAMP_ANGLE, 0.15, 0);
+        lamp.map = mask;
+        this.world.scene.add(lamp, lamp.target);
+        this.carLamps.push(lamp);
+      }
+    }
+    const s = t.spot;
+    this.carLamps.forEach((lamp, i) => {
+      lamp.visible = true;
+      lamp.intensity = s ? LAMP_ROAD : 0;
+      if (!s) return;
+      lamp.position.copy(i ? s.right : s.left);
+      lamp.target.position.copy(lamp.position).addScaledVector(s.dir, 20);
+      lamp.target.updateMatrixWorld();
+    });
+  }
+
   /** Листя на вітрі: точка землі під вантажівкою (променем униз) і напрям погляду камери. */
   private updateDebris(dt: number, wind: number, w: number): void {
     if (!this.debris) {
@@ -1641,7 +1680,10 @@ export class Ht2Drive {
     this.world.setNight(dusk);
     this.cabLight?.color.setScalar(cabAmbient(hour));
     // Фари чужих машин — ще й за повзунками графіки (g > 0,5 і d > 0,5, ui/effects.ts).
-    if (this.traffic) this.traffic.lights = trafficLights(hour) && trafficHeadlights();
+    if (this.traffic) {
+      this.traffic.lights = trafficLights(hour) && trafficHeadlights();
+      this.updateCarLamp(this.traffic.lights && trafficLamp());
+    }
     this.rainSound ??= this.audio?.loopSound('rain') ?? null;
     this.windSound ??= this.audio?.loopSound('wind') ?? null;
     // Набір кімнати з thund=off (тунелі): шум дощу й вітру не гучніший за 1 − k (king.exe 0x5a9dc0) — стихає з глибиною.
@@ -1841,7 +1883,7 @@ export class Ht2Drive {
   }
 
   /** Машина з vehicle.tech на моделі руху king.exe (фізичний трафік, міліція). */
-  private makeCar(carNode: string, variant: number, pos: THREE.Vector3, forward: THREE.Vector3, speed: number, dynamic = false): TruckVehicle | null {
+  private makeCar(carNode: string, variant: number, pos: THREE.Vector3, forward: THREE.Vector3, speed: number, dynamic = false, lights = false): TruckVehicle | null {
     const rec = this.trucks.records.find((r) => r.carNode === carNode);
     const def = rec && truckDef(this.trucks, rec);
     const model = def && buildTruckModel(this.trucks.asm, def, dynamic);
@@ -1864,6 +1906,11 @@ export class Ht2Drive {
     v.engine.engageFor(speed);
     this.world.scene.add(v.visual);
     if (model.setSwitch) this.carSwitches.set(v, model.setSwitch);
+    // Фари трафіку, що став фізичним (кінематична модель мала їх з появи вночі): раніше гасли ближче 80 м.
+    if (lights) {
+      model.setSwitch?.('refer_HeadLightKey', 1);
+      model.setSwitch?.('refer_SizeLightKey', 1);
+    }
     return v;
   }
 

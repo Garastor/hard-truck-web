@@ -9,6 +9,7 @@ import { Navigator } from '../world/navigator';
 import { control, newPhysState, type PhysState } from './physical';
 import type { TruckVehicle } from '../engine/vehicle/truckVehicle';
 import type { Ht2Trucks } from '../vehicles/trucks';
+import { disposePool, makePool, setPoolFade } from './headPools';
 
 /**
  * Трафік Дальнобойщиків 2: машини з `evehicles.sch` класу `dumb` («тупі» легковики, автобус, пікапи) — запис
@@ -64,6 +65,10 @@ const PHYS_SPEED = 18;
  */
 const BLINK_HZ = 1.5;
 const BLINK_SIZE = 0.55;
+/** Справжній прожектор фар (drive.ts) — найближчій зустрічній машині з фарами ближче за SPOT_RANGE, м. */
+const SPOT_RANGE = 90;
+/** Зустрічна: курс машини на гравця, косинус кута не менший за SPOT_FACING. */
+const SPOT_FACING = 0.7;
 const GROUND_EVERY = 0.12;
 /** Нова машина на багатосмуговій дорозі — у крайній правій з такою імовірністю (порт). */
 const KEEP_RIGHT = 0.8;
@@ -121,6 +126,9 @@ interface Car extends Mover {
   ground: Ground | null;
   /** Покажчики повороту (4 відблиски: перед і зад лівого боку, перед і зад правого) — на моделі. */
   blink: THREE.Group | null;
+  /** Фари ввімкнені (з моделлю, що зʼявилась уночі) і світлова пляма на дорозі (headPools.ts). */
+  lit: boolean;
+  pool: THREE.Group | null;
 }
 
 /** Поверхня під кінематичною моделлю: згладжена висота y, заміряна goal, нормаль n, час до заміру t. */
@@ -133,7 +141,9 @@ interface Ground {
 
 /** Фізичні машини трафіку (будує гра: модель, параметри king.exe з vehicle.tech, сцена). */
 export interface TrafficPhysics {
-  make(kind: TrafficKind, pos: THREE.Vector3, forward: THREE.Vector3, speed: number): TruckVehicle | null;
+  make(kind: TrafficKind, pos: THREE.Vector3, forward: THREE.Vector3, speed: number, lights: boolean): TruckVehicle | null;
+  /** Увімкнути чи вимкнути фари фізичної машини (перемикачі моделі). */
+  setLights(v: TruckVehicle, on: boolean): void;
   remove(v: TruckVehicle): void;
 }
 
@@ -184,6 +194,14 @@ export class Traffic {
   private blinkMat: THREE.SpriteMaterial | null | undefined;
   /** Точки покажчиків моделі (Three.js, від початку координат моделі): перед лів., зад лів., перед прав., зад прав. */
   private readonly blinkPts = new Map<string, THREE.Vector3[] | null>();
+
+  /**
+   * Справжні прожектори фар — найближчій зустрічній машині з фарами (точки лівої й правої фари й напрям, Three.js),
+   * інакше null; її пляма схована (світять прожектори). Оновлюється в update.
+   */
+  spot: { left: THREE.Vector3; right: THREE.Vector3; dir: THREE.Vector3 } | null = null;
+  /** Чи шукати машину для прожектора (повзунки графіки, drive.ts). */
+  spotWanted = false;
 
   /** Що бачить гравець: дальність (кінець туману, м) і чи видно точку з камери. Без нього — без перевірок. */
   view: { range(): number; sees(p: THREE.Vector3): boolean } | null = null;
@@ -288,6 +306,78 @@ export class Traffic {
     }
     this.cars = this.all.filter((c) => c.root || c.vehicle);
     this.updateSignals(dt);
+    this.updatePools(player);
+  }
+
+  /**
+   * Світлові плями фар (headPools.ts) на машинах з фарами: згасають від 70 % до 100 % дальності видимості. Найближча
+   * зустрічна ближче SPOT_RANGE — замість плями справжній прожектор (this.spot).
+   */
+  private updatePools(player: THREE.Vector3): void {
+    // Фари вмикаються й гаснуть з часом доби й на машинах, що вже їдуть поруч (порт, на прохання користувача; king.exe
+    // ставить фари лише при створенні машини — ті, що зʼявились удень, їхали вночі без світла).
+    for (const c of this.cars) if (c.lit !== this.lights) this.relight(c);
+    const R = this.view?.range() ?? VISIBLE_ON;
+    let best: Car | null = null;
+    let bestD = SPOT_RANGE;
+    if (this.spotWanted)
+      for (const c of this.cars) {
+        if (!c.lit) continue;
+        const d = c.pos.distanceTo(player);
+        if (d >= bestD || d < 1) continue;
+        const to = player.clone().sub(c.pos).setY(0).normalize();
+        const fwd = c.vehicle ? c.vehicle.forward().setY(0).normalize() : c.heading;
+        if (fwd.dot(to) < SPOT_FACING) continue;
+        best = c;
+        bestD = d;
+      }
+    this.spot = null;
+    for (const c of this.cars) {
+      const host = c.vehicle ? c.vehicle.visual : c.root;
+      const pts = c.lit && host ? this.signalPoints(c.kind.model) : null;
+      if (!host || !pts) {
+        if (c.pool) disposePool(c.pool);
+        c.pool = null;
+        continue;
+      }
+      // Кінематична модель піднята обгорткою над початком координат root (дорога — y = 0); фізична — у системі моделі.
+      const lift = c.vehicle ? 0 : (c.root!.children[0]?.position.y ?? 0);
+      const ground = c.vehicle ? c.vehicle.lightGeometry.groundY : 0;
+      const front = pts[0].z;
+      if (!c.pool || c.pool.parent !== host) {
+        if (c.pool) disposePool(c.pool);
+        c.pool = makePool(ground, front, pts[0].x, pts[2].x);
+        host.add(c.pool);
+      }
+      if (c === best) {
+        setPoolFade(c.pool, 0);
+        // Точки покажчиків на краях фар — на 0,15 м усередину, тобто майже в самих фарах.
+        const y = pts[0].y + lift;
+        const left = host.localToWorld(new THREE.Vector3(pts[0].x, y, front));
+        const right = host.localToWorld(new THREE.Vector3(pts[2].x, y, front));
+        const dir = host.localToWorld(new THREE.Vector3(pts[0].x, y, front - 20)).sub(left).normalize();
+        this.spot = { left, right, dir };
+        continue;
+      }
+      const d = c.pos.distanceTo(player);
+      setPoolFade(c.pool, THREE.MathUtils.clamp((R - d) / (0.3 * R), 0, 1));
+    }
+  }
+
+  /** Фари машини за this.lights: кінематичній — модель з фарами чи без (статичний шаблон перемикачів не має), фізичній — перемикачі. */
+  private relight(c: Car): void {
+    if (c.vehicle) {
+      this.physics?.setLights(c.vehicle, this.lights);
+      c.lit = this.lights;
+      return;
+    }
+    const frame = c.root?.children[0];
+    const old = frame?.children[0];
+    const model = frame && old ? this.model(c.kind, this.lights) : null;
+    if (!frame || !old || !model) return;
+    frame.remove(old);
+    frame.add(model);
+    c.lit = this.lights;
   }
 
   /** Покажчики повороту: на моделі (кінематичній чи фізичній) — блимають, коли водій сигналить. */
@@ -407,7 +497,7 @@ export class Traffic {
     if (c.speed > roadLimit(c, pathAhead(c, 150)) + 1) return;
     // Спершу прибрати кінематичне тіло: інакше промінь до землі при створенні влучає в дах самої машини.
     this.deactivate(c);
-    const v = this.physics.make(c.kind, c.pos, c.heading, Math.min(PHYS_SPEED, c.speed));
+    const v = this.physics.make(c.kind, c.pos, c.heading, Math.min(PHYS_SPEED, c.speed), c.lit);
     if (!v) {
       this.activate(c);
       return;
@@ -465,7 +555,7 @@ export class Traffic {
     if (line.lanes > 1 && right && right !== line && right.pts.length === line.pts.length && Math.random() < KEEP_RIGHT) line = right;
     const kind = this.kinds[Math.floor(Math.random() * this.kinds.length)];
     const cruise = CRUISE_MIN + Math.random() * (CRUISE_MAX - CRUISE_MIN);
-    return Object.assign(newMover(line, seg, Math.random(), cruise, 2.2), { kind, ghost, age: 0, root: null, body: null, vehicle: null, phys: newPhysState(), want: 0, flipped: 0, ground: null, blink: null });
+    return Object.assign(newMover(line, seg, Math.random(), cruise, 2.2), { kind, ghost, age: 0, root: null, body: null, vehicle: null, phys: newPhysState(), want: 0, flipped: 0, ground: null, blink: null, lit: false, pool: null });
   }
 
   /**
@@ -518,6 +608,7 @@ export class Traffic {
   private activate(c: Car): void {
     const model = this.model(c.kind, this.lights);
     if (!model) return;
+    c.lit = this.lights;
     // Модель у системі гри → обгортка в системі Three.js (вперед −Z).
     const frame = new THREE.Group();
     frame.rotation.x = -Math.PI / 2;
@@ -550,6 +641,8 @@ export class Traffic {
   private deactivate(c: Car): void {
     c.blink?.removeFromParent();
     c.blink = null;
+    if (c.pool) disposePool(c.pool);
+    c.pool = null;
     if (c.vehicle) {
       this.physics?.remove(c.vehicle);
       c.vehicle = null;
