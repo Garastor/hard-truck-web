@@ -148,6 +148,39 @@
   box-shadow: 0 0 6px #6f6;
 }
 
+/* Список водіїв (екран «Водії»): рядки на темному полі фону, поточний — яскравіший. */
+.ht2-drivers {
+  overflow-y: auto;
+  scrollbar-width: none;
+  color: #f0e896;
+  font: 600 11px/1 Arial, sans-serif;
+  text-shadow: 0 0 3px #000;
+}
+.ht2-drivers::-webkit-scrollbar {
+  display: none;
+}
+.ht2-driver-row {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.ht2-driver-row[aria-selected='true'] {
+  color: #9f9;
+  background: rgba(80, 255, 80, 0.18);
+}
+
 .ht2-save {
   width: 118px;
   color: #9f9;

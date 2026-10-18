@@ -10,8 +10,8 @@ import { DEFAULT_KEYS, type Action, type Command } from '../engine/input/input';
  *   «спецефекти» й «детальність» — пороги ефектів king.exe (ui/effects.ts);
  * - керування — таблиця 22 дій з клавішами порту; рядок дії порту — перепризначити клавішу (наступне натискання;
  *   зайнята іншою дією — обмін), «За замовчуванням» — типові;
- * - водії — імʼя, логотип (`d/logo1…8`) і фото (`d/photo01…51`) водія кар'єри, список («недавні» — збереження порту),
- *   «Видалити» — стерти кар'єру;
+ * - водії — логотип (`d/logo1…8`) і фото (`d/photo01…51`) поточного водія, поле імені (нове імʼя — новий водій),
+ *   список водіїв (вибір — поточний), «Видалити» — водія з його збереженими іграми;
  * - відеоплеєр — записів (файли .tr/.mvp оригіналу) у порту немає: список порожній, кнопки неактивні.
  */
 
@@ -265,20 +265,36 @@ export interface DriverInfo {
 }
 
 export interface DriversScreen {
-  /** Поточний водій (кар'єра) чи null — немає. */
-  driver: DriverInfo | null;
-  onChange(d: DriverInfo): void;
-  onDelete(): void;
+  /** Усі водії (king.exe — усі `*.pl1`) і поточний (`lastp`) чи null — немає. */
+  drivers(): DriverInfo[];
+  current(): string | null;
+  /** Створити водія чи оновити логотип і фото наявного; зробити поточним. */
+  onPut(d: DriverInfo): void;
+  onSelect(name: string): void;
+  /** Видалити водія (з підтвердженням); true — видалено. */
+  onDelete(name: string): Promise<boolean>;
   onCancel(): void;
   onRound(key: RoundKey): void;
 }
 
-/** Водії (`d/backDriv`, 0x51b640): логотип і фото стрілками, імʼя, «недавні», «Видалити». */
+/** Рядок списку водіїв, px; стрілки списку atop/abot — у круглих гніздах ліворуч від поля (за макетом). */
+const DRIVER_ROW = 15;
+const DRIVER_LIST = { x: 347, y: 326, w: 78, h: 120 };
+const DRIVER_ARROWS = [
+  [308, 324],
+  [308, 426],
+] as const;
+
+/**
+ * Водії (`d/backDriv`, 0x51b640): логотип і фото стрілками, поле імені, список водіїв, «Видалити». Як в оригіналі
+ * (застосувати 0x51bfa0): нове імʼя в полі — новий водій (наявне — вибрати його); вибір у списку — поточний водій.
+ */
 export function ht2DriversScreen(art: Ht2MenuArt, o: DriversScreen): () => void {
   const sc = screen(art, 'd/backdriv.txr', o.onRound);
   const { stage } = sc;
-  const d: DriverInfo = o.driver ? { ...o.driver } : { name: 'Водій', logo: 4, photo: 0 };
-  const has = !!o.driver;
+  const find = (name: string | null) => o.drivers().find((x) => x.name === name) ?? null;
+  // Немає водіїв — у полі імʼя за замовчуванням; водій зʼявиться після першої зміни (чи нової гри).
+  let d: DriverInfo = { ...(find(o.current()) ?? { name: 'Водій', logo: 4, photo: 0 }) };
   const pic = (x: number, y: number) => {
     const img = document.createElement('img');
     img.alt = '';
@@ -291,38 +307,93 @@ export function ht2DriversScreen(art: Ht2MenuArt, o: DriversScreen): () => void 
   };
   const logo = pic(342, 129);
   const photo = pic(450, 219);
-  const paint = () => {
-    logo.src = art.image(`d/logo${d.logo + 1}.msk`) ?? '';
-    photo.src = art.image(`d/photo${String(d.photo + 1).padStart(2, '0')}.msk`) ?? '';
-  };
-  const change = (f: () => void) => () => {
-    f();
-    paint();
-    o.onChange({ ...d });
-  };
-  texButton(art, stage, 'aleft', 308, 175, 'Попередній логотип', { ext: '.msk', disabled: !has, action: change(() => (d.logo = (d.logo + 7) % 8)) });
-  texButton(art, stage, 'aright', 463, 175, 'Наступний логотип', { ext: '.msk', disabled: !has, action: change(() => (d.logo = (d.logo + 1) % 8)) });
-  texButton(art, stage, 'aleft', 416, 265, 'Попереднє фото', { ext: '.msk', disabled: !has, action: change(() => (d.photo = (d.photo + 50) % 51)) });
-  texButton(art, stage, 'aright', 571, 265, 'Наступне фото', { ext: '.msk', disabled: !has, action: change(() => (d.photo = (d.photo + 1) % 51)) });
   // Поле імені «ЗА КЕРМОМ» (до 34 символів).
   const name = document.createElement('input');
   name.className = 'menu-abs';
   name.maxLength = 34;
-  name.value = d.name;
-  name.disabled = !has;
   name.setAttribute('aria-label', 'Імʼя водія');
   name.style.cssText += TEXT + 'pointer-events:auto;background:transparent;border:0;outline:0;padding:0;width:96px;height:14px;text-transform:uppercase;';
   name.style.left = '313px';
   name.style.top = '268px';
+  // Список водіїв: рядки (дотик — вибрати), гортання стрілками й пальцем.
+  const list = document.createElement('div');
+  list.className = 'menu-abs ht2-drivers';
+  list.setAttribute('role', 'listbox');
+  list.setAttribute('aria-label', 'Водії');
+  Object.assign(list.style, { left: `${DRIVER_LIST.x}px`, top: `${DRIVER_LIST.y}px`, width: `${DRIVER_LIST.w}px`, height: `${DRIVER_LIST.h}px` });
+  const paintList = () => {
+    list.replaceChildren(
+      ...o.drivers().map((x) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'ht2-driver-row';
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', String(x.name === o.current()));
+        row.style.height = `${DRIVER_ROW}px`;
+        row.textContent = x.name;
+        row.addEventListener('click', () => {
+          o.onSelect(x.name);
+          d = { ...x };
+          paint();
+        });
+        return row;
+      }),
+    );
+    if (!list.childElementCount) list.textContent = 'Немає водіїв';
+  };
+  const painters: (() => void)[] = [];
+  const paint = () => {
+    logo.src = art.image(`d/logo${d.logo + 1}.msk`) ?? '';
+    photo.src = art.image(`d/photo${String(d.photo + 1).padStart(2, '0')}.msk`) ?? '';
+    if (document.activeElement !== name) name.value = d.name;
+    paintList();
+    painters.forEach((p) => p());
+  };
+  const change = (f: () => void) => () => {
+    f();
+    o.onPut({ ...d });
+    paint();
+  };
   name.addEventListener('change', () => {
-    d.name = name.value.trim() || d.name;
+    const v = name.value.trim();
+    if (v) {
+      const known = find(v);
+      if (known) {
+        o.onSelect(v);
+        d = { ...known };
+      } else {
+        d = { ...d, name: v };
+        o.onPut({ ...d });
+      }
+    }
     name.value = d.name;
-    o.onChange({ ...d });
+    paint();
   });
-  stage.append(name);
-  // «Недавні» — збереження порту (одне).
-  text(stage, has ? d.name : 'Немає водіїв', 312, 336, { size: 11 });
-  texButton(art, stage, 'd/deldriv', 434, 418, 'Видалити водія', { disabled: !has, action: o.onDelete });
+  name.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') name.blur();
+  });
+  stage.append(name, list);
+  texButton(art, stage, 'aleft', 308, 175, 'Попередній логотип', { ext: '.msk', action: change(() => (d.logo = (d.logo + 7) % 8)) });
+  texButton(art, stage, 'aright', 463, 175, 'Наступний логотип', { ext: '.msk', action: change(() => (d.logo = (d.logo + 1) % 8)) });
+  texButton(art, stage, 'aleft', 416, 265, 'Попереднє фото', { ext: '.msk', action: change(() => (d.photo = (d.photo + 50) % 51)) });
+  texButton(art, stage, 'aright', 571, 265, 'Наступне фото', { ext: '.msk', action: change(() => (d.photo = (d.photo + 1) % 51)) });
+  const scroll = (dir: number) => () => list.scrollBy({ top: dir * DRIVER_ROW * 3 });
+  texButton(art, stage, 'atop', DRIVER_ARROWS[0][0], DRIVER_ARROWS[0][1], 'Гортати водіїв угору', { ext: '.msk', action: scroll(-1) });
+  texButton(art, stage, 'abot', DRIVER_ARROWS[1][0], DRIVER_ARROWS[1][1], 'Гортати водіїв униз', { ext: '.msk', action: scroll(1) });
+  painters.push(
+    texButton(art, stage, 'd/deldriv', 434, 418, 'Видалити водія', {
+      disabled: () => !find(o.current()),
+      action: () => {
+        const cur = o.current();
+        if (!cur) return;
+        void o.onDelete(cur).then((gone) => {
+          if (!gone) return;
+          d = { ...(find(o.current()) ?? { name: 'Водій', logo: 4, photo: 0 }) };
+          paint();
+        });
+      },
+    }),
+  );
   texButton(art, stage, 'd/canc', 323, 481, 'Скасувати', { action: o.onCancel });
   paint();
   return sc.close;

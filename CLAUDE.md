@@ -19,7 +19,7 @@
 | План / журнал | `Docs/progress.md` (рушій, структура) | `Docs/ht1/roadmap.md`, `Docs/ht1/progress.md` | `Docs/ht2/plan.md`, `Docs/ht2/progress.md` |
 | Реверс / нотатки | — | Ghidra `re/htruck`, `re/notes/ht1/` | Ghidra `re/king`, `re/notes/ht2/` |
 | Телеметрія оригіналу | `tools/re/procmem.py` (читання памʼяті) | `tools/re/ht1/`, дані `re/telemetry/*` | `tools/re/ht2/`, дані `re/telemetry/ht2/`, скіл `ht2-telemetry` |
-| Збереження (localStorage) | `ht.swapControls`, `ht.quality` | `ht.careers.v1`, `ht.*` | `ht2.career.v1`, `ht2.settings.v1` |
+| Збереження (localStorage) | `ht.swapControls`, `ht.quality` | `ht.careers.v1`, `ht.*` | `ht2.save.<id>` (збереження), `ht2.drivers.v1`, `ht2.settings.v1` |
 
 - `web/src/app/` — оболонка: вибір гри (`registry.ts`, `select.ts`), імпорт файлів, рендерер, PWA (`platform/`). Гра
   для оболонки — `games/<гра>/index.ts` (GameModule: набір файлів, dev-сервер, `selectArt()` — фон і шрифти екрана

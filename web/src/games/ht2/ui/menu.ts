@@ -204,15 +204,20 @@ const SLIDERS: [keyof Pick<Ht2Settings, 'traffic' | 'dayLength' | 'weather'>, nu
   ['dayLength', 255],
   ['weather', 285],
 ];
+/** Стрілки списку збережених ігор — лівий верхній кут у круглих гніздах фону ліворуч від поля (за макетом). */
+const SAVE_ARROWS = [
+  [314, 406],
+  [314, 443],
+] as const;
 const RUN_X0 = 385;
 const RUN_X1 = 502;
 
 export interface SingleScreen {
-  hasSave: boolean;
-  saveText: string;
+  /** Збережені ігри (усіх водіїв, найновіші першими): id і текст поля (водій, гроші, доставки). */
+  saves: { id: string; text: string }[];
   settings: Ht2Settings;
   onNew(): void;
-  onLoad(): void;
+  onLoad(id: string): void;
   onCancel(): void;
   onChange(s: Ht2Settings): void;
   /** Кругла кнопка рамки (інший розділ меню). */
@@ -253,7 +258,8 @@ export function ht2SingleScreen(art: Ht2MenuArt, o: SingleScreen): () => void {
   });
   button('car', 'mecar', 'Легковик', { selected: () => false, action: () => o.note('Легковий автомобіль у порті ще недоступний', root) });
   button('truck', 'metruck', 'Вантажівка', { selected: () => true, action: () => {} });
-  button('load', 'load', 'Завантажити гру', { disabled: !o.hasSave, action: o.onLoad });
+  let pick = 0;
+  button('load', 'load', 'Завантажити гру', { disabled: !o.saves.length, action: () => o.onLoad(o.saves[pick]!.id) });
   button('cancel', 'canc', 'Скасувати', { action: o.onCancel });
 
   for (const [key, y] of SLIDERS) {
@@ -306,13 +312,26 @@ export function ht2SingleScreen(art: Ht2MenuArt, o: SingleScreen): () => void {
     stage.append(track);
   }
 
-  // Збережена гра — у полі списку (власний текст).
+  // Збережені ігри — список зі скролом (king.exe 0x51c980: 0x5c0550 у (315, 407), стрілки atop/abot): у полі —
+  // вибрана (власний текст), стрілки в гніздах ліворуч гортають.
   const save = document.createElement('div');
   save.className = 'menu-abs ht2-save';
   save.style.left = '362px';
   save.style.top = '418px';
-  save.textContent = o.hasSave ? o.saveText : 'Немає збереженої гри';
   stage.append(save);
+  const paintSave = () => {
+    const n = o.saves.length;
+    save.textContent = n ? `${o.saves[pick]!.text}${n > 1 ? `\n${pick + 1} з ${n}` : ''}` : 'Немає збереженої гри';
+  };
+  const step = (d: number) => () => {
+    pick = Math.min(o.saves.length - 1, Math.max(0, pick + d));
+    paintSave();
+  };
+  painters.push(
+    texButton(art, stage, 'atop', SAVE_ARROWS[0][0], SAVE_ARROWS[0][1], 'Попереднє збереження', { ext: '.msk', disabled: () => pick <= 0, action: step(-1), after: repaint }),
+    texButton(art, stage, 'abot', SAVE_ARROWS[1][0], SAVE_ARROWS[1][1], 'Наступне збереження', { ext: '.msk', disabled: () => pick >= o.saves.length - 1, action: step(1), after: repaint }),
+  );
+  paintSave();
   return sc.close;
 }
 

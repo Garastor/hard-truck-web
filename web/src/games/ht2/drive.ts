@@ -488,7 +488,7 @@ export class Ht2Drive {
    * після подій пише поточний стан (на телефоні вкладку можуть вивантажити без dispose), тож вихід без збереження
    * повертає цей знімок — інакше «не зберігати» й «завантажити гру» давали стан останнього автозапису.
    */
-  private checkpoint: string | null = null;
+  private checkpoint: { id: string; raw: string | null } | null = null;
   /** Ігровий час вільної їзди, с від півночі (кар'єра — свій); старт — 10:00 (TRUCK.INI timestart=10). */
   private freeTime = 10 * 3600;
   /** Доба й погода як у king.exe (climate.ts): показник погоди, дощ, грім, вітер; дощ — слизька дорога. */
@@ -655,7 +655,7 @@ export class Ht2Drive {
         o.source.read('restable.sch').then(readSch).catch(() => []),
         o.source.read('names.sch').then(readSch).catch(() => []),
       ]);
-      this.checkpoint = savedCareerRaw();
+      if (o.career.id) this.checkpoint = { id: o.career.id, raw: savedCareerRaw(o.career.id) };
       this.careerMode = new CareerMode(this, o.career, merch, messages, parseUpgrades(restable, true), parseTowns(regionMods), parseServices(regionMods));
       this.copBribes = copsTakeBribes(names);
       this.police = new Police(parseAmbushes(regionMods, this.world.regions.values()), {
@@ -2474,7 +2474,8 @@ export class Ht2Drive {
   private escCommand(c: EscCommand, save?: boolean): void {
     if (c === 'save') {
       this.careerMode?.persist();
-      this.checkpoint = savedCareerRaw();
+      const id = this.careerMode?.career.id;
+      if (id) this.checkpoint = { id, raw: savedCareerRaw(id) };
       this.closeEsc();
       return this.say('ГРУ ЗБЕРЕЖЕНО');
     }
@@ -3270,8 +3271,8 @@ export class Ht2Drive {
 
   dispose(): void {
     if (this.careerMode) {
-      if (this.noSave) restoreCareer(this.checkpoint);
-      else this.careerMode.persist();
+      if (!this.noSave) this.careerMode.persist();
+      else if (this.checkpoint) restoreCareer(this.checkpoint.id, this.checkpoint.raw);
     }
     this.careerMode?.dispose();
     this.escMenu?.close();

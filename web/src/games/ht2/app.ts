@@ -16,7 +16,7 @@ import { parseIni } from './engine/formats/ini';
 import { decodeCp1251 } from './engine/formats/binary';
 import { WorldViewer } from './ui/viewer';
 import { Ht2Drive } from './drive';
-import { clearCareer, formatMoney, loadCareer, newCareer, saveCareer, type Ht2Career } from './career/career';
+import { DEFAULT_DRIVER, currentDriver, deleteDriver, formatMoney, listDrivers, listSaves, loadCareer, newCareer, putDriver, selectDriver, type Ht2Career } from './career/career';
 import { modal, setHudFont } from './engine/ui/modal';
 
 type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files' | 'exit';
@@ -126,9 +126,11 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   const params = new URLSearchParams(location.search);
   const tab = params.get('tab');
   let direct: Choice | null = tab === 'world' || tab === 'drive' || tab === 'career' || tab === 'race' ? tab : null;
+  // Збереження, яке завантажити («Завантажити гру» на екрані «Гра»; у меню Esc — збереження поточної гри).
+  let loadId: string | undefined;
   for (;;) {
-    const saved = loadCareer();
-    const note = saved ? `За кермом: ${saved.driver} · ${formatMoney(saved.money)} · доставок ${saved.delivered}` : 'Дальнобойщики 2 — порт у розробці';
+    const driver = currentDriver();
+    const note = driver ? `За кермом: ${driver.name}` : 'Дальнобойщики 2 — порт у розробці';
     // Кругла кнопка рамки → дія (null — лишитися в меню). «Демо» — режими порту (вільна їзда, гонка, огляд, файли).
     const round = async (key: RoundKey, parent: HTMLElement): Promise<Choice | null> => {
       if (key === 'singl') return 'single';
@@ -179,23 +181,19 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
             });
           else if (key === 'recor') close = ht2RecordsScreen(art, common);
           else {
-            const c = loadCareer();
+            // Водії (king.exe `<імʼя>.pl1`): нове імʼя в полі — новий водій, вибір у списку — поточний.
             close = ht2DriversScreen(art, {
               ...common,
-              driver: c ? { name: c.driver, logo: c.logo ?? 4, photo: c.photo ?? 0 } : null,
-              onChange: (d) => {
-                const cur = loadCareer();
-                if (!cur) return;
-                Object.assign(cur, { driver: d.name, logo: d.logo, photo: d.photo });
-                saveCareer(cur);
-              },
-              onDelete: () => {
-                void modal(topMenu(), 'Видалити водія', 'Стерти збережену кар\'єру цього водія?', ['Видалити', 'Ні']).then((i) => {
-                  if (i !== 0) return;
-                  clearCareer();
-                  done(null);
-                });
-              },
+              drivers: listDrivers,
+              current: () => currentDriver()?.name ?? null,
+              onPut: putDriver,
+              onSelect: selectDriver,
+              onDelete: (name) =>
+                modal(topMenu(), 'Видалити водія', `Стерти водія «${name}» і всі його збережені ігри?`, ['Видалити', 'Ні']).then((i) => {
+                  if (i !== 0) return false;
+                  deleteDriver(name);
+                  return true;
+                }),
             });
           }
         });
@@ -248,16 +246,20 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
     }
     if (choice === 'single' && art) {
       // Екран одиночної гри оригіналу: нова гра / завантажити, режим, повзунки; круглі кнопки — інші розділи.
-      // Збереження — заново: у меню «Водії» його могли перейменувати чи стерти вже після того, як відкрилось меню.
-      const cur = loadCareer();
+      // Збереження — заново: у меню «Водії» водія з його іграми могли стерти вже після того, як відкрилось меню.
+      // Список — усіх водіїв, найновіші першими; стрілки гортають.
+      const saves = listSaves().map((c) => ({ id: c.id!, text: `${c.driver}\n${formatMoney(c.money)}\nдоставок: ${c.delivered}` }));
       const next = await new Promise<Choice | null>((resolve) => {
         let busy = false;
         const close = ht2SingleScreen(art, {
-          hasSave: !!cur,
-          saveText: cur ? `${cur.driver}\n${formatMoney(cur.money)}\nдоставок: ${cur.delivered}` : '',
+          saves,
           settings,
           onNew: () => (close(), resolve('new')),
-          onLoad: () => (close(), resolve('career')),
+          onLoad: (id) => {
+            loadId = id;
+            close();
+            resolve('career');
+          },
           onCancel: () => (close(), resolve(null)),
           onChange: (st) => {
             settings = st;
@@ -286,9 +288,30 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
     }
     if (choice === 'drive' || choice === 'career' || choice === 'new' || choice === 'race') {
       let career: Ht2Career | null = null;
-      // Без питання «збережену гру буде втрачено»: чи зберігати, гравець уже вирішив, виходячи з гри в меню.
-      if (choice === 'new') career = newCareer('Водій', '');
-      else if (choice === 'career') career = saved ?? newCareer('Водій', '');
+      // Нова гра — окреме збереження поточного водія (немає водіїв — «Водій»); інші збереження лишаються.
+      // Завантаження без вибраного (?tab=career) — найновіше. Логотип і фото — з профілю водія.
+      if (choice === 'career') {
+        career = loadCareer(loadId);
+        // «Завантажити гру» в меню Esc у ще не збереженій новій грі — збереження немає: вибрати на екрані «Гра».
+        if (!career && loadId && art) {
+          loadId = undefined;
+          direct = 'single';
+          continue;
+        }
+      }
+      if (choice === 'new' || (choice === 'career' && !career)) {
+        const d = currentDriver() ?? { name: DEFAULT_DRIVER, logo: 4, photo: 0 };
+        putDriver(d);
+        career = newCareer(d.name, '');
+      }
+      if (career) {
+        const name = career.driver;
+        const d = listDrivers().find((x) => x.name === name);
+        if (d) Object.assign(career, { logo: d.logo, photo: d.photo });
+        else putDriver({ name, logo: career.logo ?? 4, photo: career.photo ?? 0 });
+        selectDriver(name);
+        loadId = career.id;
+      }
       await new Promise<void>((resolve) => {
         let drive: Ht2Drive | null = null;
         // next — з меню Esc: завантажити збережену гру, почати спочатку, вийти з гри (без ctx.exit — у головне меню).
