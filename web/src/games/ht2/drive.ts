@@ -211,24 +211,6 @@ const COCKPIT_LIFT = new THREE.Vector3(0, 0.08, 0);
 /** Межі кутів голови в кабіні (king.exe 0x535a70: 0x64f3b0, 0x64f3a8), рад — 2,5° уперед-назад і 5° убік. */
 const HEAD_PITCH_MAX = 0.0436;
 const HEAD_SIDE_MAX = 0.0873;
-/** Зважене середнє за останні T с з вагою 1 − вік/T (фільтри каналів king.exe 0x4eab58, 0x4eaf98). */
-class WindowAvg {
-  private readonly samples: { t: number; v: number }[] = [];
-  constructor(private readonly span: number) {}
-  /** Додати значення в момент now і повернути середнє. */
-  add(now: number, v: number): number {
-    this.samples.push({ t: now, v });
-    while (this.samples.length && now - this.samples[0].t >= this.span) this.samples.shift();
-    let sum = 0;
-    let w = 0;
-    for (const s of this.samples) {
-      const k = 1 - (now - s.t) / this.span;
-      sum += k * s.v;
-      w += k;
-    }
-    return w > 0 ? sum / w : 0;
-  }
-}
 /** Дальність видимості трафіку без туману в сцені, м. */
 const VIEW_FALLBACK = 900;
 /** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
@@ -2653,12 +2635,7 @@ export class Ht2Drive {
     }
     this.updateRadarLamp(dt, radar);
     if (!inside) return;
-    // Камера відносно салону — голова × гойдання салону (як камера салону 0x696cac king.exe): салон = камера ·
-    // гойдання⁻¹ · голова⁻¹, де голова = місце водія⁻¹ · камера.
-    this.camera.updateMatrixWorld();
-    const camM = this.camera.matrixWorld;
-    const m = camM.clone().multiply(this.cabSway.clone().invert()).multiply(camM.clone().invert()).multiply(this.cabBase);
-    m.decompose(this.cab.position, this.cab.quaternion, this.cab.scale);
+    this.cabBase.decompose(this.cab.position, this.cab.quaternion, this.cab.scale);
     const rot = (o: THREE.Object3D | undefined, axis: THREE.Vector3, angle: number) => {
       if (!o) return;
       o.matrix.copy(o.userData.baseMatrix as THREE.Matrix4).multiply(new THREE.Matrix4().makeRotationAxis(axis, angle));
@@ -2960,39 +2937,12 @@ export class Ht2Drive {
   /** Згладжені кути голови в кабіні (рад): уперед і вбік (king.exe 0x535a70); місце водія без гойдання. */
   private headA = 0;
   private headB = 0;
-  /** Місце водія з нахилом погляду (світ) і гойдання салону відносно голови (king.exe 0x4decc0). */
-  private readonly cabBase = new THREE.Matrix4();
-  private readonly cabSway = new THREE.Matrix4();
-  private readonly cabTilt = new WindowAvg(0.3);
-  private readonly cabSeatFwd = new WindowAvg(0.5);
-  private cabClock = 0;
-
   /**
-   * Гойдання салону (king.exe 0x4decc0; канали — зважене середнє за останні T с, вага 1 − вік/T, 0x4eaf98):
-   * - крен: asin(синус крену кузова +0xd20)·0,8·0,8, межа ±15°, канал `CabChan_tilt` 0,3 с; кивок — asin(синус
-   *   тангажу +0xd2c)·0,5, межа −7,5°…+4,6°, без каналу; зсув (4·крен; −4·кивок; −4(крен² + кивок²)), межі ±0,1;
-   * - сидіння (`CabChan_seetAmmortisator`): угору — (g − a) по вертикалі ·0,06, у квадраті зі знаком, ±0,2, канал 1 с;
-   *   уперед — (g − a) уперед ·0,048, так само, канал 0,5 с.
-   * Рух задає камеру салону відносно салону; у порту салон рухається навпаки відносно камери.
-   * Гіпотези порту: вхід крену симетричний (у exe гілки для + і − різні), складові від кутової швидкості
-   * (|ω|·плече ока) і сидіння вгору-вниз не перенесено.
+   * Салон — жорстко на моделі машини (з нахилом кузова, як капот), на прохання користувача: салон і капот рухаються
+   * разом, гойдається лише голова. В king.exe салон хилиться окремо (0x4decc0, канали CabChan_*, 0,64 крену кузова
+   * з запізненням 0,3 с) — re/notes/ht2/steering.md; не перенесено.
    */
-  private updateCabSway(dt: number): void {
-    const now = (this.cabClock += dt);
-    const lean = this.truck.leanAngles;
-    const roll = this.cabTilt.add(now, THREE.MathUtils.clamp(0.64 * -lean.side, -0.2618, 0.2618));
-    const pitch = THREE.MathUtils.clamp(0.5 * lean.fwd, -0.1309, 0.08);
-    const sq = (x: number, k: number) => THREE.MathUtils.clamp(x * k * Math.abs(x * k), -0.2, 0.2);
-    // Сидіння вгору-вниз (канал 1 с) не перенесено: (g − a) по вертикалі в порту — з поштовхів контактів фізики
-    // (до 0,1 м за кадр), салон від цього трусився окремо від капота.
-    const up = 0;
-    const fwd = THREE.MathUtils.clamp(this.cabSeatFwd.add(now, sq(this.truck.feltFwd, 0.048)), -0.2, 0.2);
-    const clamp1 = (x: number) => THREE.MathUtils.clamp(x, -0.1, 0.1);
-    // Осі гри (x праворуч, y уперед, z угору) → three (x, z, −y); поворот навколо осі «уперед» гри = навколо −z.
-    const pos = new THREE.Vector3(clamp1(4 * roll), up + clamp1(-4 * (roll * roll + pitch * pitch)), -(fwd - 4 * pitch));
-    const rot = new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, 0, -roll, 'ZXY'));
-    this.cabSway.compose(pos, rot, new THREE.Vector3(1, 1, 1));
-  }
+  private readonly cabBase = new THREE.Matrix4();
 
   private updateCamera(dt: number): void {
     const v = this.truck.visual;
@@ -3002,8 +2952,7 @@ export class Ht2Drive {
       this.camYaw = NaN;
       const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (this.def.tech.viewerTilt * Math.PI) / 180);
       // Голова-маятник (king.exe 0x535a70): кути A = 0,005·(g − a) уперед (≤ 2,5°) і B = 0,005·(g − a) праворуч
-      // (≤ 5°), згладжені 0,8^(10·dt) (τ ≈ 0,45 с); зсув (4B; угору −4(A² + B²); уперед 4A), нахил голови на A
-      // і крен на 0,1·B. Салон стоїть на місці водія — голова рухається відносно нього.
+      // (≤ 5°), згладжені 0,8^(10·dt) (τ ≈ 0,45 с); у порту — лише кивок на A і крен на 0,1·B (див. нижче).
       const f1 = 0.8 ** (10 * dt);
       const A = THREE.MathUtils.clamp(0.005 * this.truck.feltFwd, -HEAD_PITCH_MAX, HEAD_PITCH_MAX);
       const B = THREE.MathUtils.clamp(0.005 * this.truck.feltSide, -HEAD_SIDE_MAX, HEAD_SIDE_MAX);
@@ -3011,16 +2960,15 @@ export class Ht2Drive {
       this.headB = f1 * this.headB + (1 - f1) * B;
       const a = this.headA;
       const b = this.headB;
-      const head = new THREE.Vector3(4 * b, -4 * (a * a + b * b), -4 * a);
-      // Камера стоїть на кузові без косметичного нахилу (king.exe — матриця машини +0x204): капот хилиться в кадрі,
-      // салон — за ним (updateCabSway).
-      const q = this.truck.bodyQuat;
-      this.camera.position.copy(this.cockpit).add(head).applyQuaternion(q).add(v.position);
+      // Око — на місці водія моделі (з нахилом кузова), салон там само: салон і капот — одне ціле. Тряска — лише
+      // поворотом погляду навколо ока: орієнтація кузова без нахилу (king.exe — матриця машини +0x204, тож капот і
+      // салон хиляться в кадрі разом), кивок голови на A і крен на 0,1·B. Зсув голови (4B; 4A) не перенесено: салон
+      // CABINES задано не в метрах, і від зсуву камери капот їхав відносно салону.
+      const eye = this.cockpit.clone().applyQuaternion(v.quaternion).add(v.position);
+      this.camera.position.copy(eye);
       const nod = new THREE.Quaternion().setFromEuler(new THREE.Euler(-a, 0, -0.1 * b, 'XYZ'));
-      this.camera.quaternion.copy(q).multiply(nod).multiply(tilt);
-      // Салон: місце водія з нахилом погляду, далі — гойдання салону відносно голови.
-      this.cabBase.compose(this.cockpit.clone().applyQuaternion(q).add(v.position), q.clone().multiply(tilt), new THREE.Vector3(1, 1, 1));
-      this.updateCabSway(dt);
+      this.camera.quaternion.copy(this.truck.bodyQuat).multiply(nod).multiply(tilt);
+      this.cabBase.compose(eye, v.quaternion.clone().multiply(tilt), new THREE.Vector3(1, 1, 1));
       this.camera.near = 0.2;
       this.camera.fov = viewFov(this.opts.settings?.xpyramid ?? 1.6);
       this.camera.updateProjectionMatrix();
