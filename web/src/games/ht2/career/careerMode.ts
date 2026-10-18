@@ -36,7 +36,6 @@ export class CareerMode {
   private readonly sto: [number, number, number][] = [];
   private readonly stoNames: string[] = [];
   private readonly fuelSpots: [number, number, number][] = [];
-  private readonly lastPos = new THREE.Vector3();
   private busy = false;
   /** Місця біля складів — тригери будівель. */
   private readonly zones = new StoreZones();
@@ -73,7 +72,6 @@ export class CareerMode {
           }
           if (/^node_car_fuel/i.test(n.name)) this.fuelSpots.push(n.pos);
         }
-    this.lastPos.copy(drive.truck.visual.position);
     this.races = new CareerRaces(drive, career, (k, fb, v) => this.msg(k, fb, v), LICENCE_TIME);
   }
 
@@ -83,19 +81,24 @@ export class CareerMode {
   }
 
   /**
-   * Пальне: витрата за пройдений шлях, на холостому — половина (гіпотеза), з газом — повна; порожній бак — двигун
-   * глухне (заводиться знову, коли заправились).
+   * Пальне, як у king.exe (кадр двигуна 0x4ff800 → 0x500612, система бака 0x4eb6e0): поки двигун працює, стан бака
+   * c ∈ [0, 1] (літри = бак·c) щокадру −= |n|·газ/n₀·B·dt/E — n, n₀ — оберти й оберти найбільшої потужності
+   * (tach_with_max_power), B — присадка в масло (0,8), E — fuelTimeEndurance (с): повний бак на повному газі при n₀
+   * вистачає на E с (ZilR — 846 с ≈ 14 хв), без газу пальне не витрачається. Додатковий бак подвоює і бак, і E —
+   * літри за секунду ті самі: бак з tech / E. Порожній бак — двигун глухне (заводиться знову, коли заправились).
+   * Аркада — витрата ×0,5 (гіпотеза порту).
    */
   private burn(dt: number, throttle: number): void {
     const c = this.career;
     c.fuel ??= this.tank;
-    const p = this.drive.truck.visual.position;
-    const dist = Math.min(50, p.distanceTo(this.lastPos));
-    this.lastPos.copy(p);
-    // Присадка в масло: витрата ∝ B = 0,8 (0x500612).
-    const perMeter = ((this.drive.fuelConsumption * 10) / 100 / 1000) * (this.drive.arcade ? 0.5 : 1) * this.drive.tuning.fuel;
-    c.fuel = Math.max(0, c.fuel - dist * perMeter * (0.5 + 0.5 * throttle) - (this.drive.truck.engineOn ? dt * 0.0005 : 0));
-    if (c.fuel <= 0 && this.drive.truck.engineOn) this.drive.truck.engineOn = false;
+    const d = this.drive;
+    const t = d.truck;
+    if (t.engineOn && d.fuelEndurance > 0) {
+      const load = (Math.abs(t.rpm) * Math.max(0, throttle)) / Math.max(1, d.fuelRpm);
+      const litres = (d.tank / d.tuning.tank / d.fuelEndurance) * load * d.tuning.fuel * (d.arcade ? 0.5 : 1) * dt;
+      c.fuel = Math.max(0, c.fuel - litres);
+    }
+    if (c.fuel <= 0 && t.engineOn) t.engineOn = false;
   }
 
   /** Обʼєм кузова (площа × висота, гіпотеза) і вантажопідйомність. */
@@ -193,8 +196,11 @@ export class CareerMode {
     this.updateCompany(dt);
     // Удар — зміна швидкості від зіткнень за кадр (drive.detectHits; кінематичний поворот — не удар).
     const dv = this.drive.hitDv.length();
+    // Стан машини — шкода, яку удар завдав кузову (drive.detectHits: зони вмʼятин, посилена рама вже врахована).
+    const wear = this.drive.hitWear;
+    this.drive.hitWear = 0;
+    if (wear > 0) c.damage = Math.min(1, c.damage + wear * (this.drive.arcade ? 0.5 : 1));
     if (dv > HIT_MIN) {
-      c.damage = Math.min(1, c.damage + dv * 0.004 * this.drive.tuning.damage * (this.drive.arcade ? 0.5 : 1));
       // Пневмопідвіска: удар для вантажу ×0,3 (0x554bb0).
       if (c.order) c.order.integrity = Math.max(0, c.order.integrity - dv * 0.01 * this.drive.tuning.cargo);
       if (c.order && c.order.integrity <= 0) this.orderLost();

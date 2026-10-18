@@ -36,7 +36,7 @@ import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
 import { WorldMap, type MapPoint } from './world/worldMap';
 import { GlassRain } from './engine/render/glassRain';
-import { Dents, dentGeometry } from './vehicles/dents';
+import { Dents, dentGeometry, hitEnergy } from './vehicles/dents';
 import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
 import { orderVehicle, vehicleOffers, vehiclePowers, vehiclePrices } from './career/carOrder';
 import { HIRED_MIN_SPEED, HiredOnRoads } from './career/hired';
@@ -493,9 +493,13 @@ export class Ht2Drive {
   private wipersManual: boolean | null = null;
   /** Маса вантажу в кузові, кг (фізика: центр мас і загальна маса). */
   private cargoMass = 0;
-  /** Бак, л, і витрата (vehicle.tech: × 10 = л/100 км) вантажівки гравця. */
+  /** Бак, л (з покращенням), і витрата (vehicle.tech: × 10 = л/100 км; лише для найманих водіїв) вантажівки гравця. */
   tank = 250;
   fuelConsumption = 5;
+  /** fuelTimeEndurance vehicle.tech, с: стільки вистачає повного бака на повному газі (careerMode.burn). */
+  fuelEndurance = 850;
+  /** Оберти найбільшої потужності (tach_with_max_power), об/хв: витрата ∝ оберти / ці оберти. */
+  fuelRpm = 1600;
   private readonly onResize = () => this.resize();
 
   private constructor(
@@ -547,6 +551,8 @@ export class Ht2Drive {
     this.tank = rec.tank * this.tuning.tank;
     this.cabPrefix = rec.prefixCab;
     this.fuelConsumption = rec.fuelConsumption;
+    this.fuelEndurance = rec.fuelTimeEndurance;
+    this.fuelRpm = rec.tachMaxPower;
 
     o.setStatus('Завантаження регіонів довкола старту…');
     await this.world.ready(start[0], start[1]);
@@ -1124,8 +1130,15 @@ export class Ht2Drive {
     // Займання від удару об нерухоме (0x554c20 → 0x549900): сила удару (з урахуванням рами) понад IMPACT_FIRE м/с і
     // поруч немає машини (удар не об машину).
     if (dv.length() > IMPACT_FIRE && !this.carNear(this.truck.visual.position, 10)) this.ignite(0, true);
-    this.dents?.hit(dv.applyQuaternion(this.truck.visual.quaternion.clone().invert()), t.front);
+    // Шкода для стану машини (кар'єра) — з того самого удару, що мне кузов: середній приріст часток 8 зон вмʼятин
+    // (гіпотеза порту; у king.exe стан — зважена сума зон і систем, ваги не знайдено). Без перемикачів у моделі — за
+    // енергією удару, як середня зона (швидкість 0,1).
+    const local = dv.applyQuaternion(this.truck.visual.quaternion.clone().invert());
+    this.hitWear += this.dents ? this.dents.hit(local, t.front) : (hitEnergy(dv.length()) * 0.1) / 8;
   }
+
+  /** Шкода від ударів з останнього кроку кар'єри (0…1 стану машини; careerMode забирає й обнуляє). */
+  hitWear = 0;
 
   /** Чи є машина (трафік, міліція, мафія, далекобійники) ближче r. */
   private carNear(p: THREE.Vector3, r: number): boolean {
@@ -1684,6 +1697,8 @@ export class Ht2Drive {
     this.def = def;
     this.tank = rec.tank * this.tuning.tank;
     this.fuelConsumption = rec.fuelConsumption;
+    this.fuelEndurance = rec.fuelTimeEndurance;
+    this.fuelRpm = rec.tachMaxPower;
     this.cabPrefix = rec.prefixCab;
     this.cockpit = g2t(def.tech.viewer).add(COCKPIT_LIFT);
     if (this.cab) {

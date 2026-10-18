@@ -81,11 +81,15 @@ export class Dents {
     this.apply();
   }
 
-  /** Удар: зміна швидкості dv (м/с) у системі машини (Three.js: уперед — −z); front — множник переду (захист фар). */
-  hit(dvLocal: THREE.Vector3, front = 1): void {
+  /**
+   * Удар: зміна швидкості dv (м/с) у системі машини (Three.js: уперед — −z); front — множник переду (захист фар).
+   * Повертає середній приріст часток 8 зон кузова (0…1) — для стану машини в кар'єрі.
+   */
+  hit(dvLocal: THREE.Vector3, front = 1): number {
     const v = Math.hypot(dvLocal.x, dvLocal.z);
     const e = hitEnergy(v);
-    if (e <= 0) return;
+    if (e <= 0) return 0;
+    let added = 0;
     // До точки удару — проти зміни швидкості: nx = −dv.x, уперед (−z) — dv.z.
     const nx = -dvLocal.x / v;
     const ny = dvLocal.z / v;
@@ -94,7 +98,9 @@ export class Dents {
       const k = w[z];
       if (!k) continue;
       const f = z[0] === 'F' && z.length === 2 ? front : 1;
-      this.zones[z] = Math.min(1, (this.zones[z] ?? 0) + k * e * f * RATE[z]);
+      const was = this.zones[z] ?? 0;
+      this.zones[z] = Math.min(1, was + k * e * f * RATE[z]);
+      added += this.zones[z]! - was;
     }
     if (this.geom && e > 1) {
       const [hx, hy] = this.geom.half;
@@ -109,6 +115,7 @@ export class Dents {
       });
     }
     this.apply();
+    return added / ZONES.length;
   }
 
   repair(): void {
