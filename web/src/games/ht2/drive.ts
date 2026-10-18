@@ -283,7 +283,8 @@ export interface Ht2DriveOptions {
 }
 
 type CamMode = 'chase' | 'cockpit' | 'far';
-const NEXT_CAM: Record<CamMode, CamMode> = { chase: 'cockpit', cockpit: 'far', far: 'chase' };
+/** Порядок камер (клавіша C): з кабіни → за машиною (як в оригіналі) → згори. */
+const NEXT_CAM: Record<CamMode, CamMode> = { cockpit: 'chase', chase: 'far', far: 'cockpit' };
 
 export class Ht2Drive {
   readonly camera = new THREE.PerspectiveCamera(FOV, 1, 0.5, 4000);
@@ -295,7 +296,7 @@ export class Ht2Drive {
   /** Керування й двигун — криві Дальнобойщиків 2 (телеметрія king.exe, controls.ts). */
   private readonly input = new Input(HT2_INPUT);
   private audio: EngineAudio | null = null;
-  private camMode: CamMode = 'chase';
+  private camMode: CamMode = 'cockpit';
   /** Дзеркало заднього огляду ввімкнене (видно лише з кабіни). */
   private mirrorOn = false;
   private mirror: {
@@ -759,7 +760,11 @@ export class Ht2Drive {
     }
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);
     this.input.onCommand = (cmd) => {
-      if (cmd === 'camera') this.camMode = NEXT_CAM[this.camMode];
+      if (cmd === 'camera') {
+        this.camMode = NEXT_CAM[this.camMode];
+        // Нова камера — одразу на своєму місці: стара позиція лишилась там, де камеру вимкнули, і камера «летіла» до машини.
+        this.chaseJump = true;
+      }
       if (cmd === 'autopilot') {
         this.autopilot = this.autopilot ? null : this.pilot();
         // З напівпричепом — повільніше в поворотах (кермо на швидкості обмежене).
@@ -890,7 +895,7 @@ export class Ht2Drive {
     window.addEventListener('resize', this.onResize);
     this.resize();
     this.last = performance.now();
-    o.renderer.setAnimationLoop(() => this.frame());
+    o.renderer.setAnimationLoop((t) => this.frame(t));
   }
 
   /** Точка старту: найближча точка доріг WAY до (x, y) гри, напрям — уздовж сегмента; висота — променем униз. */
@@ -2564,8 +2569,12 @@ export class Ht2Drive {
     }
   }
 
-  private frame(): void {
-    const now = performance.now();
+  /**
+   * time — мітка кадру від requestAnimationFrame (момент vsync): performance.now() усередині кадру тремтить на кілька
+   * мс, і машина за кадр проїжджала то більше, то менше — за згладженою камерою ззаду вона смикалась.
+   */
+  private frame(time = performance.now()): void {
+    const now = time;
     // Не частіше за MAX_FPS: екрани 90/120 Гц інакше малюють у півтора-два рази частіше (допуск 2 мс — щоб 60 Гц
     // не губили кадри через тремтіння таймера).
     if (now - this.last < 1000 / MAX_FPS - 2) return;
@@ -3186,8 +3195,13 @@ export class Ht2Drive {
     const want = v.position.clone().setY(this.camBaseY).addScaledVector(flat, -dist).addScaledVector(up, height);
     if (far) {
       this.camYaw = NaN;
+      const look = v.position.clone().addScaledVector(up, 2);
+      if (this.chaseJump) {
+        this.camPos.copy(want);
+        this.camLook.copy(look);
+      }
       this.camPos.lerp(want, 1 - Math.exp(-dt * 4));
-      this.camLook.lerp(v.position.clone().addScaledVector(up, 2), 1 - Math.exp(-dt * 10));
+      this.camLook.lerp(look, 1 - Math.exp(-dt * 10));
     } else {
       // Як в оригіналі (запис king.exe, ZilR від бази до греблі): по горизонталі камера відстає від свого місця з
       // запізненням CHASE_LAG (позаду 8,8 м на місці, 16 м на 46 км/год, 20 — на 70, 25,7 — на 100: 8,8 + 0,58·v; у
