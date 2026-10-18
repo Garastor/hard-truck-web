@@ -533,6 +533,9 @@ export class Ht2Drive {
     this.rapier = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     this.objects = new WorldObjects(this.rapier);
     this.rapier.timestep = 1 / 60;
+    // CCD-розвʼязувач Rapier вимкнено: CCD тут ніде не вмикається, а він однаково обрізав крок машини гравця біля
+    // трикутників дороги (~12 % кроків — лише 4…50 % шляху за незмінної швидкості) — у виді ззаду машина смикалась.
+    this.rapier.integrationParameters.maxCcdSubsteps = 0;
     this.world.onRegion = (reg, loaded) => (loaded ? this.addRegion(reg) : this.removeRegion(reg.id));
     // Новий регіон — текстури на GPU й шейдери до показу, частинами: інакше перший кадр з ним стояв 50…100 мс.
     this.world.prepare = (root) => this.prepareRegion(root);
