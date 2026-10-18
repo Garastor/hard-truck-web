@@ -2599,6 +2599,7 @@ export class Ht2Drive {
   }
 
   private readonly mirrorSize = new THREE.Vector2();
+  private readonly mirrorPoint = new THREE.Vector3();
   private tabloH = 0;
   private tabloHAt = -Infinity;
   private mirrorAt = -Infinity;
@@ -2611,8 +2612,17 @@ export class Ht2Drive {
     m.cam.aspect = aspect;
     m.cam.far = this.camera.far;
     m.cam.updateProjectionMatrix();
-    // Погляд назад з місця водія: орієнтація машини, розвернута на 180° навколо вертикалі.
-    m.cam.position.copy(this.camera.position);
+    // Погляд назад: орієнтація машини, розвернута на 180° навколо вертикалі, з точки дзеркала (king.exe 0x595290 —
+    // верхнє дзеркало): ліве бокове дзеркало (tv_camera 0), з причепом — посередині між лівим і правим (0 і 2,
+    // ×0,5). З місця водія камера бачила тент кузова. Без точок у tech — з місця водія.
+    const pts = this.def.tech.mirrors;
+    if (pts?.length) {
+      const a = pts[0];
+      const b = this.trailer && pts[2] ? pts[2] : a;
+      this.mirrorPoint.set((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2);
+      this.truck.visual.updateWorldMatrix(true, false);
+      m.cam.position.copy(this.truck.visual.localToWorld(g2t(this.mirrorPoint)));
+    } else m.cam.position.copy(this.camera.position);
     m.cam.quaternion.copy(this.truck.visual.quaternion).multiply(Ht2Drive.BACK);
     m.cam.updateMatrixWorld();
     // Дзеркало дивиться назад — свої видимі кімнати (наступний кадр рахує їх для камери знову).

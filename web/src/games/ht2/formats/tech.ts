@@ -69,6 +69,10 @@ export interface TechRecord {
   addCollisionPoints: Vec3[];
   cornerMarksW: Vec3[];
   collisionPlanes: [number, number, number, number][];
+  /**
+   * tv_camera (+0x6f4, до 5 точок у системі моделі: x, уперед, угору): king.exe бере з них точки дзеркал заднього
+   * виду (0x595290 → 0x594e00): 0 — ліве, 2 — праве (у ZilR (−1,81; 2,31; 0,09) і (1,6; 1,32; 0,44)).
+   */
   tvCameras: Vec3[];
   smokePosition: Vec3;
   smokeDirection: Vec3;

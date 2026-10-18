@@ -50,6 +50,8 @@ export interface TruckTech {
   shadowCorners?: [number, number, number][];
   /** Товщина передніх і задніх коліс, м (front/rear_wheel_thickness vehicle.tech) — ширина сліду шин. */
   wheelThickness?: [number, number];
+  /** Точки дзеркал заднього виду в системі моделі (tv_camera vehicle.tech; king.exe 0x595290): 0 — ліве, 2 — праве. */
+  mirrors?: [number, number, number][];
   /** Труби вихлопу: точка й напрям у системі моделі (SmokePosition/SmokeDirection, …2; немає — z = 20). */
   smoke?: { pos: [number, number, number]; dir: [number, number, number] }[];
 }

@@ -95,6 +95,7 @@ export function truckDef(t: Ht2Trucks, r: TechRecord): TruckDef | null {
       viewerTilt: r.viewerTilt,
       wheelThickness: [r.frontWheelThickness, r.rearWheelThickness],
       shadowCorners: r.cornerMarksW,
+      mirrors: r.tvCameras.map(([x, y, z]) => [x, y, z] as [number, number, number]),
       vaporPoints: r.wheelPoints.slice(0, 2).map(([x, y, z]) => [x, y, z - r.wheelRadius] as [number, number, number]),
       smoke: [
         { pos: r.smokePosition, dir: r.smokeDirection },
