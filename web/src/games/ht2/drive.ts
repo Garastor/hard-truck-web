@@ -74,6 +74,7 @@ import { WindDebris } from './world/windDebris';
 import { Precipitation } from './world/precipitation';
 import { WorldObjects } from './world/objects';
 import { Blasts } from './world/blasts';
+import { TireTracks } from './world/tireTracks';
 import { CarFires, enginePoint } from './traffic/carFires';
 import { Tablo } from './ui/tablo';
 import { applyTabloSkin, lcdLabel } from './ui/tabloSkin';
@@ -190,6 +191,8 @@ const OFFROAD_ROLL = 5;
  * даних не знайдено; за поширеністю 1 — дороги, 2 — ґрунт довкола.
  */
 const HARD_SURFACE = new Set([1, 5, 10]);
+/** Покриття, на яких колеса лишають сліди (king.exe 0x502780: гілки 1/5, 2, 3, 8; на 4/7/9 і 6/10/11 — ні). */
+const TRACE_SURFACE = new Set([1, 2, 3, 5, 8]);
 /** Промінь покриття — лише по світу (не по машинах і предметах). */
 const GROUND_RAY = groups(GROUP_WORLD, GROUP_WORLD);
 /**
@@ -281,6 +284,27 @@ export class Ht2Drive {
   private objects!: WorldObjects;
   /** Вибухи й полумʼя (mnBlow3, mnFire). */
   private blasts: Blasts | null = null;
+
+  private tracks: TireTracks | null = null;
+  /** Керування машиною гравця цього кадру (для вихлопу). */
+  private lastState: { throttle: number; sharp?: boolean } | null = null;
+
+  /**
+   * Ефекти коліс і двигуна гравця щокадру: сліди шин (world/tireTracks.ts) на покриттях TRACE_SURFACE і вихлоп
+   * (Blasts.exhaust) з труб SmokePosition.
+   */
+  private updateWheelFx(): void {
+    if (!this.tracks) {
+      this.tracks = new TireTracks(this.world.common);
+      this.world.scene.add(this.tracks.group);
+    }
+    this.tracks.beginFrame();
+    if (TRACE_SURFACE.has(this.surface)) for (const w of this.truck.traceWheels()) this.tracks.add(w.i, w.p, w.n, w.w, w.type);
+    // Умова вихлопу king.exe — біт 0x400 [car+0x27b4] = [car+0x51a0] ≠ 0 (запису поля в коді не знайдено); гіпотеза
+    // порту за спостереженням користувача — газ з Ctrl («різко»).
+    const st = this.lastState;
+    this.blastFx().exhaust(st?.sharp && st.throttle > 0 ? this.truck.exhaustPoints() : []);
+  }
 
   private blastFx(): Blasts {
     if (!this.blasts) {
@@ -1507,6 +1531,7 @@ export class Ht2Drive {
     this.world.updateTrees(dt, c.wind, this.camera.position);
     this.updateDebris(dt, c.wind, c.w());
     this.updatePrecip(dt, c.wind, c.w());
+    this.updateWheelFx();
     this.blastFx().update(dt, c.wind);
     const dusk = sunHeight(hour) < 0.2;
     this.world.setNight(dusk);
@@ -2676,6 +2701,7 @@ export class Ht2Drive {
     const me = [this.truck.visual.position, ...alongPoints(this.truck), ...(this.trailer?.points() ?? [])];
     this.traffic?.update(dt, this.truck.visual.position, [me, ...trucks.slice(1).map(alongPoints)]);
     const obstacles = [this.truck.visual.position, ...(this.trailer?.points() ?? []), ...(this.traffic?.cars.map((c) => c.pos) ?? [])];
+    this.lastState = state;
     this.updateSurface();
     this.acc += dt;
     const step = this.rapier.timestep;
@@ -3016,6 +3042,7 @@ export class Ht2Drive {
     this.traffic?.dispose();
     this.debris?.dispose();
     this.blasts?.dispose();
+    this.tracks?.dispose();
     this.police?.dispose();
     this.mafia?.dispose();
     this.copters?.dispose();

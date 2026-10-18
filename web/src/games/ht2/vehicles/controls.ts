@@ -27,8 +27,9 @@ function table(points: [number, number][], t: number): number {
 }
 
 export const HT2_ENGINE: EngineProfile = {
-  // У записі з Ctrl («різко») газ ішов вище (до 0,98), але в порту Ctrl — лише кермо (на прохання користувача).
-  throttle: (t) => table(GAS, t),
+  // З Ctrl («різко», king.exe [0x2714] = 2) газ = t/(t + 0,2) (0x4ff800; у дампі Car_V — 0,99 за ≈ 1 с): на місці
+  // тяга першої передачі перевищує μ·N — колеса буксують (як в оригіналі, re/notes/ht2/wheel-effects.md).
+  throttle: (t, sharp) => (sharp ? t / (t + 0.2) : table(GAS, t)),
   // Перемикання — один кадр запису (≤ 0,1 с): передача на мить нейтраль, +0xb8 = 20 + ціль.
   shiftAuto: 0.1,
   shiftNeutral: 0.1,

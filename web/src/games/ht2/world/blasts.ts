@@ -46,6 +46,8 @@ interface Puff {
   omega: number;
   /** Тривалість кадру, с (сліди уламків — 0,05 с, один раз); без — кадри розтягнуто на все життя. */
   fdur?: number;
+  /** Зупинився (гальмування g) — далі підіймається з цією швидкістю, м/с (вихлоп 0x59c510). */
+  rise?: number;
 }
 
 /**
@@ -120,6 +122,8 @@ export class Blasts {
   private acc = 0;
   /** Машини, що горять (ключ — машина, точка гри): дим як mnFire машини (режим 0) і світло FlameLamp. */
   private readonly fires = new Map<unknown, THREE.Vector3>();
+  /** Труби вихлопу цього кадру (точка й напрям, гра) — клуби щотакту (exhaust). */
+  private exhaustPts: { p: THREE.Vector3; v: THREE.Vector3 }[] = [];
   /** Вибухи машин (_Blow): точка гри й вік, с. */
   private readonly carBlows: { p: THREE.Vector3; age: number }[] = [];
 
@@ -196,6 +200,16 @@ export class Blasts {
     }
   }
 
+  /**
+   * Вихлоп (king.exe 0x4bac90 ← 0x551970; objects.md «Ефекти машин» §2): клуб msmoke щокадру в кожній трубі
+   * (SmokePosition/SmokePosition2 з tech у матриці машини), швидкість — SmokeDirection (1 м/с); 0,5 → 4 м за 0,75 с,
+   * кадри msmoke00…03 по 0,1875 с, гальмування 3 м/с², зупинився — підіймається 0,5 м/с, вітру немає. Точки (гра)
+   * задаються щокадру; порожній список — вихлопу немає.
+   */
+  exhaust(points: { p: THREE.Vector3; v: THREE.Vector3 }[]): void {
+    this.exhaustPts = points;
+  }
+
   update(dt: number, wind: number): void {
     this.acc = Math.min(this.acc + dt, 0.2);
     while (this.acc >= TICK) {
@@ -208,6 +222,7 @@ export class Blasts {
   }
 
   private emit(): void {
+    for (const e of this.exhaustPts) this.spawnWorld(e.p.clone(), e.v.clone(), 'smoke', 0.5, 4, 3, 0.75, undefined, 0.5);
     for (let i = this.blows.length - 1; i >= 0; i--) {
       const b = this.blows[i];
       // Уламки колонки (mnBlow3): 5 одразу з точки P, v = M·(4s₁·X + 4s₂·Y + (2 + 2r)·Z).
@@ -356,7 +371,7 @@ export class Blasts {
     this.spawnWorld(p.applyMatrix4(b.m), v.applyMatrix3(b.rot), kind, s0, s1, g, life);
   }
 
-  private spawnWorld(p: THREE.Vector3, v: THREE.Vector3, kind: string, s0: number, s1: number, g: number, life: number, fdur?: number): void {
+  private spawnWorld(p: THREE.Vector3, v: THREE.Vector3, kind: string, s0: number, s1: number, g: number, life: number, fdur?: number, rise?: number): void {
     const frames = this.tex.get(kind) ?? [];
     if (!frames.length || this.puffs.length >= MAX) return;
     const s = this.free.pop() ?? new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, fog: true }));
@@ -367,7 +382,7 @@ export class Blasts {
     m.rotation = rnd() * Math.PI * 2;
     s.visible = true;
     this.group.add(s);
-    this.puffs.push({ s, p, v, born: p.clone(), g, age: 0, life, s0, s1, frames, omega: sym() * 2 * Math.PI, fdur });
+    this.puffs.push({ s, p, v, born: p.clone(), g, age: 0, life, s0, s1, frames, omega: sym() * 2 * Math.PI, fdur, rise });
   }
 
   private step(dt: number, wind: number): void {
@@ -384,9 +399,17 @@ export class Blasts {
       const g = q.p.distanceTo(q.born) > 15 ? 20 : q.g;
       const sp = q.v.length();
       if (sp > 0) q.v.multiplyScalar(Math.max(0, sp - g * dt) / sp);
-      q.p.x += (q.v.x + wind * 0.21) * dt;
-      q.p.y += q.v.y * dt;
-      q.p.z += q.v.z * dt;
+      if (q.rise !== undefined) {
+        if (q.v.lengthSq() === 0) {
+          q.v.set(0, 0, q.rise);
+          q.g = 0;
+        }
+        q.p.addScaledVector(q.v, dt);
+      } else {
+        q.p.x += (q.v.x + wind * 0.21) * dt;
+        q.p.y += q.v.y * dt;
+        q.p.z += q.v.z * dt;
+      }
       const u = q.age / q.life;
       const m = q.s.material;
       const frame = q.frames[Math.min(q.frames.length - 1, Math.floor(q.fdur ? q.age / q.fdur : u * q.frames.length))];

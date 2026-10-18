@@ -202,6 +202,10 @@ export interface KingSetup {
 const SHADOW_LIFT = 0.04;
 /** Як далеко вниз шукати землю для тіні, коли колеса не торкаються дороги, м. */
 const SHADOW_RAY = 30;
+/** Колесо, що ковзає вбік, лишає слід понад цей кут ковзання, рад (10° — king.exe 0x502780, 0x64daa0). */
+const TRACE_ALPHA = 0.174533;
+/** Ковзання вбік (king.exe [0x19c4]): |sin α| понад це. */
+const SKID_SIN = 0.26;
 
 /** Габарити машини для світла фар (земля під машиною, передня й задня межі, ширина) — у системі моделі. */
 export interface LightGeometry {
@@ -317,6 +321,57 @@ export class TruckVehicle {
   readonly hits: HitMeter;
   /** Стан коліс king: 1 — пробуксовка, −1 — заблоковане. */
   readonly slip: WheelSlip[];
+  /**
+   * Колесо king ковзає вбік (king.exe [0x19c4+i]): бічна сила шини впирається в μ·N, а |sin α| > 0,26; і кут ковзання
+   * α колеса, рад (динамічний режим, tireStep).
+   */
+  readonly skid: boolean[] = [];
+  readonly skidAlpha: number[] = [];
+
+  /**
+   * Колеса, що лишають слід шин (king.exe 0x502780 → [0x34d0+4i], 0x548250; wheel-effects.md): колесо на землі
+   * буксує чи заблоковане, або ковзає вбік з α > 10°. Ширина — товщина колеса з tech (передні 0, 1 — передня, решта
+   * — задня); ширша за колесо (i + 2) mod 4 — середнє з ним. Тип — 1 (trace1): обидві гілки king.exe ставлять 2.
+   */
+  /**
+   * Труби вихлопу (king.exe 0x551970 → 0x4bac90): SmokePosition і SmokePosition2 з tech у матриці машини, напрям —
+   * повернутий SmokeDirection (довжина 1 → 1 м/с); точки з |z| ≥ 10 (немає труби — (0, 0, 20)) пропускаються. Лише
+   * машини з масою tech > 4000 кг, car_node яких не починається з «daf» (0x5427a0, прапорець 2 [car+0x51a4]).
+   * Координати гри (x, y, z — угору).
+   */
+  exhaustPoints(): { p: THREE.Vector3; v: THREE.Vector3 }[] {
+    const t = this.def.tech;
+    if (t.mass <= 4000 || /^daf/i.test(this.def.carNode)) return [];
+    this.visual.updateMatrixWorld();
+    const q = this.visual.getWorldQuaternion(new THREE.Quaternion());
+    const out: { p: THREE.Vector3; v: THREE.Vector3 }[] = [];
+    for (const { pos, dir } of t.smoke ?? []) {
+      if (Math.abs(pos[2]) >= 10) continue;
+      const p = this.visual.localToWorld(g2t(pos));
+      const v = g2t(dir).applyQuaternion(q);
+      out.push({ p: new THREE.Vector3(p.x, -p.z, p.y), v: new THREE.Vector3(v.x, -v.z, v.y) });
+    }
+    return out;
+  }
+
+  traceWheels(): { i: number; p: THREE.Vector3; n: THREE.Vector3; w: number; type: number }[] {
+    const out: { i: number; p: THREE.Vector3; n: THREE.Vector3; w: number; type: number }[] = [];
+    if (!this.king) return out;
+    const [front, rear] = this.def.tech.wheelThickness ?? [0.2, 0.4];
+    const raw = (i: number) => (i < 2 ? front : rear);
+    for (let i = 0; i < this.wheels; i++) {
+      if (!this.slip[i] && !(this.skid[i] && (this.skidAlpha[i] ?? 0) > TRACE_ALPHA)) continue;
+      if (!this.ctrl.wheelIsInContact(i)) continue;
+      const p = this.ctrl.wheelContactPoint(i);
+      const n = this.ctrl.wheelContactNormal(i);
+      if (!p || !n) continue;
+      let w = raw(i);
+      const other = raw((i + 2) % 4);
+      if (other < w) w = (w + other) / 2;
+      out.push({ i, p: new THREE.Vector3(p.x, p.y, p.z), n: new THREE.Vector3(n.x, n.y, n.z), w, type: 1 });
+    }
+    return out;
+  }
   /**
    * Межа керма за зчепленням для поточної швидкості (рух king.exe; king.exe 0x500850 обмежує нею саме кермо s):
    * min(1; 1,5·atan(μ·k·L/v²)); без руху king — 1.
@@ -715,6 +770,7 @@ export class TruckVehicle {
     }
     if (!onGround || n.lengthSq() < 1e-6) {
       this.slip.fill(0);
+      this.skid.fill(false);
       return;
     }
     // Колеса причепа (вважаємо на землі, без приводу).
@@ -740,7 +796,8 @@ export class TruckVehicle {
     // гальмування холостими обертами на передачі штовхало вантажівку з місця назад.
     const engineBraking = this.engine.throttle === 0;
     let drive = engineBraking ? 0 : this.engine.force;
-    if (this.tractionControl && drive > 0) {
+    // АПС (0x4ff660) не діє з Ctrl: у 0x4ff800 гілка «різко» ([0x2714] = 2) обмеження газу оминає.
+    if (this.tractionControl && drive > 0 && !sharp) {
       let grip = 0;
       for (const w of wheels) if (w.ground && w.driven) grip += w.mu * w.load;
       drive = Math.min(drive, 0.81 * grip);
@@ -835,6 +892,7 @@ export class TruckVehicle {
     const I = this.yawInertia;
     const on: number[] = [];
     for (let i = 0; i < this.wheels; i++) if (wheels[i].ground && this.ctrl.wheelContactPoint(i)) on.push(i);
+    this.skid.fill(false);
     let w = omega0;
     const dv = new THREE.Vector3();
     let dw = 0;
@@ -864,6 +922,9 @@ export class TruckVehicle {
       // число коліс (діють одночасно), щоб разом не перекинути знак.
       const arm = new THREE.Vector3().crossVectors(r, d).dot(n);
       const gain = 1 / M + (arm * arm) / I;
+      // Сила впирається в межу — колесо ковзає вбік (для сліду шин).
+      this.skid[i] = size * dt < Math.abs(lat) / (gain * on.length) && Math.abs(Math.sin(alpha)) > SKID_SIN;
+      this.skidAlpha[i] = alpha;
       const j = -Math.sign(lat) * Math.min(size * dt, Math.abs(lat) / (gain * on.length));
       dv.addScaledVector(d, j / M);
       dw += (arm * j) / I;

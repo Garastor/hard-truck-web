@@ -18,8 +18,8 @@ describe('HT2: двигун і коробка ZilR', () => {
     const gasAt = (t: number) => HT2_ENGINE.throttle!(t, false);
     expect(gasAt(1)).toBeCloseTo(0.528, 3);
     expect(gasAt(4)).toBeCloseTo(0.739, 3);
-    // Ctrl («різко») — лише кермо: газ той самий.
-    expect(HT2_ENGINE.throttle!(1, true)).toBeCloseTo(0.528, 3);
+    // Ctrl («різко», king.exe [0x2714] = 2): газ t/(t + 0,2) (0x4ff800).
+    expect(HT2_ENGINE.throttle!(1, true)).toBeCloseTo(1 / 1.2, 3);
     expect(gasAt(100)).toBeLessThan(0.83);
   });
 

@@ -88,6 +88,11 @@ export function truckDef(t: Ht2Trucks, r: TechRecord): TruckDef | null {
       bodySquare: r.bodySquare,
       viewer: r.viewer,
       viewerTilt: r.viewerTilt,
+      wheelThickness: [r.frontWheelThickness, r.rearWheelThickness],
+      smoke: [
+        { pos: r.smokePosition, dir: r.smokeDirection },
+        { pos: r.smokePosition2, dir: r.smokeDirection2 },
+      ],
     },
   };
 }

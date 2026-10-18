@@ -70,6 +70,9 @@ export interface TechRecord {
   tvCameras: Vec3[];
   smokePosition: Vec3;
   smokeDirection: Vec3;
+  /** Друга труба вихлопу (SmokePosition2/SmokeDirection2; немає — (0, 0, 20)). */
+  smokePosition2: Vec3;
+  smokeDirection2: Vec3;
   flamePlace: Vec3;
   faraFL: Vec3;
   faraFR: Vec3;
@@ -189,7 +192,8 @@ function readRecord(r: BinReader, index: number): TechRecord {
   r.skip(12); // tvCameraRightConer
   const smokePosition = v3();
   const smokeDirection = v3();
-  r.skip(24); // smoke 2
+  const smokePosition2 = v3();
+  const smokeDirection2 = v3();
   const flamePlace = v3();
   const faraFL = v3();
   const faraFR = v3();
@@ -226,7 +230,7 @@ function readRecord(r: BinReader, index: number): TechRecord {
     cargoLoad, bodyMass, bodyHeight, bodySquare, cargoBottom, drivingWheels, steeringWheels, touchingWheels, viewer,
     viewerTilt, inertia, suspension, ks, cs, collisionRadius, collisionCenter, rubberCollisionCoeff,
     slideCollisionCoeff, cornerMarks, addCollisionPoints, cornerMarksW, collisionPlanes: planes.slice(0, nPlanes),
-    tvCameras: cams.slice(0, nCams), smokePosition, smokeDirection, flamePlace, faraFL, faraFR, faraBL, faraBR,
+    tvCameras: cams.slice(0, nCams), smokePosition, smokeDirection, smokePosition2, smokeDirection2, flamePlace, faraFL, faraFR, faraBL, faraBR,
     faraBLs, faraBRs, horsePower, price, lowSaddle, topSaddle, towHook, coupler, shiftSaddle, couplerLength,
     trailerType, speedScale, tachScale,
   };
