@@ -203,6 +203,11 @@ const GROUND_RAY = groups(GROUP_WORLD, GROUP_WORLD);
 function cabAmbient(hour: number): number {
   return 0.5 + 0.5 * Math.sin((hour * Math.PI) / 24) ** 2;
 }
+/**
+ * Підйом місця водія (разом із салоном) над `viewer` з vehicle.tech, м — на око, на прохання користувача: інакше
+ * між задньою кромкою капота й панеллю приладів видно щілину (king.exe ставить око інакше — re/notes/ht2/weather.md).
+ */
+const COCKPIT_LIFT = new THREE.Vector3(0, 0.2, 0);
 /** Дальність видимості трафіку без туману в сцені, м. */
 const VIEW_FALLBACK = 900;
 /** 911: відлік до відновлення, с, і плата, $ (гіпотези — re/notes/ht2/ui.md §5). */
@@ -543,7 +548,7 @@ export class Ht2Drive {
     this.hitch();
     this.mountLamps();
     this.safe = spawn;
-    this.cockpit = g2t(def.tech.viewer);
+    this.cockpit = g2t(def.tech.viewer).add(COCKPIT_LIFT);
     this.camPos.copy(spawn.position).addScaledVector(spawn.forward, -14).add(new THREE.Vector3(0, 6, 0));
     this.camLook.copy(spawn.position);
 
@@ -1651,7 +1656,7 @@ export class Ht2Drive {
     this.tank = rec.tank * this.tuning.tank;
     this.fuelConsumption = rec.fuelConsumption;
     this.cabPrefix = rec.prefixCab;
-    this.cockpit = g2t(def.tech.viewer);
+    this.cockpit = g2t(def.tech.viewer).add(COCKPIT_LIFT);
     if (this.cab) {
       this.overlayScene.remove(this.cab);
       this.glassRain?.dispose();
