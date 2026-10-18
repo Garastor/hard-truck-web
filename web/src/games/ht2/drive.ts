@@ -95,6 +95,8 @@ const NOTE_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentC
  * меншою в кадрі.
  */
 const CHASE_BACK = 8.8;
+/** Поява машини гравця — праворуч від осьової лінії дороги WAY на стільки, м (king.exe: старт на 1,75 м від лінії). */
+const SPAWN_LANE = 1.75;
 /**
  * Дзеркало заднього огляду (M) — лише з кабіни, посередині під табло, у рамці `m16\mirrT?.msk` з esc16.RES
  * (S/M/L/H — 170…480 px: розмір за роздільністю, гіпотеза; ≈ 30 % ширини екрана — тут найдетальніша H, масштабована).
@@ -570,6 +572,13 @@ export class Ht2Drive {
     // Старт гри (GAME.CNF): king.exe ставить машину курсом +x гри (на схід) — у чотирьох записах телеметрії з
     // початку гри вектор «уперед» рівно (1, 0); уздовж дороги порт ставив її навпаки, носом на захід.
     if (!saved && !o.race) spawn.forward.copy(toThree(1, 0, 0)).normalize();
+    if (!o.race) {
+      // Не на осьовій лінії WAY, а на правій смузі: у записі king.exe машина на (−3020,7; −4616,75) при лінії дороги
+      // y = −4615 — на 1,75 м праворуч від курсу (як смуги гонки, race.ts LANE). Вузька дорога — посередині правого краю.
+      const right = new THREE.Vector3().crossVectors(spawn.forward, new THREE.Vector3(0, 1, 0)).normalize();
+      const p = spawn.position.clone().addScaledVector(right, Math.min(SPAWN_LANE, spawn.widthRight / 2));
+      spawn.position.copy(this.groundAt(p.setY(p.y - 2.5)));
+    }
     if (!saved && rec.group === 'tractors' && !o.race && o.trailer !== 'none') {
       // Старт бази (GAME.CNF) — упритул до будівлі позаду: причіп (до 14 м) зʼявлявся б у ній. Тягач — на 10 м
       // далі дорогою.
@@ -884,10 +893,11 @@ export class Ht2Drive {
   }
 
   /** Точка старту: найближча точка доріг WAY до (x, y) гри, напрям — уздовж сегмента; висота — променем униз. */
-  private spawnAt([x, y, z]: [number, number, number]): { position: THREE.Vector3; forward: THREE.Vector3 } {
+  private spawnAt([x, y, z]: [number, number, number]): { position: THREE.Vector3; forward: THREE.Vector3; widthRight: number } {
     let best = Infinity;
     let pos: [number, number, number] = [x, y, z];
     let dir: [number, number] = [0, 1];
+    let widthRight = 0;
     for (const r of this.world.regions.values())
       for (const room of r.way.rooms)
         for (const s of room.segments) {
@@ -906,10 +916,11 @@ export class Ht2Drive {
             best = d;
             pos = q;
             dir = [dx / l, dy / l];
+            widthRight = s.widthRight;
           }
         }
     const position = this.groundAt(toThree(...pos));
-    return { position, forward: toThree(dir[0], dir[1], 0).normalize() };
+    return { position, forward: toThree(dir[0], dir[1], 0).normalize(), widthRight };
   }
 
   /** Поверхня під точкою (Three.js) + 2,5 м — висота центру вантажівки над дорогою при появі. */
