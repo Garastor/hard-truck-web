@@ -5,7 +5,7 @@ import { isList, num, str, type SExpr } from '../formats/sexpr';
 import type { Way } from '../formats/way';
 import type { Ht2Roads } from '../world/roads';
 import { ambushProp, toThree } from '../world/world';
-import { ChaseRoute, lineOfSight, newChaser, shoot, steerChase, type Chaser } from './pursuit';
+import { ChaseRoute, lineOfSight, newChaser, roadside, shoot, steerChase, type Chaser } from './pursuit';
 
 /**
  * Міліція Дальнобойщиків 2 (Б9; поведінка king.exe — re/notes/ht2/police.md).
@@ -74,7 +74,7 @@ export interface Ambush {
   heading: THREE.Vector3;
   /** Ліміт швидкості, км/год (null — пост перевищення не фіксує). */
   limit: number | null;
-  /** Реквізит засідки — шипи (імена анімованих обʼєктів, world.ambushProp). */
+  /** Реквізит засідки — шипи (імена анімованих обʼєктів, world.ambushProp); виставляються лише на перехоплення. */
   props: string[];
 }
 
@@ -162,7 +162,11 @@ export interface PoliceDeps {
   obstacles(): readonly THREE.Vector3[];
   /** Кількість інспекторів (names.sch COP*). */
   people: number;
-  /** Показати чи сховати реквізит засідки (шипи) — king.exe 0x569310 на зайнятій засідці. */
+  /**
+   * Показати чи сховати реквізит засідки (шипи, king.exe 0x569310): зайняття й звільнення засідки ставлять 0
+   * (activateAmbush 0x42bb90, 0x42baa0), пост, що зривається за розшукуваним (releaseAmbushPlayer 0x42c570 →
+   * 0x42ba20), — 1; знімаються всі разом зі штрафами (0x42bb50).
+   */
   props(names: readonly string[], on: boolean): void;
   /**
    * Інші переслідувачі, що ведуть ціль (гелікоптери, helicopters.ts): той самий лічильник +0x51D0 — попередження й
@@ -191,6 +195,8 @@ export class Police {
   /** Маршрут до цілі (updateChasedCars): дорогами до позиції гравця, перерахунок раз на 3 с (pursuit.ts). */
   private readonly route: ChaseRoute;
   private readonly tmp = new THREE.Vector3();
+  /** Виставлені шипи: пост → його реквізит (знімаються, коли гравця більше не шукають і їх не видно). */
+  private readonly spikes = new Set<Post>();
 
   constructor(
     ambushes: Ambush[],
@@ -405,9 +411,19 @@ export class Police {
         p.cop = null;
         p.active = false;
         c.engaged = true;
-        this.deps.props(p.props, false);
+        if (p.props.length) {
+          this.deps.props(p.props, true);
+          this.spikes.add(p);
+        }
       }
     }
+    // Погоні немає — шипи прибрано (0x42bb50 при знятті штрафів; порт — коли не видно, щоб не зникали на очах).
+    if (!pl.wanted)
+      for (const p of this.spikes) {
+        if (p.cop || this.deps.sees(p.pos)) continue;
+        this.deps.props(p.props, false);
+        this.spikes.delete(p);
+      }
   }
 
   /** «Вільні» машини: виклик на розшукуваного, захоплення цілі, втрата видимості, прибирання. */
@@ -434,10 +450,12 @@ export class Police {
   }
 
   private occupy(p: Post): void {
-    const v = this.deps.make(p.pos, p.heading);
+    // Пост — на узбіччі (вузол засідки лежить на смузі); шипи прибрано (0x42bb90 ставить реквізиту 0).
+    const v = this.deps.make(roadside(this.deps.roads, p.pos, p.dir), p.heading);
     if (!v) return;
     p.cop = this.add(v, p);
-    this.deps.props(p.props, true);
+    this.deps.props(p.props, false);
+    this.spikes.delete(p);
   }
 
   private release(c: Cop): void {
@@ -457,10 +475,7 @@ export class Police {
     const i = this.cops.indexOf(c);
     if (i < 0) return;
     this.cops.splice(i, 1);
-    if (c.post?.cop === c) {
-      c.post.cop = null;
-      this.deps.props(c.post.props, false);
-    }
+    if (c.post?.cop === c) c.post.cop = null;
     this.deps.remove(c.v);
   }
 

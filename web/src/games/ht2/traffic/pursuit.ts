@@ -216,6 +216,29 @@ export function steerChase(c: Chaser, q: Quarry, o: ChaseOptions, dt: number): v
   drive(c, target, want, blocking, dt);
 }
 
+/** Наскільки машина засідки стоїть за краєм проїжджої частини (центр машини), м (гіпотеза порту). */
+const SHOULDER = 1.6;
+
+/**
+ * Місце машини засідки на узбіччі. Вузли `polamb_*`/`mafamb_*` у WAY лежать на смугах (0,3…1,5 м від осі смуги,
+ * інколи до 13 м від дороги), а в оригіналі машина стоїть на узбіччі — ставимо її за край дороги з боку вузла
+ * (вузол на осі — праворуч від гравця, що підʼїжджає з боку dir); там інша дорога (перехрестя) — з другого боку.
+ * Вузол уже на узбіччі — як у даних.
+ */
+export function roadside(roads: Ht2Roads, node: THREE.Vector3, dir: THREE.Vector3): THREE.Vector3 {
+  const n = roads.nearestAxis(node);
+  if (!n || n.dist >= n.axis.width / 2 + SHOULDER) return node.clone();
+  const out = new THREE.Vector3(node.x - n.point.x, 0, node.z - n.point.z);
+  // Гравець їде проти dir; його праве узбіччя — (−f.z, f.x) при f = −dir.
+  if (out.length() < 0.5) out.set(dir.z, 0, -dir.x);
+  out.normalize();
+  for (const side of [1, -1]) {
+    const p = n.point.clone().addScaledVector(out, side * (n.axis.width / 2 + SHOULDER)).setY(node.y);
+    if (roads.offRoad(p, SHOULDER - 0.1)) return p;
+  }
+  return node.clone();
+}
+
 /** Стояти на місці (пост, ціль утрачено). */
 export function holdStill(c: Chaser): void {
   Object.assign(c.ctrl, { steer: 0, throttle: 0, brake: c.v.speedKmh < 2 ? 0 : 1, handbrake: c.v.speedKmh < 2 });

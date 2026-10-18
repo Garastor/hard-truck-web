@@ -5,7 +5,7 @@ import { isList, str, type SExpr } from '../formats/sexpr';
 import type { Way } from '../formats/way';
 import type { Ht2Roads } from '../world/roads';
 import { ambushProp, toThree } from '../world/world';
-import { ChaseRoute, cruiseTo, holdStill, lineOfSight, newChaser, shoot, steerChase, type Chaser, type Quarry } from './pursuit';
+import { ChaseRoute, cruiseTo, holdStill, lineOfSight, newChaser, roadside, shoot, steerChase, type Chaser, type Quarry } from './pursuit';
 
 /**
  * Мафія Дальнобойщиків 2 за king.exe (re/notes/ht2/mafia.md).
@@ -255,7 +255,7 @@ export class Mafia {
     for (const p of this.posts) {
       const d = p.pos.distanceTo(pl.pos);
       if (step && p.active && !p.hood && d > OCCUPY_MIN && d < OCCUPY_MAX && tmp.copy(pl.pos).sub(p.pos).dot(p.dir) > 0) {
-        const v = this.deps.make(p.pos, p.heading);
+        const v = this.deps.make(roadside(this.deps.roads, p.pos, p.dir), p.heading);
         if (v) p.hood = this.add(v, p);
       }
       const h = p.hood;
