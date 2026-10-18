@@ -277,12 +277,15 @@ export interface DriversScreen {
   onRound(key: RoundKey): void;
 }
 
-/** Рядок списку водіїв, px; стрілки списку atop/abot — у круглих гніздах ліворуч від поля (за макетом). */
+/**
+ * Рядок списку водіїв, px; стрілки списку atop/abot — у круглих гніздах ліворуч від поля: найкращий збіг картинки
+ * стрілки з гніздом `d/backDriv` (x 308 — як у списку king.exe).
+ */
 const DRIVER_ROW = 15;
 const DRIVER_LIST = { x: 347, y: 326, w: 78, h: 120 };
 const DRIVER_ARROWS = [
   [308, 324],
-  [308, 426],
+  [308, 424],
 ] as const;
 
 /**
