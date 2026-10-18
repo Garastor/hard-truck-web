@@ -667,7 +667,7 @@ export class TruckVehicle {
     const q = this.visual.quaternion;
     this.visual.position.addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(q), this.bumpLift);
     // У системі моделі: поворот навколо осі «угору × нахил».
-    const tilt = new THREE.Vector3(this.leanSide, 0, -this.leanFwd);
+    const tilt = new THREE.Vector3(this.leanSide * this.rollScale, 0, -this.leanFwd);
     const angle = tilt.length();
     const rot = angle > 1e-5 ? new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0).cross(tilt).normalize(), angle) : null;
     if (rot) q.multiply(rot);
@@ -1132,6 +1132,8 @@ export class TruckVehicle {
    */
   feltFwd = 0;
   feltSide = 0;
+  /** Множник косметичного крену кузова (вигляд з кабіни — 0,7, на прохання користувача; drive.ts). */
+  rollScale = 1;
   /** Орієнтація кузова без косметичного нахилу (як матриця машини +0x204 king.exe — на ній стоїть камера кабіни). */
   readonly bodyQuat = new THREE.Quaternion();
   /** Нахил кузова (рад): верх праворуч і вперед — вхід гойдання салону (king.exe 0x4decc0, поля +0xd20, +0xd2c). */
