@@ -19,7 +19,7 @@ import { decodeCp1251 } from '@ht2/engine/formats/binary';
 import { HT2_FILES, HT2_REGIONS, HT2_REQUIRED } from '@ht2/files';
 import { detectGame } from '@app/registry';
 import { HT2_DIR } from '../gameDirs';
-import { cargoHit, findStores, hideIllegal, orderPay, parseGoods, parseServices, parseTowns } from '@ht2/career/economy';
+import { PAY_PER_M, cargoHit, findStores, hideIllegal, orderPay, parseGoods, parseServices, parseTowns } from '@ht2/career/economy';
 import { HT2_MOD_REGIONS } from '@ht2/files';
 import { install, parseUpgrades, tireGrip, tuning } from '@ht2/career/upgrades';
 import { parseMarkets } from '@ht2/career/market';
@@ -244,8 +244,8 @@ describe.skipIf(!has)('HT2: економіка', () => {
   });
   it('оплата гравцю за king.exe: ×14,4, з причепом ×21,6', () => {
     const g = { id: 'X', name: 'X', mass: 10, volume: 0.1, price: 100, ratio: 0.8, durability: 0.8, illegal: false, forMafia: false, trucks: true, fuel: false, cars: false, guilt: 0 };
-    expect(orderPay(g, 100, 5000, false)).toBe(Math.round((5000 * 0.115 + 0.4 * 100) * 14.4));
-    expect(orderPay(g, 100, 5000, true)).toBe(Math.round((5000 * 0.115 + 0.4 * 100) * 21.6));
+    expect(orderPay(g, 100, 5000, false)).toBe(Math.round((5000 * PAY_PER_M + 0.4 * 100) * 14.4));
+    expect(orderPay(g, 100, 5000, true)).toBe(Math.round((5000 * PAY_PER_M + 0.4 * 100) * 21.6));
   });
   it('прихований нелегальний товар: лише illegal + trucks, коефіцієнт штрафу з merchandise.sch', () => {
     const goods = parseGoods(readSch(read('merchandise.sch')));

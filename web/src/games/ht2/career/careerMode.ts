@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { modal } from '../engine/ui/modal';
 import { isList, str, type SExpr } from '../formats/sexpr';
-import { cargoHit, contrabandPay, findStores, makeOrders, orderPay, orderValue as orderValueOf, parseGoods, type Goods, type Order, type Store, type Town } from './economy';
+import { PAY_PER_M, cargoHit, contrabandPay, findStores, makeOrders, orderPay, orderValue as orderValueOf, parseGoods, type Goods, type Order, type Store, type Town } from './economy';
 import { FUEL_PRICE, REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type ActiveOrder, type Ht2Career } from './career';
 import { toThree } from '../world/world';
 import { install, type Upgrade } from './upgrades';
@@ -198,7 +198,7 @@ export class CareerMode {
   /**
    * Вікно дорожньої місії при підборі (0x56bc80, case 0x19) і замовлення (0x41be60 → 0x41bca0, 0x471200):
    * кількість — 0,85 · min(M, V·m/v) / m (M, V — вантажопідйомність і обʼєм причепа, m, v — маса й обʼєм одиниці);
-   * оплата — 5,4 · (0,115 · L + (1,2 − k)·√(ціна · кількість)), L — шлях до складу; строк — 0,13 с на метр (0x471780),
+   * оплата — 5,4 · (PAY_PER_M · L + (1,2 − k)·√(ціна · кількість)), L — шлях до складу; строк — 0,13 с на метр (0x471780),
    * від підбору. Повертає прийняте замовлення (вантаж у причепі ставить drive) або null.
    */
   async offerMission(lot: MissionLot, trailer: TechRecord): Promise<boolean> {
@@ -214,7 +214,7 @@ export class CareerMode {
     const units = Math.round(((0.85 * Math.min(trailer.cargoLoad, g.volume > 0 ? (volume * g.mass) / g.volume : Infinity)) / g.mass) * 100) / 100;
     const L = this.drive.routeLeft(toThree(...to.center)) ?? Math.hypot(to.center[0] - this.drive.truck.visual.position.x, to.center[1] + this.drive.truck.visual.position.z) * 1.35;
     // Контрабанда (порт) — 40–80 тис. за шлях дорогами; легальний лот — формула king.exe.
-    const pay = g.illegal ? contrabandPay(L) : Math.round(5.4 * (0.115 * L + (1.2 - g.ratio) * Math.sqrt(g.price * units)));
+    const pay = g.illegal ? contrabandPay(L) : Math.round(5.4 * (PAY_PER_M * L + (1.2 - g.ratio) * Math.sqrt(g.price * units)));
     const deadline = Math.round(0.13 * L);
     const o: Order = { goods: g, units, from: lot.from, to: lot.to, distance: L, pay, value: Math.round(orderValueOf(g, units)), deadline, urgent: false };
     return this.offerLoose(g.illegal ? 'Причіп з контрабандою' : 'Причіп з вантажем', o);

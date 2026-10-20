@@ -1,4 +1,4 @@
-import type { Goods, Store } from './economy';
+import { PAY_PER_M, type Goods, type Store } from './economy';
 
 /**
  * Наймані водії — за king.exe (re/notes/ht2/company.md §2, 2а). Ліцензію дають за доставку першим серед конкурентів і
@@ -9,7 +9,7 @@ import type { Goods, Store } from './economy';
  * - робота (0x423f40) — аванс −= тариф·d·0,001 (d — пройдені метри); вичерпано — роботодавець платить ще 10·тариф,
  *   нема чим — водій іде (NO_MONEY_FOR_ADVANCE); пальне — d·R·0,00002 $ з роботодавця (бака немає);
  * - замовлення — як у далекобійника ІІ (0x4185d0): порожнім — до найближчого складу, там 85 % місткості товару складу
- *   до іншого складу; оплата 12·(0,115·L + (1,2 − k)·√(ціна·кількість)), з причепом ×1,5 — уся роботодавцю, без
+ *   до іншого складу; оплата 12·(PAY_PER_M·L + (1,2 − k)·√(ціна·кількість)), з причепом ×1,5 — уся роботодавцю, без
  *   строків, неустойок і повідомлень (лічильник прибутку водія росте);
  * - звільнення (0x476f70) — водій повертає вартість машини, аванс лишає собі; аварій і поломок абстрактний рух не має.
  *
@@ -104,7 +104,7 @@ export function driverCosts(d: HiredDriver, meters: number, wallet: { money: num
 
 /**
  * Вантаж на складі (0x4185d0, 0x41ba50): товар зі списку складу (легальний, не паливо), призначення — інший склад;
- * кількість — 85 % місткості за меншим обмеженням; оплата 12·(0,115·L + (1,2 − k)·√(ціна·кількість)), з причепом ×1,5.
+ * кількість — 85 % місткості за меншим обмеженням; оплата 12·(PAY_PER_M·L + (1,2 − k)·√(ціна·кількість)), з причепом ×1,5.
  */
 export function hiredLoad(
   from: Store,
@@ -126,6 +126,6 @@ export function hiredLoad(
   const units = LOAD_SHARE * Math.min(cap.mass / g.mass, g.volume > 0 ? cap.volume / g.volume : Infinity);
   if (!(units > 0)) return null;
   const L = routeLength(to);
-  const pay = Math.round(12 * (0.115 * L + (1.2 - g.ratio) * Math.sqrt(g.price * units)) * (trailer ? 1.5 : 1));
+  const pay = Math.round(12 * (PAY_PER_M * L + (1.2 - g.ratio) * Math.sqrt(g.price * units)) * (trailer ? 1.5 : 1));
   return { to: to.id, load: { goods: g.id, units, pay } };
 }

@@ -253,13 +253,20 @@ export function contrabandPay(route: number): number {
 }
 
 /**
+ * Ставка за метр шляху в оплаті замовлень, $/м. У king.exe 0x471200 — 0,115 (c = 115 за км); у порту відкалібровано
+ * за спостереженням користувача: Південний → Приозерськ (8,4 км дорогами, вантажівка 8 т) в оригіналі платив
+ * 8–12 тис., а з 0,115 і шляхом дорогами виходило 15,5–20,6 тис. Із 0,053 — 8–13 тис. (основа за товар не змінена).
+ */
+export const PAY_PER_M = 0.053;
+
+/**
  * Оплата складського замовлення гравцю (king.exe 0x471200, виклик з loadOrder 0x4436c2 — re/notes/ht2/trailers-bodies.md
- * §8, company.md §2а): (0,115·L + (1,2 − k)·√(ціна·кількість)) × 3 × 1,2 (гравець) × 4 (складське) = ×14,4, з причепом
+ * §8, company.md §2а): (PAY_PER_M·L + (1,2 − k)·√(ціна·кількість)) × 3 × 1,2 (гравець) × 4 (складське) = ×14,4, з причепом
  * ще ×1,5 = ×21,6 (найманий і ІІ — без ×1,2). Термінових замовлень у exe немає.
  */
 export function orderPay(g: Goods, units: number, distance: number, trailer: boolean): number {
   const base = (1.2 - g.ratio) * Math.sqrt(g.price * units);
-  return Math.round((distance * 0.115 + base) * 14.4 * (trailer ? 1.5 : 1));
+  return Math.round((distance * PAY_PER_M + base) * 14.4 * (trailer ? 1.5 : 1));
 }
 
 /**
