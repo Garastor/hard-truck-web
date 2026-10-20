@@ -20,6 +20,13 @@ import type { B3d } from '../engine/formats/b3d';
  *   пірамід, крізь які кімнату видно.
  * Камера поза всіма кімнатами — малюємо все.
  *
+ * Рухомі обʼєкти (машини трафіку, далекобійники, міліція, мафія, гелікоптери — `markMover`) теж належать кімнатам, як
+ * обʼєкти типу 0x11 у king.exe: їх малює кімната, у якій вони стоять, а обʼєкт, що перетинає площину порталу,
+ * отримує копію в кімнаті-цілі (0x5fb9e0). Тож обʼєкт видно, лише якщо його сфера потрапляє в піраміду, крізь яку
+ * видно його кімнату (кімнати — за слідом на плані; біля межі клітинка належить обом — як копія на порталі). Без
+ * цього машину за пагорбом чи будинком, повернутим до камери зворотним (однобічним, непомальованим) боком, було
+ * видно крізь нього.
+ *
  * Те, що видно над сусідніми кімнатами, але не крізь портали (вулиця на пагорбі за селом aj), оригінал теж не малює.
  */
 
@@ -151,6 +158,11 @@ export class RoomVisibility {
   /** Вимкнути (налагодження): усе видно. */
   enabled = true;
 
+  /**
+   * Сцена, діти якої з `userData.mover` (радіус сфери навколо `position`, м — `markMover`) — рухомі обʼєкти, видимі
+   * лише з кімнатою, у якій стоять.
+   */
+  movers: THREE.Object3D | null = null;
   private readonly frustum = new THREE.Frustum();
   private readonly vp = new THREE.Matrix4();
   private readonly reached = new Map<string, Planes[]>();
@@ -189,7 +201,7 @@ export class RoomVisibility {
   }
 
   /** Кімнати камери: перехід через портал своєї кімнати; поза слідом своєї кімнати чи вперше — за слідами. */
-  private track(camera: THREE.Camera): string[] {
+  private follow(camera: THREE.Camera): string[] {
     const pos = camera.position;
     const here = this.roomsAt(pos.x, -pos.z).filter((n) => this.rooms.has(n));
     let t = this.trackers.get(camera);
@@ -211,10 +223,11 @@ export class RoomVisibility {
   }
 
   update(camera: THREE.PerspectiveCamera): void {
-    const start = this.enabled ? this.track(camera) : [];
+    const start = this.enabled ? this.follow(camera) : [];
     if (!start.length) {
       this.visible = null;
       for (const r of this.rooms.values()) show(r, null);
+      this.showMovers(null);
       return;
     }
     camera.updateMatrixWorld();
@@ -252,7 +265,38 @@ export class RoomVisibility {
     }
     this.visible = new Set(reached.keys());
     for (const [name, r] of this.rooms) show(r, reached.get(name) ?? []);
+    this.showMovers(reached);
   }
+
+  /** Рухомі обʼєкти: видно, якщо сфера в піраміді будь-якої з кімнат під ним; поза слідами кімнат — видно. */
+  private showMovers(reached: Map<string, Planes[]> | null): void {
+    for (const o of this.movers?.children ?? []) {
+      const radius = o.userData.mover as number | undefined;
+      if (radius === undefined) continue;
+      let v = true;
+      if (reached) {
+        const p = o.position;
+        const rooms = this.roomsAt(p.x, -p.z);
+        if (rooms.length) {
+          S.center.copy(p);
+          S.radius = radius;
+          v = rooms.some((n) => reached.get(n)?.some((f) => sphereIn(S, f)) ?? false);
+        }
+      }
+      if (o.visible !== v) o.visible = v;
+    }
+  }
+}
+
+const S = new THREE.Sphere();
+
+/**
+ * Позначити рухомий обʼєкт (дитину сцени світу): малюється лише з кімнатою, у якій стоїть (RoomVisibility.movers).
+ * Радіус — півдіагональ видимої коробки з запасом (центр коробки не збігається з `position` — низом моделі).
+ */
+export function markMover(obj: THREE.Object3D, size?: THREE.Vector3): void {
+  size ??= new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
+  obj.userData.mover = size.length() / 2 + 2;
 }
 
 /** Показати кімнату (frusta — піраміди, крізь які її видно; null — усю, як без порталів; [] — сховати). */

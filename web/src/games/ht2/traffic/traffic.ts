@@ -10,6 +10,7 @@ import { control, newPhysState, type PhysState } from './physical';
 import type { TruckVehicle } from '../engine/vehicle/truckVehicle';
 import type { Ht2Trucks } from '../vehicles/trucks';
 import { disposePool, makePool, setPoolFade } from './headPools';
+import { markMover } from '../world/roomVisibility';
 
 /**
  * Трафік Дальнобойщиків 2: машини з `evehicles.sch` класу `dumb` («тупі» легковики, автобус, пікапи) — запис
@@ -637,6 +638,7 @@ export class Traffic {
       body,
     );
     body.setRotation(root.quaternion, true);
+    markMover(root, size);
     this.scene.add(root);
     c.root = root;
     c.body = body;

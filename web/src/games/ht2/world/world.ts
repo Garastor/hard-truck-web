@@ -243,6 +243,7 @@ export class Ht2World {
     this.scene.add(this.sun, this.sun.target, this.moon, this.moon.target, this.ambient);
     this.flare = new LensFlare(common);
     this.scene.add(this.flare.group);
+    this.visibility.movers = this.scene;
     this.setClimate(14, 0);
   }
 
