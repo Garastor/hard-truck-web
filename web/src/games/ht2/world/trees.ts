@@ -102,6 +102,9 @@ const TRUNK_W = 0.025;
 const TRUNK_TOP = 0.5;
 /** Наскільки стовбур відсунуто від камери за площину крони, м. */
 const TRUNK_PUSH = 0.4;
+/** Згасання основи ребром (синус кута між променем і площиною): нижче EDGE_HIDE — не видно, вище EDGE_SHOW — повністю. */
+const EDGE_HIDE = 0.1;
+const EDGE_SHOW = 0.3;
 
 /**
  * Площина (z угору) від z0 до z1, x — від −w/2 до w/2; u — [u0, u0 + uw], v — від низу зображення до верху.
@@ -188,6 +191,9 @@ export class TreeSway {
  * Матеріал циліндричного білборда: вершина x — уздовж напрямку ⟂ осі стовбура (локальна z) і напрямку на камеру,
  * z — уздовж осі. Без освітлення за нормалями (як в оригіналі): колір = текстура × градієнт тіні (колір вершин) ×
  * TREE_LIGHT. Погойдування — атрибут інстансів `sway` (зсув вершини, м гри), уздовж висоти — ламана bend(z).
+ * Згасання ребром (не з king.exe — власне, на прохання користувача): згори площину видно майже ребром, і перспектива
+ * тягне її в довгу смугу через дороги (re/notes/ht2/trees.md); де промінь до вершини йде під площину під синусом кута
+ * менше EDGE_SHOW, альфа спадає до 0 на EDGE_HIDE (з alphaTest 0,5 — зникає частина площини, видима надто косо).
  */
 function billboardMaterial(map: THREE.Texture, push = 0): THREE.MeshBasicMaterial {
   const mat = new THREE.MeshBasicMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide, vertexColors: true });
@@ -205,11 +211,15 @@ function billboardMaterial(map: THREE.Texture, push = 0): THREE.MeshBasicMateria
       float bend = bz < 0.3333 ? bz * 0.5 : (bz < 0.6667 ? bz * 1.5 - 0.3333 : bz * 1.5 - 0.5);
       vec3 swayV = (modelViewMatrix * vec4(sway * bend, 0.0, 0.0)).xyz;
       vec4 mvPosition = vec4(bbC.xyz + bbR * transformed.x * bbS + bbUp * transformed.z + swayV + normalize(bbC.xyz) * ${push.toFixed(2)}, 1.0);
-      gl_Position = projectionMatrix * mvPosition;`,
+      gl_Position = projectionMatrix * mvPosition;
+      vec3 bbN = cross(bbR, normalize(bbUp));
+      bbFade = smoothstep(${EDGE_HIDE.toFixed(2)}, ${EDGE_SHOW.toFixed(2)}, abs(dot(normalize(mvPosition.xyz), bbN)));`,
     );
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying float bbFade;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 treeLight;')
-      .replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( diffuse * treeLight, opacity );');
+      .replace('#include <common>', '#include <common>\nuniform vec3 treeLight;\nvarying float bbFade;')
+      .replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( diffuse * treeLight, opacity );')
+      .replace('#include <alphatest_fragment>', 'diffuseColor.a *= bbFade;\n#include <alphatest_fragment>');
   };
   mat.customProgramCacheKey = () => `ht2-tree-billboard-${push}`;
   return mat;
