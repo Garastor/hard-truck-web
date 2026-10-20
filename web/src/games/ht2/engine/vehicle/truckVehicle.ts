@@ -293,14 +293,24 @@ export class TruckVehicle {
   private readonly groundRays = (c: RAPIER.Collider): boolean =>
     (!this.rayFilter || this.rayFilter(c)) && (this.roomRule ??= RoomBounds.groundFilter(this.world, this.body) ?? (() => true))(c);
 
-  /**
-   * Навантаження на сідло, Н (напівпричіп): задня підвіска тягача (колеса з 2-го) жорсткішає пропорційно — у Rapier
-   * сила пружини масштабується масою шасі, і вага причепа інакше стискала її до упору. Частка задніх коліс у вазі
-   * тягача — половина (гіпотеза).
-   */
+  /** Навантаження на сідло, Н (напівпричіп): лягає на задні колеса тягача — див. `balanceSprings`. */
   setTowLoad(newtons: number): void {
-    const f = 1 + newtons / (this.mass * 9.81 * 0.5);
-    for (let i = 2; i < this.wheels; i++) {
+    this.balanceSprings(newtons);
+  }
+
+  /**
+   * Жорсткість пружини кожного колеса — пропорційно його статичному навантаженню (`staticLoads` плюс вага на сідлі
+   * порівну на задні колеса), як у king.exe: k_i = N_ст/((x/L₀ + 1)·x) — кожна пружина в рівновазі на тому самому ході
+   * (0x508300). У Rapier сила пружини масштабується масою шасі, і однакова жорсткість стискала навантажені колеса до
+   * упору: у бортових машин (DafR, VolvoR — центр мас у tech ≈ 3 м позаду, ≈ 80 % ваги на задній осі) задок сідав,
+   * машина стояла дибки; вага причепа так само давила задок тягача.
+   */
+  private balanceSprings(towNewtons = 0): void {
+    const loads = this.staticLoads();
+    const nr = Math.max(1, this.wheels - 2);
+    const avg = (this.mass * KING.g) / this.wheels;
+    for (let i = 0; i < this.wheels; i++) {
+      const f = (loads[i] + (i >= 2 ? towNewtons / nr : 0)) / avg;
       this.ctrl.setWheelSuspensionStiffness(i, SUSPENSION.stiffness * f);
       this.suspMax[i] = this.mass * 40 * f;
       if (!this.tipped) this.ctrl.setWheelMaxSuspensionForce(i, this.suspMax[i]);
@@ -734,6 +744,7 @@ export class TruckVehicle {
       tire.setEnabled(false);
       this.tires.push(tire);
     }
+    this.balanceSprings();
 
     // Бампери: корпус-колайдер високо (низ ≈ 1 м над дорогою), а колеса — промені, тож низькі предмети (ящики,
     // блоки) проходили під кузовом і колеса на них заїжджали. Низькі коробки спереду й ззаду без маси —
