@@ -433,7 +433,9 @@ export class Presents {
     const groundAt = (local: THREE.Vector3): number | null => {
       const w = local.clone().applyQuaternion(yawQ).add(p.pos);
       const from = { x: w.x, y: p.pos.y + 6, z: w.z };
-      const hit = this.ctx.rapier.castRay(new RAPIER.Ray(from, { x: 0, y: -1, z: 0 }), 60, true, undefined, undefined, undefined, m.body);
+      // Лише нерухомий світ: щойно відчеплений причіп стоїть шворнем над тягачем — промінь влучав у тягач, і причіп
+      // ставав дибки (ніс на висоті даху тягача).
+      const hit = this.ctx.rapier.castRay(new RAPIER.Ray(from, { x: 0, y: -1, z: 0 }), 60, true, RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC, undefined, undefined, m.body);
       return hit ? from.y - hit.timeOfImpact : null;
     };
     const ya = groundAt(m.contact);
