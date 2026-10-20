@@ -84,6 +84,8 @@ const PREDICT_STEP = 0.25;
 const CROSS_MARGIN = 1.5;
 /** Точка обʼїзду (перед тіла, яке обʼїжджаємо) далі за стільки — обʼїзд скасовано, м. */
 const BYPASS_LOST = 80;
+/** Перешкода, що рухається під кутом, меншим за arccos(SAME_WAY), до нашого курсу, — попутна: її рух не передбачаємо. */
+const SAME_WAY = 0.7;
 /** Зустрічна має бути вільна на стільки вперед, м. */
 const BYPASS_CLEAR = 120;
 /**
@@ -640,7 +642,9 @@ export function leaderOn(
     if (dist > reach + PREDICT * o.vel.length()) continue;
     // Перешкода не на смугах (гравець) — ще й на своїй траєкторії: точка через tau с — перешкода, якщо ми будемо там
     // майже тоді ж.
-    const moving = !o.mover && o.vel.lengthSq() >= 1;
+    // Того, хто їде в наш бік (наздоганяє ззаду чи обганяє), не передбачаємо: прогноз ставив гравця, що наздоганяє,
+    // просто перед капотом — машина гальмувала до нуля й чекала, доки її штовхнуть (повідомлення користувача).
+    const moving = !o.mover && o.vel.lengthSq() >= 1 && o.vel.x * m.heading.x + o.vel.z * m.heading.z < SAME_WAY * o.vel.length();
     for (let tau = 0; tau <= (moving ? PREDICT : 0) + 1e-6; tau += PREDICT_STEP) {
       const q = tau ? ahead.copy(o.pos).addScaledVector(o.vel, tau).setY(o.pos.y) : o.pos;
       let hit = false;

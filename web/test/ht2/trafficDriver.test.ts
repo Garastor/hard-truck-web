@@ -183,6 +183,20 @@ describe('HT2: водій трафіку', () => {
     expect(closest).toBeGreaterThan(5);
   });
 
+  it('гравця, що наздоганяє ззаду, лідером не вважає — не зупиняється перед ним (повідомлення користувача)', () => {
+    const [l] = road(straight(2000), 1, 0);
+    const m = newMover(l, 10, 0, 7, 2);
+    m.speed = 7;
+    // Гравець на тій самій смузі за 30 м, 17 м/с — за 2–3 с «опиняється» перед капотом за прогнозом.
+    const player: Obstacle = { pos: m.pos.clone().add(new THREE.Vector3(0, 0, 30)), vel: new THREE.Vector3(0, 0, -17), half: 2.5 };
+    let minSpeed = Infinity;
+    run(m, 1.6, [player], () => {
+      player.pos.addScaledVector(player.vel, 1 / 30);
+      minSpeed = Math.min(minSpeed, m.speed);
+    });
+    expect(minSpeed).toBeGreaterThan(6);
+  });
+
   it('зустрічна зайнята — чекає', () => {
     const lanes = road(straight(1000), 1, 0);
     const m = newMover(lanes[0], 0, 0, 20, 2);
