@@ -2781,7 +2781,13 @@ export class Ht2Drive {
       this.safe = spawn;
       this.skipHits = 3;
     } else this.recover();
-    this.careerMode?.pay911();
+    if (this.careerMode) this.careerMode.pay911();
+    else {
+      // Вільна їзда (порт): платити нічим — 911 ремонтує безкоштовно, як у кар'єрі з грошима.
+      this.dents?.repair();
+      this.trailerDents?.repair();
+      this.extinguish();
+    }
     this.rescue = null;
   }
 
