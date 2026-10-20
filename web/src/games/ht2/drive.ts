@@ -151,9 +151,9 @@ function viewFov(xpyramid: number): number {
 }
 /**
  * Коробка над оком у системі моделі машини (clipRoof), м: півширина, низ і верх над оком, назад і вперед від ока.
- * Козирок ScaniaR — на 0,24 м вище ока й на 1 м попереду.
+ * Козирок ScaniaR — на 0,24 м вище ока й на 1 м попереду, тонований козирок MercedesR (effect_shadedglass) — від 0,13 м.
  */
-const CAB_ROOF: [number, number, number, number, number] = [1.3, 0.15, 3, 2, 2.5];
+const CAB_ROOF: [number, number, number, number, number] = [1.3, 0.1, 3, 2, 2.5];
 const CAB_ROOF_CLIP = Array.from({ length: 6 }, () => new THREE.Plane());
 /** Запізнення камери за машиною, с (оригінал: відстань позаду = 8,8 м + 0,58 с × швидкість, повертається за ≈ 1,5 с). */
 const CHASE_LAG = 0.6;
@@ -3064,7 +3064,9 @@ export class Ht2Drive {
     // Вісь — z простору керма (0x5ac0c0); навколо y кермо ставало ребром і зникало в панелі.
     rot(this.cabParts.rule, new THREE.Vector3(0, 0, 1), 2 * this.truck.steerAngle);
     rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), needle(this.truck.speedKmh, this.def.speedScale), NEEDLE_SIZE);
-    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle(this.truck.rpm / 60, this.def.tachScale), NEEDLE_SIZE);
+    // Шкала тахометра — у сотнях об/хв (tech: об/с, поділені на 5/3 — formats.md; VolvoR 28, ZilR 40 — як позначки на
+    // циферблатах). З rpm/60 стрілка показувала в 1,67 раза більше: холості 800 об/хв — на «13».
+    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle(this.truck.rpm / 100, this.def.tachScale), NEEDLE_SIZE);
   }
 
   /**
