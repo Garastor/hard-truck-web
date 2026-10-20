@@ -290,12 +290,17 @@ export class Traffic {
     for (const e of extra) if (Array.isArray(e)) for (const p of e) groups.set(p, e);
     const avoid = [player, ...extra.flat()];
     const obstacles: Obstacle[] = this.cars.map((c) => ({ pos: c.pos, vel: c.heading.clone().multiplyScalar(c.speed), half: c.halfLen, mover: c }));
+    const prevOk = dt > 0 && this.avoidPrev.length === avoid.length;
     avoid.forEach((p, i) => {
-      const prev = this.avoidPrev[i];
-      const vel = prev && dt > 0 && this.avoidPrev.length === avoid.length ? p.clone().sub(prev).divideScalar(dt) : new THREE.Vector3();
-      obstacles.push({ pos: p, vel: vel.lengthSq() < 900 ? vel : new THREE.Vector3(), half: AVOID_HALF, group: groups.get(p) });
+      const vel = new THREE.Vector3();
+      if (prevOk) vel.subVectors(p, this.avoidPrev[i]).divideScalar(dt);
+      if (vel.lengthSq() >= 900) vel.set(0, 0, 0);
+      obstacles.push({ pos: p, vel, half: AVOID_HALF, group: groups.get(p) });
     });
-    this.avoidPrev = avoid.map((p) => p.clone());
+    // Попередні точки — у тих самих векторах (щокадру десятки точок).
+    while (this.avoidPrev.length < avoid.length) this.avoidPrev.push(new THREE.Vector3());
+    this.avoidPrev.length = avoid.length;
+    avoid.forEach((p, i) => this.avoidPrev[i].copy(p));
     for (const c of this.all) {
       c.stopAt = c.root || c.vehicle ? (this.signals?.stopAhead(c.pos, c.heading) ?? Infinity) : Infinity;
       if (c.vehicle) this.think(c, dt, obstacles);
@@ -671,9 +676,10 @@ export class Traffic {
     // Кінематична машина інакше штовхає гравця з «нескінченною» масою (на перехресті вантажівка з причепом
     // виїжджає збоку, гальмувати пізно).
     for (const o of avoid) {
-      const rel = o.clone().sub(c.pos);
-      const along = rel.x * c.heading.x + rel.z * c.heading.z;
-      const side = Math.abs(rel.x * c.heading.z - rel.z * c.heading.x);
+      const rx = o.x - c.pos.x;
+      const rz = o.z - c.pos.z;
+      const along = rx * c.heading.x + rz * c.heading.z;
+      const side = Math.abs(rx * c.heading.z - rz * c.heading.x);
       if (along > 0 && along < c.halfLen + 5 && side < 2.5) c.speed = 0;
     }
     if (!c.root || !c.body) return;
@@ -684,7 +690,7 @@ export class Traffic {
       else if (c.ground) c.ground.t = GROUND_EVERY;
     }
     if (c.ground) c.ground.y += (c.ground.goal - c.ground.y) * (1 - Math.exp(-dt / GROUND_LAG));
-    const q = orient(new THREE.Quaternion(), c.heading, c.ground?.n);
+    const q = orient(DRIVE_Q, c.heading, c.ground?.n);
     // Плавний поворот на зламах ламаної.
     c.root.quaternion.slerp(q, Math.min(1, dt * 6));
     c.root.position.set(c.pos.x, c.ground?.y ?? c.pos.y, c.pos.z);
@@ -731,9 +737,16 @@ export function recolor(root: THREE.Object3D, trucks: Ht2Trucks, n: number): voi
 
 /** Орієнтація моделі: перед — курс, спроєктований на площину ґрунту з нормаллю n (без n — горизонтально). */
 function orient(q: THREE.Quaternion, heading: THREE.Vector3, n?: THREE.Vector3): THREE.Quaternion {
-  const up = n ?? new THREE.Vector3(0, 1, 0);
-  const f = heading.clone().addScaledVector(up, -heading.dot(up));
+  // Робочі обʼєкти модуля — щокадру для кожної машини трафіку.
+  const up = n ?? ORIENT_UP;
+  const f = ORIENT_F.copy(heading).addScaledVector(up, -heading.dot(up));
   if (f.lengthSq() < 1e-6) f.copy(heading);
   // lookAt ставить +Z від цілі до ока: ціль — уперед, тож −Z (перед моделі) дивиться за рухом.
-  return q.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), f.normalize(), up));
+  return q.setFromRotationMatrix(ORIENT_M.lookAt(ORIENT_EYE, f.normalize(), up));
 }
+
+const ORIENT_UP = new THREE.Vector3(0, 1, 0);
+const ORIENT_F = new THREE.Vector3();
+const ORIENT_EYE = new THREE.Vector3();
+const ORIENT_M = new THREE.Matrix4();
+const DRIVE_Q = new THREE.Quaternion();

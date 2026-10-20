@@ -78,6 +78,8 @@ export class WayNet {
 
 /** Огляд перешкод попереду, м; зупинка за стільки до перешкоди (точки), м; розрахункове сповільнення, м/с². */
 const BLOCK_LOOK = 60;
+/** Робочий вектор перевірки перешкод (щокадру десятки точок — без нових обʼєктів). */
+const REL = new THREE.Vector3();
 /** Перешкода «на курсі» — ближче за стільки вбік від осі машини (півширини обох + запас), м. */
 const STOP_SIDE = 2.6;
 const STOP_GAP = 10;
@@ -221,7 +223,7 @@ export class AutoPilot {
     const slow = !!here.base || lw < SLOW_LANE;
     if (tight) for (const o of oncoming) {
       if (o.forward.dot(flat) > PASS_COS) continue;
-      const rel = o.pos.clone().sub(pos);
+      const rel = REL.subVectors(o.pos, pos);
       const ahead = rel.dot(forward);
       if (ahead > 0 && ahead < PASS_LOOK && Math.abs(rel.dot(rightV)) < PASS_SIDE) this.passing = PASS_HOLD;
     }
@@ -230,7 +232,7 @@ export class AutoPilot {
     let blockSide = 0;
     let stopDist = Infinity;
     for (const o of others) {
-      const rel = o.clone().sub(pos);
+      const rel = REL.subVectors(o, pos);
       const ahead = rel.dot(forward);
       if (ahead <= 0 || ahead > BLOCK_LOOK) continue;
       const side = rel.dot(rightV);

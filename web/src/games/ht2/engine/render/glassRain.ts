@@ -21,6 +21,8 @@ import { SceneCopy, WATER_FRAGMENT, WATER_LOOK, WATER_VERTEX, WaterBuffer, toLev
  */
 const REST = 0.12217304555555557;
 const SWEEP = Math.PI / 2;
+/** Робоча матриця повороту двірників (щокадру — без нових обʼєктів). */
+const WIPER_TMP = new THREE.Matrix4();
 const SPEED = 2.35619445;
 /**
  * Краплі й сліди залежать від швидкості (0x5a58e0, поле 0xb8 — гіпотеза: м/с): краплі × (1 − 0,05·v), сліди ×
@@ -179,7 +181,8 @@ export class GlassRain {
     this.speed = speedKmh / 3.6;
     const prev = this.angle;
     this.updateWipers(dt);
-    for (const w of this.wipers) w.obj.matrix.copy(w.base).multiply(new THREE.Matrix4().makeRotationY(this.angle));
+    const turn = WIPER_TMP.makeRotationY(this.angle);
+    for (const w of this.wipers) w.obj.matrix.copy(w.base).multiply(turn);
     if (this.raining) {
       this.water.wet();
       this.spawn(dt);

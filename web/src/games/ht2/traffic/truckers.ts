@@ -45,6 +45,8 @@ const START_AWAY = 150;
 const FREE_R = 30;
 /** Перевірка, кому стати машиною, — раз на стільки, с. */
 const PROMOTE_EVERY = 0.5;
+/** Абстрактний рух водіїв світу — раз на стільки, с (на прохання користувача). */
+const FLEET_EVERY = 1;
 /** Стоїть довше — застряг, с. */
 const STUCK_FOR = 30;
 /** Після перекидання чи застрягання — абстрактний щонайменше стільки, с, і машиною лише поза видимістю. */
@@ -98,6 +100,8 @@ export class Truckers {
   readonly hired = new Map<string, Rival>();
   /** До наступної перевірки, кому стати машиною, с (1e9 — нікому: тести в браузері). */
   timer = 0;
+  /** Час, накопичений для кроку абстрактних водіїв, с. */
+  private fleetAcc = 0;
   /** Усі далекобійники світу (створюються в першому after — біля гравця не ставимо). */
   fleet: Fleet | null = null;
   private saved: readonly SavedTrucker[] | null = null;
@@ -378,7 +382,14 @@ export class Truckers {
   private fleetStep(dt: number, player: THREE.Vector3, playerSpeed: number): void {
     const f = (this.fleet ??= this.makeFleet(player));
     if (!f) return;
-    f.tick(dt, Math.max(HIRED_MIN_SPEED, playerSpeed));
+    // Абстрактні водії (далі PHYS_ON, їх не видно) — раз на FLEET_EVERY с за весь час (оптимізація для телефона:
+    // 50 водіїв щокадру — 0,3 мс на ПК); рейси без рейсу — щокадру, по два.
+    f.assignJobs();
+    this.fleetAcc += dt;
+    if (this.fleetAcc >= FLEET_EVERY) {
+      f.tick(this.fleetAcc, Math.max(HIRED_MIN_SPEED, playerSpeed));
+      this.fleetAcc = 0;
+    }
     if ((this.timer -= dt) > 0) return;
     this.timer = PROMOTE_EVERY;
     if (this.list.length >= this.max) return;

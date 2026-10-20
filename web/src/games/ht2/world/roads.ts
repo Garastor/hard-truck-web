@@ -471,15 +471,22 @@ export class Ht2Roads {
 
   /** Відстань по горизонталі до найближчої осі дороги й сама вісь (null — доріг поблизу немає); open — без закритих. */
   nearestAxis(p: THREE.Vector3, open = false): { axis: RoadLine; dist: number; point: THREE.Vector3 } | null {
-    let best: { axis: RoadLine; dist: number; point: THREE.Vector3 } | null = null;
+    // Точка — лише для найближчої осі (щокадру десятки осей: без нових векторів на кожну).
+    let axis: RoadLine | null = null;
+    let dist = Infinity;
+    let seg = 0;
+    let t = 0;
     for (const a of new Set(nearCells(this.axisGrid, p))) {
       if (open && a.closed) continue;
-      const q = closestOn(a.pts, p);
-      if (!q) continue;
-      const dist = Math.hypot(q.point.x - p.x, q.point.z - p.z);
-      if (!best || dist < best.dist) best = { axis: a, dist, point: q.point };
+      if (!closestSeg(a.pts, p)) continue;
+      if (!axis || SEG.d < dist) {
+        axis = a;
+        dist = SEG.d;
+        seg = SEG.i;
+        t = SEG.t;
+      }
     }
-    return best;
+    return axis ? { axis, dist, point: axis.pts[seg].clone().lerp(axis.pts[seg + 1], t) } : null;
   }
 
   /**
@@ -544,7 +551,7 @@ export class Ht2Roads {
    * тупикових (deadEnd), якщо є інші; choose — своє продовження (маршрут бота, world/navigator next), null — як завжди.
    */
   advance(line: RoadLine, seg: number, t: number, ahead: number, choose?: (l: RoadLine) => RoadLine | null): THREE.Vector3 {
-    let cur = line.pts[seg].clone().lerp(line.pts[seg + 1], t);
+    const cur = line.pts[seg].clone().lerp(line.pts[seg + 1], t);
     let left = ahead;
     let l: RoadLine = line;
     let i = seg + 1;
@@ -560,7 +567,7 @@ export class Ht2Roads {
       const d = cur.distanceTo(l.pts[i]);
       if (d >= left) return cur.lerp(l.pts[i], left / d);
       left -= d;
-      cur = l.pts[i].clone();
+      cur.copy(l.pts[i]);
       i++;
     }
     return cur;
@@ -572,6 +579,15 @@ export class Ht2Roads {
  * місце стоянки й виїзд (на базі біля аеропорту — ланцюжок кишень по 27 м з поворотом 94° поруч із прямою).
  */
 export function isPocket(l: RoadLine): boolean {
+  // Лінії незмінні — відповідь запамʼятовується (питають щокадру на кожній розвилці).
+  let v = POCKETS.get(l);
+  if (v === undefined) POCKETS.set(l, (v = pocketShape(l)));
+  return v;
+}
+
+const POCKETS = new WeakMap<RoadLine, boolean>();
+
+function pocketShape(l: RoadLine): boolean {
   if (!(l.flags & 0x10) || l.length > 40) return false;
   let w = 0;
   let prev: THREE.Vector3 | null = null;
@@ -671,18 +687,43 @@ function tangentStart(pts: THREE.Vector3[]): THREE.Vector3 {
 
 /** Найближча до p точка ламаної (по горизонталі) і дотична там. */
 function closestOn(pts: THREE.Vector3[], p: THREE.Vector3): { point: THREE.Vector3; tangent: THREE.Vector3 } | null {
-  let best: { point: THREE.Vector3; tangent: THREE.Vector3; d: number } | null = null;
+  if (!closestSeg(pts, p)) return null;
+  const a = pts[SEG.i];
+  const b = pts[SEG.i + 1];
+  return { point: a.clone().lerp(b, SEG.t), tangent: new THREE.Vector3(b.x - a.x, 0, b.z - a.z).normalize() };
+}
+
+/** Результат closestSeg: відрізок i, частка t на ньому, відстань d по горизонталі. */
+const SEG = { i: 0, t: 0, d: 0 };
+
+/**
+ * Найближчий до p відрізок ламаної (по горизонталі) — у SEG, без нових обʼєктів (щокадру — сотні відрізків: сміття
+ * для збирача памʼяті на телефоні). false — ламана без відрізків.
+ */
+function closestSeg(pts: THREE.Vector3[], p: THREE.Vector3): boolean {
+  let bi = -1;
+  let bt = 0;
+  let bd = Infinity;
   for (let i = 0; i + 1 < pts.length; i++) {
     const a = pts[i];
-    const ab = pts[i + 1].clone().sub(a).setY(0);
-    const len2 = ab.lengthSq();
+    const b = pts[i + 1];
+    const abx = b.x - a.x;
+    const abz = b.z - a.z;
+    const len2 = abx * abx + abz * abz;
     if (!len2) continue;
-    const t = THREE.MathUtils.clamp(((p.x - a.x) * ab.x + (p.z - a.z) * ab.z) / len2, 0, 1);
-    const point = a.clone().lerp(pts[i + 1], t);
-    const d = Math.hypot(point.x - p.x, point.z - p.z);
-    if (!best || d < best.d) best = { point, tangent: ab.normalize(), d };
+    const t = THREE.MathUtils.clamp(((p.x - a.x) * abx + (p.z - a.z) * abz) / len2, 0, 1);
+    const d = Math.hypot(a.x + abx * t - p.x, a.z + abz * t - p.z);
+    if (d < bd) {
+      bd = d;
+      bi = i;
+      bt = t;
+    }
   }
-  return best;
+  if (bi < 0) return false;
+  SEG.i = bi;
+  SEG.t = bt;
+  SEG.d = bd;
+  return true;
 }
 
 function cellKey(p: THREE.Vector3): string {

@@ -113,6 +113,12 @@ const MAX_FPS = 60;
 const BALANCE_DPR = 1.5;
 /** Дзеркало оновлюється не частіше (к/с): друге малювання світу — найдорожча частина виду з кабіни. */
 const MIRROR_FPS = 20;
+/** Скільки прожекторів буває в сцені: без фар, фари гравця, фари гравця й зустрічної (compileLit). */
+const LAMP_STATES = [0, 2, 4];
+/** Робочі обʼєкти кабіни (стрілки й кермо щокадру — без нових матриць). */
+const CAB_TMP = new THREE.Matrix4();
+const AXIS_Y = new THREE.Vector3(0, 1, 0);
+const AXIS_Z = new THREE.Vector3(0, 0, 1);
 
 const MIRROR_MASK = 'm16\\mirrth.msk';
 const MIRROR_W = 480;
@@ -252,6 +258,19 @@ const GROUND_RAY = groups(GROUP_WORLD, GROUP_WORLD);
 function cabAmbient(hour: number): number {
   return 0.5 + 0.5 * Math.sin((hour * Math.PI) / 24) ** 2;
 }
+
+/** Звільнити GPU-ресурси салону: збирач CABINES не зберігається (loadCab), тож геометрія, матеріали й текстури — лише його. */
+function disposeCab(cab: THREE.Object3D): void {
+  cab.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    o.geometry.dispose();
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      (m as THREE.MeshLambertMaterial).map?.dispose();
+      m.dispose();
+    }
+  });
+}
+
 /**
  * Підйом місця водія (разом із салоном) над `viewer` з vehicle.tech, м — на око, на прохання користувача: інакше
  * між задньою кромкою капота й панеллю приладів видно щілину (king.exe ставить око інакше — re/notes/ht2/weather.md).
@@ -473,7 +492,6 @@ export class Ht2Drive {
   private cabParts: { rule?: THREE.Object3D; speed?: THREE.Object3D; tacho?: THREE.Object3D; fuel?: THREE.Object3D } = {};
   /** Згладжені оберти для стрілки тахометра, об/хв (updateCab). */
   private tachShown = 0;
-  private cabAsm: SceneAssembler | null = null;
   /** Вода на склі кабіни й двірники (як у першій грі: маски glass_1/glass_2.msk з CABINES.RES, Wiper*). */
   private glassRain: GlassRain | null = null;
   /** Вмʼятини гравця (перемикачі пошкоджень моделі); у кар'єрі — зберігаються. */
@@ -507,7 +525,6 @@ export class Ht2Drive {
   private semiTypes: SemiKind[] = [];
   /** Габарити (SizeLightKey моделі). */
   private setTruckSwitch: ((n: string, s: number) => void) | undefined;
-  private cabRmp: ReturnType<typeof parseRmp> | null = null;
   private shelterTimer = 0;
   private sheltered = false;
   private cabLoading = false;
@@ -987,6 +1004,16 @@ export class Ht2Drive {
     }
     window.addEventListener('resize', this.onResize);
     this.resize();
+    o.setStatus('Підготовка шейдерів…');
+    // Кабіна — до першого кадру, якщо їзда починається з неї (інакше вантажиться при першому вигляді з кабіни).
+    if (this.camMode === 'cockpit') await this.loadCab();
+    // Площини відсічення даху машини — до компіляції: вони теж у ключі шейдера (перший кадр компілював би машину знову).
+    this.clipRoof(false);
+    // Крок без часу — створює те, що зʼявляється з першим кадром (світло вибухів у blasts — точкове світло теж у ключі
+    // шейдера, листя, опади, перші машини трафіку), щоб прогрів бачив сцену такою, як у грі.
+    this.update(0);
+    this.world.visibility.update(this.camera);
+    await this.warmScene();
     this.last = performance.now();
     o.renderer.setAnimationLoop((t) => this.frame(t));
   }
@@ -1048,7 +1075,60 @@ export class Ht2Drive {
       r.initTexture(t);
       if (++n % TEXTURES_PER_TASK === 0) await yieldTask();
     }
-    await r.compileAsync(root, this.camera, this.world.scene).catch(() => undefined);
+    await this.compileLit(root);
+  }
+
+  /**
+   * Шейдери root наперед — для всіх станів фар: без прожекторів, фари гравця (2), фари гравця й зустрічної (4).
+   * Кількість прожекторів — у ключі шейдера three.js: без цього перше ввімкнення фар (чи сутінки з фарами зустрічних)
+   * компілювало заново шейдери всього видимого (на ПК 16 шейдерів за 0,18 с; на телефоні — у кілька разів довше).
+   * Шейдери кожного стану three.js тримає в матеріалі, тож далі перемикання — без компіляції. Стан задають сховані
+   * прожектори-замінники (warmLamps, у сцені), справжні на час виклику ховаються; поточний стан — останнім.
+   */
+  private async compileLit(root: THREE.Object3D, scene: THREE.Scene = this.world.scene): Promise<void> {
+    const r = this.opts.renderer;
+    if (!this.warmLamps.length) {
+      const map = new THREE.Texture();
+      for (let i = 0; i < 4; i++) {
+        const l = new THREE.SpotLight(0xffffff, 0);
+        l.map = map;
+        l.visible = false;
+        this.world.scene.add(l);
+        this.warmLamps.push(l);
+      }
+    }
+    const real = [...this.lamps, ...this.carLamps];
+    const now = real.filter((l) => l.visible).length;
+    const tasks: Promise<unknown>[] = [];
+    for (const count of [...LAMP_STATES.filter((c) => c !== now), now]) {
+      if (this.disposed) break;
+      const was = real.map((l) => l.visible);
+      for (const l of real) l.visible = false;
+      this.warmLamps.forEach((l, i) => (l.visible = i < count));
+      // compileAsync будує шейдери синхронно з поточними світлами — одразу після виклику стан можна повернути.
+      tasks.push(r.compileAsync(root, this.camera, scene).catch(() => undefined));
+      for (const l of this.warmLamps) l.visible = false;
+      real.forEach((l, i) => (l.visible = was[i]));
+      await yieldTask();
+    }
+    await Promise.all(tasks);
+  }
+
+  /** Сховані прожектори для compileLit (лише задають кількість світел під час компіляції). */
+  private readonly warmLamps: THREE.SpotLight[] = [];
+
+  /**
+   * Шейдери всього, що вже в сцені (регіони старту — ще раз: їх готували до появи світла вибухів; небо, відблиски
+   * сонця, опади, вибухи, машини з усіма варіантами перемикачів), — до першого кадру: інакше перша поява кожного
+   * (зміна камери, дощ, вибух, фари) — ривок.
+   */
+  private async warmScene(): Promise<void> {
+    for (const c of [...this.world.scene.children]) {
+      if (this.warmLamps.includes(c as THREE.SpotLight)) continue;
+      await this.compileLit(c);
+    }
+    // Салон — своя сцена зі своїм світлом (фари на нього не діють).
+    if (this.cab) await this.opts.renderer.compileAsync(this.cab, this.camera, this.overlayScene).catch(() => undefined);
   }
 
   /**
@@ -1942,6 +2022,7 @@ export class Ht2Drive {
     this.cockpit = g2t(def.tech.viewer).add(COCKPIT_LIFT);
     if (this.cab) {
       this.overlayScene.remove(this.cab);
+      disposeCab(this.cab);
       this.glassRain?.dispose();
       this.glassRain = null;
       this.cab = null;
@@ -2155,7 +2236,9 @@ export class Ht2Drive {
     this.burning = -1;
     this.blasts?.carFire(null);
     this.truck.engineOn = false;
-    void this.clip(screen === 'BackLoose5' ? 'trbn.bne' : 'TRirr.bne').then(() => {
+    void this.clip(screen === 'BackLoose5' ? 'trbn.bne' : 'TRirr.bne').then(async () => {
+      // Екран кінця гри не тримається в памʼяті (ui/escArt.ts LAZY) — довантажити.
+      await this.escArt?.ensure(`m_16\\${screen}.txr`);
       this.audio?.play('youlost');
       showGameOver(this.escArt, this.overlay, screen, {
         main: () => this.opts.onExit(),
@@ -2193,6 +2276,8 @@ export class Ht2Drive {
     cm.persist();
     this.paused = true;
     await this.clip('TRw1.bne');
+    // Вікно перемоги не тримається в памʼяті (ui/escArt.ts LAZY) — довантажити.
+    await this.escArt?.ensure('m_16\\BackWin.txr');
     this.paused = true;
     this.audio?.play('youwin');
     showVictory(this.escArt, this.overlay, {
@@ -2957,16 +3042,19 @@ export class Ht2Drive {
     if (this.cabLoading || this.cab) return;
     this.cabLoading = true;
     try {
-      if (!this.cabAsm) {
-        const [b3d, res] = await Promise.all([this.opts.source.read('COMMON/CABINES.B3D'), readTextures(this.opts.source, 'COMMON/CABINES.RES')]);
-        this.cabRmp = parseRmp(res);
-        this.cabAsm = new SceneAssembler(parseB3d(b3d), this.cabRmp, { lit: true, colorKey: true, nearGroup: 0, type4Space: true, palette: this.world.common.lib.palette ?? undefined });
+      // CABINES.B3D і .RES (≈ 29 МБ) — лише на час збирання салону: збирач з файлами не зберігається (памʼять на
+      // телефоні); інший салон (зміна машини) — читає їх знову.
+      const [b3d, res] = await Promise.all([this.opts.source.read('COMMON/CABINES.B3D'), readTextures(this.opts.source, 'COMMON/CABINES.RES')]);
+      if (this.disposed || this.cab) return;
+      const rmp = parseRmp(res);
+      const asm = new SceneAssembler(parseB3d(b3d), rmp, { lit: true, colorKey: true, nearGroup: 0, type4Space: true, palette: this.world.common.lib.palette ?? undefined });
+      if (!this.cabLight) {
         // Світло в кабіні — лише розсіяне сіре cabAmbient(година) (king.exe 0x4df4a8), без сонця й envamb.
         this.cabLight = new THREE.AmbientLight(new THREE.Color().setScalar(cabAmbient(this.hour)), Math.PI);
         this.overlayScene.add(this.cabLight);
       }
       const name = `${this.cabPrefix}Cab`;
-      const dyn = this.cabAsm.dynamicObject(name);
+      const dyn = asm.dynamicObject(name);
       if (!dyn) return;
       const inner = dyn.root;
       inner.rotation.x = -Math.PI / 2;
@@ -2998,10 +3086,9 @@ export class Ht2Drive {
       dyn.setSwitch('GlassKey', 1);
       this.cabSwitch = dyn.setSwitch;
       this.cabRadar = null;
-      const rmp = this.cabRmp!;
       const mask = (n: string) => {
         const b = rmp.masks.get(n);
-        return b ? parseMsk(b, this.cabAsm!.lib.palette ?? undefined) : null;
+        return b ? parseMsk(b, asm.lib.palette ?? undefined) : null;
       };
       this.glassRain = new GlassRain(inner, mask('txr/glass_1.msk'), mask('txr/glass_2.msk'));
       this.glassRain.onStroke = () => this.audio?.play('wipers', 0.9);
@@ -3101,28 +3188,28 @@ export class Ht2Drive {
     this.cabBase.decompose(this.cab.position, this.cab.quaternion, this.cab.scale);
     const rot = (o: THREE.Object3D | undefined, axis: THREE.Vector3, angle: number, size = 1) => {
       if (!o) return;
-      o.matrix.copy(o.userData.baseMatrix as THREE.Matrix4).multiply(new THREE.Matrix4().makeRotationAxis(axis, angle));
+      o.matrix.copy(o.userData.baseMatrix as THREE.Matrix4).multiply(CAB_TMP.makeRotationAxis(axis, angle));
       // Довжина стрілки — у площині циферблата (x, z простору стрілки), навколо осі.
-      if (size !== 1) o.matrix.multiply(new THREE.Matrix4().makeScale(size, 1, size));
+      if (size !== 1) o.matrix.multiply(CAB_TMP.makeScale(size, 1, size));
     };
     const deg = Math.PI / 180;
     const needle = (v: number, [max, angle]: [number, number]) => (Math.min(Math.max(v, 0), max * 1.05) / max) * angle * deg;
     // Кермо в кабіні — π/2 × положення керма s (king.exe 0x4decc0, поле 0x29e0; δ коліс = π/4·s): удвічі більше за
     // кут коліс, уже з межею й формою керма (а не натискання клавіші).
     // Вісь — z простору керма (0x5ac0c0); навколо y кермо ставало ребром і зникало в панелі.
-    rot(this.cabParts.rule, new THREE.Vector3(0, 0, 1), 2 * this.truck.steerAngle);
-    rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), needle(this.truck.speedKmh, this.def.speedScale), NEEDLE_SIZE);
+    rot(this.cabParts.rule, AXIS_Z, 2 * this.truck.steerAngle);
+    rot(this.cabParts.speed, AXIS_Y, needle(this.truck.speedKmh, this.def.speedScale), NEEDLE_SIZE);
     // Тахометр — як king.exe 0x53d530 → 0x53d1f0: оберти (поле машини 0x51ec) / шкала tech (у файлі — об/с; порт ділить
     // її на 5/3 — сотні об/хв: VolvoR 28, ZilR 40, як позначки на циферблатах) × кут шкали. Тож стрілка — rpm/100;
     // з rpm/60 показувала в 1,67 раза більше. Холості (4 об/с) — ≈ 2,4. Оберти оригінал згладжує (filterEngineTach —
     // середнє за вікном часу, re/notes/ht2/physics.md); порт — лише для стрілки, експонентою TACH_SMOOTH: оберти
     // фізики стрибали на перемиканнях і поштовхах, і стрілка сіпалась.
     this.tachShown += (this.truck.rpm - this.tachShown) * (1 - Math.exp(-dt / TACH_SMOOTH));
-    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle(this.tachShown / 100, this.def.tachScale), NEEDLE_SIZE);
+    rot(this.cabParts.tacho, AXIS_Y, needle(this.tachShown / 100, this.def.tachScale), NEEDLE_SIZE);
     // Паливо (0x53d1f0, стрілка FuelArrowSpace): частка пального в баку × кут FuelScale з tech. Без кар'єри — повний.
     const c = this.careerMode?.career;
     const fuel = c ? Math.min(1, Math.max(0, (c.fuel ?? this.tank) / this.tank)) : 1;
-    rot(this.cabParts.fuel, new THREE.Vector3(0, 1, 0), fuel * (this.def.fuelScale ?? 0) * deg);
+    rot(this.cabParts.fuel, AXIS_Y, fuel * (this.def.fuelScale ?? 0) * deg);
   }
 
   /**
@@ -3608,7 +3695,7 @@ export class Ht2Drive {
     document.body.classList.remove('ht2-orig-ui');
     this.audio?.dispose();
     this.glassRain?.dispose();
-    this.cabAsm?.dispose();
+    if (this.cab) disposeCab(this.cab);
     this.music?.dispose();
     this.traffic?.dispose();
     this.debris?.dispose();

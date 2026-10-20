@@ -243,6 +243,9 @@ const SHARP_SCRUB = 0.4;
 const SHARP_GAS = 0.3;
 const SHARP_BLEND_ON = 4;
 const SHARP_BLEND_OFF = 1.5;
+/** Робочі обʼєкти візуалу (без нових обʼєктів щокадру — сміття для збирача памʼяті на телефоні). */
+const WHEEL_TMP = new THREE.Matrix4();
+const SLERP_TMP = new THREE.Quaternion();
 /**
  * Перекидання (порт): промені підвіски Rapier нахиляються разом із кузовом, і на крені ≈ 45° точки опору зсуваються під
  * центр мас — машина «стояла» й їхала на двох колесах. Кузов відхилився від нормалі ґрунту понад TIP_ON — колеса не
@@ -781,7 +784,7 @@ export class TruckVehicle {
     this.visual.quaternion.set(r.x, r.y, r.z, r.w);
     if (alpha < 1 && this.hasPrev && this.prevPos.distanceTo(this.visual.position) < 5) {
       this.visual.position.lerpVectors(this.prevPos, this.visual.position, alpha);
-      this.visual.quaternion.slerpQuaternions(this.prevQuat, this.visual.quaternion.clone(), alpha);
+      this.visual.quaternion.slerpQuaternions(this.prevQuat, SLERP_TMP.copy(this.visual.quaternion), alpha);
     }
     this.bodyQuat.copy(this.visual.quaternion);
     // Нахил кузова king (косметичний): верх кузова хилиться праворуч на leanSide і вперед на leanFwd.
@@ -1553,11 +1556,11 @@ export class TruckVehicle {
       const len = this.ctrl.wheelSuspensionLength(i) ?? this.suspRest;
       const steer = this.ctrl.wheelSteering(i) ?? 0;
       const spin = this.ctrl.wheelRotation(i) ?? 0;
-      const m = w.base.clone();
-      m.multiply(new THREE.Matrix4().makeTranslation(0, 0, this.suspAnchor - len + (this.wheelLift[i] ?? 0)));
-      m.multiply(new THREE.Matrix4().makeRotationZ(steer));
-      m.multiply(new THREE.Matrix4().makeRotationX(-spin));
-      w.obj.matrix.copy(m);
+      // Прямо в матрицю колеса, робоча матриця модуля (щокадру для кожного колеса кожної машини).
+      const m = w.obj.matrix.copy(w.base);
+      m.multiply(WHEEL_TMP.makeTranslation(0, 0, this.suspAnchor - len + (this.wheelLift[i] ?? 0)));
+      m.multiply(WHEEL_TMP.makeRotationZ(steer));
+      m.multiply(WHEEL_TMP.makeRotationX(-spin));
     }
   }
 

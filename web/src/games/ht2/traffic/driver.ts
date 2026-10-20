@@ -349,10 +349,17 @@ function segStart(m: Mover): THREE.Vector3 {
 
 /** Кут повороту з кінця лінії a на початок b (праворуч — додатний), рад. */
 export function turnAngle(a: RoadLine, b: RoadLine): number {
+  // Без нових векторів (щокадру для кожної машини): atan2(×, ·) не залежить від довжин напрямків.
   const n = a.pts.length;
-  const din = a.pts[n - 1].clone().sub(a.pts[n - 2]).setY(0).normalize();
-  const dout = b.pts[Math.min(2, b.pts.length - 1)].clone().sub(b.pts[0]).setY(0).normalize();
-  return Math.atan2(din.x * dout.z - din.z * dout.x, din.dot(dout));
+  const p1 = a.pts[n - 1];
+  const p0 = a.pts[n - 2];
+  const q1 = b.pts[Math.min(2, b.pts.length - 1)];
+  const q0 = b.pts[0];
+  const ix = p1.x - p0.x;
+  const iz = p1.z - p0.z;
+  const ox = q1.x - q0.x;
+  const oz = q1.z - q0.z;
+  return Math.atan2(ix * oz - iz * ox, ix * ox + iz * oz);
 }
 
 /** Перебудувати маршрут (king.exe seeIfMustBeRetraced): машину відкинуло від лінії — на найближчу. */
@@ -481,12 +488,15 @@ function giveUpLeft(m: Mover): void {
 function nextLine(line: RoadLine, road: number | null, lane: number): RoadLine | null {
   // На закриту завалом дорогу й на зрізалку не заїжджаємо (з закритої — можна: машина вже там і має з неї виїхати);
   // дорога, що далі веде лише на зрізалки (ag_010, ah_010), — тупик: розворот.
-  const all = (line.next as RoadLine[]).filter((l) => (line.closed || !l.closed) && (line.shortcut || !l.shortcut));
-  const cand = road === null ? all : all.filter((l) => l.road === road);
-  const list = cand.length ? cand : all;
+  // Без проміжних масивів (щокадру для кожної машини): найближча смуга серед ліній тієї ж дороги, без них — серед усіх.
   let best: RoadLine | null = null;
-  for (const l of list) if (!best || Math.abs(l.lane - lane) < Math.abs(best.lane - lane)) best = l;
-  return best;
+  let any: RoadLine | null = null;
+  for (const l of line.next as RoadLine[]) {
+    if (!((line.closed || !l.closed) && (line.shortcut || !l.shortcut))) continue;
+    if (!any || Math.abs(l.lane - lane) < Math.abs(any.lane - lane)) any = l;
+    if (road !== null && l.road === road && (!best || Math.abs(l.lane - lane) < Math.abs(best.lane - lane))) best = l;
+  }
+  return road === null ? any : (best ?? any);
 }
 
 /** Найпряміше продовження (для огляду за межею запланованого). */
@@ -1082,14 +1092,18 @@ function advance(m: Mover, move: number): void {
   }
 }
 
+const PLACE_DIR = new THREE.Vector3();
+const PLACE_RIGHT = new THREE.Vector3();
+
 /** Позиція й напрям з лінії й бічного зсуву. */
 function place(m: Mover, dt: number): void {
   const a = segStart(m);
   const b = m.line.pts[m.seg + 1];
-  const dir = b.clone().sub(a).setY(0);
+  // Робочі вектори модуля: place — щокадру для кожної машини трафіку й привида.
+  const dir = PLACE_DIR.subVectors(b, a).setY(0);
   if (dir.lengthSq() < 1e-8) return;
   dir.normalize();
-  const right = new THREE.Vector3(-dir.z, 0, dir.x);
+  const right = PLACE_RIGHT.set(-dir.z, 0, dir.x);
   linePoint(m, m.pos).addScaledVector(right, m.lat);
   // Курс з бічною складовою перестроювання (зсув згасає — машина «з'їжджає» на нову смугу).
   const dLat = ((m.lat - m.latGoal) * (1 - Math.exp(-dt / LANE_TAU))) / Math.max(0.5, m.speed * dt);

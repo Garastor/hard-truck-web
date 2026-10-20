@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { installVertexFog } from './engine/render/vertexFog';
+import { installVertexLighting } from './engine/render/vertexLighting';
 import { installHeadlightShading } from './vehicles/headlights';
 import { cachedSource, idbSourceFor, missingFiles, prefetchMissing, removeFiles, storedFiles } from '@shared/gameStore';
 import type { FileSource } from '@shared/source';
@@ -108,6 +109,8 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   ctx.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
   installVertexFog();
   installHeadlightShading();
+  // Після туману: дописує свій підрахунок у fog_vertex.
+  installVertexLighting();
   ctx.setStatus('Завантаження «Дальнобійників 2»…');
   const source = await pickSource(ctx);
   const font = (name: string) => source.read(name).then((b) => new PixelFont(parseFon(b))).catch(() => null);

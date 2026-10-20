@@ -19,6 +19,9 @@ export class EscArt {
 
   private constructor(
     private readonly res: RmpArchive,
+    /** Великі рідкісні картинки, яких у res немає: довантажує ensure (normName). */
+    private readonly lazy: Set<string>,
+    private readonly source: FileSource,
     /** Підписи табло й тексти поверх панелей (7×12, лише великі літери). */
     readonly matrix: PixelFont | null,
     /** Цифри й значки табло (25×30): великі цифри 0x30, дрібні 0x40, значки 0x3B–0x6F. */
@@ -26,6 +29,30 @@ export class EscArt {
     /** Тексти на панелях (MENU.FON — шрифт king.exe для вікон складу, ринку, СТО). */
     readonly menu: PixelFont | null,
   ) {}
+
+  /**
+   * Довантажити великі картинки (екрани кінця гри й перемоги) перед показом: їх не тримаємо в памʼяті —
+   * файл читається ще раз (лише в ці рідкісні моменти).
+   */
+  async ensure(...names: string[]): Promise<void> {
+    const want = names.map(normName).filter((n) => this.lazy.has(n));
+    if (!want.length) return;
+    try {
+      const full = parseRmp(await this.source.read(ESC_FILE));
+      for (const n of want) {
+        const tex = full.textures.get(n);
+        const msk = full.masks.get(n);
+        if (tex) this.res.textures.set(n, tex.slice());
+        if (msk) this.res.masks.set(n, msk.slice());
+        this.lazy.delete(n);
+        // Запит до довантаження лишив би в кешах null.
+        this.canvases.delete(n);
+        this.urls.delete(n);
+      }
+    } catch (e) {
+      console.warn(`${ESC_FILE}: не вдалося довантажити ${want.join(', ')}`, e);
+    }
+  }
 
   /** Завантажене для джерела файлів: нова гра й завантаження збереження не читають 57 МБ заново. */
   private static readonly cache = new WeakMap<FileSource, Promise<EscArt | null>>();
@@ -43,10 +70,11 @@ export class EscArt {
 
   private static async read(source: FileSource): Promise<EscArt | null> {
     try {
-      const res = parseRmp(await source.read('COMMON/esc16.RES'));
+      const res = parseRmp(await source.read(ESC_FILE));
+      const lazy = compact(res);
       const font = (n: string) => source.read(n).then((b) => new PixelFont(parseFon(b))).catch(() => null);
       const [matrix, icon, menu] = await Promise.all([font('matrix.fon'), font('icon.fon'), font('MENU.FON')]);
-      return new EscArt(res, matrix, icon, menu);
+      return new EscArt(res, lazy, source, matrix, icon, menu);
     } catch (e) {
       console.warn('COMMON/esc16.RES недоступний — інтерфейс порту замість оригінального', e);
       return null;
@@ -56,7 +84,7 @@ export class EscArt {
   /** Чи є картинка (`m16\tablo.txr`, `m_16\BackGas.txr`, `m16\mess9.msk`…). */
   has(name: string): boolean {
     const n = normName(name);
-    return this.res.textures.has(n) || this.res.masks.has(n);
+    return this.res.textures.has(n) || this.res.masks.has(n) || this.lazy.has(n);
   }
 
   /** Картинка як canvas (кешується; не вставляти той самий у DOM двічі — для DOM є url). */
@@ -81,6 +109,28 @@ export class EscArt {
     if (!this.urls.has(n)) this.urls.set(n, this.canvas(n)?.toDataURL() ?? null);
     return this.urls.get(n)!;
   }
+}
+
+const ESC_FILE = 'COMMON/esc16.RES';
+
+/** Великі рідкісні картинки (кінець гри BackLoose*, перемога BackWin* — ≈ 31 МБ з 57) — не тримати, а довантажувати. */
+const LAZY = /^m_16[\\/]back(loose|win)/i;
+
+/**
+ * Копії потрібних шматків замість переглядів у буфер файлу (оптимізація памʼяті для телефона): інакше весь
+ * 57-МБ файл лишався в памʼяті, доки жива графіка. Великі рідкісні картинки — прибрати; повертає їхні імена.
+ */
+function compact(res: RmpArchive): Set<string> {
+  const lazy = new Set<string>();
+  for (const map of [res.palettes, res.sounds, res.backgrounds, res.masks, res.textures]) {
+    for (const [n, v] of map) {
+      if ((map === res.textures || map === res.masks) && LAZY.test(n)) {
+        map.delete(n);
+        lazy.add(n);
+      } else map.set(n, v.slice());
+    }
+  }
+  return lazy;
 }
 
 function toCanvas(img: RgbaImage): HTMLCanvasElement {

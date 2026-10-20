@@ -164,21 +164,29 @@ export class Fleet {
     m.stopped = false;
   }
 
+  /** Рейси водіям без рейсу — по JOBS_PER_TICK за кадр (кожен кадр, хоч рух і рідше: без ривка на старті). */
+  assignJobs(): void {
+    if (!this.freight) return;
+    let budget = JOBS_PER_TICK;
+    for (const m of this.members) {
+      if (budget <= 0) return;
+      if (m.off || m.physical || m.job) continue;
+      budget--;
+      this.startJob(m);
+    }
+  }
+
   /**
-   * Кадр абстрактного руху: speed — м/с (prescribeAdvance). Водії-машини й наймані стоять; без рейсу — отримують (по
-   * JOBS_PER_TICK за кадр); на паузі (вантаження) і біля місця — стоять, Freight.step вантажить/розвантажує й видає
-   * наступний рейс. Повертає водіїв, у кого змінився вантаж.
+   * Крок абстрактного руху за dt с (truckers.ts кличе раз на FLEET_EVERY с — водіїв далеко не видно): speed — м/с
+   * (prescribeAdvance). Водії-машини й наймані стоять; на паузі (вантаження) і біля місця — стоять, Freight.step
+   * вантажить/розвантажує й видає наступний рейс. Повертає водіїв, у кого змінився вантаж.
    */
   tick(dt: number, speed: number): FleetMember[] {
     const changed: FleetMember[] = [];
-    let budget = JOBS_PER_TICK;
+    this.assignJobs();
     for (const m of this.members) {
       if (m.off || m.physical) continue;
       m.hold = Math.max(0, m.hold - dt);
-      if (!m.job && this.freight && budget > 0) {
-        budget--;
-        this.startJob(m);
-      }
       const job = m.job;
       if (!job || job.pause <= 0) this.move(m, speed * dt);
       if (!job || !this.freight) continue;

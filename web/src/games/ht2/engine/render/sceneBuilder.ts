@@ -262,7 +262,8 @@ export class MaterialLibrary {
         t.magFilter = THREE.LinearFilter;
         t.minFilter = THREE.LinearMipmapLinearFilter;
         t.generateMipmaps = true;
-        t.anisotropy = 4;
+        // Без анізотропії, як king.exe (LINEAR без анізотропії, docs lighting.md §7): дешевше на телефоні, трава на
+        // відстані мʼякша — як в оригіналі (було anisotropy = 4).
         t.name = file;
         t.userData.hasAlpha = img.hasAlpha;
         // Плавна альфа (тіні будівель store_sh, вода, річки, габарити): понад 15 % пікселів напівпрозорі.
@@ -384,6 +385,8 @@ export class SceneAssembler {
   /** Усі простори (24), включно з вкладеними, з композицією матриць батьків. */
   private readonly spaces = new Map<string, THREE.Matrix4>();
   private readonly templateCache = new Map<string, THREE.Group>();
+  /** Зразки dynamicObject (не віддаються назовні — лише їхні копії) з перемикачами. */
+  private readonly dynamicProtos = new Map<string, { root: THREE.Group; switches: Map<string, THREE.Group[][]> }>();
   private readonly switchGroup: number;
   /** Перемикачі стану (тип 21) у кімнатах світу: імʼя → групи (видима лише одна). */
   readonly switches = new Map<string, THREE.Group[][]>();
@@ -457,17 +460,39 @@ export class SceneAssembler {
   dynamicObject(
     name: string,
   ): { root: THREE.Group; setSwitch: (n: string, state: number) => void; names: string[]; states: (n: string) => number } | null {
-    const blk = this.topByName.get(name.toLowerCase());
-    if (!blk) return null;
+    const key = name.toLowerCase();
+    let proto = this.dynamicProtos.get(key);
+    if (!proto) {
+      const blk = this.topByName.get(key);
+      if (!blk) return null;
+      const sw = new Map<string, THREE.Group[][]>();
+      const prev = this.switchTarget;
+      this.switchTarget = sw;
+      const grp = new THREE.Group();
+      grp.name = blk.name;
+      const batches: Batches = new Map();
+      this.visit(blk, null, batches, grp, 0);
+      this.flush(batches, grp);
+      this.switchTarget = prev;
+      proto = { root: grp, switches: sw };
+      this.dynamicProtos.set(key, proto);
+    }
+    // Екземпляр — копія збереженого зразка (геометрія й матеріали спільні, вузли свої): збирання з B3D щоразу
+    // коштувало 25…45 мс на ПК (фізична машина трафіку, що зʼявляється біля гравця, — ривок). Перемикачі — на вузли
+    // копії; userData — свій для кожного вузла (стандартна копія Three.js пропускає його через JSON — матриці
+    // baseMatrix ставали звичайними обʼєктами).
+    const src: THREE.Object3D[] = [];
+    proto.root.traverse((o) => src.push(o));
+    const root = proto.root.clone(true);
+    const map = new Map<THREE.Object3D, THREE.Object3D>();
+    let i = 0;
+    root.traverse((o) => {
+      const s = src[i++];
+      map.set(s, o);
+      o.userData = { ...s.userData };
+    });
     const switches = new Map<string, THREE.Group[][]>();
-    const prev = this.switchTarget;
-    this.switchTarget = switches;
-    const root = new THREE.Group();
-    root.name = blk.name;
-    const batches: Batches = new Map();
-    this.visit(blk, null, batches, root, 0);
-    this.flush(batches, root);
-    this.switchTarget = prev;
+    for (const [n, sets] of proto.switches) switches.set(n, sets.map((objs) => objs.map((o) => map.get(o) as THREE.Group)));
     return {
       root,
       names: [...switches.keys()],
