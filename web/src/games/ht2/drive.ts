@@ -2224,6 +2224,8 @@ export class Ht2Drive {
    */
   private syncSidePanel(): void {
     const open = this.fPanels?.open != null || !!this.radio?.open || !!this.escMenu;
+    // Панелі F1–F4 і меню Esc — ліворуч: кнопки керування з лівого боку екрана йдуть під них (ht2.css).
+    document.body.classList.toggle('ht2-left-open', this.fPanels?.open != null || !!this.escMenu);
     if (open === this.sidePanelOpen) return;
     this.sidePanelOpen = open;
     document.body.classList.toggle('ht2-side-open', open);
@@ -3909,7 +3911,7 @@ export class Ht2Drive {
     document.removeEventListener('pointerdown', this.onOutsideTap, true);
     document.removeEventListener('visibilitychange', this.onHide);
     window.removeEventListener('pagehide', this.onHide);
-    document.body.classList.remove('ht2-side-open');
+    document.body.classList.remove('ht2-side-open', 'ht2-left-open');
     this.tabMap?.dispose();
     this.mirror?.rt.dispose();
     this.mirror?.frame.remove();

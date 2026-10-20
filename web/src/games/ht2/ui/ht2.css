@@ -746,6 +746,17 @@ div.ht2-mirror {
   z-index: 35;
 }
 
+/* Відкрита панель ліворуч (F1–F4, меню Esc): кнопки з лівого боку екрана — під нею (на прохання користувача), праві
+   лишаються зверху. Ліворуч — кермо, а з «педалі ліворуч» (swap-controls) — гальмо й газ. Фон панелі дотиків не
+   ловить, тож сховані кнопки вимкнено, щоб тап по меню не крутив кермо (утримана кнопка відпуститься — pointer capture). */
+body.ht2-left-open:not(.swap-controls) .touch-ui > .touch-btn.left,
+body.ht2-left-open:not(.swap-controls) .touch-ui > .touch-btn.right,
+body.ht2-left-open.swap-controls .touch-ui > .touch-btn.brake,
+body.ht2-left-open.swap-controls .touch-ui > .touch-btn.gas {
+  z-index: 2;
+  pointer-events: none;
+}
+
 /*
  * Технічні написи порту (вікна modal.ts, рядок стану, налаштування вільної їзди) — зелений звичайний шрифт без
  * піксельного ефекту (на прохання користувача; раніше — бірюзовий піксельний MENU.FON).
