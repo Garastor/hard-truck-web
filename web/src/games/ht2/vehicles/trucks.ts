@@ -70,6 +70,7 @@ export function truckDef(t: Ht2Trucks, r: TechRecord): TruckDef | null {
     panelMask: '',
     tachScale: r.tachScale,
     speedScale: r.speedScale,
+    fuelScale: r.fuelScale,
     tech: {
       mass: r.mass,
       maxRotMomentum: r.maxRotMomentum,

@@ -16,6 +16,8 @@ export interface TruckDef {
   /** Екранні координати (x, y) 2D-приладів панелі для зовнішньої камери (TachScale/SpeedScale у TCH). */
   tachScale: [number, number];
   speedScale: [number, number];
+  /** Кут стрілки палива на повному баку, градуси (HT2 tech FuelScale; без нього стрілка не рухається). */
+  fuelScale?: number;
   tech: TruckTech;
 }
 

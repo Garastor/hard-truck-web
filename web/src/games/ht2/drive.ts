@@ -149,8 +149,8 @@ function modelMid(root: THREE.Object3D, fwd: THREE.Vector3): number {
 function viewFov(xpyramid: number): number {
   return THREE.MathUtils.radToDeg(2 * Math.atan((xpyramid / 2) * (3 / 4)));
 }
-/** Множник обертів двигуна (об/с) для стрілки тахометра, king.exe 0x64f420 (double). */
-const KING_TACH = 0.606796;
+/** Згладжування стрілки тахометра, с (king.exe — filterEngineTach, вікно не розібране; підібрано). */
+const TACH_SMOOTH = 0.12;
 /**
  * Коробка над оком у системі моделі машини (clipRoof), м: півширина, низ і верх над оком, назад і вперед від ока.
  * Козирок ScaniaR — на 0,24 м вище ока й на 1 м попереду, тонований козирок MercedesR (effect_shadedglass) — від 0,13 м.
@@ -470,7 +470,9 @@ export class Ht2Drive {
   /** Кабіна (вид з кабіни): інтер'єр з CABINES.B3D окремою сценою поверх світу, як у першій грі. */
   private readonly overlayScene = new THREE.Scene();
   private cab: THREE.Group | null = null;
-  private cabParts: { rule?: THREE.Object3D; speed?: THREE.Object3D; tacho?: THREE.Object3D } = {};
+  private cabParts: { rule?: THREE.Object3D; speed?: THREE.Object3D; tacho?: THREE.Object3D; fuel?: THREE.Object3D } = {};
+  /** Згладжені оберти для стрілки тахометра, об/хв (updateCab). */
+  private tachShown = 0;
   private cabAsm: SceneAssembler | null = null;
   /** Вода на склі кабіни й двірники (як у першій грі: маски glass_1/glass_2.msk з CABINES.RES, Wiper*). */
   private glassRain: GlassRain | null = null;
@@ -2936,9 +2938,9 @@ export class Ht2Drive {
         });
         return found;
       };
-      this.cabParts = { rule: bySpace('rulespace'), speed: bySpace('speedspace'), tacho: bySpace('tachospace') };
+      this.cabParts = { rule: bySpace('rulespace'), speed: bySpace('speedspace'), tacho: bySpace('tachospace'), fuel: bySpace('fuelarrowspace') };
       // Стрілки — на 10 см ближче до ока (лише глибина): на малій швидкості їх перекривала текстура панелі зліва.
-      for (const n of [this.cabParts.speed, this.cabParts.tacho]) if (n) biasTowardCamera(n, NEEDLE_BIAS);
+      for (const n of [this.cabParts.speed, this.cabParts.tacho, this.cabParts.fuel]) if (n) biasTowardCamera(n, NEEDLE_BIAS);
       // Кермо — поверх панелі, без перевірки глибини: у ScaniaCab верх обода геометрично за верхом панелі й не
       // малювався (гіпотеза: king.exe малює салон у порядку обʼєктів; звірено на око з користувачем). Матеріал —
       // копія: текстура спільна з панеллю. Прозорий прохід (transparent, renderOrder 10) — після стрілок приладів:
@@ -3067,10 +3069,17 @@ export class Ht2Drive {
     // Вісь — z простору керма (0x5ac0c0); навколо y кермо ставало ребром і зникало в панелі.
     rot(this.cabParts.rule, new THREE.Vector3(0, 0, 1), 2 * this.truck.steerAngle);
     rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), needle(this.truck.speedKmh, this.def.speedScale), NEEDLE_SIZE);
-    // Тахометр — як king.exe 0x53d530 → 0x53d1f0: значення = оберти двигуна (об/с) × 0,606796 (0x64f420, ≈ сотні
-    // об/хв), поділене на шкалу tech (після ділення на 5/3 — formats.md; VolvoR 28, ZilR 40 — як позначки на
-    // циферблатах), × кут шкали. З rpm/60 стрілка показувала в 1,67 раза більше. Холості (4 об/с) — ≈ 2,4.
-    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle((this.truck.rpm / 60) * KING_TACH, this.def.tachScale), NEEDLE_SIZE);
+    // Тахометр — як king.exe 0x53d530 → 0x53d1f0: оберти (поле машини 0x51ec) / шкала tech (у файлі — об/с; порт ділить
+    // її на 5/3 — сотні об/хв: VolvoR 28, ZilR 40, як позначки на циферблатах) × кут шкали. Тож стрілка — rpm/100;
+    // з rpm/60 показувала в 1,67 раза більше. Холості (4 об/с) — ≈ 2,4. Оберти оригінал згладжує (filterEngineTach —
+    // середнє за вікном часу, re/notes/ht2/physics.md); порт — лише для стрілки, експонентою TACH_SMOOTH: оберти
+    // фізики стрибали на перемиканнях і поштовхах, і стрілка сіпалась.
+    this.tachShown += (this.truck.rpm - this.tachShown) * (1 - Math.exp(-dt / TACH_SMOOTH));
+    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle(this.tachShown / 100, this.def.tachScale), NEEDLE_SIZE);
+    // Паливо (0x53d1f0, стрілка FuelArrowSpace): частка пального в баку × кут FuelScale з tech. Без кар'єри — повний.
+    const c = this.careerMode?.career;
+    const fuel = c ? Math.min(1, Math.max(0, (c.fuel ?? this.tank) / this.tank)) : 1;
+    rot(this.cabParts.fuel, new THREE.Vector3(0, 1, 0), fuel * (this.def.fuelScale ?? 0) * deg);
   }
 
   /**

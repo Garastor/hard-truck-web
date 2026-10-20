@@ -102,6 +102,8 @@ export interface TechRecord {
    */
   speedScale: [number, number];
   tachScale: [number, number];
+  /** Кут стрілки палива на повному баку, градуси (FuelScale; king.exe 0x53d1f0: частка пального × кут). */
+  fuelScale: number;
 }
 
 export interface Tech {
@@ -218,7 +220,7 @@ function readRecord(r: BinReader, index: number): TechRecord {
   const couplerLength = r.f32();
   const speedScale: [number, number] = [r.f32() * 3.6, r.f32() * RAD];
   const tachScale: [number, number] = [r.f32() / (5 / 3), r.f32() * RAD];
-  r.skip(4); // FuelScale
+  const fuelScale = r.f32() * RAD;
   r.skip(24 + 16 + 28 + 8); // вікна кабіни, шия водія, ?
   const cockpitSpace = s(60);
   const tch = s(30).replace(/^\.\\/, '').replace(/\.tch$/i, '');
@@ -238,6 +240,6 @@ function readRecord(r: BinReader, index: number): TechRecord {
     slideCollisionCoeff, cornerMarks, addCollisionPoints, cornerMarksW, collisionPlanes: planes.slice(0, nPlanes),
     tvCameras: cams.slice(0, nCams), smokePosition, smokeDirection, smokePosition2, smokeDirection2, flamePlace, faraFL, faraFR, faraBL, faraBR,
     faraBLs, faraBRs, horsePower, price, lowSaddle, topSaddle, towHook, coupler, shiftSaddle, couplerLength,
-    trailerType, speedScale, tachScale,
+    trailerType, speedScale, tachScale, fuelScale,
   };
 }
