@@ -149,6 +149,8 @@ function modelMid(root: THREE.Object3D, fwd: THREE.Vector3): number {
 function viewFov(xpyramid: number): number {
   return THREE.MathUtils.radToDeg(2 * Math.atan((xpyramid / 2) * (3 / 4)));
 }
+/** Множник обертів двигуна (об/с) для стрілки тахометра, king.exe 0x64f420 (double). */
+const KING_TACH = 0.606796;
 /**
  * Коробка над оком у системі моделі машини (clipRoof), м: півширина, низ і верх над оком, назад і вперед від ока.
  * Козирок ScaniaR — на 0,24 м вище ока й на 1 м попереду, тонований козирок MercedesR (effect_shadedglass) — від 0,13 м.
@@ -2939,10 +2941,11 @@ export class Ht2Drive {
       for (const n of [this.cabParts.speed, this.cabParts.tacho]) if (n) biasTowardCamera(n, NEEDLE_BIAS);
       // Кермо — поверх панелі, без перевірки глибини: у ScaniaCab верх обода геометрично за верхом панелі й не
       // малювався (гіпотеза: king.exe малює салон у порядку обʼєктів; звірено на око з користувачем). Матеріал —
-      // копія: текстура спільна з панеллю.
+      // копія: текстура спільна з панеллю. Прозорий прохід (transparent, renderOrder 10) — після стрілок приладів:
+      // вони прозорі, і з кермом у непрозорому проході стрілки малювались поверх обода.
       this.cabParts.rule?.traverse((o) => {
         if (!(o instanceof THREE.Mesh)) return;
-        const mats = (Array.isArray(o.material) ? o.material : [o.material]).map((m: THREE.Material) => Object.assign(m.clone(), { depthTest: false }));
+        const mats = (Array.isArray(o.material) ? o.material : [o.material]).map((m: THREE.Material) => Object.assign(m.clone(), { depthTest: false, transparent: true }));
         o.material = Array.isArray(o.material) ? mats : mats[0];
         o.renderOrder = 10;
       });
@@ -3064,9 +3067,10 @@ export class Ht2Drive {
     // Вісь — z простору керма (0x5ac0c0); навколо y кермо ставало ребром і зникало в панелі.
     rot(this.cabParts.rule, new THREE.Vector3(0, 0, 1), 2 * this.truck.steerAngle);
     rot(this.cabParts.speed, new THREE.Vector3(0, 1, 0), needle(this.truck.speedKmh, this.def.speedScale), NEEDLE_SIZE);
-    // Шкала тахометра — у сотнях об/хв (tech: об/с, поділені на 5/3 — formats.md; VolvoR 28, ZilR 40 — як позначки на
-    // циферблатах). З rpm/60 стрілка показувала в 1,67 раза більше: холості 800 об/хв — на «13».
-    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle(this.truck.rpm / 100, this.def.tachScale), NEEDLE_SIZE);
+    // Тахометр — як king.exe 0x53d530 → 0x53d1f0: значення = оберти двигуна (об/с) × 0,606796 (0x64f420, ≈ сотні
+    // об/хв), поділене на шкалу tech (після ділення на 5/3 — formats.md; VolvoR 28, ZilR 40 — як позначки на
+    // циферблатах), × кут шкали. З rpm/60 стрілка показувала в 1,67 раза більше. Холості (4 об/с) — ≈ 2,4.
+    rot(this.cabParts.tacho, new THREE.Vector3(0, 1, 0), needle((this.truck.rpm / 60) * KING_TACH, this.def.tachScale), NEEDLE_SIZE);
   }
 
   /**
