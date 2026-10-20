@@ -265,6 +265,60 @@ describe('HT2: водій трафіку', () => {
     expect(a.line.road).toBe(1);
   });
 
+  it('на перехресті, прочекавши YIELD_MAX, їде першим, а не поступається знову по колу (затор біля аеропорту)', () => {
+    const net: Net = { isJunction: (n) => n === 0 };
+    const east = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(-100 + i * 10, 0, 0)), 1, 0, [-1, 0]);
+    const east2 = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(i * 10, 0, 0)), 1, 1, [0, -1]);
+    const north = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(0, 0, 100 - i * 10)), 1, 2, [-1, 0]);
+    east[0].next.push(east2[0]);
+    const a = newMover(east[0], 0, 0, 15, 2);
+    // Праворуч біля перехрестя стоїть машина, що не рушає (cruise 0): a поступається, але за 6 с має проїхати.
+    const b = newMover(north[0], 8, 0, 0, 2);
+    b.speed = 0;
+    runAll([a, b], 40, net);
+    expect(a.line.road).toBe(1);
+  });
+
+  it('уже на перехресті з двох вузлів — звільняє його, а не чекає на тих, хто чекає на неї', () => {
+    // Вузли 0 (0, 0, 0) і 1 (0, 0, −20) — одне перехрестя (ближче JUNCTION_CLUSTER).
+    const net: Net = { isJunction: (n) => n === 0 || n === 1, nodes: [{ pos: new THREE.Vector3(0, 0, 0) }, { pos: new THREE.Vector3(0, 0, -20) }] };
+    const inner = road([0, 1, 2, 3, 4].map((i) => new THREE.Vector3(0, 0, -i * 5)), 1, 0, [0, 1]);
+    const out = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(0, 0, -20 - i * 10)), 1, 1, [1, -1]);
+    inner[0].next.push(out[0]);
+    // Праворуч, із заходу на схід → ні, зі сходу (+x) на захід до вузла 1: давно чекає (waitJ 100).
+    const west = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(100 - i * 10, 0, -20)), 1, 2, [-1, 1]);
+    const west2 = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(-i * 10, 0, -20)), 1, 3, [1, -1]);
+    west[0].next.push(west2[0]);
+    const a = newMover(inner[0], 0, 0.6, 10, 2);
+    a.speed = 0;
+    const b = newMover(west[0], 9, 0.2, 10, 2);
+    b.speed = 0;
+    b.waitJ = 100;
+    let minGap = Infinity;
+    runAll([a, b], 30, net, [], () => (minGap = Math.min(minGap, a.pos.distanceTo(b.pos))));
+    expect(a.line.road).toBe(1);
+    expect(b.line.road).toBe(3);
+    expect(minGap).toBeGreaterThan(3);
+  });
+
+  it('двоє, що чекали однаково довго, не поступаються одне одному навзаєм — проїжджають по черзі', () => {
+    const net: Net = { isJunction: (n) => n === 0 };
+    const east = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(-100 + i * 10, 0, 0)), 1, 0, [-1, 0]);
+    const east2 = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(i * 10, 0, 0)), 1, 1, [0, -1]);
+    const north = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(0, 0, 100 - i * 10)), 1, 2, [-1, 0]);
+    const north2 = road(Array.from({ length: 11 }, (_, i) => new THREE.Vector3(0, 0, -i * 10)), 1, 3, [0, -1]);
+    east[0].next.push(east2[0]);
+    north[0].next.push(north2[0]);
+    const a = newMover(east[0], 8, 0.5, 12, 2);
+    const b = newMover(north[0], 8, 0.5, 12, 2);
+    for (const m of [a, b]) Object.assign(m, { speed: 0, waitJ: 20 });
+    let minGap = Infinity;
+    runAll([a, b], 30, net, [], () => (minGap = Math.min(minGap, a.pos.distanceTo(b.pos))));
+    expect(a.line.road).toBe(1);
+    expect(b.line.road).toBe(3);
+    expect(minGap).toBeGreaterThan(4);
+  });
+
   it('перед правим поворотом перестроюється в крайню праву смугу', () => {
     const a = road(straight(400), 2, 0);
     const b = road([0, 1, 2, 3, 4, 5].map((i) => new THREE.Vector3(i * 20, 0, -400)), 2, 1);

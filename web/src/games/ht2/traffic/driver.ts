@@ -859,11 +859,13 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
 
   const base = roadLimit(m, path);
   let want = followLimit(m, leader, m.overtaking ? Math.min(base + OVERTAKE_BOOST, m.cruise + OVERTAKE_BOOST) : base);
-  // Пропуск на перехресті: зупинитися перед вузлом, доки той, кому поступаємося, не проїде.
+  // Пропуск на перехресті: зупинитися перед вузлом, доки той, кому поступаємося, не проїде. Час очікування waitJ
+  // скидається лише за перехрестям: інакше, прочекавши YIELD_MAX і вирішивши їхати, машина наступного кадру знову
+  // поступалася з нуля — коло 0…6 с без руху (затор чотирьох машин біля аеропорту, боти в черзі за ними).
   if (junction && net && mustYield(m, junction, obstacles, net)) {
     want = Math.min(want, followLimit(m, { gap: junction.dist - JUNCTION_STOP - m.halfLen, speed: 0 }, want));
     m.waitJ = m.speed < 1 ? m.waitJ + dt : m.waitJ;
-  } else m.waitJ = 0;
+  } else if (!junction) m.waitJ = 0;
   // Червоне світло (king.exe: точка зупинки +0x40b0 від тригера 0x1D): стати перед стоп-лінією. Порт: рівне
   // гальмування 2 м/с² до точки за 2,5 м перед лінією; «не встигаю» (проїхати) — лише якщо на початку не вистачає
   // і екстреного 6 м/с²; почавши гальмувати, стоїть до кінця (інакше запізнення біля лінії вирішувало «проїхати»).
@@ -961,8 +963,8 @@ function through(m: Mover, from: number, to: number): THREE.Vector3[] {
   return out;
 }
 
-function crosses(a: THREE.Vector3[], b: THREE.Vector3[]): boolean {
-  for (const p of a) for (const q of b) if (Math.hypot(p.x - q.x, p.z - q.z) < CONFLICT_DIST) return true;
+function crosses(a: readonly THREE.Vector3[], b: readonly THREE.Vector3[], dist = CONFLICT_DIST): boolean {
+  for (const p of a) for (const q of b) if (Math.hypot(p.x - q.x, p.z - q.z) < dist) return true;
   return false;
 }
 
@@ -997,31 +999,71 @@ function plannedTurn(m: Mover): number {
  * загальмувати — їде; хто чекає довше YIELD_MAX — їде; головна дорога (ширша на 3 м) — їде; поворот ліворуч
  * пропускає зустрічного; на рівних — перешкода праворуч.
  */
+/**
+ * a має перевагу над b за очікуванням: a чекав понад YIELD_MAX, а b — ні; чекали обидва — сталий порядок машин.
+ * Лічильники обох ростуть по черзі щокадру, тож порівняння «хто довше» (і з допуском) з двох боків давало різне:
+ * двоє, що чекали однаково, поступалися одне одному навзаєм (затор ботів біля аеропорту).
+ */
+const YIELD_STUCK = 15;
+const ranks = new WeakMap<Mover, number>();
+let nextRank = 0;
+function rank(m: Mover): number {
+  let r = ranks.get(m);
+  if (r === undefined) ranks.set(m, (r = nextRank++));
+  return r;
+}
+function longer(a: Mover, b: Mover): boolean {
+  return a.waitJ > YIELD_MAX && (b.waitJ <= YIELD_MAX || rank(a) < rank(b));
+}
+
 function mustYield(m: Mover, j: { node: number; dist: number }, obstacles: readonly Obstacle[], net: Net): boolean {
   const canStop = (o: Mover, dist: number) => !(o.speed > 3 && dist < (o.speed * o.speed) / (2 * 4) + 3);
   if (!canStop(m, j.dist)) return false;
   let mine: THREE.Vector3[] | null = null;
   const myEta = j.dist / Math.max(m.speed, 0.5);
+  // Уже на перехресті (з кількох вузлів WAY: ще один вузол попереду) — звільняє його, а не поступається тим, хто не
+  // заїхав: інакше той, хто всередині, чекав на тих, хто чекає на нього (затор біля аеропорту).
+  const mIn = sameJunction(net, m.line.startNode, j.node) ? fromStart(m) : Infinity;
+  const mInside = mIn < INSIDE + (m.tail ?? 0);
+  const seen = new Set<Mover>();
   for (const o of obstacles) {
     const om = o.mover;
-    if (!om || om === m || om.gone || om.line.siblings === m.line.siblings) continue;
+    if (!om || om === m || om.gone || om.line.siblings === m.line.siblings || seen.has(om)) continue;
+    // Вантажівка (бот) — кілька точок з тим самим водієм: розглядаємо раз.
+    seen.add(om);
+    // Вихід із затору: чекає понад YIELD_STUCK (+ сталий зсув за номером — не всі разом) — тим, хто й сам стоїть, не
+    // поступається (рухомим — так): кола очікування на перехресті з кількох вузлів і світлофором стояли хвилинами.
+    if (m.waitJ > YIELD_STUCK + (rank(m) % 4) * 1.5 && om.speed < 1) continue;
+    // Позаду нас (за кабіною) — не поступаємося: він їде за нами, а не перетинає шлях попереду (у заторі біля
+    // аеропорту машина поступалася тій, що стояла впритул за нею).
+    if ((om.pos.x - m.pos.x) * m.heading.x + (om.pos.z - m.pos.z) * m.heading.z < -m.halfLen) continue;
     let inside = false;
     let oDist: number;
     if (net.isJunction(om.line.endNode) && sameJunction(net, om.line.endNode, j.node)) {
       oDist = remaining(om);
       if (oDist > JUNCTION_LOOK) continue;
       if (oDist > 25 && oDist / Math.max(om.speed, 0.5) > myEta + 4) continue;
-    } else if (sameJunction(net, om.line.startNode, j.node) && fromStart(om) < INSIDE) {
+    } else if (sameJunction(net, om.line.startNode, j.node) && fromStart(om) < INSIDE + (om.tail ?? 0)) {
+      // Тягач з причепом — «на перехресті», доки там причіп.
       inside = true;
       oDist = 0;
     } else continue;
     mine ??= through(m, j.dist - 4, j.dist + 25);
     const theirs = inside ? through(om, 0, 20) : through(om, oDist - 4, oDist + 25);
-    if (!crosses(mine, theirs)) continue;
+    // Шляхи широких машин (вантажівок) перетинаються з більшим зазором; того, хто вже на перехресті, — ще й усім тілом
+    // (причіп позаду кабіни — не на його шляху попереду).
+    const gap = CONFLICT_DIST + (m.wide ?? 0) + (om.wide ?? 0);
+    const body = inside && om.tail ? obstacles.filter((x) => x.mover === om).map((x) => x.pos) : [];
+    if (!crosses(mine, theirs, gap) && !crosses(mine, body, gap)) continue;
+    // Двоє всередині — поступається той, хто проїхав менше; всередині — тим, хто зовні, не поступається.
+    if (mInside) {
+      if (inside && fromStart(om) > mIn) return true;
+      continue;
+    }
     if (inside) return true;
     if (!canStop(om, oDist)) return true;
-    if (m.waitJ > YIELD_MAX && m.waitJ >= om.waitJ) continue;
-    if (om.waitJ > YIELD_MAX && om.waitJ > m.waitJ) return true;
+    if (longer(m, om)) continue;
+    if (longer(om, m)) return true;
     if (om.line.width >= m.line.width + 3) return true;
     if (m.line.width >= om.line.width + 3) continue;
     const dot = m.heading.dot(om.heading);

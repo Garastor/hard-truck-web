@@ -86,6 +86,12 @@ const CRUISE_MAX = 20;
 /** Півдовжина гравця й інших точок-перешкод, м. */
 const AVOID_HALF = 2.5;
 
+/**
+ * Тіло-перешкода для трафіку (точки вздовж машини); mover — водій бота-далекобійника (traffic/botDriver.ts): трафік
+ * пропускає його на перехрестях, бачить, чи він у черзі, і обʼїжджає лише застряглого, як свою машину.
+ */
+export type TrafficBody = readonly THREE.Vector3[] & { readonly mover?: Mover };
+
 export interface TrafficKind {
   model: string;
   variant: number;
@@ -247,7 +253,7 @@ export class Traffic {
    * player — гравець; extra — інші точки, яких машини не мають наїхати (напівпричіп гравця, суперники); масив точок —
    * одне тіло (вантажівка вздовж): обʼїжджають його цілком.
    */
-  update(dt: number, player: THREE.Vector3, extra: readonly (THREE.Vector3 | readonly THREE.Vector3[])[] = []): void {
+  update(dt: number, player: THREE.Vector3, extra: readonly (THREE.Vector3 | TrafficBody)[] = []): void {
     if (!this.started) {
       this.started = true;
       // Постійні машини dumb — на старті по всій мережі (king.exe createPlayersRegular: N·T).
@@ -279,8 +285,8 @@ export class Traffic {
     }
     this.cars = this.all.filter((c) => c.root || c.vehicle);
 
-    const groups = new Map<THREE.Vector3, object>();
-    for (const e of extra) if (Array.isArray(e)) for (const p of e) groups.set(p, e);
+    const groups = new Map<THREE.Vector3, TrafficBody>();
+    for (const e of extra) if (Array.isArray(e)) for (const p of e) groups.set(p, e as TrafficBody);
     const avoid = [player, ...extra.flat()];
     const obstacles: Obstacle[] = this.cars.map((c) => ({ pos: c.pos, vel: c.heading.clone().multiplyScalar(c.speed), half: c.halfLen, mover: c }));
     const prevOk = dt > 0 && this.avoidPrev.length === avoid.length;
@@ -288,7 +294,8 @@ export class Traffic {
       const vel = new THREE.Vector3();
       if (prevOk) vel.subVectors(p, this.avoidPrev[i]).divideScalar(dt);
       if (vel.lengthSq() >= 900) vel.set(0, 0, 0);
-      obstacles.push({ pos: p, vel, half: AVOID_HALF, group: groups.get(p) });
+      const g = groups.get(p);
+      obstacles.push({ pos: p, vel, half: AVOID_HALF, group: g, mover: g?.mover });
     });
     // Попередні точки — у тих самих векторах (щокадру десятки точок).
     while (this.avoidPrev.length < avoid.length) this.avoidPrev.push(new THREE.Vector3());

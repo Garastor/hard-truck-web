@@ -27,10 +27,13 @@ export interface PhysState {
   ctrl: ControlState;
   stuck: number;
   reverse: number;
+  /** Газ = min(1; gas·Δv) і газувати, доки швидкість нижча hold·цілі (king.exe 0,2 і 0,9; бот — сильніше, botDriver). */
+  gas: number;
+  hold: number;
 }
 
 export function newPhysState(): PhysState {
-  return { ctrl: { steer: 0, throttle: 0, brake: 0, handbrake: false }, stuck: 0, reverse: 0 };
+  return { ctrl: { steer: 0, throttle: 0, brake: 0, handbrake: false }, stuck: 0, reverse: 0, gas: 0.2, hold: 0.9 };
 }
 
 /** Кут коліс δ → кермо (обернене до δ = 45°·a·|s|^p, HT2_KING; як `Ht2Drive.pilot`). */
@@ -84,8 +87,8 @@ export function control(m: Mover, v: TruckVehicle, ps: PhysState, want: number, 
   } else if (dv < 0) {
     c.throttle = 0;
     c.brake = Math.min(1, BRAKE_GAIN * -dv);
-  } else if (speed < 0.9 * want) {
-    c.throttle = Math.min(1, 0.2 * dv);
+  } else if (speed < ps.hold * want) {
+    c.throttle = Math.min(1, ps.gas * dv);
     c.brake = 0;
   } else {
     c.throttle = 0;

@@ -16,7 +16,7 @@ import { Fleet, type FleetMember, type SavedTrucker } from './fleet';
 import { HIRED_MIN_SPEED } from '../career/hired';
 import type { Ht2Roads } from '../world/roads';
 import type { Ht2Drive } from '../drive';
-import { alongPoints, newBot, POINT_HALF, setRoute, steer, think, type BotDriver } from './botDriver';
+import { alongPoints, botCruise, newBot, POINT_HALF, setRoute, steer, think, type BotDriver } from './botDriver';
 import { turnSignal, type Obstacle } from './driver';
 import { Blinkers } from './blinkers';
 
@@ -224,8 +224,8 @@ export class Truckers {
     const g = truck.lightGeometry;
     const halfLen = Math.max(2, -g.frontZ);
     const rear = trailer ? truck.visual.position.distanceTo(trailer.points()[2]) + 2 : g.backZ;
-    // Крейсерська (як була в автопілоті): 50–75 км/год, з напівпричепом — 45–55 (і повільніше на кривих, botDriver).
-    const cruise = (trailer ? 45 + Math.random() * 10 : 50 + Math.random() * 25) / 3.6;
+    // Крейсерська — 20 м/с з розкидом водія (botDriver.botCruise).
+    const cruise = botCruise(Math.random() * 2 - 1);
     const bot = newBot(this.roads, truck.visual.position, truck.forward().setY(0).normalize(), cruise, halfLen, Math.max(0, rear - halfLen), trailer?.reach ?? 0, g.width / 2)!;
     const faras: [THREE.Vector3, THREE.Vector3] = [g2t(rec.faraFL), g2t(rec.faraFR)];
     return { name, truck, bot, bad: 0, trailer, idle: 0, setSwitch: model.setSwitch, faras, lit: null, pool: null, job: null, rec, member: null, blink: null, blinkTrailer: null };

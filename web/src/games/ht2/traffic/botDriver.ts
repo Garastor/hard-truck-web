@@ -47,7 +47,23 @@ const OTHER_HALF = 1.3;
 /** Перестроюватися на обʼїзд раніше на стільки секунд ходу, ніж трафік (смуга в тягача — ≈ 4 с), с. */
 const LANE_EARLY = 2.5;
 /** Множник швидкості на кривих для тягача з причепом (driver.roadLimit). */
-const TRAILER_BEND = 0.75;
+const TRAILER_BEND = 0.9;
+/**
+ * Крейсерська — 20 м/с, як абстрактна швидкість цілої машини в king.exe (prescribeAdvance 0x41a9d0: 20 × (1 − 0,5·k),
+ * k — поле кузова +0xf4, не вантаж: що саме — не розібрано). Далекобійники не «обережні» (0x4cf260: лише типи 7/8),
+ * тож фізичній машині king.exe дозволяє до 30 м/с — обмежують криві й двигун (повний тягач і так повільніший на
+ * підйомах). Розкид ±CRUISE_SPREAD — порту.
+ */
+const CRUISE_TOP = 20;
+const CRUISE_SPREAD = 0.05;
+/** Газ бота: сила й поріг утримання (physical.control; трафік — 0,2 і 0,9: важкий тягач не тримав швидкості). */
+const BOT_GAS = 0.6;
+const BOT_HOLD = 0.97;
+
+/** Крейсерська бота, м/с, зі сталим розкидом водія jitter (−1…1). */
+export function botCruise(jitter = 0): number {
+  return CRUISE_TOP * (1 + CRUISE_SPREAD * jitter);
+}
 /** Захід у поворот: частка зрізання, вікно кривизни (± м від точки керма), найбільше назовні (частка смуги), м/с зміни. */
 const OFFTRACK_K = 1.0;
 const OFFTRACK_WIN = 6;
@@ -88,6 +104,7 @@ export interface BotDriver {
   halfWidth: number;
 }
 
+
 /** Точки вздовж машини у світі: від заду до переду габариту, крайні — на 2 м всередину, крок не більше 4 м. */
 export function alongPoints(v: TruckVehicle): THREE.Vector3[] {
   const g = v.lightGeometry;
@@ -112,7 +129,10 @@ export function newBot(roads: Ht2Roads, pos: THREE.Vector3, fwd: THREE.Vector3, 
   m.wide = Math.max(0, halfWidth + OTHER_HALF - 2.2);
   m.route = null;
   sync(m, pos, fwd, 0);
-  return { m, ps: newPhysState(), want: 0, halt: null, passing: 0, squeeze: 0, reach, shift: 0, halfWidth };
+  const ps = newPhysState();
+  ps.gas = BOT_GAS;
+  ps.hold = BOT_HOLD;
+  return { m, ps, want: 0, halt: null, passing: 0, squeeze: 0, reach, shift: 0, halfWidth };
 }
 
 /** Новий рейс: маршрут до місця й точка зупинки (null — без маршруту, як трафік). */
@@ -196,9 +216,11 @@ function sideClear(b: BotDriver, p: THREE.Vector3, flat: THREE.Vector3, right: T
   for (const o of obstacles) {
     rel.subVectors(o.pos, p);
     const a = rel.dot(flat);
-    if (a < -(m.halfLen + (m.tail ?? 0) + o.half) || a > ahead + o.half) continue;
+    // Зустрічна наближається й своїм ходом: огляд — на SIDE_LOOK с зближення.
+    const towards = Math.max(0, -(o.vel.x * flat.x + o.vel.z * flat.z));
+    if (a < -(m.halfLen + (m.tail ?? 0) + o.half) || a > ahead + towards * SIDE_LOOK + o.half) continue;
     // Бічна відстань від шляху, яким бот буде біля перешкоди: тіло — на m.lat від лінії, шлях там — offAt.
-    const s = rel.dot(right) + m.lat - offAt(m, Math.max(0, a) / Math.max(2, speed));
+    const s = rel.dot(right) + m.lat - offAt(m, Math.max(0, a) / Math.max(2, speed + towards));
     const d = Math.abs(s);
     if (d >= clear || d < ON_PATH) continue;
     const need = -Math.sign(s) * (clear - d);
