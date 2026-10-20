@@ -94,8 +94,12 @@ export function findPoles(asm: SceneAssembler, find: (name: string) => Block | u
     if (!tpl || !m) continue;
     for (const [s] of walk([tpl])) {
       const sd = s.data;
-      if (sd.t !== 20 || sd.trigger.values.length < 2 || (sd.trigger.values[1] & 0xffff) !== 2) continue;
-      const kind = sd.trigger.values[1] >>> 16;
+      if (sd.t !== 20 || !/^sharp/i.test(s.name)) continue;
+      // Вказівники міст (`e_BAZ0080`…) у даних без події — в king.exe стоять як стіна; порт (на прохання
+      // користувача) збиває їх, як дорожній знак (вид 1).
+      const event = sd.trigger.values.length >= 2;
+      if (event && (sd.trigger.values[1] & 0xffff) !== 2) continue;
+      const kind = event ? sd.trigger.values[1] >>> 16 : 1;
       if (![1, 4, 5, 6].includes(kind)) continue;
       const h = asFloat(sd.trigger.values[0]);
       out.push({
@@ -193,16 +197,15 @@ interface Station {
 export class WorldObjects {
   private readonly poles = new Map<string, PoleState[]>();
   private readonly movables = new Map<string, MovableState[]>();
-  /** Повалені стовпи й пози предметів — переживають вивантаження регіону (як реєстр king.exe). */
-  private readonly fallen = new Map<string, { axis: THREE.Vector3; to: number }>();
+  /**
+   * Пози рухомих предметів — переживають вивантаження регіону (як реєстр king.exe). Повалені й зламані стовпи й
+   * підірвані заправки — ні: з поверненням у регіон стоять знову цілі (на прохання користувача; у king.exe — [Г] так
+   * само, objects.md).
+   */
   private readonly poses = new Map<string, { p: RAPIER.Vector; q: RAPIER.Rotation }>();
   private readonly prevVel = new Map<number, { v: RAPIER.Vector; w: RAPIER.Vector }>();
   private readonly stations = new Map<string, Station>();
-  /** Стан заправок (біти) — переживає вивантаження регіону. */
-  private readonly stationBits = new Map<string, number>();
   private glows = new Map<string, THREE.Object3D>();
-  /** Зламані стовпи (удар P ≥ 5000, нахилені чи повалені) — переживають вивантаження регіону. */
-  private readonly broken = new Set<string>();
 
   constructor(private readonly rapier: RAPIER.World) {
     brokenRadars.clear();
@@ -215,28 +218,17 @@ export class WorldObjects {
       const s = String(o.userData.space ?? '').toLowerCase();
       if (s) (byspace.get(s) ?? byspace.set(s, []).get(s)!).push(o);
     });
-    const ps: PoleState[] = poles.map((def, i) => {
-      const key = `${id}:${def.space}:${i}`;
-      const st: PoleState = {
-        def,
-        colliders: [],
-        visuals: (byspace.get(def.space) ?? []).map((o) => ({ o, base: o.matrix.clone() })),
-        down: false,
-        fall: null,
-        key,
-      };
-      const was = this.fallen.get(key);
-      if (was) {
-        st.down = true;
-        this.tilt(st, was.axis, was.to);
-        if (def.kind === 4) this.lightOff(st);
-      } else st.colliders = this.poleColliders(def);
-      return st;
-    });
+    const ps: PoleState[] = poles.map((def, i) => ({
+      def,
+      colliders: this.poleColliders(def),
+      visuals: (byspace.get(def.space) ?? []).map((o) => ({ o, base: o.matrix.clone() })),
+      down: false,
+      fall: null,
+      key: `${id}:${def.space}:${i}`,
+    }));
     this.poles.set(id, ps);
     root.getObjectByName('glows')?.children.forEach((g) => g.name && this.glows.set(g.name.toLowerCase(), g));
     for (const s of ps) {
-      if (this.broken.has(s.key)) this.breakPole(s);
       if (s.def.kind !== 3) continue;
       const key = `${id}:${s.def.space}`;
       let st = this.stations.get(key);
@@ -254,7 +246,6 @@ export class WorldObjects {
       }
       st.columns.push(s);
     }
-    for (const [key, st] of this.stations) if (key.startsWith(`${id}:`)) this.applyStation(st, this.stationBits.get(key) ?? 0);
     this.movables.set(
       id,
       movables.map((def) => {
@@ -265,7 +256,11 @@ export class WorldObjects {
   }
 
   removeRegion(id: string): void {
-    for (const s of this.poles.get(id) ?? []) for (const c of s.colliders) this.rapier.removeCollider(c, false);
+    for (const s of this.poles.get(id) ?? []) {
+      for (const c of s.colliders) this.rapier.removeCollider(c, false);
+      // Зламаний радар знову штрафує, коли регіон завантажиться наново.
+      if (s.def.kind === 5 && s.def.radar !== undefined) brokenRadars.delete(s.def.radar);
+    }
     for (const m of this.movables.get(id) ?? []) {
       this.poses.set(m.key, { p: m.body.translation(), q: m.body.rotation() });
       this.rapier.removeRigidBody(m.body);
@@ -297,14 +292,13 @@ export class WorldObjects {
         if (s.def.kind === 3) this.checkColumn(s, ev);
         else this.checkPole(s, ev);
       }
-    for (const [key, st] of this.stations) {
+    for (const st of this.stations.values()) {
       st.time += dt;
       for (const q of [...st.queue]) {
         if (q.at > st.time) continue;
         st.queue.splice(st.queue.indexOf(q), 1);
         if (st.bits & (1 << (2 * q.column))) continue;
         st.bits |= 1 << (2 * q.column);
-        this.stationBits.set(key, st.bits);
         this.applyStation(st, st.bits);
         ev.push({ sound: q.column % 2 ? 'blowgazstation3' : 'blowgazstation2', volume: 1, blast: { matrix: st.columns[0].def.matrix, column: q.column } });
       }
@@ -399,7 +393,6 @@ export class WorldObjects {
     s.colliders = [];
     const to = 0.98 * PHI_MAX;
     s.fall = { axis, to, t: 0 };
-    this.fallen.set(s.key, { axis, to });
     if (s.def.kind === 4) this.lightOff(s);
     const A = (pmax - MIN_P) * PHI_MAX * 0.6496;
     if (A < P) {
@@ -415,7 +408,6 @@ export class WorldObjects {
    */
   private breakPole(s: PoleState): void {
     if (s.def.kind !== 5 && s.def.kind !== 6) return;
-    this.broken.add(s.key);
     if (s.def.kind === 5 && s.def.radar !== undefined) brokenRadars.add(s.def.radar);
     if (s.def.kind === 6) this.glows.get(s.def.name.replace(/fonar/i, 'glow').toLowerCase())?.removeFromParent();
     for (const v of s.visuals)

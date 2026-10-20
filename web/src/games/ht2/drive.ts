@@ -3,7 +3,7 @@ import { HT2_ENGINE, HT2_INPUT, HT2_KING, HT2_KING_BRAKE, HT2_KING_ENGINE, HT2_R
 import * as THREE from 'three';
 import type { FileSource } from '@shared/source';
 import { EngineAudio } from './engine/audio/engineAudio';
-import { instanceCollision, levelCollision, openPortals } from './engine/physics/collision';
+import { instanceCollision, levelCollision, openPortals, roomGround, roomPosts } from './engine/physics/collision';
 import { RoomBounds } from './engine/physics/roomBounds';
 import { TruckVehicle } from './engine/vehicle/truckVehicle';
 import { ROUGH_ASPHALT, ROUGH_GROUND } from './engine/vehicle/kingModel';
@@ -1132,6 +1132,14 @@ export class Ht2Drive {
     floors.push(...inst.floors);
     surfaces.push(...inst.floorSurface);
     wallPolys.push(...inst.walls);
+    // Стовпчики sharp_* без подій (ніжки щитів і вказівників, стовпи огорож) — як стіни своєї кімнати.
+    const keys = new Set([...col.wallSwitch, ...col.floorSwitch].filter(Boolean).map((t) => t.split('#')[0]));
+    const posts = roomPosts(asm.b3d, (n) => asm.block(n) ?? this.world.common.block(n), (n) => asm.space(n), keys, roomGround(col));
+    posts.walls.forEach((p, i) => {
+      const r = posts.wallRoom[i];
+      if (posts.wallSwitch[i]) part(posts.wallSwitch[i], r).walls.push(p);
+      else (roomWalls.get(r) ?? roomWalls.set(r, []).get(r)!).push(p);
+    });
     // Процедурний рельєф (aa) — heightfield.
     if (reg.terrain) cs.push(terrainCollider(this.rapier, reg.terrain));
     // Trimesh — шматками по COLLIDER_CHUNK полігонів (великий регіон — ≈ 100 мс одним шматком); колеса — промені,
