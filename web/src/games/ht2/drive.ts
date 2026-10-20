@@ -794,7 +794,8 @@ export class Ht2Drive {
     this.semiTypes = semiKinds(vehicles);
     this.vehiclePowers = vehiclePowers(vehicles);
     this.vehiclePriceMap = vehiclePrices(vehicles);
-    if (o.career && this.semiTypes.length) {
+    // Причепи на базах — і у вільній їзді (на прохання користувача; без дорожніх місій і збереження), не в гонці.
+    if (!o.race && this.semiTypes.length) {
       const limit = cnf ? num(assoc(cnf, 'semitrailers')?.[1], 28) : 28;
       this.presents = new Presents(
         {
@@ -816,7 +817,7 @@ export class Ht2Drive {
       const cm = this.careerMode;
       if (cm) this.presents.missions(roadPlaces(this.world.regions.values()), missions, (pl) => cm.missionLot(pl.pos));
       // Збережені причепи (king.exe зберігає всі presents, 0x4833a0) — на своїх місцях, з вантажем і строками.
-      if (o.career.presents) this.presents.restore(o.career.presents);
+      if (o.career?.presents) this.presents.restore(o.career.presents);
     }
     if (!o.race) {
       const [names, merch] = await Promise.all(['names.sch', 'merchandise.sch'].map((f) => o.source.read(f).then(readSch).catch((): SExpr[] => [])));
@@ -2447,13 +2448,15 @@ export class Ht2Drive {
    */
   private ignite(force: number, impact = false): void {
     // Займається лише машина, що не горить і не щойно погашена (стан 4 → 0 через 5 с, 0x54e180).
-    if (this.burning >= 0 || !this.careerMode || this.fireCool > 0) return;
+    // Займання — у кар'єрі й у вільній їзді, не в гонці.
+    if (this.burning >= 0 || (!this.careerMode && this.race) || this.fireCool > 0) return;
     if (!impact && Math.random() >= (this.tuning.glass * force * 0.03) / (force + 0.3)) return;
     this.burning = 0;
     // Вибух _Blow — раз за пожежу (0x551970 → 0x549e60): у кар'єрі +0,4 пошкодження (момент вибуху — одразу [Г]).
     this.blowFx(enginePoint(this.truck));
-    const c = this.careerMode.career;
-    c.damage = Math.min(1, c.damage + BLOW_DAMAGE);
+    const c = this.careerMode?.career;
+    if (c) c.damage = Math.min(1, c.damage + BLOW_DAMAGE);
+    else this.freeDamage = Math.min(1, this.freeDamage + BLOW_DAMAGE);
   }
 
   /** Вибух машини (_Blow) у точці Three.js: ефект і звук blowkapot3, чутно до 50 м. */
@@ -2488,7 +2491,7 @@ export class Ht2Drive {
   /** Куля повз гравця влучила в інше тіло: машина ІІ — займання з імовірністю g·P·0,03/(P + 0,3), g = 1 (0x567440). */
   private readonly strayShot = (body: RAPIER.RigidBody, power: number): void => {
     const v = this.aiCars().find((c) => c.body === body);
-    if (v && this.careerMode) this.fires().shot(v, power);
+    if (v && (this.careerMode || !this.race)) this.fires().shot(v, power);
   };
 
   /** Після гасіння FIRE_COOL с машина не займається. */
@@ -2544,6 +2547,33 @@ export class Ht2Drive {
     const p = this.truck.visual.position.clone().addScaledVector(this.truck.forward(), 2).setY(this.truck.visual.position.y + 1.5);
     this.blastFx().carFire(new THREE.Vector3(p.x, -p.z, p.y));
   }
+
+  /**
+   * Стан машини у вільній їзді (на прохання користувача — як у кар'єрі, лише без грошей і кінця гри): удари (hitWear),
+   * займання й горіння (−1/60 за секунду), вибух +0,4; знищено (> 0,9) чи втопилася — 911 (переставляє й ремонтує).
+   */
+  private updateFreeDamage(dt: number): void {
+    if (this.careerMode || this.race || this.paused) return;
+    this.fireCool = Math.max(0, this.fireCool - dt);
+    const wear = this.hitWear;
+    this.hitWear = 0;
+    if (wear > 0) this.freeDamage = Math.min(1, this.freeDamage + wear * (this.arcade ? 0.5 : 1));
+    if (this.fires().update(dt, this.aiCars(), { v: this.truck, burning: this.burning >= 0 })) this.ignite(0, true);
+    const sunk = this.water.update(dt, this.world.loaded.values(), this.truck.visual.position, false);
+    if (this.burning >= 0) {
+      this.burning += dt;
+      this.freeDamage = Math.min(1, this.freeDamage + dt / 60);
+      const p = this.truck.visual.position.clone().addScaledVector(this.truck.forward(), 2).setY(this.truck.visual.position.y + 1.5);
+      this.blastFx().carFire(new THREE.Vector3(p.x, -p.z, p.y));
+    }
+    if ((sunk || this.freeDamage > 0.9) && !this.rescue) {
+      this.say(sunk ? 'МАШИНА ПОТОНУЛА — ВИКЛИКАНО 911' : 'МАШИНУ ЗНИЩЕНО — ВИКЛИКАНО 911', 6);
+      this.call911();
+    }
+  }
+
+  /** Стан машини у вільній їзді: 0 — ціла, 1 — знищена (кар'єра — career.damage). */
+  freeDamage = 0;
 
   /** Відкриття прихованих доріг карти проїздом (world/mapReveal.ts, king.exe updatePlayerBoxes 0x42cf50). */
   private updateReveal(dt: number): void {
@@ -3045,6 +3075,7 @@ export class Ht2Drive {
     if (this.careerMode) this.careerMode.pay911();
     else {
       // Вільна їзда (порт): платити нічим — 911 ремонтує безкоштовно, як у кар'єрі з грошима.
+      this.freeDamage = 0;
       this.dents?.repair();
       this.trailerDents?.repair();
       this.extinguish();
@@ -3520,6 +3551,7 @@ export class Ht2Drive {
     this.updateReveal(dt);
     this.updateSirens();
     this.updateFire(dt);
+    this.updateFreeDamage(dt);
     this.updateMafia(dt);
     if (this.markets && this.careerMode) this.markets.update(this.truck.visual.position, Math.floor(this.careerMode.career.time / 86400));
     this.obstacles?.update(dt);
@@ -3543,6 +3575,8 @@ export class Ht2Drive {
     // Причепити / відчепити — лише тягачем; світиться, поки причіп зчеплений.
     this.input.setToggle('attach', !!this.trailer, !this.hitched || !!this.race);
     if (this.careerMode) this.hiredStep(dt);
+    // Вільна їзда: причепи лише стоять (поповнення й моделі біля гравця), T прибирає й повертає свій причіп.
+    if (this.presents && !this.careerMode) this.presents.update(this.truck.visual.position, 0, (k) => this.canTow(k), dt);
     if (this.presents && this.careerMode) {
       const cm = this.careerMode;
       this.presents.update(this.truck.visual.position, cm.career.time, (k) => this.canTow(k), dt);
@@ -3619,7 +3653,7 @@ export class Ht2Drive {
       rpm: this.truck.rpm,
       trailer: this.trailer ? 'on' : 'none',
       fuel: c ? (c.fuel ?? this.tank) / this.tank : 1,
-      condition: c ? 1 - c.damage : 1,
+      condition: c ? 1 - c.damage : this.race ? 1 : 1 - this.freeDamage,
       nav: this.navTurn,
       position: this.careerMode?.race ?? null,
       licences: this.careerMode?.licenceInfo() ?? null,
