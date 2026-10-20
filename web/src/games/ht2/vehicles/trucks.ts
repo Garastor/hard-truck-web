@@ -40,6 +40,11 @@ export function drivable(t: Ht2Trucks): TechRecord[] {
   return t.records.filter((r) => (r.group === 'tractors' || r.group === 'lorries') && !!t.asm.block(r.carNode));
 }
 
+/** Машини вільної їзди (меню-шестерня): ще й легкові (група cars) — усе, крім напівпричепів, з моделлю. */
+export function selectable(t: Ht2Trucks): TechRecord[] {
+  return t.records.filter((r) => r.group !== 'trailers' && !!t.asm.block(r.carNode));
+}
+
 /** Колеса моделі: групи `<prefix>wheelN` у вузлі car_node → простір і модель колеса з посилання (18). */
 function wheelsOf(body: Block, prefix: string): { space: string; node: string }[] {
   const out: { space: string; node: string }[] = [];

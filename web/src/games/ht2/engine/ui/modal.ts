@@ -1,8 +1,9 @@
 /**
- * Діалоги в стилі табличок табло (тонка рамка, піксельний шрифт MENU.FON; без шрифту — системний): модальне вікно з
- * кнопками й піксельний текст із переносом. Спільні для ігор (стилі — `.career-modal`, `.career-box` у style.css).
+ * Технічні вікна порту (тонка рамка табло): модальне вікно з кнопками й текст. Шрифт — звичайний, зелений, без
+ * піксельного ефекту (на прохання користувача; раніше — бірюзовий піксельний MENU.FON). Стилі — `.career-modal`,
+ * `.career-box` у style.css, колір HT2 — `body.game-ht2 .career-box` у ui/ht2.css.
  */
-import { HUD_CYAN, hudScale, pixelCanvas, type PixelFont } from './pixelFont';
+import type { PixelFont } from './pixelFont';
 
 export function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -17,59 +18,20 @@ export function setHudFont(f: PixelFont | null): void {
   uiFont = f;
 }
 
-/** Рядки тексту не ширші за w пікселів шрифту. */
-export function wrapText(f: PixelFont, t: string, w: number): string[] {
-  const out: string[] = [];
-  for (const para of t.split('\n')) {
-    let line = '';
-    for (const word of para.split(' ')) {
-      const next = line ? `${line} ${word}` : word;
-      if (line && f.measure(next) > w) {
-        out.push(line);
-        line = word;
-      } else line = next;
-    }
-    out.push(line);
-  }
-  return out;
+/** Текст технічного вікна: звичайний шрифт (колір — зі стилю вікна), перенос рядків браузером. */
+export function techText(t: string): HTMLElement {
+  return el('p', 'career-text', t);
 }
 
-/** Збільшення піксельного шрифту на кнопках (табло й вікон) відносно решти тексту. */
-export const BUTTON_ZOOM = 1.35;
-
-/**
- * Текст піксельним шрифтом табло (бірюзовий) з переносом за шириною в CSS-пікселях; без шрифту — звичайний
- * текст. line — крок рядків у пікселях шрифту.
- */
-export function pixelText(t: string, cssWidth: number, color = HUD_CYAN, line = 12, zoom = 1): HTMLElement {
-  const f = uiFont;
-  if (!f) return el('p', 'career-text', t);
-  const s = hudScale() * zoom;
-  // У MENU.FON немає «ялинок» і кривих лапок — прямі.
-  const text = t.replace(/[«»„“”]/g, '"');
-  const lines = wrapText(f, text, Math.max(40, Math.floor(cssWidth / s)));
-  const w = Math.max(1, ...lines.map((l) => f.measure(l)));
-  const { canvas, ctx } = pixelCanvas(w, lines.length * line - (line - f.height), s);
-  lines.forEach((l, i) => f.draw(ctx, l, 0, i * line, color));
-  canvas.setAttribute('aria-label', t);
-  canvas.classList.add('career-pixel-text');
-  return canvas;
-}
-
-/** Ширина вмісту вікна, CSS-пікселі (як у .career-box: до 520, з полями). */
-export function boxContentWidth(): number {
-  return Math.min(520, window.innerWidth - 32) - 34;
-}
-
-/** Модальне вікно в стилі табличок табло (тонка рамка, піксельний шрифт); повертає вибрану кнопку. */
+/** Модальне технічне вікно (тонка рамка табло, зелений текст); повертає вибрану кнопку. */
 export function modal(overlay: HTMLElement, title: string, body: string | HTMLElement, buttons: string[]): Promise<number> {
   return new Promise((resolve) => {
     const back = el('div', 'career-modal');
     const box = el('div', 'career-box');
     const head = el('h2');
-    head.append(pixelText(title, boxContentWidth(), 'rgb(255,255,255)'));
+    head.textContent = title;
     box.append(head);
-    box.append(typeof body === 'string' ? pixelText(body, boxContentWidth()) : body);
+    box.append(typeof body === 'string' ? techText(body) : body);
     const row = el('div', 'career-actions');
     const close = (i: number) => {
       window.removeEventListener('keydown', onKey, true);
@@ -90,9 +52,7 @@ export function modal(overlay: HTMLElement, title: string, body: string | HTMLEl
     buttons.forEach((b, i) => {
       const btn = el('button', i === 0 ? 'hud-btn primary' : 'hud-btn');
       btn.setAttribute('aria-label', b);
-      // Напис кнопки — крупніший за текст вікна (на прохання користувача).
-      if (uiFont) btn.append(pixelText(b, 400, HUD_CYAN, 12, BUTTON_ZOOM));
-      else btn.textContent = b;
+      btn.textContent = b;
       btn.addEventListener('click', () => close(i));
       row.append(btn);
     });

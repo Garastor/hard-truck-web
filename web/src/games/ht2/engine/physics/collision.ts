@@ -200,6 +200,151 @@ export function instanceCollision(
   return { floors, floorSurface, walls, count };
 }
 
+/** Найменший радіус стовпчика `sharp_*`, м: тонший тонкий trimesh корпус на швидкості проскакує. */
+const POST_MIN_R = 0.1;
+/** Сторін призми стовпчика. */
+const POST_SIDES = 8;
+/**
+ * Стовпчик, верх якого нижче ґрунту + POST_ABOVE, піднімається над ґрунтом щонайменше на стільки, м: точки ніжок
+ * щитів (aj) — 0,4…0,6 м над ґрунтом, а корпус машини в порту вищий (king.exe б'є точки об свій корпус `hit_*`).
+ */
+const POST_ABOVE = 2;
+/**
+ * Наскільки нижче ґрунту шукати «закопаний» стовпчик, м (у даних здебільшого 1–4 м, поодинокі — до 13 м); більше —
+ * ризик підняти стовпчик під мостом на сам міст.
+ */
+const BURIED_MAX = 4.5;
+/** Верхня точка колізії дерева над основою (king.exe 0x64c350; нижня — 0,75, 0x64c330), м. */
+const TREE_HIGH = 1.5;
+
+export interface RoomPosts {
+  /** Бічні грані стовпчиків (система гри). */
+  walls: Poly[];
+  /** Кімната кожної грані. */
+  wallRoom: string[];
+  /** Гілка перемикача (`<Ключ>#<гілка>`) кожної грані; '' — діє завжди. */
+  wallSwitch: string[];
+  /** Кількість стовпчиків. */
+  count: number;
+}
+
+/**
+ * «Гострі» колізії без подій — блоки 20 `sharp_*` у піддереві кімнат (не в `hit_*`) і в шаблонах, які кімната
+ * ставить екземплярами (блок 18: склади `store_*`, СТО `STOS`, `Gorodok`, аеропорт). King.exe
+ * бере до 30 таких вузлів кімнати тіла й перевіряє вершини ламаної як кулі радіуса `i2 · 0,01` проти корпусу
+ * (0x5855a0 → 0x585150, re/notes/ht2/physics.md «Колізії кімнат»). У даних це майже завжди вертикальні стовпчики —
+ * 2–3 точки на одній вертикалі: ніжки рекламних щитів, щогли, стовпи огорож `sharp_fence_`, навісів складів.
+ * Порт робить із кожної вертикалі восьмигранну призму від нижньої до верхньої кулі.
+ * Збивні `e_*` (знаки, світлофори, радари, ліхтарі, вказівники міст) і рухомі `AnmObj*` — у world/objects.ts.
+ * keys — ключі перемикачів, гілки яких мають власні колізії (з `hit_*`); під іншими перемикачами (освітлення,
+ * світлофори) стовпчик діє завжди.
+ */
+export function roomPosts(
+  b3d: B3d,
+  find: (name: string) => Block | undefined,
+  space: (name: string) => { elements: ArrayLike<number> } | null,
+  keys: ReadonlySet<string> = new Set(),
+  ground: ((x: number, y: number, z: number, room: string) => number | null) | null = null,
+): RoomPosts {
+  const out: RoomPosts = { walls: [], wallRoom: [], wallSwitch: [], count: 0 };
+  const seen = new Set<string>();
+  const emit = (pts: readonly number[][], radius: number, room: string, tag: string, lift = true) => {
+    for (const p of posts(pts, radius, ground && lift ? (x, y, z) => ground(x, y, z, room) : null)) {
+      out.count++;
+      for (const w of p) {
+        out.walls.push(w);
+        out.wallRoom.push(room);
+        out.wallSwitch.push(tag);
+      }
+    }
+  };
+  const visit = (b: Block, room: string, tag: string, m: ArrayLike<number> | null, depth: number): void => {
+    const d = b.data;
+    if (d.t === 20 && /^sharp/i.test(b.name) && d.trigger.values.length <= 1) {
+      const pts = m ? d.points.map(([x, y, z]) => [m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]]) : d.points;
+      emit(pts, d.trigger.i2 * 0.01, room, tag);
+      return;
+    }
+    // Дерево з бітом 1 `i1`: king.exe сам ставить у кімнату вузол `sharpTerrainTree` — дві точки над основою (центр
+    // сфери, на землі) на 0,75 і 1,5 м, точковий тест проти корпусу (0x5c8ae0 → 0x5c85a0, re/notes/ht2/trees.md).
+    if (d.t === 40 && d.name2 === '$$TreeGenerator1' && d.i1 & 2 && d.bound[3] > 0 && !m) {
+      const [x, y, z] = d.bound;
+      // Порт — стовбур від ґрунту до POST_ABOVE (корпус машини в порту вищий за корпус king.exe, як у стовпчиків).
+      emit([[x, y, z - 0.5 + POST_MIN_R], [x, y, z + Math.max(TREE_HIGH, POST_ABOVE) - POST_MIN_R]], 0, room, tag, false);
+      return;
+    }
+    if (d.t === 18 && depth < 4 && !/^(anmobj|e_)|hit/i.test(d.object)) {
+      const key = `${room}|${d.space}|${d.object}`.toLowerCase();
+      const tpl = find(d.object);
+      const sm = space(d.space)?.elements ?? null;
+      if (tpl && sm && !seen.has(key)) {
+        seen.add(key);
+        visit(tpl, room, tag, sm, depth + 1);
+      }
+      return;
+    }
+    if (d.t === 21 && b.groups) {
+      const k = b.name.replace(/^refer_/i, '');
+      b.groups.forEach((g, gi) => g.forEach((c) => visit(c, room, keys.has(k) ? `${k}#${gi}` : tag, m, depth)));
+      return;
+    }
+    for (const g of b.groups ?? []) for (const c of g) visit(c, room, tag, m, depth);
+  };
+  for (const top of b3d.blocks) if (top.data.t === 19) visit(top, top.name, '', null, 0);
+  return out;
+}
+
+/** Висота підлоги (`hit_road`) своєї кімнати під точкою — для `roomPosts`; підлогу розкладено по кімнатах один раз. */
+export function roomGround(col: Pick<LevelCollision, 'floors' | 'floorRoom'>): (x: number, y: number, z: number, room: string) => number | null {
+  const by = new Map<string, { floors: Poly[]; floorRoom: string[] }>();
+  col.floors.forEach((p, i) => {
+    const r = col.floorRoom[i].toLowerCase();
+    const g = by.get(r) ?? by.set(r, { floors: [], floorRoom: [] }).get(r)!;
+    g.floors.push(p);
+    g.floorRoom.push(r);
+  });
+  return (x, y, z, room) => {
+    const g = by.get(room.toLowerCase());
+    return g ? (floorAt(g, x, y, z)?.z ?? null) : null;
+  };
+}
+
+/**
+ * Точки ламаної `sharp_*` → призми: точки на одній вертикалі — один стовпчик від нижньої до верхньої кулі.
+ * ground — висота підлоги під стовпчиком. Низькі стовпчики (ніжки щитів у aj — точки 0,4…0,6 м над ґрунтом) і ≈ 150
+ * нижчих за ґрунт `hit_road` (огорожі ab) порт піднімає на POST_ABOVE над ґрунтом — щоб їх зачіпав корпус машини.
+ */
+function posts(points: readonly number[][], radius: number, ground: ((x: number, y: number, z: number) => number | null) | null): Poly[][] {
+  const r = Math.max(POST_MIN_R, radius);
+  const cols: { x: number; y: number; z0: number; z1: number }[] = [];
+  for (const [x, y, z] of points) {
+    const c = cols.find((q) => Math.hypot(q.x - x, q.y - y) < 0.05);
+    if (c) {
+      c.z0 = Math.min(c.z0, z);
+      c.z1 = Math.max(c.z1, z);
+    } else cols.push({ x, y, z0: z, z1: z });
+  }
+  return cols.map(({ x, y, z0, z1 }) => {
+    let lo = z0 - r;
+    let hi = z1 + r;
+    const g = ground?.(x, y, z1 + BURIED_MAX);
+    if (g != null && hi < g + POST_ABOVE) {
+      lo = Math.min(lo, g - 0.5);
+      hi = g + POST_ABOVE;
+    }
+    const at = (i: number) => {
+      const a = (2 * Math.PI * i) / POST_SIDES;
+      return [x + Math.cos(a) * r, y + Math.sin(a) * r];
+    };
+    const sides: Poly[] = [];
+    for (let i = 0; i < POST_SIDES; i++) {
+      const [p, q] = [at(i), at(i + 1)];
+      sides.push([[p[0], p[1], lo], [q[0], q[1], lo], [q[0], q[1], hi], [p[0], p[1], hi]]);
+    }
+    return sides;
+  });
+}
+
 /** Наскільки близько до лінії огорожі має лежати портал, щоб вирізати в ній прохід, м. */
 const PORTAL_ON_FENCE = 0.5;
 

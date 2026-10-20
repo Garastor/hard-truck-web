@@ -181,6 +181,17 @@ export class Mafia {
     for (const h of this.hoods) h.v.syncVisual(alpha);
   }
 
+  /** Рівень з меню вільної їзди (порт): 0 — ні, 1 — жене, 2 — попередила, 3 — стріляє. */
+  get level(): number {
+    return this.phase ? this.phase - 20 : 0;
+  }
+
+  setLevel(n: number): void {
+    this.phase = n > 0 ? 20 + Math.min(3, n) : 0;
+    this.phaseTime = 0;
+    if (!n) for (const h of this.hoods) h.engaged = false;
+  }
+
   update(dt: number, pl: MafiaPlayer): MafiaEvent[] {
     const ev: MafiaEvent[] = [];
     this.updatePosts(dt, pl);

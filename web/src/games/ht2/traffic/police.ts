@@ -261,6 +261,17 @@ export class Police {
     this.zone = true;
   }
 
+  /**
+   * Рівень розшуку з меню вільної їзди (порт): 0 — ні, 1 — погоня, 2 — попередили, 3 — «будемо стріляти», 4 — вогонь.
+   * Відлік до наступного кроку — з цієї миті.
+   */
+  setLevel(n: number): void {
+    if (n <= 0) return this.reset();
+    this.phase = Math.min(4, n);
+    this.zone = false;
+    this.carMark = this.clock;
+  }
+
   /** Кадр: засідки, погоня, попередження, стрілянина, затримання. */
   update(dt: number, pl: PlayerState): PoliceEvent[] {
     const ev: PoliceEvent[] = [];
