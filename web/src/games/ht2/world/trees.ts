@@ -254,7 +254,11 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
     // і менша сфера інстансів відсікається полем зору й туманом.
     const key = `${s.room}:${s.kind >> 1}:${half}:${width}:${crown}:${split}`;
     let g = groups.get(key);
-    if (!g) groups.set(key, (g = { tex, u0: half === 2 ? 0 : half * 0.5, uw: half === 2 ? 0.95 : 0.45, width, crown, split, trunk, room: s.room, list: [] }));
+    // Краї крони — на пів текселя всередину: лінійна фільтрація на u = 0,5 брала навпіл колонку 127 — суцільну
+    // смужку кори лівої половини (без кольору прозорості), альфа ≈ 0,5 на порозі alphaTest давала пунктирні
+    // вертикальні лінії по боках дерев (знімки користувача).
+    const inset = 0.5 / ((tex.image as { width: number }).width || 256);
+    if (!g) groups.set(key, (g = { tex, u0: (half === 2 ? 0 : half * 0.5) + inset, uw: (half === 2 ? 0.95 : 0.45) - 2 * inset, width, crown, split, trunk, room: s.room, list: [] }));
     g.list.push(s);
   }
   const m = new THREE.Matrix4();
