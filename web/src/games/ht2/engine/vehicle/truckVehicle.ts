@@ -197,6 +197,8 @@ export interface KingSetup {
   tires?: boolean;
   /** Множник μ для бічних сил шин (μ king.exe — 0,83 у записі, поздовжнє в порту підігнано з 0,71). */
   sideGrip?: number;
+  /** Режим «Аркадний» (налаштування гри): допомога керуванню в режимі шин (ARCADE, arcadeAssist). */
+  arcade?: boolean;
 }
 
 /** Тінь над дорогою, м — щоб не мерехтіла з дорогою (гіпотеза порту). */
@@ -220,6 +222,17 @@ const SKID_SIN = 0.26;
  *   вже в бік повороту; що повільніше (до SHARP_GRIP_KMH), то сильніше колеса «ловлять» дорогу й поворот різкішає.
  * Ctrl вмикається й гасне плавно (SHARP_BLEND_ON / _OFF, 1/с).
  */
+/**
+ * Допомога керуванню в режимі «Аркадний» (власна логіка порту, на прохання користувача: з причепом на 100 км/год
+ * машина йшла дугою ≈ 90 м, хоч як крути, а тягач без причепа зривався в обертання). Лише режим шин, не з Ctrl:
+ * - межа керма за зчепленням — з k × ARCADE.steerK (колеса повертаються більше на швидкості);
+ * - курс тягнеться (ARCADE.yaw, 1/с) до кінематичного v·sin δ / L, але не крутіше бічного прискорення
+ *   ARCADE.lat·μ·g — і докручує, і гасить зрив в обертання;
+ * - бічне ковзання кузова понад кінематичне гаситься до ARCADE.slip·ARCADE.lat·μ·g. Обʼєкт змінний — для підбору в консолі (dev).
+ * Напівпричіп в «Аркадному» — кінематично за шворнем (Trailer.follow, як у ботів): вільний 23-тонний причіп виносив
+ * задок тягача, якого веде допомога (бічна до 15 м/с, складання 60° на повному кермі). «Симулятор» — без змін.
+ */
+export const ARCADE = { steerK: 3, lat: 1.9, yaw: 3, slip: 0.6 };
 const SHARP_SLIDE_KMH = 90;
 const SHARP_GRIP_KMH = 50;
 const SHARP_SLIDE_GRIP = 0.45;
@@ -419,13 +432,13 @@ export class TruckVehicle {
    * (saddleLoad, Н, у точці saddleZ — z сідла в системі тіла тягача) на задніх колесах (tireLoads).
    */
   tow: { mass: number; wheels: number; saddleLoad?: number; saddleZ?: number } | null = null;
-  /** Причіп рухається сам (режим шин тягача): тоді Trailer.update отримує towTires. */
+  /** Причіп рухається сам (режим шин тягача, не «Аркадний»): тоді Trailer.update отримує towTires. */
   get towDynamic(): boolean {
-    return !!this.king?.tires;
+    return !!this.king?.tires && !this.king.arcade;
   }
   /** Зчеплення шин для причепа в динамічному русі (μ поздовжнє поточного кроку й множник бічного). */
   get towTires(): { mu: number; side: number } | undefined {
-    return this.king?.tires ? { mu: this.muNow, side: this.king.sideGrip ?? 1 } : undefined;
+    return this.towDynamic ? { mu: this.muNow, side: this.king!.sideGrip ?? 1 } : undefined;
   }
   /** μ коліс останнього кроку руху king.exe (покриття, дощ, шини). */
   private muNow: number = 0.71;
@@ -530,7 +543,7 @@ export class TruckVehicle {
     const r = this.body.rotation();
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w));
     const lv = this.body.linvel();
-    return steerLimit(lv.x * fwd.x + lv.y * fwd.y + lv.z * fwd.z, mu, this.base, K.steerK);
+    return steerLimit(lv.x * fwd.x + lv.y * fwd.y + lv.z * fwd.z, mu, this.base, K.steerK * (K.arcade && K.tires ? ARCADE.steerK : 1));
   }
 
   /** Тестовий режим: дощ (у кар'єрі він уже в setup.grip). */
@@ -915,7 +928,7 @@ export class TruckVehicle {
     // (sharpBlend): кермо в кабіні не перескакує на упор і назад.
     const vAlong = lv0.x * fwd.x + lv0.y * fwd.y + lv0.z * fwd.z;
     this.sharpBlend = sharp ? Math.min(1, this.sharpBlend + SHARP_BLEND_ON * dt) : Math.max(0, this.sharpBlend - SHARP_BLEND_OFF * dt);
-    const normLim = steerLimit(vAlong, mu, this.base, K.steerK);
+    const normLim = steerLimit(vAlong, mu, this.base, K.steerK * (K.arcade && K.tires ? ARCADE.steerK : 1));
     const lim = normLim + (1 - normLim) * this.sharpBlend;
     const shaped = Math.sign(steer) * K.steerScale * Math.abs(steer) ** K.steerPower;
     // Аварійний поворот (SHARP_*): наскільки кермо понад звичайною межею; зчеплення — за швидкістю.
@@ -970,7 +983,7 @@ export class TruckVehicle {
       return;
     }
     // Колеса причепа (вважаємо на землі, без приводу); у режимі шин причіп рахує себе сам (Trailer.dynamic).
-    const tow = this.tow && !K.tires ? this.tow : null;
+    const tow = this.tow && !this.towDynamic ? this.tow : null;
     if (tow)
       for (let i = 0; i < tow.wheels; i++) {
         const load = (tow.mass * KING.g) / tow.wheels;
@@ -1045,6 +1058,7 @@ export class TruckVehicle {
       const av0 = this.body.angvel();
       tireOmega = this.tireStep(dt, next, n, ft, delta, wheels, Math.abs(vFwd), av0.x * n.x + av0.y * n.y + av0.z * n.z, perWheel);
       if (this.sharpTurn > 0) tireOmega = this.sharpAssist(dt, next, n, ft, delta, tireOmega, mu);
+      else if (K.arcade && !sharp && this.sharpBlend === 0) tireOmega = this.arcadeAssist(dt, next, n, ft, delta, tireOmega, mu * (K.sideGrip ?? 1));
       // Прискорення від сил коліс (без ваги) — для перенесення навантаження наступного кроку.
       this.tireAcc.addScaledVector(ft, force / mass);
     }
@@ -1172,6 +1186,23 @@ export class TruckVehicle {
     return omega;
   }
 
+  /**
+   * Допомога керуванню «Аркадний» (ARCADE): курс — до кінематичного v·sin δ / L у межах бічного прискорення
+   * A = ARCADE.lat·μ·g (в обидва боки: і докручує, і не дає зірватися в обертання), бічна швидкість центру мас понад
+   * кінематичну ω·d (d — від задньої осі) гаситься до ARCADE.slip·A. Змінює next, повертає кутову швидкість.
+   */
+  private arcadeAssist(dt: number, next: THREE.Vector3, n: THREE.Vector3, ft: THREE.Vector3, delta: number, omega: number, mu: number): number {
+    const A = ARCADE.lat * mu * KING.g;
+    const vLon = next.dot(ft);
+    const speed = Math.max(1, Math.abs(vLon));
+    const want = THREE.MathUtils.clamp(-yawRate(vLon, delta, this.base), -A / speed, A / speed);
+    omega += (want - omega) * Math.min(1, ARCADE.yaw * dt);
+    const side = new THREE.Vector3().crossVectors(n, ft);
+    const extra = next.dot(side) - omega * (this.rearAxleZ - this.body.localCom().z);
+    next.addScaledVector(side, -Math.sign(extra) * Math.min(Math.abs(extra), ARCADE.slip * A * dt));
+    return omega;
+  }
+
   /** Прискорення від сил коліс минулого кроку (світ, м/с²) і стан кузова на пружинах (tireLoads). */
   private readonly tireAcc = new THREE.Vector3();
   private readonly spring = { z: 0, vz: 0, roll: 0, vroll: 0, pitch: 0, vpitch: 0 };
@@ -1235,7 +1266,8 @@ export class TruckVehicle {
     const gn = Math.max(0, -(this.world.gravity.x * n.x + this.world.gravity.y * n.y + this.world.gravity.z * n.z));
     const Mg = M * gn;
     // Вага напівпричепа на сідлі (режим шин: причіп — окреме тіло): униз у точці сідла, на d позаду центру мас.
-    const Fk = (this.tow?.saddleLoad ?? 0) * (gn / KING.g);
+    // (Кінематичний причіп — «Аркадний» — свою вагу несе колесами в рівнянні тягача, тут її немає.)
+    const Fk = this.towDynamic ? (this.tow?.saddleLoad ?? 0) * (gn / KING.g) : 0;
     const sk = this.tow?.saddleZ !== undefined ? -(this.tow.saddleZ - this.body.localCom().z) : 0;
     const h = KING_COM_HEIGHT;
     const sp = this.spring;

@@ -1431,7 +1431,7 @@ export class Ht2Drive {
     // межа керма — з величин king.exe: C = μ·k·L = 0,83·9,8·7,9 ≈ 64 (ZilR; підгонка 8,8 була під кінематику — з шинами
     // радіуси виходили в 1,5–3 рази більші за запис). `?physics=kinematic` — колишній кінематичний рух.
     if (new URLSearchParams(location.search).get('physics') === 'kinematic') return { ...base, engine: HT2_KING_ENGINE, brake: HT2_KING_BRAKE, king: { ...HT2_KING, travel: this.rec?.suspension } };
-    const king = { ...HT2_KING, travel: this.rec?.suspension, tires: true, sideGrip: KING_EXE_MU / HT2_KING.mu, steerK: (KING_EXE_MU * 9.8 * KING_EXE_BASE) / (HT2_KING.mu * ZILR_BASE) };
+    const king = { ...HT2_KING, travel: this.rec?.suspension, tires: true, sideGrip: KING_EXE_MU / HT2_KING.mu, steerK: (KING_EXE_MU * 9.8 * KING_EXE_BASE) / (HT2_KING.mu * ZILR_BASE), arcade: this.arcade };
     return { ...base, engine: HT2_KING_ENGINE, brake: HT2_KING_BRAKE, king };
   }
 
