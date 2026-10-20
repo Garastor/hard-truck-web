@@ -8,13 +8,19 @@ import type { Ht2Roads, RoadLine } from './roads';
  * точок, де він був; діагональ габариту × REVEAL_K > розмаху ділянки — ділянку відкрито. Перейшов на іншу дорогу —
  * габарит з нуля. Відкрите — ключі ділянок (`MapSection.key`) у кар'єрі (`Ht2Career.mapOpened`).
  *
- * Гіпотеза порту: «гравець на ділянці» — найближча вісь ближче за ON_ROAD (+ пів ширини дороги); у king.exe — дорога
- * PositionId гравця (проєкція на мережу ІІ), поріг невідомий. Габарит — у плані (у king.exe — 3D).
+ * Відступ порту (на прохання користувача): приховані дороги — часто просто трава без видимого полотна, тож суворе «на
+ * дорозі» (як PositionId у king.exe) змушувало їхати точно по невидимій лінії. Тут гравець «на ділянці», коли край
+ * будь-якої її осі ближче за ON_ROAD (не обовʼязково найближча вісь — поряд може бути інша дорога), і габарит кожної
+ * ділянки накопичується окремо з проєкцій машини на вісь (трава-доріжка місцями відходить від осі WAY, тож габарит
+ * самих позицій недобирав розмаху); скидається він лише тоді, коли гравець відʼїхав від ділянки далі за LEAVE.
+ * Габарит — у плані (у king.exe — 3D, з позицій машини).
  */
 /** Коефіцієнт діагоналі габариту гравця (king.exe 0x64b7b8 = 1,2): відкрити, проїхавши ≈ 83 % розмаху ділянки. */
 export const REVEAL_K = 1.2;
-/** Поза дорогою (край дороги + стільки, м) — уже не на ній. */
-const ON_ROAD = 15;
+/** Ближче до краю осі ділянки, м, — гравець їде нею (рахується в габарит). */
+const ON_ROAD = 60;
+/** Далі від усіх осей ділянки, м, — зʼїхав з неї: габарит з нуля. */
+const LEAVE = 150;
 
 export class MapReveal {
   /** Відкриті ділянки (індекси `roads.sections`). */
@@ -23,8 +29,8 @@ export class MapReveal {
   version = 0;
   /** Нова ділянка відкрита (кар'єра зберігає). */
   onOpen: ((key: string) => void) | null = null;
-  private section = -1;
-  private readonly box = new THREE.Box2();
+  /** Габарити ділянок, біля яких гравець зараз (у плані). */
+  private readonly boxes = new Map<number, THREE.Box2>();
   private readonly byKey = new Map<string, number>();
 
   constructor(private readonly roads: Ht2Roads, saved: readonly string[] = []) {
@@ -39,7 +45,7 @@ export class MapReveal {
       const i = this.byKey.get(k);
       if (i !== undefined) this.opened.add(i);
     }
-    this.section = -1;
+    this.boxes.clear();
     this.version++;
   }
 
@@ -56,20 +62,24 @@ export class MapReveal {
 
   /** Кадр гравця: позиція машини. Повертає індекс щойно відкритої ділянки чи −1. */
   update(pos: THREE.Vector3): number {
-    const n = this.roads.nearestAxis(pos);
-    const s = n && n.dist <= n.axis.width / 2 + ON_ROAD ? (n.axis.section ?? -1) : -1;
-    if (s !== this.section) {
-      // Інша дорога — габарит з нуля (king.exe: +0x3a8 ≠ дорога PositionId).
-      this.section = s;
-      this.box.makeEmpty();
+    const near = this.roads.sectionsNear(pos, LEAVE);
+    // Відʼїхав далеко — габарит з нуля (king.exe: +0x3a8 ≠ дорога PositionId).
+    for (const s of this.boxes.keys()) if (!near.has(s)) this.boxes.delete(s);
+    let res = -1;
+    for (const [s, n] of near) {
+      if (n.dist > ON_ROAD || this.opened.has(s)) continue;
+      let box = this.boxes.get(s);
+      if (!box) this.boxes.set(s, (box = new THREE.Box2()));
+      // Проєкція на вісь, не сама машина: виляння вбік не зменшує зарахований проїзд.
+      box.expandByPoint(new THREE.Vector2(n.point.x, n.point.z));
+      if (box.min.distanceTo(box.max) * REVEAL_K <= this.roads.sections[s].span) continue;
+      this.opened.add(s);
+      this.boxes.delete(s);
+      this.version++;
+      this.onOpen?.(this.roads.sections[s].key);
+      if (res < 0) res = s;
     }
-    if (s < 0 || this.opened.has(s)) return -1;
-    this.box.expandByPoint(new THREE.Vector2(pos.x, pos.z));
-    if (this.box.min.distanceTo(this.box.max) * REVEAL_K <= this.roads.sections[s].span) return -1;
-    this.opened.add(s);
-    this.version++;
-    this.onOpen?.(this.roads.sections[s].key);
-    return s;
+    return res;
   }
 }
 

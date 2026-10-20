@@ -482,6 +482,24 @@ export class Ht2Roads {
     return best;
   }
 
+  /**
+   * Приховані ділянки карти поблизу: індекс ділянки → відстань від краю її найближчої осі, м (лише ≤ within), і
+   * найближча точка на осі.
+   */
+  sectionsNear(p: THREE.Vector3, within: number): Map<number, { dist: number; point: THREE.Vector3 }> {
+    const out = new Map<number, { dist: number; point: THREE.Vector3 }>();
+    for (const a of new Set(nearCells(this.axisGrid, p))) {
+      if (a.section === undefined) continue;
+      const q = closestOn(a.pts, p);
+      if (!q) continue;
+      const dist = Math.max(0, Math.hypot(q.point.x - p.x, q.point.z - p.z) - a.width / 2);
+      if (dist > within) continue;
+      const prev = out.get(a.section);
+      if (!prev || dist < prev.dist) out.set(a.section, { dist, point: q.point });
+    }
+    return out;
+  }
+
   /** Точка поза проїжджою частиною (далі від осі, ніж половина ширини W, з запасом). */
   offRoad(p: THREE.Vector3, margin = 0.5): boolean {
     const n = this.nearestAxis(p);

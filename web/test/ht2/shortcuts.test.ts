@@ -126,6 +126,24 @@ describe.skipIf(!has)('HT2: зрізалки й приховані дороги 
     expect(rev.visible(roads.axes.find((a) => (a.flags & 0x30) === 0x30)!)).toBe(false);
   });
 
+  it('не треба їхати точно по лінії: зсув ~25 м убік теж відкриває', () => {
+    const s = roads.sections.findIndex((x) => x.axes.length === 1 && roads.axes[x.axes[0]].shortcut && x.span > 200);
+    const axis = roads.axes[roads.sections[s].axes[0]];
+    const rev = new MapReveal(roads);
+    let at = -1;
+    for (let i = 0; i + 1 < axis.pts.length && at < 0; i++) {
+      const a = axis.pts[i];
+      const b = axis.pts[i + 1];
+      const len = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+      // Перпендикуляр у плані, зсув то вліво, то вправо (виляння по траві).
+      const side = (i % 2 ? 1 : -1) * (axis.width / 2 + 25);
+      const off = new THREE.Vector3(((b.z - a.z) / len) * side, 0, (-(b.x - a.x) / len) * side);
+      if (rev.update(a.clone().add(off)) === s) at = i;
+    }
+    if (at < 0) rev.update(axis.pts[axis.pts.length - 1]);
+    expect(rev.visible(axis)).toBe(true);
+  });
+
   it('зʼїхав на іншу дорогу — габарит з нуля', () => {
     const s = roads.sections.findIndex((x) => x.axes.length === 1 && roads.axes[x.axes[0]].shortcut && x.span > 200);
     const axis = roads.axes[roads.sections[s].axes[0]];
