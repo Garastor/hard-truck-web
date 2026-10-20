@@ -4,6 +4,7 @@ import type { Block } from '../engine/formats/b3d';
 import type { LoadedRegion } from '../world/world';
 import { toThree } from '../world/world';
 import { fireRay, type Quarry } from './pursuit';
+import { markMover } from '../world/roomVisibility';
 
 /**
  * Гелікоптери Ка-50 Дальнобойщиків 2 (Б11; поведінка king.exe — re/notes/ht2/helicopters.md).
@@ -205,6 +206,7 @@ export class Helicopters {
     frame.add(m.root);
     const root = new THREE.Group();
     root.add(frame);
+    markMover(root);
     this.deps.scene.add(root);
     c.model = { root, setSwitch: m.setSwitch };
     c.sw.clear();

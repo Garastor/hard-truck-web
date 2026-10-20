@@ -9,6 +9,7 @@ import { Trailer } from '../vehicles/trailer';
 import type { SemiKind } from '../vehicles/presents';
 import { recolor, SPOT_FACING, SPOT_RANGE, spotShare } from './traffic';
 import { disposePool, makePool, setPoolFade } from './headPools';
+import { markMover } from '../world/roomVisibility';
 import { g2t } from '../engine/physics/world';
 import { Freight, type FreightCapacity, type FreightJob } from './freight';
 import { Fleet, type FleetMember, type SavedTrucker } from './fleet';
@@ -198,6 +199,7 @@ export class Truckers {
     if (variant > 0) recolor(model.root, this.drive.trucksData, variant + 1);
     // Рух king.exe, як у гравця (kingModel), автопілот — переслідування по дузі з базою машини.
     const truck = new TruckVehicle(this.drive.rapierWorld, def, model, { position: this.drive.groundAtPublic(at), forward }, kingCar(rec.suspension));
+    markMover(truck.visual);
     this.drive.world.scene.add(truck.visual);
     const pilot = kingPilot(new AutoPilot(this.roads), truck.base);
     pilot.cruise = 50 + Math.random() * 25;
@@ -228,6 +230,7 @@ export class Truckers {
     const cargo = this.freight ? 0 : Math.min(tr.cargoLoad, rec.cargoLoad || tr.cargoLoad) * (0.3 + 0.7 * Math.random());
     const paint = kind.cluster > 0 ? (root: THREE.Object3D) => recolor(root, trucks, kind.cluster + 1) : undefined;
     const trailer = new Trailer(this.drive.rapierWorld, trucks.asm, def, tr, { body: truck.body, saddle: rec.lowSaddle }, cargo, paint);
+    markMover(trailer.visual);
     this.drive.world.scene.add(trailer.visual);
     truck.towing = true;
     const handle = trailer.body.handle;
