@@ -2126,6 +2126,7 @@ export class Ht2Drive {
         options: mafia.map((label, i) => ({ value: String(i), label })),
         value: () => String(this.freeWanted.mafia ? Math.max(1, this.mafia?.level ?? 1) : 0),
         set: (v) => {
+    this.redraw();
           this.freeWanted.mafia = v !== '0';
           this.mafia?.setLevel(Number(v));
         },
@@ -3213,6 +3214,14 @@ export class Ht2Drive {
       const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: rt.texture, depthTest: false, depthWrite: false }));
       // Дзеркало: ліве й праве міняються місцями.
       quad.scale.x = -1;
+  /** Розмір полотна й лічильник redraw, з якими вже намальовано кадр паузи ('' — не на паузі). */
+  private pausedFrame = '';
+  private redraws = 0;
+  /** Перемалювати кадр паузи (сцену змінено, поки гра стоїть: інша машина з шестерні). */
+  redraw(): void {
+    this.redraws++;
+  }
+
       const scene = new THREE.Scene();
       scene.add(quad);
       const url = this.escArt?.url(MIRROR_MASK);
@@ -3224,6 +3233,15 @@ export class Ht2Drive {
     }
     const m = this.mirror;
     const ratio = r.getPixelRatio();
+    // Пауза (меню Esc, карта, ролик, вікна): світ стоїть — кадр не змінюється, не перемальовуємо (полотно зберігає
+    // зображення; раніше — повний кадр світу 60 разів на секунду даремно, як було й у першій грі). Ще раз — після
+    // зміни розміру полотна (поворот, роздільність: воно тоді очищається) чи redraw() (зміна сцени на паузі).
+    if (this.paused) {
+      const c = this.opts.renderer.domElement;
+      const key = `${c.width}x${c.height}:${this.redraws}`;
+      if (key === this.pausedFrame) return;
+      this.pausedFrame = key;
+    } else this.pausedFrame = '';
     let fresh = now - this.mirrorAt >= 1000 / MIRROR_FPS - 2;
     if (m.rt.width !== Math.round(w * ratio) || m.rt.height !== Math.round(h * ratio)) {
       m.rt.setSize(Math.round(w * ratio), Math.round(h * ratio));

@@ -51,8 +51,11 @@ export function sharedContext(): AudioContext {
     if (ctx.state !== 'running') void ctx.resume().catch(() => undefined);
   };
   for (const ev of ['pointerup', 'touchend', 'click', 'keydown']) window.addEventListener(ev, unlock, { capture: true, passive: true });
+  // Згорнули застосунок чи сховали вкладку — кадри браузер зупиняє сам, а цикли звуку (двигун, дощ, музика) грали б
+  // далі; призупинити контекст, після повернення — відновити.
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) unlock();
+    if (document.hidden) void ctx.suspend().catch(() => undefined);
+    else unlock();
   });
   return ctx;
 }

@@ -29,7 +29,14 @@ export class Music {
     }
     this.setVolume(volume);
     this.audio.addEventListener('ended', () => void this.next());
+    document.addEventListener('visibilitychange', this.onVisibility);
   }
+
+  /** Згорнули застосунок — трек на паузу (не грає беззвучно далі), повернулись — з того ж місця, якщо музика ввімкнена. */
+  private readonly onVisibility = () => {
+    if (document.hidden) this.audio.pause();
+    else if (this.on && this.audio.src) void this.audio.play().catch(() => {});
+  };
 
   async next(): Promise<void> {
     if (!this.on || this.failures >= HT2_MUSIC.length) return;
@@ -68,6 +75,7 @@ export class Music {
   }
 
   dispose(): void {
+    document.removeEventListener('visibilitychange', this.onVisibility);
     this.audio.pause();
     this.audio.src = '';
     this.gain?.disconnect();
