@@ -41,11 +41,12 @@ import { MapReveal } from './world/mapReveal';
 import { GlassRain } from './engine/render/glassRain';
 import { Dents, dentGeometry, hitEnergy } from './vehicles/dents';
 import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
+import { Caches, hiddenPlaces, type Cache } from './vehicles/caches';
 import { orderVehicle, vehicleOffers, vehiclePowers, vehiclePrices } from './career/carOrder';
 import { HIRED_MIN_SPEED, HiredOnRoads } from './career/hired';
 import { BALANCE_DPR, keyName, resolutionDpr } from './ui/menuScreens';
 import { driverCosts, hiredLoad, upgradeDriver } from './career/company';
-import { routeLength } from './career/economy';
+import { routeLength, type Store } from './career/economy';
 import { terrainCollider } from './world/terrain';
 import { parseMsk } from './engine/formats/msk';
 import { findStores, parseGoods } from './career/economy';
@@ -527,6 +528,10 @@ export class Ht2Drive {
   private sizeLights = false;
   /** Напівпричепи на базах (кар'єра, vehicles/presents.ts) і типи з evehicles.sch. */
   presents: Presents | null = null;
+  /** Схованки pos_hidden — контейнери й цистерни (кар'єра, vehicles/caches.ts). */
+  caches: Caches | null = null;
+  /** Контейнер, вікно якого вже показано (повторно — лише коли відʼїде далі CACHE_PICK_RANGE). */
+  private cacheOffered: Cache | null = null;
   private presentsSaveTimer = 0;
   /** Наймані водії на дорогах (career/hired.ts) і їхні точки для карти (I_tr_myc). */
   private hiredRoads: HiredOnRoads | null = null;
@@ -838,6 +843,33 @@ export class Ht2Drive {
       if (cm) this.presents.missions(roadPlaces(this.world.regions.values()), missions, (pl) => cm.missionLot(pl.pos));
       // Збережені причепи (king.exe зберігає всі presents, 0x4833a0) — на своїх місцях, з вантажем і строками.
       if (o.career?.presents) this.presents.restore(o.career.presents);
+      // Старі збереження: невзяті причепи з легальним вантажем — тепер контрабанда (careerMode.missionLot, відступ порту).
+      if (cm)
+        for (const p of this.presents.list) {
+          if (!p.lot || p.order || cm.goodsList.find((g) => g.id === p.lot!.goods)?.illegal) continue;
+          const lot = cm.missionLot(p.pos);
+          if (lot) p.lot = lot;
+        }
+      // Схованки pos_hidden (vehicles/caches.ts) — лише в кар'єрі: контейнери з вантажем (`containers`) і цистерни
+      // (`fuel`); без CNF — 5 і 2, як у king.exe.
+      if (cm) {
+        const limit = (k: string, d: number) => (cnf ? num(assoc(cnf, k)?.[1], d) : d);
+        this.caches = new Caches(
+          {
+            scene: this.world.scene,
+            rapier: this.rapier,
+            common: this.world.common,
+            roadPoint: (p) => {
+              const n = this.roads.nearest(p);
+              return n ? n.line.pts[n.seg].clone().lerp(n.line.pts[n.seg + 1], n.t) : null;
+            },
+          },
+          hiddenPlaces(this.world.regions.values()),
+          { container: limit('containers', 5), fuel: limit('fuel', 2) },
+          () => cm.cacheLot(),
+        );
+        if (o.career?.caches) this.caches.restore(o.career.caches);
+      }
     }
     if (!o.race) {
       const [names, merch] = await Promise.all(['names.sch', 'merchandise.sch'].map((f) => o.source.read(f).then(readSch).catch((): SExpr[] => [])));
@@ -1685,7 +1717,7 @@ export class Ht2Drive {
         const tr = tractor ? this.trucks.records.find((r) => r.carNode === 'STrailerM') : undefined;
         const body = tr ?? rec;
         const cap = { mass: body?.cargoLoad ?? 0, volume: body ? body.bodySquare * body.bodyHeight : 0 };
-        d.trip = hiredLoad(from, cm.stores, cm.goodsList, cap, tractor, (to) => routeLength(from, to)) ?? undefined;
+        d.trip = hiredLoad(from, cm.stores, cm.goodsList, cap, tractor, (to) => this.storeRoute(from, to)) ?? undefined;
       }
       if (d.road) delete d.road.route;
     }
@@ -1801,6 +1833,29 @@ export class Ht2Drive {
       take();
       const o = c.order;
       if (o) this.setCargo(o.goods.mass * o.units);
+    });
+  }
+
+  /**
+   * Схованки: дозаповнення й моделі; гравець зупинився (до 5 км/год) ближче 20 м від контейнера — вікно замовлення
+   * (king.exe подія 0x14; підтвердження — «Взяти»). Взяв — контейнер зникає (місце звільняється), вантаж у кузові.
+   */
+  private cacheStep(cm: CareerMode, dt: number): void {
+    const caches = this.caches!;
+    caches.update(this.truck.visual.position, dt);
+    const near = caches.near(this.truck.visual.position);
+    if (this.cacheOffered && this.cacheOffered !== near) this.cacheOffered = null;
+    if (!near || near === this.cacheOffered || this.offering || this.paused || this.truck.speedKmh > 5) return;
+    this.cacheOffered = near;
+    this.offering = true;
+    void cm.offerCache(near.lot!).then((ok) => {
+      this.offering = false;
+      if (!ok || !caches.list.includes(near)) return;
+      caches.take(near);
+      const o = cm.career.order;
+      if (o) this.setCargo(o.goods.mass * o.units);
+      cm.career.caches = caches.snapshot();
+      cm.persist();
     });
   }
 
@@ -2261,6 +2316,28 @@ export class Ht2Drive {
   routeLeft(target: THREE.Vector3): number | null {
     this.navigator ??= new Navigator(this.roads);
     return this.navigator.remaining(this.truck.visual.position, this.truck.forward(), target);
+  }
+
+  private readonly storeRoutes = new Map<string, number>();
+
+  /**
+   * Довжина шляху дорогами між складами, м (оплата й строк замовлень): навігатор від центру складу (чи першого місця,
+   * якщо центр далеко від доріг) до центру іншого — найкоротший шлях без зрізалок. Шляху немає — оцінка routeLength.
+   */
+  storeRoute(a: Store, b: Store): number {
+    const key = `${a.id}>${b.id}`;
+    const hit = this.storeRoutes.get(key);
+    if (hit !== undefined) return hit;
+    this.navigator ??= new Navigator(this.roads);
+    const target = toThree(...b.center);
+    let L: number | null = null;
+    for (const p of [a.center, ...a.docks]) {
+      L = this.navigator.remaining(toThree(...p), undefined, target);
+      if (L !== null) break;
+    }
+    const out = L ?? routeLength(a, b);
+    this.storeRoutes.set(key, out);
+    return out;
   }
 
   /** Точка через s метрів найкоротшим шляхом дорогами від pos до цілі (navigator.pointAlong). */
@@ -3636,9 +3713,11 @@ export class Ht2Drive {
       if ((this.presentsSaveTimer -= dt) <= 0 || expired) {
         this.presentsSaveTimer = 1;
         cm.career.presents = this.presents.snapshot();
+        if (this.caches) cm.career.caches = this.caches.snapshot();
         if (expired) cm.persist();
       }
     }
+    if (this.caches && this.careerMode) this.cacheStep(this.careerMode, dt);
     this.updateNavigator(dt);
     this.tabMap?.draw(dt, {
       me: this.truck.visual.position,
@@ -3989,6 +4068,7 @@ export class Ht2Drive {
     this.truckers?.dispose();
     this.trailer?.dispose();
     this.presents?.dispose();
+    this.caches?.dispose();
     this.truck?.dispose();
     this.world.dispose();
     this.trucks.asm.dispose();

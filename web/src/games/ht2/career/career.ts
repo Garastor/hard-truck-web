@@ -3,6 +3,7 @@ import type { Order } from './economy';
 import type { RivalRun } from './competition';
 import type { HiredDriver } from './company';
 import type { SavedPresent, TrailerChoice } from '../vehicles/presents';
+import type { SavedCache } from '../vehicles/caches';
 import type { OrderedCar } from './market';
 import type { SavedTrucker } from '../traffic/fleet';
 
@@ -72,6 +73,8 @@ export interface Ht2Career {
   trailer?: TrailerChoice | null;
   /** Причепи-presents (бази, дорожні місії, кинуті гравцем з вантажем) — vehicles/presents.ts. */
   presents?: SavedPresent[];
+  /** Схованки `pos_hidden` — контейнери з вантажем і цистерни-декорації (vehicles/caches.ts). */
+  caches?: SavedCache[];
   /** Діючий завал (id `obstacle` з mod_*.sch, world/obstacles.ts); null — жодного. */
   obstacle?: string | null;
   /** Замовлені рацією машини, що чекають на ринках (career/carOrder.ts). */

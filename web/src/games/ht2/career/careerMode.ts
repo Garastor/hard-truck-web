@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { modal } from '../engine/ui/modal';
 import { isList, str, type SExpr } from '../formats/sexpr';
-import { cargoHit, findStores, makeOrders, orderValue as orderValueOf, parseGoods, type Goods, type Order, type Store, type Town } from './economy';
+import { cargoHit, contrabandPay, findStores, makeOrders, orderPay, orderValue as orderValueOf, parseGoods, type Goods, type Order, type Store, type Town } from './economy';
 import { FUEL_PRICE, REPAIR_PER_PERCENT, formatClock, formatMoney, saveCareer, settle, type ActiveOrder, type Ht2Career } from './career';
 import { toThree } from '../world/world';
 import { install, type Upgrade } from './upgrades';
@@ -17,6 +17,7 @@ import { StoreZones } from './storeZones';
 import { arrestCard, ILLEGAL_FINE, noFines, SPEEDING_PER_DEGREE, type Fines } from './law';
 import { fleetLoad, marketShare } from './share';
 import type { MissionLot } from '../vehicles/presents';
+import type { CacheLot } from '../vehicles/caches';
 import type { TechRecord } from '../formats/tech';
 
 /**
@@ -111,23 +112,87 @@ export class CareerMode {
   private forfeitCard: { left: number; amount: number } | null = null;
 
   /**
-   * Лот дорожньої місії (king.exe 0x41d340): склад відвантаження — найближчий до місця; товар — з його списку без
-   * illegal і fuel (порожній список — будь-який такий); призначення — випадковий інший склад. Гіпотези: вага
-   * «×0,25 за кожне замовлення складу з тим самим товаром» не перенесена; приймання — будь-який склад (не газгольдер).
+   * Лот дорожньої місії — **контрабанда** (відступ від оригіналу на прохання користувача: у king.exe 0x41d340 товар —
+   * легальний зі списку найближчого складу). Товар — рівномірно серед нелегальних для вантажівок (`illegal` + `trucks`,
+   * без палива: рад. і хім. відходи, АКМ, героїн, гексаген); склад відвантаження — найближчий до місця (лише для
+   * запису), призначення — випадковий інший склад. Оплата — contrabandPay (economy.ts).
    */
   missionLot(pos: THREE.Vector3): MissionLot | null {
     const gx = pos.x;
     const gy = -pos.z;
     const near = [...this.stores].sort((a, b) => Math.hypot(a.center[0] - gx, a.center[1] - gy) - Math.hypot(b.center[0] - gx, b.center[1] - gy));
-    const ok = (g: Goods) => !g.illegal && !g.fuel && g.price > 0 && g.mass > 0;
-    for (const w of near.slice(0, 2)) {
-      const local = this.goods.filter((g) => ok(g) && w.goods.includes(g.id.toUpperCase()));
-      const pool = local.length ? local : near.indexOf(w) === 1 ? this.goods.filter(ok) : [];
-      const targets = this.stores.filter((s) => s.id !== w.id);
-      if (!pool.length || !targets.length) continue;
-      return { goods: pool[Math.floor(Math.random() * pool.length)].id, from: w.id, to: targets[Math.floor(Math.random() * targets.length)].id };
+    const pool = this.goods.filter((g) => g.illegal && g.trucks && !g.fuel && g.price > 0 && g.mass > 0);
+    const w = near[0];
+    const targets = this.stores.filter((s) => s.id !== w?.id);
+    if (!w || !pool.length || !targets.length) return null;
+    return { goods: pool[Math.floor(Math.random() * pool.length)].id, from: w.id, to: targets[Math.floor(Math.random() * targets.length)].id };
+  }
+
+  /**
+   * Вантаж контейнера-схованки (king.exe 0x41d340, гілка 0x40; trailers-bodies.md §10): товар — рівномірно серед
+   * легальних не-паливних (клас не перевіряється, як в оригіналі), призначення — будь-який склад (найближчий теж).
+   */
+  cacheLot(): CacheLot | null {
+    const pool = this.goods.filter((g) => !g.illegal && !g.fuel && g.price > 0 && g.mass > 0);
+    if (!pool.length || !this.stores.length) return null;
+    return { goods: pool[Math.floor(Math.random() * pool.length)].id, to: this.stores[Math.floor(Math.random() * this.stores.length)].id };
+  }
+
+  /**
+   * Підбір контейнера (0x56ffd0 case 0x14 → loadOrder 0x442e10): вікно «ЗАКАЗ», «Взяти» — складське замовлення в кузов
+   * чи причіп: кількість 0,85·min(M, V·m/v)/m, оплата orderPay (×14,4, з причепом ×21,6), строк 0,1·L (з причепом
+   * ×1,3), L — шлях дорогами до складу. Відступ порту: без місця (тягач без причепа, цистерна) контейнер лишається на
+   * місці з підказкою (у king.exe зникав, хоч вантаж і не брався). true — замовлення взято (контейнер прибрати).
+   */
+  async offerCache(lot: CacheLot): Promise<boolean> {
+    const c = this.career;
+    if (c.order) {
+      this.drive.say('СПОЧАТКУ ДОСТАВТЕ ВАНТАЖ');
+      return false;
     }
-    return null;
+    const g = this.goods.find((x) => x.id === lot.goods);
+    const to = this.stores.find((s) => s.id === lot.to);
+    if (!g || !to) return false;
+    if (this.drive.trailer?.rec.trailerType === 3) {
+      this.drive.say('В АВТОЦИСТЕРНУ МОЖНА ЛИШЕ ЗАЛИВАТИ ПАЛЬНЕ');
+      return false;
+    }
+    const cap = this.capacity();
+    const units = Math.round(((0.85 * Math.min(cap.mass, g.volume > 0 ? (cap.volume * g.mass) / g.volume : Infinity)) / g.mass) * 100) / 100;
+    if (!(units > 0)) {
+      this.drive.say('НЕМАЄ КУДИ ВАНТАЖИТИ — ПОТРІБЕН ПРИЧІП');
+      return false;
+    }
+    const trailer = !!this.drive.trailer;
+    const L = this.drive.routeLeft(toThree(...to.center)) ?? Math.hypot(to.center[0] - this.drive.truck.visual.position.x, to.center[1] + this.drive.truck.visual.position.z) * 1.35;
+    const pay = orderPay(g, units, L, trailer);
+    const deadline = Math.round(0.1 * L * (trailer ? 1.3 : 1));
+    return this.offerLoose('Контейнер', { goods: g, units, from: -1, to: to.id, distance: L, pay, value: Math.round(orderValueOf(g, units)), deadline, urgent: false });
+  }
+
+  /** Вікно замовлення «не зі складу» (причіп на дорозі, контейнер; 0x56bc80): «Взяти» — замовлення гравця. */
+  private async offerLoose(title: string, o: Order): Promise<boolean> {
+    const c = this.career;
+    const to = this.stores.find((s) => s.id === o.to);
+    const box = [
+      o.goods.name,
+      `→ ${to?.town ?? '?'}`,
+      formatMoney(o.pay),
+      `${Math.floor(o.deadline / 60)}:${String(o.deadline % 60).padStart(2, '0')}`,
+      `${((o.units * o.goods.mass) / 1000).toFixed(2)} т`,
+      `${(o.units * o.goods.volume).toFixed(2)} м3`,
+    ].join('\n');
+    this.drive.paused = true;
+    try {
+      const i = await modal(this.drive.overlay, title, box, ['Взяти', 'Не брати']);
+      if (i !== 0 || c.order) return false;
+      c.order = { ...o, deadline: o.deadline * this.drive.timeScale, taken: c.time, integrity: 1 };
+      this.recountGuilt();
+      this.persist();
+      return true;
+    } finally {
+      this.drive.paused = false;
+    }
   }
 
   /**
@@ -148,28 +213,11 @@ export class CareerMode {
     const volume = Math.max(1, trailer.bodySquare * trailer.bodyHeight);
     const units = Math.round(((0.85 * Math.min(trailer.cargoLoad, g.volume > 0 ? (volume * g.mass) / g.volume : Infinity)) / g.mass) * 100) / 100;
     const L = this.drive.routeLeft(toThree(...to.center)) ?? Math.hypot(to.center[0] - this.drive.truck.visual.position.x, to.center[1] + this.drive.truck.visual.position.z) * 1.35;
-    const pay = Math.round(5.4 * (0.115 * L + (1.2 - g.ratio) * Math.sqrt(g.price * units)));
+    // Контрабанда (порт) — 40–80 тис. за шлях дорогами; легальний лот — формула king.exe.
+    const pay = g.illegal ? contrabandPay(L) : Math.round(5.4 * (0.115 * L + (1.2 - g.ratio) * Math.sqrt(g.price * units)));
     const deadline = Math.round(0.13 * L);
-    const box = [
-      g.name,
-      `→ ${to.town}`,
-      formatMoney(pay),
-      `${Math.floor(deadline / 60)}:${String(deadline % 60).padStart(2, '0')}`,
-      `${((units * g.mass) / 1000).toFixed(2)} т`,
-      `${(units * g.volume).toFixed(2)} м3`,
-    ].join('\n');
-    this.drive.paused = true;
-    try {
-      const i = await modal(this.drive.overlay, 'Причіп з вантажем', box, ['Взяти', 'Не брати']);
-      if (i !== 0 || c.order) return false;
-      const o: Order = { goods: g, units, from: lot.from, to: lot.to, distance: L, pay, value: Math.round(orderValueOf(g, units)), deadline, urgent: false };
-      c.order = { ...o, deadline: o.deadline * this.drive.timeScale, taken: c.time, integrity: 1 };
-      this.recountGuilt();
-      this.persist();
-      return true;
-    } finally {
-      this.drive.paused = false;
-    }
+    const o: Order = { goods: g, units, from: lot.from, to: lot.to, distance: L, pay, value: Math.round(orderValueOf(g, units)), deadline, urgent: false };
+    return this.offerLoose(g.illegal ? 'Причіп з контрабандою' : 'Причіп з вантажем', o);
   }
 
   /** Товари merchandise.sch (рейси найманих, drive.hiredStep). */
@@ -362,7 +410,7 @@ export class CareerMode {
     let cached = this.storeOrders.get(store.id);
     if (!cached || c.time - cached.time > 3600) {
       const n = Math.max(1, store.docks.length);
-      cached = { orders: makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, n, this.drive.trailer?.rec.trailerType === 3, this.marketShare(), !!this.drive.trailer), time: c.time };
+      cached = { orders: makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, n, this.drive.trailer?.rec.trailerType === 3, this.marketShare(), !!this.drive.trailer, (a, b) => this.drive.storeRoute(a, b)), time: c.time };
       this.storeOrders.set(store.id, cached);
     }
     const o = cached.orders[dock % cached.orders.length];
@@ -551,7 +599,8 @@ export class CareerMode {
   recountGuilt(): void {
     const c = this.career;
     const f = this.fines;
-    const h = c.order?.hidden;
+    // Прихований товар чи відверта контрабанда (причепи біля доріг у порту) — той самий штраф за товар.
+    const h = c.order?.hidden ?? (c.order?.goods.illegal ? c.order.goods : undefined);
     f.illegal = h && Math.random() < 0.8 ? ILLEGAL_FINE * h.guilt : 0;
     f.stolen = c.stolen && Math.random() < 0.5 ? Math.round(0.8 * (c.truckPrice ?? 0)) : 0;
     this.recountMafia();
@@ -597,7 +646,7 @@ export class CareerMode {
   /** Конфіскація (cancelIllegalOrders 0x444f80): замовлення з прихованим товаром зникає без неустойки. */
   private confiscate(): void {
     const c = this.career;
-    if (!c.order?.hidden) return;
+    if (!c.order?.hidden && !c.order?.goods.illegal) return;
     c.order = null;
     this.drive.setCargo(0);
     this.drive.say(this.msg('LOAD_SEIZED', 'ВАНТАЖ КОНФІСКОВАНО'));
@@ -910,6 +959,7 @@ export class CareerMode {
     this.career.pos = [p.x, -p.z, p.y];
     this.career.heading = [f.x, -f.z];
     if (this.drive.presents) this.career.presents = this.drive.presents.snapshot();
+    if (this.drive.caches) this.career.caches = this.drive.caches.snapshot();
     if (this.drive.obstacles) this.career.obstacle = this.drive.obstacles.active;
     const fleet = this.drive.truckers?.snapshot();
     if (fleet) this.career.fleet = fleet;
@@ -953,7 +1003,7 @@ export class CareerMode {
         const to = this.stores.find((s) => s.id === c.order!.to);
         await modal(this.drive.overlay, `Склад «${store.town}»`, `У кузові — ${c.order.goods.name}, доставити в «${to?.town ?? '?'}».`, ['Гаразд']);
       } else {
-        const orders = makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, 5, this.drive.trailer?.rec.trailerType === 3, this.marketShare(), !!this.drive.trailer);
+        const orders = makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, 5, this.drive.trailer?.rec.trailerType === 3, this.marketShare(), !!this.drive.trailer, (a, b) => this.drive.storeRoute(a, b));
         const box = document.createElement('div');
         box.className = 'career-form ht2-orders';
         box.textContent = 'Замовлення на доставку:';

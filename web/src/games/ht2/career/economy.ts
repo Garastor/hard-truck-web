@@ -189,7 +189,10 @@ export function findStores(ways: Iterable<{ id: string; way: Way }>, towns: Map<
   return stores.sort((a, b) => a.id - b.id);
 }
 
-/** Відстань маршруту — пряма × 1,35 (гіпотеза: дороги петляють; точний маршрут — пошуком по мережі, пізніше). */
+/**
+ * Оцінка відстані маршруту — пряма × 1,35 (дороги петляють). Лише запасний варіант і для ботів: гравцю й найманим
+ * кар'єра рахує шлях дорогами (drive.storeRoute — навігатор без зрізалок).
+ */
 export function routeLength(a: Store, b: Store): number {
   return Math.hypot(a.center[0] - b.center[0], a.center[1] - b.center[1]) * 1.35;
 }
@@ -233,6 +236,23 @@ export function hideIllegal(goods: Goods[], rnd: () => number): Goods | null {
 }
 
 /**
+ * Контрабанда: оплата від CONTRABAND_PAY[0] до [1] — за шлях дорогами від CONTRABAND_ROUTE[0] до [1] м (шляхи від
+ * місць pos_road до складів: 10 % коротші за 6,2 км, медіана 13,5 км, 90 % — до 30 км, найдовший 45 км).
+ */
+export const CONTRABAND_PAY: [number, number] = [40_000, 80_000];
+export const CONTRABAND_ROUTE: [number, number] = [5_000, 30_000];
+
+/**
+ * Оплата контрабанди в причепах біля доріг (відступ порту на прохання користувача; в оригіналі там легальні вантажі):
+ * 40–80 тис. лінійно за довжиною шляху дорогами до складу (до 5 км — 40 тис., від 30 км — 80 тис.), круглі сотні.
+ */
+export function contrabandPay(route: number): number {
+  const [lo, hi] = CONTRABAND_ROUTE;
+  const k = Math.min(1, Math.max(0, (route - lo) / (hi - lo)));
+  return Math.round((CONTRABAND_PAY[0] + k * (CONTRABAND_PAY[1] - CONTRABAND_PAY[0])) / 100) * 100;
+}
+
+/**
  * Оплата складського замовлення гравцю (king.exe 0x471200, виклик з loadOrder 0x4436c2 — re/notes/ht2/trailers-bodies.md
  * §8, company.md §2а): (0,115·L + (1,2 − k)·√(ціна·кількість)) × 3 × 1,2 (гравець) × 4 (складське) = ×14,4, з причепом
  * ще ×1,5 = ×21,6 (найманий і ІІ — без ×1,2). Термінових замовлень у exe немає.
@@ -256,6 +276,7 @@ export function makeOrders(
   tanker = false,
   illegalShare = ILLEGAL_SHARE,
   trailer = false,
+  route: (a: Store, b: Store) => number = routeLength,
 ): Order[] {
   // Вантажі для вантажівок; паливо — лише в цистерну.
   const legal0 = goods.filter((g) => !g.illegal && g.price > 0 && g.mass > 0 && g.trucks && (!g.fuel || tanker));
@@ -270,7 +291,7 @@ export function makeOrders(
     const maxUnits = Math.floor(Math.min(capacity.mass / g.mass, g.volume > 0 ? capacity.volume / g.volume : Infinity));
     if (maxUnits < 1) continue;
     const units = Math.max(1, Math.floor(maxUnits * 0.85));
-    const distance = routeLength(from, to);
+    const distance = route(from, to);
     const hidden = illegalShare > ILLEGAL_SHARE_MIN && !g.fuel ? hideIllegal(goods, rnd) : null;
     out.push({
       goods: g,

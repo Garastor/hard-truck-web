@@ -27,8 +27,10 @@ const STRAIGHT = THREE.MathUtils.degToRad(25);
 export class Navigator {
   private readonly prev = new Map<RoadLine, RoadLine[]>();
   private readonly length = new Map<RoadLine, number>();
-  /** Відстані до останніх цілей (ключ — ціль, arrive і версія завалів), не більше CACHE. */
-  private readonly cache = new Map<string, Map<RoadLine, number>>();
+  /** Справжня довжина лінії, м (без штрафів зрізалок і звивистості). */
+  private readonly real = new Map<RoadLine, number>();
+  /** Відстані до останніх цілей (ключ — ціль, arrive і версія завалів), не більше CACHE: вартість і справжні метри. */
+  private readonly cache = new Map<string, { cost: Map<RoadLine, number>; real: Map<RoadLine, number> }>();
 
   /**
    * extra — додаткова «вартість» лінії, м (трафік: штраф за звивистість, traffic/driver.routePenalty); end — чи може
@@ -43,6 +45,7 @@ export class Navigator {
       let len = 0;
       for (let i = 1; i < l.pts.length; i++) len += l.pts[i].distanceTo(l.pts[i - 1]);
       this.length.set(l, len + (extra?.(l) ?? 0) + (l.shortcut ? SHORTCUT_COST : 0));
+      this.real.set(l, len);
       for (const n of l.next) (this.prev.get(n as RoadLine) ?? this.prev.set(n as RoadLine, []).get(n as RoadLine)!).push(l);
     }
   }
@@ -52,13 +55,26 @@ export class Navigator {
    * для ботів — лише відрізок, на якому воно стоїть).
    */
   distances(target: THREE.Vector3, arrive = ARRIVE): Map<RoadLine, number> {
+    return this.search(target, arrive).cost;
+  }
+
+  /**
+   * Справжня довжина найкоротшого (за вартістю) шляху від кінця кожної лінії до цілі, м: той самий шлях, що й у
+   * distances (зрізалки оминаються), але без штрафів — для оплати й строків замовлень.
+   */
+  realDistances(target: THREE.Vector3, arrive = ARRIVE): Map<RoadLine, number> {
+    return this.search(target, arrive).real;
+  }
+
+  private search(target: THREE.Vector3, arrive: number): { cost: Map<RoadLine, number>; real: Map<RoadLine, number> } {
     const key = `${Math.round(target.x)},${Math.round(target.z)},${arrive},${this.roads.closedVersion}`;
     const hit = this.cache.get(key);
     if (hit) return hit;
     const dist = new Map<RoadLine, number>();
-    const heap: [number, RoadLine][] = [];
-    const push = (d: number, l: RoadLine) => {
-      heap.push([d, l]);
+    const real = new Map<RoadLine, number>();
+    const heap: [number, RoadLine, number][] = [];
+    const push = (d: number, l: RoadLine, r: number) => {
+      heap.push([d, l, r]);
       for (let i = heap.length - 1; i > 0; ) {
         const p = (i - 1) >> 1;
         if (heap[p][0] <= heap[i][0]) break;
@@ -66,7 +82,7 @@ export class Navigator {
         i = p;
       }
     };
-    const pop = (): [number, RoadLine] => {
+    const pop = (): [number, RoadLine, number] => {
       const top = heap[0];
       const last = heap.pop()!;
       if (heap.length) {
@@ -84,17 +100,19 @@ export class Navigator {
       }
       return top;
     };
-    for (const l of this.roads.lines) if (!l.closed && l.pts.some((p) => Math.hypot(p.x - target.x, p.z - target.z) < arrive) && this.end(l)) push(0, l);
+    for (const l of this.roads.lines) if (!l.closed && l.pts.some((p) => Math.hypot(p.x - target.x, p.z - target.z) < arrive) && this.end(l)) push(0, l, 0);
     while (heap.length) {
-      const [d, l] = pop();
+      const [d, l, r] = pop();
       if (dist.has(l)) continue;
       dist.set(l, d);
+      real.set(l, r);
       // Попередня лінія доходить до цілі через цю: + довжина цієї.
-      for (const p of this.prev.get(l) ?? []) if (!dist.has(p) && !p.closed) push(d + this.length.get(l)!, p);
+      for (const p of this.prev.get(l) ?? []) if (!dist.has(p) && !p.closed) push(d + this.length.get(l)!, p, r + this.real.get(l)!);
     }
     if (this.cache.size >= CACHE) this.cache.delete(this.cache.keys().next().value!);
-    this.cache.set(key, dist);
-    return dist;
+    const out = { cost: dist, real };
+    this.cache.set(key, out);
+    return out;
   }
 
   /**
@@ -114,11 +132,14 @@ export class Navigator {
     return best;
   }
 
-  /** Скільки лишилось дорогами до цілі, м (null — машина далеко від доріг чи шляху немає). */
+  /**
+   * Скільки лишилось дорогами до цілі, м (null — машина далеко від доріг чи шляху немає): справжня довжина
+   * найкоротшого шляху без зрізалок (штраф SHORTCUT_COST лише вибирає шлях, у метри не входить).
+   */
   remaining(pos: THREE.Vector3, heading: THREE.Vector3 | undefined, target: THREE.Vector3): number | null {
     const at = this.roads.nearest(pos, heading);
     if (!at || at.dist > 80) return null;
-    const d = this.distances(target).get(at.line);
+    const d = this.realDistances(target).get(at.line);
     if (d === undefined) return null;
     let rest = at.line.pts[at.seg].distanceTo(at.line.pts[at.seg + 1]) * (1 - at.t);
     for (let i = at.seg + 1; i + 1 < at.line.pts.length; i++) rest += at.line.pts[i].distanceTo(at.line.pts[i + 1]);

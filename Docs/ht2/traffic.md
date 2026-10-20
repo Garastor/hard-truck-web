@@ -196,6 +196,16 @@ aa, bc, cb). Сам біт 0x10 базу не позначає: він є й н�
   `presents.update` з часом 0); T не чіпляє їх — прибирає й повертає на сідло свій причіп (`drive.toggleTrailer`).
 - `career/market.ts`: продаж — план на день (`plan`, ліміти forsale/used/stolen), шукач роботи — окрема машина на
   вільному звичайному місці (`stock` → `hire: true`; `company.hireOffer`), вікно — `careerMode.salePanel`.
+- **Причепи з контрабандою** (`pos_road`, 22 місця, `missions 10`; відступ порту — в оригіналі легальні): лот —
+  `careerMode.missionLot` (товари `illegal` + `trucks`), оплата — `economy.contrabandPay` (`CONTRABAND_PAY`
+  40–80 тис. за `CONTRABAND_ROUTE` 5–30 км шляху дорогами), вікно — `offerMission`. Відновлюються: `presents.update`
+  раз на 7 с ставить новий не ближче 700 м від гравця.
+- **Схованки** `vehicles/caches.ts` (`pos_hidden`, 62 місця, лише кар'єра): контейнери AnmObj0231 з легальним
+  вантажем (`containers`) і цистерни-декорації AnmObj0241 (`fuel`); ті самі 7 с / 700 м; підбір — `drive.cacheStep`
+  (стоїть ближче 20 м) → `careerMode.offerCache`. Реверс — `re/notes/ht2/trailers-bodies.md` §10.
+- **Відстань для оплати** — лише дорогами без зрізалок: `Navigator.remaining` (справжні метри; штраф зрізалок лише
+  вибирає шлях), між складами — `drive.storeRoute` (кеш на пару). `economy.routeLength` (пряма × 1,35) — запасний
+  варіант і для ботів. Перевірка — `test/ht2/routePay.test.ts`.
 
 ## 8. Як перевірити зміну
 
