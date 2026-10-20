@@ -1972,16 +1972,6 @@ export class Ht2Drive {
     this.setCargo(this.cargoMass);
   }
 
-  /** Нові покращення: бак і перебудова фізики вантажівки (момент, гальма, зчеплення — при створенні). */
-  applyTuning(): void {
-    const rec = this.rec;
-    if (rec) this.tank = rec.tank * this.tuning.tank;
-    this.setCargo(this.cargoMass);
-  }
-
-  /** Меню Esc: відкрити (пауза) чи закрити. Без графіки оригіналу — вихід, як раніше. */
-  toggleEsc(): void {
-    if (this.escMenu) return this.closeEsc();
   /** Розшук у вільній їзді (меню-шестерня): міліція й мафія женуть, доки не затримають / пограбують чи не скасуєш. */
   readonly freeWanted = { police: false, mafia: false };
 
@@ -2110,6 +2100,16 @@ export class Ht2Drive {
     return !hit;
   }
 
+  /** Нові покращення: бак і перебудова фізики вантажівки (момент, гальма, зчеплення — при створенні). */
+  applyTuning(): void {
+    const rec = this.rec;
+    if (rec) this.tank = rec.tank * this.tuning.tank;
+    this.setCargo(this.cargoMass);
+  }
+
+  /** Меню Esc: відкрити (пауза) чи закрити. Без графіки оригіналу — вихід, як раніше. */
+  toggleEsc(): void {
+    if (this.escMenu) return this.closeEsc();
     this.fPanels?.close();
     if (!this.escArt || this.rescue) return;
     if (this.worldMap && !this.worldMap.el.hidden) return;
