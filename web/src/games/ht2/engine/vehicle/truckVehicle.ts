@@ -5,6 +5,7 @@ import type { ControlState } from '../input/input';
 import { visibleBox, type TruckDef, type TruckModel } from './trucks';
 import { Engine, GEAR_N, GEAR_R, type EngineProfile } from './engine';
 import { HitMeter } from './hitMeter';
+import { RoomBounds } from '../physics/roomBounds';
 import { KING, ROUGH_ASPHALT, roadBump, type Roughness, rollingForce, steerLimit, tireCurve, wheelForces, yawRate, type KingWheel, type WheelSlip } from './kingModel';
 
 /**
@@ -271,6 +272,10 @@ export class TruckVehicle {
    * фільтра тягач «ставав» колесами на власний причіп і перекидався.
    */
   rayFilter: ((c: RAPIER.Collider) => boolean) | undefined = undefined;
+  private roomRule: ((c: RAPIER.Collider) => boolean) | undefined;
+  /** Промені коліс: `rayFilter` і лише підлога своєї кімнати та сусідніх через портал (engine/physics/roomBounds.ts). */
+  private readonly groundRays = (c: RAPIER.Collider): boolean =>
+    (!this.rayFilter || this.rayFilter(c)) && (this.roomRule ??= RoomBounds.groundFilter(this.world, this.body) ?? (() => true))(c);
 
   /**
    * Навантаження на сідло, Н (напівпричіп): задня підвіска тягача (колеса з 2-го) жорсткішає пропорційно — у Rapier
@@ -317,7 +322,7 @@ export class TruckVehicle {
     const own = this.body.handle;
     const hit = this.world.castRayAndGetNormal(new RAPIER.Ray({ x: c.x, y: c.y + 0.5, z: c.z }, { x: 0, y: -1, z: 0 }), 6, true, undefined, undefined, undefined, undefined, (col) => {
       const p = col.parent();
-      return !p || (p.handle !== own && (!this.rayFilter || this.rayFilter(col)));
+      return !p ? this.groundRays(col) : p.handle !== own && (!this.rayFilter || this.rayFilter(col));
     });
     if (hit && hit.normal.y > 0.5) this.groundUp.set(hit.normal.x, hit.normal.y, hit.normal.z).normalize();
   }
@@ -866,7 +871,7 @@ export class TruckVehicle {
       } else this.ctrl.setWheelEngineForce(i, -engine);
       this.ctrl.setWheelBrake(i, force * dt);
     }
-    this.ctrl.updateVehicle(dt, undefined, undefined, this.rayFilter);
+    this.ctrl.updateVehicle(dt, undefined, undefined, this.groundRays);
     this.updateGroundUp();
     if (this.tipped) return;
     this.applyBumpStops(dt);
@@ -913,7 +918,7 @@ export class TruckVehicle {
     const left = this.steerAngle > 0;
     ctrl.setWheelSteering(0, Math.sign(this.steerAngle) * (left ? inner : outer));
     ctrl.setWheelSteering(1, Math.sign(this.steerAngle) * (left ? outer : inner));
-    ctrl.updateVehicle(dt, undefined, undefined, this.rayFilter);
+    ctrl.updateVehicle(dt, undefined, undefined, this.groundRays);
     this.updateGroundUp();
     if (this.tipped) {
       // Перекинута: колеса не тримають і не везуть — кузов падає (рух лише Rapier).

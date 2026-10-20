@@ -4,6 +4,7 @@ import { buildTruckModel, visibleBox, type TruckDef } from '../engine/vehicle/tr
 import { TIP_OFF, TIP_ON, TIRE } from '../engine/vehicle/truckVehicle';
 import { HitMeter } from '../engine/vehicle/hitMeter';
 import { g2t } from '../engine/physics/world';
+import { RoomBounds } from '../engine/physics/roomBounds';
 import type { TechRecord } from '../formats/tech';
 import type { SceneAssembler } from '../engine/render/sceneBuilder';
 import { dentGeometry, type DentGeometry } from './dents';
@@ -255,7 +256,7 @@ export class Trailer {
       this.ctrl.setWheelBrake(i, 0);
       this.ctrl.setWheelFrictionSlip(i, 0);
     }
-    this.ctrl.updateVehicle(dt, undefined, undefined, (c) => c.parent()?.handle !== this.tractor.body.handle);
+    this.ctrl.updateVehicle(dt, undefined, undefined, this.groundRays);
     this.updateGroundUp();
     const n = new THREE.Vector3();
     for (let i = 0; i < this.wheels.length; i++) {
@@ -359,10 +360,15 @@ export class Trailer {
     const tractor = this.tractor.body.handle;
     const hit = this.world.castRayAndGetNormal(new RAPIER.Ray({ x: c.x, y: c.y + 0.5, z: c.z }, { x: 0, y: -1, z: 0 }), 6, true, undefined, undefined, undefined, undefined, (col) => {
       const p = col.parent();
-      return !p || (p.handle !== own && p.handle !== tractor);
+      return !p ? this.groundRays(col) : p.handle !== own && p.handle !== tractor;
     });
     if (hit && hit.normal.y > 0.5) this.groundUp.set(hit.normal.x, hit.normal.y, hit.normal.z).normalize();
   }
+
+  private roomRule: ((c: RAPIER.Collider) => boolean) | undefined;
+  /** Промені коліс: повз тягач і лише підлога своєї кімнати та сусідніх (engine/physics/roomBounds.ts). */
+  private readonly groundRays = (c: RAPIER.Collider): boolean =>
+    c.parent()?.handle !== this.tractor.body.handle && (this.roomRule ??= RoomBounds.groundFilter(this.world, this.body) ?? (() => true))(c);
 
   /** Після кроку підвіски на колесах: нормаль ґрунту — середня нормаль контактів. */
   private updateGroundUp(): void {
@@ -382,7 +388,7 @@ export class Trailer {
     this.updateTip();
     if (this.tipped) {
       // Перекинутий: лише Rapier (шарнір тримає зчіпку), колеса не тримають.
-      this.ctrl.updateVehicle(dt, undefined, undefined, (c) => c.parent()?.handle !== this.tractor.body.handle);
+      this.ctrl.updateVehicle(dt, undefined, undefined, this.groundRays);
       this.updateGroundUp();
       return;
     }
@@ -396,7 +402,7 @@ export class Trailer {
     const force = (brake * brakePower) / n + (ROLLING * this.mass * 9.81) / n;
     for (let i = 0; i < n; i++) this.ctrl.setWheelBrake(i, force * dt);
     // Промені коліс причепа — повз тягач (і навпаки, див. drive.hitch).
-    this.ctrl.updateVehicle(dt, undefined, undefined, (c) => c.parent()?.handle !== this.tractor.body.handle);
+    this.ctrl.updateVehicle(dt, undefined, undefined, this.groundRays);
     this.updateGroundUp();
     this.lateral(dt);
     this.hitchDamper(dt);

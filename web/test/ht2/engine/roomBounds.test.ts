@@ -63,3 +63,51 @@ describe.skipIf(!has)('HT2: стіни кімнат (dr_000 / dr_099)', () => {
     expect(y).toBeGreaterThan(-2895);
   });
 });
+
+// Підлога кімнат теж лише для своєї кімнати й сусідніх через портал: схил ґрунту av_050 піднімається на 2 м над
+// дорогою aw_001 (гра ≈ −2470, 1590), і машина впиралася в нього, як у невидиму стіну.
+const aw = join(HT2_DIR, 'ENV', 'aw.b3d');
+const av = join(HT2_DIR, 'ENV', 'av.b3d');
+
+describe.skipIf(!existsSync(aw) || !existsSync(av))('HT2: підлога кімнат (aw_001 / av_050)', () => {
+  let world: RAPIER.World;
+  let bounds: RoomBounds;
+
+  beforeAll(async () => {
+    await initRapier();
+    world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    world.timestep = 1 / 60;
+    bounds = new RoomBounds(world);
+    for (const [id, file] of [['aw', aw], ['av', av]] as const) {
+      const col = levelCollision(parseB3d(new Uint8Array(readFileSync(file))));
+      const rooms = new Map<string, { polys: number[][][]; surfaces: number[] }>();
+      col.floors.forEach((p, i) => {
+        if (col.floorSwitch[i] || !col.floorRoom[i]) return;
+        const g = rooms.get(col.floorRoom[i]) ?? rooms.set(col.floorRoom[i], { polys: [], surfaces: [] }).get(col.floorRoom[i])!;
+        g.polys.push(p);
+        g.surfaces.push(col.floorSurface[i]);
+      });
+      for (const [r, g] of rooms) bounds.addFloors(id, r, g.polys);
+      for (const [r, g] of rooms) bounds.addFloorCollider(id, r, g.polys, g.surfaces);
+    }
+  });
+
+  it('схил av_050 стоїть над дорогою aw_001', () => {
+    expect(bounds.roomAt(-2475, 1590, 20)).toBe('aw/room_aw_001');
+    expect(bounds.roomAt(-2470.3, 1593.5, 23)).toBe('av/room_av_050');
+  });
+
+  it('корпус на дорозі aw_001 проїжджає крізь схил av_050', () => {
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(-2478, 20.6, -1586).lockRotations());
+    world.createCollider(RAPIER.ColliderDesc.cuboid(1, 0.5, 2), body);
+    for (let i = 0; i < 90; i++) {
+      const v = body.linvel();
+      body.setLinvel({ x: 8.6, y: v.y, z: -5.1 }, true);
+      bounds.step();
+    }
+    const t = body.translation();
+    world.removeRigidBody(body);
+    expect(t.x).toBeGreaterThan(-2468);
+    expect(t.y).toBeLessThan(21.5);
+  });
+});

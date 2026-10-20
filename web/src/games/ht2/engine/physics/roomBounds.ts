@@ -17,30 +17,53 @@ interface Room {
   box: [number, number, number, number];
 }
 
+/** Колайдер кімнати: її ключ, імʼя (без регіону) і чи це підлога. */
+interface Owned {
+  key: string;
+  name: string;
+  floor: boolean;
+}
+
 /**
- * Стіни кімнат лише для машин у цій кімнаті. King.exe перевіряє зіткнення корпусу лише з колізіями кімнати, у якій
+ * Колізії кімнат лише для машин у цій кімнаті. King.exe перевіряє зіткнення корпусу лише з колізіями кімнати, у якій
  * машина (обʼєкт-батько тіла; сусідня — лише якщо відрізок руху кроку перетинає портал; 0x5855a0, 0x4e6059) —
  * re/notes/ht2/physics.md «Колізії кімнат». Порт тримав колайдери всіх кімнат завантажених регіонів разом, і стіни
  * однієї кімнати, що перетинають дорогу сусідньої (межа-огорожа кільця dr_000 на дорозі dr_099, межі ar_046…049),
- * ставали невидимими стінами посеред дороги. Тут стіни кожної кімнати — окремий колайдер із фільтром пар контакту:
- * тіло стикається з ними, лише коли його кімната — ця. Кімната тіла — поточна, поки її підлога (`hit_road`) під
- * центром, інакше — найвища підлога під центром; без підлоги під собою (стрибок, вихід за межі) тіло лишається в останній знайденій кімнаті, як в
- * оригіналі (кімната змінюється лише переходом).
+ * ставали невидимими стінами посеред дороги; так само підлога — схил ґрунту av_050 піднімається на 2 м над дорогою
+ * aw_001 (−2470, −1590 у Three.js) і зупиняв машину. Тут стіни й підлога кожної кімнати — окремі колайдери з фільтром
+ * пар контакту: тіло стикається зі стінами, лише коли його кімната — ця, а з підлогою — ще й сусідніх через портал
+ * (наближення «кімнати за порталом» king.exe: на переході колеса вже над підлогою сусідньої кімнати). Промені коліс
+ * фільтрує `groundFilter` за тим самим правилом. Кімната тіла — поточна, поки її підлога (`hit_road`) під центром,
+ * інакше — найвища підлога під центром; без підлоги під собою (стрибок, вихід за межі) тіло лишається в останній
+ * знайденій кімнаті, як в оригіналі (кімната змінюється лише переходом).
  *
- * Підлогу не фільтруємо: колеса — промені (хуки на них не діють), а кімнати з однаковою підлогою не перетинаються.
  * Хуки Rapier 0.20 діють лише в кроці з чергою подій — крок світу робити через `step()`.
  */
 export class RoomBounds {
+  private static readonly byWorld = new WeakMap<RAPIER.World, RoomBounds>();
+
+  /** Фільтр променів коліс тіла (`undefined` — у світі немає кімнат). */
+  static groundFilter(world: RAPIER.World, body: RAPIER.RigidBody): ((c: RAPIER.Collider) => boolean) | undefined {
+    const rb = RoomBounds.byWorld.get(world);
+    if (!rb) return undefined;
+    const handle = body.handle;
+    return (c) => rb.sees(handle, c.handle);
+  }
+
   /** Кімнати з підлогою: `<регіон>/<кімната>`. */
   private readonly rooms = new Map<string, Room>();
-  /** Колайдер стін → кімната. */
-  private readonly walls = new Map<number, string>();
+  /** Колайдер стін чи підлоги кімнати → кімната. */
+  private readonly owned = new Map<number, Owned>();
+  /** Сусіди кімнати через портали (імена без регіону, мале письмо; в обидва боки, з самою кімнатою). */
+  private readonly near = new Map<string, Set<string>>();
   /** Тіло → [крок пошуку, кімната]. */
   private readonly bodies = new Map<number, [number, string | null]>();
   private readonly events = new RAPIER.EventQueue(false);
   private steps = 0;
 
-  constructor(private readonly world: RAPIER.World) {}
+  constructor(private readonly world: RAPIER.World) {
+    RoomBounds.byWorld.set(world, this);
+  }
 
   /** Підлога кімнати (для пошуку кімнати тіла). */
   addFloors(region: string, room: string, floors: Poly[]): void {
@@ -56,21 +79,39 @@ export class RoomBounds {
   }
 
   /**
+   * Колайдер підлоги кімнати: діє лише на тіла в цій кімнаті та в сусідніх через портал. Кімната без `addFloors` —
+   * звичайний колайдер.
+   */
+  addFloorCollider(region: string, room: string, floors: Poly[], surfaces: readonly number[]): RAPIER.Collider | null {
+    const c = addCollisionPolys(this.world, floors, 1.0, surfaces);
+    const key = `${region}/${room.toLowerCase()}`;
+    if (c && this.rooms.has(key)) this.own(c, key, true);
+    return c;
+  }
+
+  /**
    * Стіни кімнати — колайдер, що діє лише на тіла в цій кімнаті. Кімната без підлоги (`hit_road` немає) — звичайний
    * колайдер: у неї тіло не «потрапить».
    */
   addWalls(region: string, room: string, walls: Poly[]): RAPIER.Collider | null {
     const c = addCollisionPolys(this.world, walls, 0.4);
     const key = `${region}/${room.toLowerCase()}`;
-    if (!c || !this.rooms.has(key)) return c;
-    c.setActiveHooks(RAPIER.ActiveHooks.FILTER_CONTACT_PAIRS);
-    this.walls.set(c.handle, key);
+    if (c && this.rooms.has(key)) this.own(c, key, false);
     return c;
+  }
+
+  /** Портали кімнати: імена кімнат за ними (сусідство — в обидва боки). */
+  addPortals(room: string, to: readonly string[]): void {
+    const a = room.toLowerCase();
+    for (const t of to) {
+      const b = t.toLowerCase();
+      for (const [x, y] of [[a, b], [b, a]]) (this.near.get(x) ?? this.near.set(x, new Set([x])).get(x)!).add(y);
+    }
   }
 
   /** Забути регіон (його колайдери прибирає власник). */
   removeRegion(region: string, colliders: readonly RAPIER.Collider[]): void {
-    for (const c of colliders) this.walls.delete(c.handle);
+    for (const c of colliders) this.owned.delete(c.handle);
     for (const k of [...this.rooms.keys()]) if (k.startsWith(`${region}/`)) this.rooms.delete(k);
   }
 
@@ -80,7 +121,7 @@ export class RoomBounds {
    */
   step(): void {
     this.steps++;
-    if (this.walls.size) this.world.forEachRigidBody((b) => void (b.isFixed() || this.roomOf(b)));
+    if (this.owned.size) this.world.forEachRigidBody((b) => void (b.isFixed() || this.roomOf(b)));
     this.world.step(this.events, this.hooks);
   }
 
@@ -116,14 +157,27 @@ export class RoomBounds {
     return best;
   }
 
+  private own(c: RAPIER.Collider, key: string, floor: boolean): void {
+    c.setActiveHooks(RAPIER.ActiveHooks.FILTER_CONTACT_PAIRS);
+    this.owned.set(c.handle, { key, name: key.slice(key.indexOf('/') + 1), floor });
+  }
+
+  /** Чи діє колайдер на тіло: чужі колайдери й тіла, чию кімнату ще не знайдено, — так. */
+  private sees(body: number, collider: number): boolean {
+    const o = this.owned.get(collider);
+    if (!o) return true;
+    const at = this.bodies.get(body)?.[1] ?? null;
+    // Кімнату ще не знайдено (тіло над місцем без підлоги від самого початку) — колізії діють, як раніше.
+    if (at === null || at === o.key) return true;
+    if (!o.floor) return false;
+    return this.near.get(at.slice(at.indexOf('/') + 1))?.has(o.name) ?? false;
+  }
+
   private readonly hooks: RAPIER.PhysicsHooks = {
     filterContactPair: (c1, c2, b1, b2) => {
-      const r1 = this.walls.get(c1);
-      const [room, body] = r1 !== undefined ? [r1, b2] : [this.walls.get(c2), b1];
-      if (room === undefined || body === null || body === undefined) return RAPIER.SolverFlags.COMPUTE_IMPULSE;
-      const at = this.bodies.get(body)?.[1] ?? null;
-      // Кімнату ще не знайдено (тіло над місцем без підлоги від самого початку) — стіни діють, як раніше.
-      return at === null || at === room ? RAPIER.SolverFlags.COMPUTE_IMPULSE : null;
+      const [collider, body] = this.owned.has(c1) ? [c1, b2] : [c2, b1];
+      if (body === null || body === undefined) return RAPIER.SolverFlags.COMPUTE_IMPULSE;
+      return this.sees(body, collider) ? RAPIER.SolverFlags.COMPUTE_IMPULSE : null;
     },
     filterIntersectionPair: () => true,
   };

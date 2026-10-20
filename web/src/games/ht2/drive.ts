@@ -1072,8 +1072,18 @@ export class Ht2Drive {
     const floors: number[][][] = [];
     const surfaces: number[] = [];
     const wallPolys: number[][][] = [];
+    // Підлога кімнат — по кімнатах, як стіни нижче: чужа підлога, що перетинає дорогу (схил av_050 над дорогою
+    // aw_001), — не перешкода. Без кімнати — для всіх.
+    const roomSolid = new Map<string, { polys: number[][][]; surfaces: number[] }>();
     col.floors.forEach((p, i) => {
       const t = col.floorSwitch[i];
+      const r = col.floorRoom[i];
+      if (!t && r) {
+        const g = roomSolid.get(r) ?? roomSolid.set(r, { polys: [], surfaces: [] }).get(r)!;
+        g.polys.push(p);
+        g.surfaces.push(col.floorSurface[i]);
+        return;
+      }
       (t ? part(t).floors : floors).push(p);
       (t ? part(t).surfaces : surfaces).push(col.floorSurface[i]);
     });
@@ -1090,6 +1100,7 @@ export class Ht2Drive {
       (roomFloors.get(r) ?? roomFloors.set(r, []).get(r)!).push(p);
     });
     for (const [r, polys] of roomFloors) this.roomBounds.addFloors(reg.id, r, polys);
+    for (const [room, list] of reg.portals) this.roomBounds.addPortals(room, list.map((p) => p.to));
     // Будівлі складів, СТО, заправки — окремі обʼєкти колізій, розставлені екземплярами.
     const asm = reg.built.assembler;
     const inst = instanceCollision(asm.b3d, (n) => asm.block(n) ?? this.world.common.block(n), (n) => asm.space(n));
@@ -1107,6 +1118,10 @@ export class Ht2Drive {
         await yieldTask();
         if (!alive()) return;
       }
+    for (const [r, g] of roomSolid) {
+      const c = this.roomBounds.addFloorCollider(reg.id, r, g.polys, g.surfaces);
+      if (c) cs.push(c);
+    }
     for (const [r, polys] of roomWalls) {
       const c = this.roomBounds.addWalls(reg.id, r, polys);
       if (c) cs.push(c);
