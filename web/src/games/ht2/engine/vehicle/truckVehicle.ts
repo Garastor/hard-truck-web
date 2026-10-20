@@ -1014,10 +1014,12 @@ export class TruckVehicle {
     // Антибукс (0x4ff660): газ ≤ 0,81 межі зчеплення ведучих. Газ із клавіші king.exe обмежує завжди (0x4ff800: гілка
     // [0x2714] = 1 іде на 0x4ffc5d), без покращення; покращення ABS ([0x2754]) потрібне лише аналоговому газу — тут
     // машинам без режиму шин (трафік). Ctrl («різко», [0x2714] = 2) обмеження оминає — колеса можна зірвати.
-    if ((this.tractionControl || K.tires) && drive > 0 && !sharp) {
+    // Задній хід — так само (0x4ff660 має окрему гілку для задньої передачі [0x1c1c] = 0): раніше обрізалась лише
+    // тяга вперед, і Scania задом буксувала.
+    if ((this.tractionControl || K.tires) && drive !== 0 && !sharp) {
       let grip = 0;
       for (const w of wheels) if (w.ground && w.driven) grip += w.mu * w.load;
-      drive = Math.min(drive, 0.81 * grip);
+      drive = Math.sign(drive) * Math.min(Math.abs(drive), 0.81 * grip);
     }
     // Сили коліс окремо — для моменту рискання від нерівної тяги й гальм (режим шин).
     const perWheel: number[] = [];
