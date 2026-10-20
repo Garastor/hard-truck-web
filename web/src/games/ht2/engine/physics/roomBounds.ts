@@ -9,6 +9,27 @@ const RISE = 1.5;
 const DROP = 60;
 /** Поточна кімната лишається, поки її підлога під центром тіла не нижче за KEEP, м. */
 const KEEP = 4;
+/** Запас порталу по висоті й з боків при перетині, м. */
+const GATE_PAD = 2;
+/** Зсув тіла за крок, з якого це вже не рух, а перенесення (портали не перевіряються), м. */
+const TELEPORT = 20;
+
+/** Портал кімнати на плані (система гри): відрізок a→b, висоти z0…z1; ціль — ліворуч від a→b. */
+export interface RoomGate {
+  to: string;
+  a: [number, number];
+  b: [number, number];
+  z0: number;
+  z1: number;
+}
+
+/** Відомості про тіло: крок пошуку кімнати, кімната, позиція на попередньому кроці (гра). */
+interface BodyRoom {
+  at: number;
+  room: string | null;
+  x: number;
+  y: number;
+}
 
 interface Room {
   /** Підлога кімнати (система гри). */
@@ -33,9 +54,12 @@ interface Owned {
  * aw_001 (−2470, −1590 у Three.js) і зупиняв машину. Тут стіни й підлога кожної кімнати — окремі колайдери з фільтром
  * пар контакту: тіло стикається зі стінами, лише коли його кімната — ця, а з підлогою — ще й сусідніх через портал
  * (наближення «кімнати за порталом» king.exe: на переході колеса вже над підлогою сусідньої кімнати). Промені коліс
- * фільтрує `groundFilter` за тим самим правилом. Кімната тіла — поточна, поки її підлога (`hit_road`) під центром,
- * інакше — найвища підлога під центром; без підлоги під собою (стрибок, вихід за межі) тіло лишається в останній
- * знайденій кімнаті, як в оригіналі (кімната змінюється лише переходом).
+ * фільтрує `groundFilter` за тим самим правилом. Кімната тіла змінюється, як у king.exe, коли центр за крок перетинає
+ * портал її кімнати (0x57def0): підлога кімнат заходить за портали (підлога dr_000 тягнеться до межі y = −2770, а
+ * портал у dr_099 — на y = −2800), і машина, що виїжджала з кільця на dr_099, лишалась у dr_000 й упиралась у його
+ * межу. Крім того кімната — поточна, поки її підлога (`hit_road`) під центром, інакше — найвища підлога під центром
+ * (наближення там, де портал проминуто: перенесення, перший крок); без підлоги під собою (стрибок, вихід за межі)
+ * тіло лишається в останній знайденій кімнаті.
  *
  * Хуки Rapier 0.20 діють лише в кроці з чергою подій — крок світу робити через `step()`.
  */
@@ -56,8 +80,10 @@ export class RoomBounds {
   private readonly owned = new Map<number, Owned>();
   /** Сусіди кімнати через портали (імена без регіону, мале письмо; в обидва боки, з самою кімнатою). */
   private readonly near = new Map<string, Set<string>>();
-  /** Тіло → [крок пошуку, кімната]. */
-  private readonly bodies = new Map<number, [number, string | null]>();
+  /** Портали кімнат (ключ `<регіон>/<кімната>`). */
+  private readonly gates = new Map<string, RoomGate[]>();
+  /** Тіло → кімната й позиція. */
+  private readonly bodies = new Map<number, BodyRoom>();
   private readonly events = new RAPIER.EventQueue(false);
   private steps = 0;
 
@@ -100,19 +126,24 @@ export class RoomBounds {
     return c;
   }
 
-  /** Портали кімнати: імена кімнат за ними (сусідство — в обидва боки). */
-  addPortals(room: string, to: readonly string[]): void {
+  /**
+   * Портали кімнати: сусідство (в обидва боки) і переходи тіл. Кімната за порталом — у тому самому регіоні, а як її
+   * там немає — у будь-якому завантаженому.
+   */
+  addPortals(region: string, room: string, gates: readonly RoomGate[]): void {
     const a = room.toLowerCase();
-    for (const t of to) {
-      const b = t.toLowerCase();
+    for (const g of gates) {
+      const b = g.to.toLowerCase();
       for (const [x, y] of [[a, b], [b, a]]) (this.near.get(x) ?? this.near.set(x, new Set([x])).get(x)!).add(y);
     }
+    this.gates.set(`${region}/${a}`, gates.map((g) => ({ ...g, to: g.to.toLowerCase() })));
   }
 
   /** Забути регіон (його колайдери прибирає власник). */
   removeRegion(region: string, colliders: readonly RAPIER.Collider[]): void {
     for (const c of colliders) this.owned.delete(c.handle);
     for (const k of [...this.rooms.keys()]) if (k.startsWith(`${region}/`)) this.rooms.delete(k);
+    for (const k of [...this.gates.keys()]) if (k.startsWith(`${region}/`)) this.gates.delete(k);
   }
 
   /**
@@ -127,18 +158,58 @@ export class RoomBounds {
 
   /** Кімната тіла (`<регіон>/<кімната>`) або null — ще не знайдено (налагодження). */
   roomOf(body: RAPIER.RigidBody): string | null {
-    const known = this.bodies.get(body.handle);
-    if (known && this.steps - known[0] < RECHECK_STEPS) return known[1];
     const t = body.translation();
-    // Кімната змінюється лише виходом з-під її підлоги (в оригіналі — переходом через портал): де підлоги кімнат
+    const x = t.x;
+    const y = -t.z;
+    const known = this.bodies.get(body.handle);
+    if (known) {
+      const moved = Math.hypot(x - known.x, y - known.y);
+      const gate = known.room && moved > 1e-6 && moved < TELEPORT ? this.crossed(known.room, known.x, known.y, x, y, t.y) : null;
+      known.x = x;
+      known.y = y;
+      if (gate) {
+        known.room = gate;
+        known.at = this.steps;
+        return gate;
+      }
+      if (this.steps - known.at < RECHECK_STEPS && moved < TELEPORT) return known.room;
+    }
+    // Портал проминуто (перенесення, перший крок) чи підлога поточної кімнати скінчилась: де підлоги кімнат
     // перекриваються (дорога dr_099 заходить на кільце dr_000), машина лишається в тій, з якої приїхала.
-    const cur = known?.[1] ? this.rooms.get(known[1]) : undefined;
-    const fz = cur ? floorUnder(cur.floors, t.x, -t.z, t.y + RISE) : null;
+    const cur = known?.room ? this.rooms.get(known.room) : undefined;
+    const fz = cur ? floorUnder(cur.floors, x, y, t.y + RISE) : null;
     const stay = fz !== null && t.y - fz < KEEP;
-    const room = stay ? known![1] : (this.roomAt(t.x, -t.z, t.y) ?? known?.[1] ?? null);
+    const room = stay ? known!.room : (this.roomAt(x, y, t.y) ?? known?.room ?? null);
     if (this.bodies.size > 2048) this.bodies.clear();
-    this.bodies.set(body.handle, [this.steps, room]);
+    this.bodies.set(body.handle, { at: this.steps, room, x, y });
     return room;
+  }
+
+  /** Кімната за порталом кімнати `key`, який перетнув відрізок (x0, y0) → (x1, y1) на висоті z; null — жодного. */
+  private crossed(key: string, x0: number, y0: number, x1: number, y1: number, z: number): string | null {
+    const gates = this.gates.get(key);
+    if (!gates) return null;
+    for (const g of gates) {
+      if (z < g.z0 - GATE_PAD || z > g.z1 + GATE_PAD) continue;
+      const dx = g.b[0] - g.a[0];
+      const dy = g.b[1] - g.a[1];
+      const len = Math.hypot(dx, dy);
+      if (len < 1e-6) continue;
+      // Відстань ліворуч від a→b (бік кімнати-цілі): перехід — з відʼємної на невідʼємну.
+      const s0 = (dx * (y0 - g.a[1]) - dy * (x0 - g.a[0])) / len;
+      const s1 = (dx * (y1 - g.a[1]) - dy * (x1 - g.a[0])) / len;
+      if (!(s0 < 0 && s1 >= 0)) continue;
+      const k = s0 / (s0 - s1);
+      const px = x0 + (x1 - x0) * k;
+      const py = y0 + (y1 - y0) * k;
+      const along = ((px - g.a[0]) * dx + (py - g.a[1]) * dy) / len;
+      if (along < -GATE_PAD || along > len + GATE_PAD) continue;
+      const region = key.slice(0, key.indexOf('/'));
+      const same = `${region}/${g.to}`;
+      if (this.rooms.has(same)) return same;
+      for (const k2 of this.rooms.keys()) if (k2.endsWith(`/${g.to}`)) return k2;
+    }
+    return null;
   }
 
   /** Кімната найвищої підлоги під точкою (система гри) не вище z + RISE. */
@@ -166,7 +237,7 @@ export class RoomBounds {
   private sees(body: number, collider: number): boolean {
     const o = this.owned.get(collider);
     if (!o) return true;
-    const at = this.bodies.get(body)?.[1] ?? null;
+    const at = this.bodies.get(body)?.room ?? null;
     // Кімнату ще не знайдено (тіло над місцем без підлоги від самого початку) — колізії діють, як раніше.
     if (at === null || at === o.key) return true;
     if (!o.floor) return false;

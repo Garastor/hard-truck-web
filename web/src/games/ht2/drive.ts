@@ -1066,9 +1066,13 @@ export class Ht2Drive {
     openPortals(col, portals.map((p) => ({ a: [p.corners[0].x, -p.corners[0].z] as [number, number], b: [p.corners[1].x, -p.corners[1].z] as [number, number] })));
     await yieldTask();
     if (!alive()) return;
-    // Колізії гілок перемикачів (обвали) — окремо: діють лише в стані своєї гілки.
+    // Колізії гілок перемикачів (обвали, рампа StartKey dr_099 біля фінішу Кільця) — окремо: діють лише в стані своєї
+    // гілки й, як решта колізій кімнат, лише на машини своєї кімнати (ключ — `<гілка>|<кімната>`).
     const parts = new Map<string, { floors: number[][][]; surfaces: number[]; walls: number[][][] }>();
-    const part = (tag: string) => parts.get(tag) ?? parts.set(tag, { floors: [], surfaces: [], walls: [] }).get(tag)!;
+    const part = (tag: string, room: string) => {
+      const k = `${tag}|${room}`;
+      return parts.get(k) ?? parts.set(k, { floors: [], surfaces: [], walls: [] }).get(k)!;
+    };
     const floors: number[][][] = [];
     const surfaces: number[] = [];
     const wallPolys: number[][][] = [];
@@ -1084,13 +1088,13 @@ export class Ht2Drive {
         g.surfaces.push(col.floorSurface[i]);
         return;
       }
-      (t ? part(t).floors : floors).push(p);
-      (t ? part(t).surfaces : surfaces).push(col.floorSurface[i]);
+      (t ? part(t, r).floors : floors).push(p);
+      (t ? part(t, r).surfaces : surfaces).push(col.floorSurface[i]);
     });
     // Стіни кімнат — по кімнатах: діють лише на машини в тій самій кімнаті (engine/physics/roomBounds.ts).
     const roomWalls = new Map<string, number[][][]>();
     col.walls.forEach((p, i) => {
-      if (col.wallSwitch[i]) return part(col.wallSwitch[i]).walls.push(p);
+      if (col.wallSwitch[i]) return part(col.wallSwitch[i], col.wallRoom[i]).walls.push(p);
       const r = col.wallRoom[i];
       (roomWalls.get(r) ?? roomWalls.set(r, []).get(r)!).push(p);
     });
@@ -1100,7 +1104,14 @@ export class Ht2Drive {
       (roomFloors.get(r) ?? roomFloors.set(r, []).get(r)!).push(p);
     });
     for (const [r, polys] of roomFloors) this.roomBounds.addFloors(reg.id, r, polys);
-    for (const [room, list] of reg.portals) this.roomBounds.addPortals(room, list.map((p) => p.to));
+    for (const [room, list] of reg.portals)
+      this.roomBounds.addPortals(reg.id, room, list.map((p) => ({
+        to: p.to,
+        a: [p.corners[0].x, -p.corners[0].z] as [number, number],
+        b: [p.corners[2].x, -p.corners[2].z] as [number, number],
+        z0: Math.min(p.corners[0].y, p.corners[2].y),
+        z1: Math.max(p.corners[0].y, p.corners[2].y),
+      })));
     // Будівлі складів, СТО, заправки — окремі обʼєкти колізій, розставлені екземплярами.
     const asm = reg.built.assembler;
     const inst = instanceCollision(asm.b3d, (n) => asm.block(n) ?? this.world.common.block(n), (n) => asm.space(n));
@@ -1127,11 +1138,15 @@ export class Ht2Drive {
       if (c) cs.push(c);
     }
     const switched = new Map<string, RAPIER.Collider[]>();
-    for (const [tag, g] of parts) {
-      const list = [addCollisionPolys(this.rapier, g.floors, 1.0, g.surfaces), addCollisionPolys(this.rapier, g.walls, 0.4)].filter((c): c is RAPIER.Collider => !!c);
+    for (const [k, g] of parts) {
+      const [tag, room] = k.split('|');
+      const list = (room
+        ? [this.roomBounds.addFloorCollider(reg.id, room, g.floors, g.surfaces), this.roomBounds.addWalls(reg.id, room, g.walls)]
+        : [addCollisionPolys(this.rapier, g.floors, 1.0, g.surfaces), addCollisionPolys(this.rapier, g.walls, 0.4)]
+      ).filter((c): c is RAPIER.Collider => !!c);
       const [key, branch] = tag.split('#');
       for (const c of list) c.setEnabled((this.worldSwitches.get(key) ?? 0) === Number(branch));
-      switched.set(tag, list);
+      switched.set(tag, [...(switched.get(tag) ?? []), ...list]);
       cs.push(...list);
     }
     this.switchColliders.set(reg.id, switched);

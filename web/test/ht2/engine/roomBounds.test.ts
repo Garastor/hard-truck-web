@@ -7,6 +7,7 @@ import { parseB3d } from '@ht2/engine/formats/b3d';
 import { levelCollision } from '@ht2/engine/physics/collision';
 import { RoomBounds } from '@ht2/engine/physics/roomBounds';
 import { addCollisionPolys, initRapier } from '@ht2/engine/physics/world';
+import { readPortals } from '@ht2/world/roomVisibility';
 import { HT2_DIR } from '../../gameDirs';
 
 const file = join(HT2_DIR, 'ENV', 'dr.b3d');
@@ -21,7 +22,16 @@ describe.skipIf(!has)('HT2: стіни кімнат (dr_000 / dr_099)', () => {
     world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     world.timestep = 1 / 60;
     bounds = new RoomBounds(world);
-    const col = levelCollision(parseB3d(new Uint8Array(readFileSync(file))));
+    const b3d = parseB3d(new Uint8Array(readFileSync(file)));
+    const col = levelCollision(b3d);
+    for (const [room, list] of readPortals(b3d))
+      bounds.addPortals('dr', room, list.map((p) => ({
+        to: p.to,
+        a: [p.corners[0].x, -p.corners[0].z] as [number, number],
+        b: [p.corners[2].x, -p.corners[2].z] as [number, number],
+        z0: Math.min(p.corners[0].y, p.corners[2].y),
+        z1: Math.max(p.corners[0].y, p.corners[2].y),
+      })));
     const by = (polys: number[][][], rooms: string[]) => {
       const m = new Map<string, number[][][]>();
       polys.forEach((p, i) => (m.get(rooms[i]) ?? m.set(rooms[i], []).get(rooms[i])!).push(p));
@@ -56,6 +66,22 @@ describe.skipIf(!has)('HT2: стіни кімнат (dr_000 / dr_099)', () => {
     // Дорога dr_099 до порталу в dr_000 на y = −2800 перетинає лінію огорожі dr_000.
     const [, y] = push(-2879, -2755, 0, -10);
     expect(y).toBeLessThan(-2775);
+  });
+
+  it('з кільця dr_000 на дорогу dr_099 — через портал (y = −2800), межа dr_000 (y = −2770) не тримає', () => {
+    // Підлога dr_000 тягнеться до y = −2760: без переходу через портал машина лишалась у dr_000 і впиралась у межу.
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(-2875, 1, 2825));
+    const rooms: (string | null)[] = [];
+    for (let y = -2825; y <= -2772; y += 0.5) {
+      body.setNextKinematicTranslation({ x: -2875, y: 1, z: -y });
+      bounds.step();
+      rooms.push(bounds.roomOf(body));
+    }
+    world.removeRigidBody(body);
+    expect(rooms[0]).toBe('dr/room_dr_000');
+    expect(rooms.at(-1)).toBe('dr/room_dr_099');
+    // Перехід — саме на порталі: у dr_099 тіло вже за 3 м після нього.
+    expect(rooms[Math.round((-2797 + 2825) / 0.5)]).toBe('dr/room_dr_099');
   });
 
   it('машину всередині dr_000 його межа тримає (y = −2895)', () => {
