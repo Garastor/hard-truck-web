@@ -54,7 +54,7 @@ import { RaceMode } from './race';
 import { Trailer } from './vehicles/trailer';
 import { headlightMask } from './vehicles/headlights';
 import { setPoolLight } from './traffic/headPools';
-import { Truckers, truckerKinds, truckerNames } from './traffic/truckers';
+import { AITRUCK, Truckers, truckerKinds, truckerNames } from './traffic/truckers';
 import { parseUpgrades, tireGrip, tuning, type Tuning } from './career/upgrades';
 import { parseServices, parseTowns } from './career/economy';
 import { Music } from './ui/music';
@@ -765,7 +765,11 @@ export class Ht2Drive {
       // Рейси ботів: склади (вузли node_store_*, міста mod_*.sch) і товари merchandise.sch (traffic/freight.ts).
       const goods = parseGoods(merch);
       const freight = goods.length ? new Freight(this.roads, findStores(this.world.regions.values(), parseTowns(regionMods)), goods) : null;
-      this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r), truckerKinds(vehicles, this.trucks), Math.round(4 * (o.settings?.traffic ?? 1)), this.semiTypes, freight);
+      // Далекобійників у світі — `aitruck N` з playertypes GAME.CNF (усі існують весь час, traffic/fleet.ts).
+      const ai = assoc(cnf ? (assoc(cnf, 'playertypes')?.slice(1) ?? []) : [], 'aitruck');
+      this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r), truckerKinds(vehicles, this.trucks), Math.round(4 * (o.settings?.traffic ?? 1)), this.semiTypes, freight, ai ? num(ai[1]) : AITRUCK);
+      // Збережені далекобійники кар'єри — на своїх дорогах, з рейсами й вантажем.
+      if (o.career?.fleet) this.truckers.restore(o.career.fleet);
     }
     // Населення трафіку — `dumb N` і `ghost N` з playertypes GAME.CNF, насиченість — повзунок (TRUCK.INI trafs).
     const types = cnf ? (assoc(cnf, 'playertypes')?.slice(1) ?? []) : [];
@@ -3052,7 +3056,7 @@ export class Ht2Drive {
       this.careerMode.fines.redLight += RED_LIGHT_FINE;
       this.careerMode.persist();
     }
-    this.truckers?.after(dt, this.truck.visual.position, alpha);
+    this.truckers?.after(dt, this.truck.visual.position, alpha, Math.abs(this.truck.speedKmh) / 3.6);
     this.traffic?.after(alpha);
     this.police?.after(alpha);
     this.mafia?.after(alpha);

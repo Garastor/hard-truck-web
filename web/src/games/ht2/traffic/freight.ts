@@ -126,9 +126,13 @@ export class Freight {
 
   /** Продовження лінії до цілі роботи (AutoPilot.choose); null — як завжди (випадкова стала гілка). */
   route(j: FreightJob): ((l: RoadLine) => RoadLine | null) | null {
-    const goal = j.goal;
-    if (!goal) return null;
-    return (l) => this.navigator.next(l, goal, DOCK_LINE);
+    if (!j.goal) return null;
+    return (l) => this.next(j, l);
+  }
+
+  /** Продовження лінії найкоротшим шляхом до місця рейсу (null — без цілі чи шляху немає). */
+  next(j: FreightJob, l: RoadLine): RoadLine | null {
+    return j.goal ? this.navigator.next(l, j.goal, DOCK_LINE) : null;
   }
 
   /**
