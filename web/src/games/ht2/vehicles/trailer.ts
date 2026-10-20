@@ -102,7 +102,7 @@ export class Trailer {
     paint?.(model.root);
     this.setSwitch = model.setSwitch;
     this.switchStates = model.switchStates;
-    // Зчеплений: опори підняті (SupportKey 0, 0x55ee80); логотип — компанії власника (у гравця компанії немає — 0).
+    // Зчеплений: опори підняті (SupportKey 0, 0x55ee80); логотип — компанії власника тягача (ставить власник; тут — 0).
     this.setSwitch?.('SupportKey', 0);
     this.setSwitch?.('refer_IconKey', 0);
     const frame = new THREE.Group();

@@ -67,7 +67,7 @@ import { Music } from './ui/music';
 import { SceneAssembler, setStaticSwitch } from './engine/render/sceneBuilder';
 import { parseB3d } from './engine/formats/b3d';
 import { parseRmp } from './engine/formats/rmp';
-import { REPAIR_PER_PERCENT, restoreCareer, savedCareerRaw, type Ht2Career } from './career/career';
+import { REPAIR_PER_PERCENT, currentDriver, restoreCareer, savedCareerRaw, type Ht2Career } from './career/career';
 import { HT2_MOD_REGIONS, readTextures } from './files';
 import { SFX_REF, saveSettings, steerGain, timeScale, type Ht2Settings } from './ui/settings';
 import { EscArt } from './ui/escArt';
@@ -526,6 +526,8 @@ export class Ht2Drive {
   private hiredMarks: THREE.Vector3[] = [];
   /** Лінія, з якої маршрут до складу не знайшовся (не шукати щокадру). */
   private readonly hiredNoRoute = new Map<string, string>();
+  /** Машини далекобійників, яким уже поставлено логотип (stampIcons). */
+  private readonly iconed = new WeakSet<object>();
   /** Потужність моделей з evehicles.sch (вікно замовлення машини). */
   private vehiclePowers = new Map<string, number>();
   private vehiclePriceMap = new Map<string, number>();
@@ -1601,6 +1603,8 @@ export class Ht2Drive {
     // Нова модель — перемикачі вмʼятин і вогнів (стан пошкоджень — з кар'єри).
     const m = this.truck.visual.userData.model as TruckModel | undefined;
     this.setTruckSwitch = m?.setSwitch;
+    // Логотип компанії на кузові (у тягачів IconKey немає — лише на причепі).
+    m?.setSwitch?.('refer_IconKey', this.ownIcon);
     this.dents = new Dents(this.opts.career ? (this.opts.career.dents ??= {}) : this.freeDents, m?.setSwitch, m?.switchStates, m ? dentGeometry(m, visibleBox(m.body)) : null);
     this.trailerDents = null;
     // Нова машина — дощ знову робить дорогу слизькою (зчеплення ×0,8, як у першій грі).
@@ -1626,6 +1630,7 @@ export class Ht2Drive {
     const paint = cluster > 0 ? (root: THREE.Object3D) => recolor(root, this.trucks, cluster + 1) : undefined;
     this.trailer = new Trailer(this.rapier, this.trucks.asm, def, tr, { body: this.truck.body, saddle: rec.lowSaddle }, this.cargoMass, paint);
     this.world.scene.add(this.trailer.visual);
+    this.trailer.setSwitch?.('refer_IconKey', this.ownIcon);
     const trl = this.trailer;
     this.trailerDents = new Dents(this.opts.career ? (this.opts.career.trailerDents ??= {}) : this.freeTrailerDents, trl.setSwitch, trl.switchStates, trl.dentGeom);
     this.truck.towing = true;
@@ -1633,6 +1638,31 @@ export class Ht2Drive {
     this.truck.rayFilter = (c) => c.parent()?.handle !== trailerBody;
     this.truck.setTowLoad(this.trailer.kingpinLoad);
     this.truck.tow = { mass: this.trailer.mass, wheels: this.trailer.wheelCount, saddleLoad: this.trailer.kingpinLoad, saddleZ: g2t(rec.lowSaddle).z };
+  }
+
+  /**
+   * Стан IconKey машини компанії гравця (king.exe 0x43f840: логотип компанії власника + 1; 0 — без логотипа):
+   * логотип водія з меню «Водії» (кар'єра — збережений у ній, вільна їзда — поточного водія).
+   */
+  private get ownIcon(): number {
+    return (this.opts.career?.logo ?? currentDriver()?.logo ?? 4) + 1;
+  }
+
+  /**
+   * Логотипи на машинах далекобійників (раз на машину): у найманих — компанії гравця (роботодавця), у решти —
+   * немає (власних компаній у ботів порт не веде; king.exe — логотип лише компанії з найманими, 0x476a30).
+   */
+  private stampIcons(): void {
+    const t = this.truckers;
+    if (!t) return;
+    const stamp = (r: { truck: object; setSwitch?: (n: string, s: number) => void; trailer: { setSwitch?: (n: string, s: number) => void } | null }, icon: number) => {
+      if (this.iconed.has(r.truck)) return;
+      this.iconed.add(r.truck);
+      r.setSwitch?.('refer_IconKey', icon);
+      r.trailer?.setSwitch?.('refer_IconKey', icon);
+    };
+    for (const r of t.list) stamp(r, 0);
+    for (const r of t.hired.values()) stamp(r, this.ownIcon);
   }
 
   /**
@@ -3592,7 +3622,8 @@ export class Ht2Drive {
     // Гравець (центр — та сама точка, що й player) разом із напівпричепом — одне тіло: обʼїжджають усе; так само
     // далекобійники з напівпричепами.
     const me = [this.truck.visual.position, ...alongPoints(this.truck), ...(this.trailer?.points() ?? [])];
-    const rigs = (this.truckers?.rigs ?? []).map((r) => [...alongPoints(r.truck), ...(r.trailer?.points() ?? [])]);
+    // Боти — з водієм (трафік пропускає їх на перехрестях і бачить чергу, traffic.TrafficBody).
+    const rigs = (this.truckers?.rigs ?? []).map((r) => Object.assign([...alongPoints(r.truck), ...(r.trailer?.points() ?? [])], { mover: r.bot.m }));
     this.traffic?.update(dt, this.truck.visual.position, [me, ...rigs]);
     // Водії ботів (як у трафіку, traffic/botDriver.ts): гравець — точками вздовж машини з причепом; зустрічні для
     // розминання — гравець і трафік (позиція й курс).
@@ -3650,6 +3681,7 @@ export class Ht2Drive {
       this.careerMode.persist();
     }
     this.truckers?.after(dt, this.truck.visual.position, alpha, Math.abs(this.truck.speedKmh) / 3.6);
+    this.stampIcons();
     this.traffic?.after(alpha);
     this.police?.after(alpha);
     this.mafia?.after(alpha);
