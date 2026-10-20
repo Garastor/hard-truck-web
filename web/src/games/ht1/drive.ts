@@ -878,6 +878,16 @@ export class DriveSession {
   private roomVis: RoomVisibility | null = null;
   /** Кімнати суперників (для колізій) — оновлюються разом із кімнатою гравця. */
   private readonly opponentRooms: (string | null)[] = [];
+  /** Де суперник був на попередньому пошуку кімнати (перетин порталу між пошуками). */
+  private readonly opponentPrev: (THREE.Vector3 | null)[] = [];
+  /**
+   * Колайдер кімнати → [кімната (канонічна), підлога]. Стіни кімнати діють лише на машини в цій кімнаті, підлога —
+   * ще й на машини в сусідніх через портал (див. `seesRoom`).
+   */
+  private readonly roomOf = new Map<number, [string, boolean]>();
+  /** Тіло машини → її кімната на цей крок (до кроку: під час кроку до тіл звертатися не можна). */
+  private readonly bodyRooms = new Map<number, string | null>();
+  private readonly stepEvents = new RAPIER.EventQueue(false);
   private locateTimer = 0;
   private readonly prevVel = new THREE.Vector3();
   private raceStart: number | null = null;
@@ -926,12 +936,19 @@ export class DriveSession {
       polys.forEach((p, i) => (m.get(rooms[i]) ?? m.set(rooms[i], []).get(rooms[i])!).push(p));
       return m;
     };
-    const addRoom = (room: string, c: RAPIER.Collider | null) => {
-      if (c) (s.roomColliders.get(room) ?? s.roomColliders.set(room, []).get(room)!).push(c);
+    const addRoom = (room: string, c: RAPIER.Collider | null, floor: boolean) => {
+      if (!c) return;
+      (s.roomColliders.get(room) ?? s.roomColliders.set(room, []).get(room)!).push(c);
+      // Увімкнені кімнати біля всіх машин разом, тож межа сусідньої кімнати, що перетинає дорогу (огорожа room_004
+      // поперек room_099 біля фінішу CIRCUIT), ставала невидимою стіною: оригінал перевіряє лише кімнату машини.
+      if (s.track.rooms.has(room)) {
+        c.setActiveHooks(RAPIER.ActiveHooks.FILTER_CONTACT_PAIRS);
+        s.roomOf.set(c.handle, [s.track.canonical(room), floor]);
+      }
     };
-    if (col.hasFloor) for (const [room, polys] of byRoom(col.floors, col.floorRoom)) addRoom(room, addCollisionPolys(s.world, polys, 1.0));
+    if (col.hasFloor) for (const [room, polys] of byRoom(col.floors, col.floorRoom)) addRoom(room, addCollisionPolys(s.world, polys, 1.0), true);
     else addStaticMeshes(s.world, built.root);
-    for (const [room, polys] of byRoom(col.walls, col.wallRoom)) addRoom(room, addCollisionPolys(s.world, polys, 0.4));
+    for (const [room, polys] of byRoom(col.walls, col.wallRoom)) addRoom(room, addCollisionPolys(s.world, polys, 0.4), false);
     // Нижче найнижчої підлоги — випали за межі колізій (напр. тунелі бази до трас): рестарт.
     if (col.hasFloor) {
       let minZ = Infinity;
@@ -1893,7 +1910,7 @@ export class DriveSession {
       const state = this.controls(this.world.timestep);
       this.truck.update(this.world.timestep, state);
       this.stepOpponents(this.world.timestep);
-      this.world.step();
+      this.stepWorld();
       this.afterStep();
       this.tick(this.world.timestep);
       this.clock += this.world.timestep;
@@ -1940,7 +1957,7 @@ export class DriveSession {
       this.truck.update(step, state);
       // Машина друга — на момент кінця цього кроку (решта кроків кадру ще попереду).
       this.stepOpponents(step, now - (this.acc - step));
-      this.world.step();
+      this.stepWorld();
       this.afterStep();
       this.tick(step);
       this.clock += step;
@@ -2131,12 +2148,47 @@ export class DriveSession {
     if (!this.opponents.length) return;
     const i = (this.opponentRoomNext = (this.opponentRoomNext + 1) % this.opponents.length);
     if (!carActive(this.opponents[i])) return;
-    const p = this.opponents[i].truck.body.translation();
-    const r = this.locate(new THREE.Vector3(p.x, p.y, p.z)) ?? this.opponentRooms[i] ?? null;
-    if (r === this.opponentRooms[i]) return;
+    const t = this.opponents[i].truck.body.translation();
+    const cur = new THREE.Vector3(t.x, t.y, t.z);
+    const prev = this.opponentPrev[i];
+    this.opponentPrev[i] = cur;
+    const was = this.opponentRooms[i] ?? null;
+    // Як у гравця (updateTrack): кімнату змінює перетин порталу; за підлогою — лише коли під машиною вже немає
+    // підлоги її кімнати (рестарт, пропущений портал). «Найвища підлога» помилялась там, де підлоги кімнат
+    // перекриваються, — і машина бачила стіни чужої кімнати.
+    let r = was && prev && prev.distanceTo(cur) < 15 ? this.track.crossPortal(was, prev, cur) : null;
+    if (r) r = this.track.canonical(r);
+    if (!r || !this.track.rooms.has(r)) r = this.roomByFloor(was, cur) ?? was;
+    if (r === was) return;
     this.opponentRooms[i] = r;
     this.updateActiveRooms();
   }
+
+  /** Крок світу з фільтром колізій кімнат: кімнати машин — до кроку (хук не може звертатися до тіл). */
+  private stepWorld(): void {
+    this.bodyRooms.clear();
+    this.bodyRooms.set(this.truck.body.handle, this.room);
+    this.opponents.forEach((o, i) => this.bodyRooms.set(o.truck.body.handle, this.opponentRooms[i] ?? null));
+    this.world.step(this.stepEvents, this.roomHooks);
+  }
+
+  /** Чи діє колайдер кімнати на тіло: стіни — лише на машину в цій кімнаті, підлога — ще й у сусідніх. */
+  private seesRoom(collider: number, body: number | null | undefined): boolean {
+    const own = this.roomOf.get(collider);
+    if (!own || body === null || body === undefined || !this.bodyRooms.has(body)) return true;
+    const at = this.bodyRooms.get(body) ?? null;
+    if (at === null || at === own[0]) return true;
+    if (!own[1]) return false;
+    return this.track.rooms.get(at)?.portals.some((p) => this.track.canonical(p.to) === own[0]) ?? true;
+  }
+
+  private readonly roomHooks: RAPIER.PhysicsHooks = {
+    filterContactPair: (c1, c2, b1, b2) => {
+      const [collider, body] = this.roomOf.has(c1) ? [c1, b2] : [c2, b1];
+      return this.seesRoom(collider, body) ? RAPIER.SolverFlags.COMPUTE_IMPULSE : null;
+    },
+    filterIntersectionPair: () => true,
+  };
 
   /** Удар: різка зміна швидкості за один крок (≫ гальмування чи розгону) — накопичуємо силу. */
   private afterStep(): void {
@@ -2213,6 +2265,22 @@ export class DriveSession {
     return floorAt(this.col, p.x, -p.z, p.y)?.z ?? null;
   }
 
+  /**
+   * Кімната за підлогою, коли портал не перетнуто (рестарт, пропущений портал): поточна, поки під точкою її підлога;
+   * інакше — сусідня через портал, під якою підлога; лише далі — найвища підлога будь-якої кімнати. Біля фінішу
+   * CIRCUIT підлоги room_099, room_004 і room_999 лежать одна на одній на тій самій висоті, і «найвища» давала
+   * чужу кімнату — машина впиралась у її межу.
+   */
+  private roomByFloor(room: string | null, p: THREE.Vector3): string | null {
+    const under = (r: string) => floorAt(this.col, p.x, -p.z, p.y + 1, (x) => this.track.canonical(x) === r) !== null;
+    if (room !== null && under(room)) return room;
+    for (const portal of (room !== null && this.track.rooms.get(room)?.portals) || []) {
+      const to = this.track.canonical(portal.to);
+      if (this.track.rooms.has(to) && under(to)) return to;
+    }
+    return this.locate(p);
+  }
+
   /** Кімната під точкою (Three.js) — за підлогою hit_road/hit_obj. */
   private locate(p: THREE.Vector3): string | null {
     const r = roomAt(this.col, p.x, -p.z, p.y);
@@ -2237,12 +2305,8 @@ export class DriveSession {
       // Кімнату змінює перетин порталу (як в оригіналі). За підлогою — лише якщо під машиною вже немає
       // підлоги поточної кімнати (рестарт, пропущений портал): підлоги сусідніх кімнат перекриваються
       // (тунель траси під залом запчастин), і «найвища підлога» вводила в оману.
-      const room = this.room;
-      const inRoom = room !== null && floorAt(this.col, cur.x, -cur.z, cur.y + 1, (r) => this.track.canonical(r) === room) !== null;
-      if (!inRoom) {
-        const at = this.locate(cur);
-        if (at && at !== this.room) next = at;
-      }
+      const at = this.roomByFloor(this.room, cur);
+      if (at && at !== this.room) next = at;
     }
     {
       if (next && this.track.rooms.has(next)) {
