@@ -617,6 +617,11 @@ body.ht2-orig-ui .touch-top .touch-btn {
   text-decoration: none;
 }
 
+/* Сховані кнопки (обертання камери з кабіни, дзеркало зовні) — display:flex вище перебивав атрибут hidden. */
+body.ht2-orig-ui .touch-top .touch-btn[hidden] {
+  display: none;
+}
+
 body.ht2-orig-ui .touch-top .touch-btn svg {
   width: 20px;
   height: 20px;
@@ -753,6 +758,15 @@ body.ht2-left-open:not(.swap-controls) .touch-ui > .touch-btn.left,
 body.ht2-left-open:not(.swap-controls) .touch-ui > .touch-btn.right,
 body.ht2-left-open.swap-controls .touch-ui > .touch-btn.brake,
 body.ht2-left-open.swap-controls .touch-ui > .touch-btn.gas {
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Меню Esc («Проблеми в дорозі»): усі кнопки керування — під ним і його затемненням (на прохання користувача). */
+body.ht2-esc-open .touch-ui > .touch-btn.left,
+body.ht2-esc-open .touch-ui > .touch-btn.right,
+body.ht2-esc-open .touch-ui > .touch-btn.brake,
+body.ht2-esc-open .touch-ui > .touch-btn.gas {
   z-index: 2;
   pointer-events: none;
 }
