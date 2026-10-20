@@ -35,6 +35,7 @@ import { WIN_SHARE } from './career/share';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
 import { WorldMap, type MapPoint } from './world/worldMap';
+import { MapReveal } from './world/mapReveal';
 import { GlassRain } from './engine/render/glassRain';
 import { Dents, dentGeometry, hitEnergy } from './vehicles/dents';
 import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
@@ -426,6 +427,9 @@ export class Ht2Drive {
   private signs: Signs | null = null;
   markets: Markets | null = null;
   private worldMap: WorldMap | null = null;
+  /** Приховані дороги карти й відкриття проїздом (world/mapReveal.ts); відкрите — у кар'єрі (`mapOpened`). */
+  mapReveal: MapReveal | null = null;
+  private revealTimer = 0;
   /** Коротке повідомлення на табло (текст і скільки ще показувати, с). */
   private notice: { text: string; time: number } | null = null;
   /** Графіка інтерфейсу оригіналу (COMMON/esc16.RES) і верхнє табло з пейджером; без файлу — табло порту. */
@@ -656,7 +660,14 @@ export class Ht2Drive {
         }
     for (const m of parseMarkets(regionMods, this.world.regions.values())) if (!m.hidden) points.push({ pos: m.spots[0].pos, kind: 'market', label: m.name });
     this.mapPoints = points;
-    this.worldMap = new WorldMap(document.body, this.roads.axes, points);
+    this.mapReveal = new MapReveal(this.roads, o.career?.mapOpened ?? []);
+    this.mapReveal.onOpen = () => {
+      const cm = this.careerMode;
+      if (!cm) return;
+      cm.career.mapOpened = this.mapReveal!.keys();
+      cm.persist();
+    };
+    this.worldMap = new WorldMap(document.body, this.roads.axes, points, this.mapReveal);
     this.worldMap.onClose = () => {
       this.paused = false;
     };
@@ -939,7 +950,7 @@ export class Ht2Drive {
         },
         say: (t) => this.say(t),
       });
-      this.tabMap = new TabMap(art, o.overlay, this.roads.axes, this.mapPoints);
+      this.tabMap = new TabMap(art, o.overlay, this.roads.axes, this.mapPoints, this.mapReveal);
       // Одразу — мінікарта (стан 2): у порту її видно з початку їзди (king.exe починає зі схованої карти).
       this.tabMap.show(2);
       document.body.classList.add('ht2-orig-ui');
@@ -2201,6 +2212,14 @@ export class Ht2Drive {
     this.blastFx().carFire(new THREE.Vector3(p.x, -p.z, p.y));
   }
 
+  /** Відкриття прихованих доріг карти проїздом (world/mapReveal.ts, king.exe updatePlayerBoxes 0x42cf50). */
+  private updateReveal(dt: number): void {
+    if (!this.mapReveal || this.paused || (this.revealTimer -= dt) > 0) return;
+    // 10 разів на секунду (king.exe — щокадру; габарит від цього майже не змінюється).
+    this.revealTimer = 0.1;
+    this.mapReveal.update(this.truck.visual.position);
+  }
+
   /**
    * Камери-радари (traffic/radars.ts, king.exe 0x56ffd0): перевищення — штраф 250 × ступінь одразу з грошей, картка 16;
    * кожна камера — раз за гру.
@@ -3068,6 +3087,7 @@ export class Ht2Drive {
     this.updatePolice(dt);
     this.updateCopters(dt);
     this.updateRadars(dt);
+    this.updateReveal(dt);
     this.updateSirens();
     this.updateFire(dt);
     this.updateMafia(dt);

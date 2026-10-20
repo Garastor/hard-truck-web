@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import type { RoadLine } from './roads';
+import { roadPath, type MapReveal } from './mapReveal';
 
 /**
- * Карта світу HT2 (власний інтерфейс; як виглядала карта оригіналу, невідомо): усі дороги WAY, міста й склади,
+ * Карта світу HT2 (власний інтерфейс; як виглядала карта оригіналу, невідомо): дороги WAY (приховані 0x20 — лише
+ * відкриті проїздом, world/mapReveal.ts), міста й склади,
  * СТО, заправки, ринки; гравець — жовта стрілка, ціль — зелене коло. Перетягування — пальцем чи мишею, масштаб —
  * двома пальцями чи колесом; «×» — закрити. Координати — площина XZ світу Three.js (північ — угору, −z).
  */
@@ -23,7 +25,8 @@ const LEGEND: [MapPoint['kind'], string][] = [
 export class WorldMap {
   readonly el = document.createElement('div');
   private readonly canvas = document.createElement('canvas');
-  private readonly roads = new Path2D();
+  private roads = new Path2D();
+  private roadsVersion = -1;
   private readonly bounds = new THREE.Box2();
   private center = new THREE.Vector2();
   private scale = 0.1;
@@ -34,16 +37,11 @@ export class WorldMap {
 
   constructor(
     parent: HTMLElement,
-    lines: readonly RoadLine[],
+    private readonly lines: readonly RoadLine[],
     private readonly points: MapPoint[],
+    private readonly reveal: MapReveal | null = null,
   ) {
-    for (const l of lines) {
-      l.pts.forEach((p, i) => {
-        if (i) this.roads.lineTo(p.x, p.z);
-        else this.roads.moveTo(p.x, p.z);
-        this.bounds.expandByPoint(new THREE.Vector2(p.x, p.z));
-      });
-    }
+    for (const l of lines) for (const p of l.pts) this.bounds.expandByPoint(new THREE.Vector2(p.x, p.z));
     this.el.className = 'ht2-worldmap';
     this.el.hidden = true;
     const close = document.createElement('button');
@@ -135,6 +133,11 @@ export class WorldMap {
     ctx.fillStyle = 'rgba(6, 14, 10, 0.94)';
     ctx.fillRect(0, 0, w, h);
     const k = this.scale;
+    const version = this.reveal?.version ?? 0;
+    if (version !== this.roadsVersion) {
+      this.roadsVersion = version;
+      this.roads = roadPath(this.lines, this.reveal);
+    }
     const toScreen = (p: THREE.Vector3) => [w / 2 + (p.x - this.center.x) * k, h / 2 + (p.z - this.center.y) * k] as const;
     ctx.save();
     ctx.translate(w / 2, h / 2);

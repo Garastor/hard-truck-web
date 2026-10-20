@@ -314,8 +314,8 @@ export class Truckers {
   }
 
   private spawn(player: THREE.Vector3): void {
-    // Не на під'їздах заправок і СТО (порт, world/roads markStations).
-    const lines = this.roads.lines.filter((l) => !l.station && this.loaded(l.region));
+    // Не на під'їздах заправок і СТО (порт, world/roads markStations) і не на зрізалках (markShortcuts).
+    const lines = this.roads.lines.filter((l) => !l.station && !l.shortcut && this.loaded(l.region));
     const all = drivable(this.drive.trucksData);
     const pool = this.kinds.length
       ? this.kinds.map((k) => ({ rec: all.find((r) => r.carNode === k.model)!, variant: k.variant }))

@@ -88,8 +88,10 @@ describe.skipIf(!has)('HT2: мережа доріг', () => {
     let forks = 0;
     let wrong = 0;
     for (const l of roads.lines) {
-      const open = (l.next as RoadLine[]).filter((n) => !roads.deadEnd(n));
-      if (!open.length || open.length === l.next.length) continue;
+      // Зрізалки автопілоту недоступні (markShortcuts) — розвилка лише між звичайними гілками.
+      const next = (l.next as RoadLine[]).filter((n) => l.shortcut || !n.shortcut);
+      const open = next.filter((n) => !roads.deadEnd(n));
+      if (!open.length || open.length === next.length) continue;
       forks++;
       if (roads.deadEnd(roads.pick(l)!)) wrong++;
     }
