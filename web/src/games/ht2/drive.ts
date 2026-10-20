@@ -61,7 +61,7 @@ import { AITRUCK, Truckers, truckerKinds, truckerNames } from './traffic/trucker
 import { parseUpgrades, tireGrip, tuning, type Tuning } from './career/upgrades';
 import { parseServices, parseTowns } from './career/economy';
 import { Music } from './ui/music';
-import { SceneAssembler } from './engine/render/sceneBuilder';
+import { SceneAssembler, setStaticSwitch } from './engine/render/sceneBuilder';
 import { parseB3d } from './engine/formats/b3d';
 import { parseRmp } from './engine/formats/rmp';
 import { REPAIR_PER_PERCENT, restoreCareer, savedCareerRaw, type Ht2Career } from './career/career';
@@ -356,6 +356,11 @@ type CamMode = 'chase' | 'cockpit' | 'far';
 /** Порядок камер (клавіша C): з кабіни → за машиною (як в оригіналі) → згори. */
 /** Швидкість обертання камери навколо машини, рад/с (king.exe 0x650af0: π/3 — 60°/с). */
 const ORBIT_RATE = Math.PI / 3;
+// Світіння фар у моделях машин (`refer_HeadLightKey`) — у даних TRUCKS.B3D початковий стан 1 («горять»); у king.exe
+// гілку вмикають лише фари чи габарити машини (re/notes/ht2/weather.md «Фари»). Тож моделі збираються з вимкненими,
+// а вмикає їх гра (гравець — фарами, трафік і боти — вночі).
+setStaticSwitch('refer_HeadLightKey', 0);
+
 const NEXT_CAM: Record<CamMode, CamMode> = { cockpit: 'chase', chase: 'far', far: 'cockpit' };
 
 export class Ht2Drive {
@@ -1954,8 +1959,10 @@ export class Ht2Drive {
     this.windSound?.set(Math.min(quiet, c.windVolume));
     const on = this.lightsManual;
     for (const l of this.lamps) l.visible = on;
-    // Габарити вантажівки (SizeLightKey: 1 — горять) — разом з фарами.
+    // Габарити й світіння фар вантажівки (SizeLightKey / HeadLightKey: 1 — горять) — разом з фарами. HeadLightKey у
+    // даних моделі стоїть на 1, тож без цього скло фар світилося й удень з вимкненими фарами.
     this.setTruckSwitch?.('refer_SizeLightKey', on ? 1 : 0);
+    this.setTruckSwitch?.('refer_HeadLightKey', on ? 1 : 0);
     this.trailer?.setSwitch?.('refer_SizeLightKey', on ? 1 : 0);
     this.sizeLights = on;
   }

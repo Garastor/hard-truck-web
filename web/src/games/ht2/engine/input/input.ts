@@ -432,13 +432,11 @@ export class Input {
     more.className = 'touch-more';
     more.hidden = true;
     const toggle = btn('more', '', undefined, undefined, ICONS.more, row);
-    // «•••» по колу: група «ще» → група «ще» + дві кнопки обертання камери → згорнуто. З кабіни кнопок обертання
-    // немає — друге натискання одразу згортає групу.
+    // «•••» показує / згортає групу «ще»; з зовнішньою камерою в ній — і 4-й ряд обертання камери (з кабіни схований).
     toggle.addEventListener('pointerdown', () => {
-      this.moreState = (this.moreState + 1) % 3;
-      if (this.moreState === 2 && !this.orbitAllowed) this.moreState = 0;
-      more.hidden = this.moreState === 0;
-      toggle.classList.toggle('on', this.moreState !== 0);
+      this.moreOpen = !this.moreOpen;
+      more.hidden = !this.moreOpen;
+      toggle.classList.toggle('on', this.moreOpen);
       this.syncOrbit();
     });
     btn('reset', '', undefined, 'reset', ICONS.reset, row);
@@ -457,7 +455,7 @@ export class Input {
       ['horn', 'horn', HORN_SVG],
     ];
     for (const [cls, cmd, icon] of items) btn(cls, '', undefined, cmd, icon, more).dataset.cmd = cmd;
-    // Друге натискання «•••» дописує до групи кнопки обертання камери по колу (тримати); ракурс скидає «Камера».
+    // Кнопки обертання камери по колу (тримати) — 4-м рядом групи «ще»; ракурс скидає «Камера».
     for (const [cls, a, icon] of [['orbit-left', 'camLeft', ICONS.orbitLeft], ['orbit-right', 'camRight', ICONS.orbitRight]] as const) {
       const b = btn(cls, '', a, undefined, icon, more);
       b.hidden = true;
@@ -526,7 +524,7 @@ export class Input {
     return (this.held.has('camRight') ? 1 : 0) - (this.held.has('camLeft') ? 1 : 0);
   }
 
-  private moreState = 0;
+  private moreOpen = false;
   private orbitAllowed = true;
   private readonly orbitBtns: HTMLElement[] = [];
 
@@ -537,7 +535,7 @@ export class Input {
   }
 
   private syncOrbit(): void {
-    const show = this.moreState === 2 && this.orbitAllowed;
+    const show = this.moreOpen && this.orbitAllowed;
     for (const b of this.orbitBtns) b.hidden = !show;
     // Сховану кнопку, яку ще тримали, — відпустити.
     if (!show) {
