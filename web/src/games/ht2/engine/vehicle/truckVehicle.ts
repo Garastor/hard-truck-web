@@ -414,9 +414,21 @@ export class TruckVehicle {
   /**
    * Напівпричіп у русі king.exe: його маса — у рівнянні тягача (v += F/(M + M_прич)·dt), його колеса — гальмують і
    * котяться разом з тягачем (навантаження — порівну, без частки на сідлі; гіпотеза). Сам причіп іде кінематично
-   * за шворнем (Trailer.update).
+   * за шворнем (Trailer.update). У режимі шин (гравець, towDynamic) — інакше: причіп — вільне тіло зі своїми шинами
+   * (Trailer.dynamic), тягне його шарнір Rapier; тягач не рахує ні маси, ні коліс причепа, лише вагу на сідлі
+   * (saddleLoad, Н, у точці saddleZ — z сідла в системі тіла тягача) на задніх колесах (tireLoads).
    */
-  tow: { mass: number; wheels: number } | null = null;
+  tow: { mass: number; wheels: number; saddleLoad?: number; saddleZ?: number } | null = null;
+  /** Причіп рухається сам (режим шин тягача): тоді Trailer.update отримує towTires. */
+  get towDynamic(): boolean {
+    return !!this.king?.tires;
+  }
+  /** Зчеплення шин для причепа в динамічному русі (μ поздовжнє поточного кроку й множник бічного). */
+  get towTires(): { mu: number; side: number } | undefined {
+    return this.king?.tires ? { mu: this.muNow, side: this.king.sideGrip ?? 1 } : undefined;
+  }
+  /** μ коліс останнього кроку руху king.exe (покриття, дощ, шини). */
+  private muNow: number = 0.71;
   /** Кінематичний рух king.exe (кермо дає кутову швидкість v·sin δ / L). */
   get kinematic(): boolean {
     return this.king !== null;
@@ -893,6 +905,7 @@ export class TruckVehicle {
       ctrl.setWheelFrictionSlip(i, 0);
     }
     const mu = K.mu * this.grip * this.surfaceGrip * (this.weatherGrip < 1 ? K.rain : 1);
+    this.muNow = mu;
     const r = this.body.rotation();
     const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
@@ -956,8 +969,8 @@ export class TruckVehicle {
       this.skid.fill(false);
       return;
     }
-    // Колеса причепа (вважаємо на землі, без приводу).
-    const tow = this.tow;
+    // Колеса причепа (вважаємо на землі, без приводу); у режимі шин причіп рахує себе сам (Trailer.dynamic).
+    const tow = this.tow && !K.tires ? this.tow : null;
     if (tow)
       for (let i = 0; i < tow.wheels; i++) {
         const load = (tow.mass * KING.g) / tow.wheels;
@@ -1221,6 +1234,9 @@ export class TruckVehicle {
     const M = this.mass;
     const gn = Math.max(0, -(this.world.gravity.x * n.x + this.world.gravity.y * n.y + this.world.gravity.z * n.z));
     const Mg = M * gn;
+    // Вага напівпричепа на сідлі (режим шин: причіп — окреме тіло): униз у точці сідла, на d позаду центру мас.
+    const Fk = (this.tow?.saddleLoad ?? 0) * (gn / KING.g);
+    const sk = this.tow?.saddleZ !== undefined ? -(this.tow.saddleZ - this.body.localCom().z) : 0;
     const h = KING_COM_HEIGHT;
     const sp = this.spring;
     // Зовнішні моменти від сил коліс минулого кроку (на рівні дороги): бічна сила ліворуч кренить праворуч, тяга
@@ -1235,10 +1251,10 @@ export class TruckVehicle {
     for (let k = 0; k < sub; k++) {
       let Fz = 0;
       let Mr = -Fy * h;
-      let Mp = -Fx * h;
+      let Mp = -Fx * h + Fk * sk;
       for (const t of pts) {
         const isFront = t.i < 2;
-        const Ns = ((isFront ? Mg * lr : Mg * lf) / L) / (isFront ? front.length : rear.length);
+        const Ns = ((isFront ? Mg * lr + Fk * (lr + sk) : Mg * lf + Fk * (lf - sk)) / L) / (isFront ? front.length : rear.length);
         const T = this.king!.travel?.[t.i] ?? 0.3;
         const L0 = T * SPRING_L0;
         const x0 = L0 - 0.75 * T;
@@ -1261,7 +1277,7 @@ export class TruckVehicle {
         Mr -= N * t.q;
         Mp -= N * t.s;
       }
-      sp.vz += ((Mg - Fz) / M) * hdt;
+      sp.vz += ((Mg + Fk - Fz) / M) * hdt;
       sp.vroll += (Mr / Iroll) * hdt;
       sp.vpitch += (Mp / Ipitch) * hdt;
       sp.z += sp.vz * hdt;

@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { buildTruckModel, visibleBox, type TruckDef } from '../engine/vehicle/trucks';
 import { TIP_OFF, TIP_ON, TIRE } from '../engine/vehicle/truckVehicle';
 import { HitMeter } from '../engine/vehicle/hitMeter';
+import { KING, rollingForce, tireCurve } from '../engine/vehicle/kingModel';
 import { g2t } from '../engine/physics/world';
 import { RoomBounds } from '../engine/physics/roomBounds';
 import type { TechRecord } from '../formats/tech';
@@ -40,6 +41,8 @@ const HITCH_RETURN = 3;
  * ×(1 − min(FOLD_MAX, FOLD_K·|s|·(|s| − 0,534))) — гіпотеза порту.
  */
 const FOLD_FROM = 0.534;
+/** Пружина складання king.exe (0x64b780): момент |s|·(|s| − FOLD_FROM)·KING_FOLD_K·I (динамічний режим). */
+const KING_FOLD_K = 10;
 const FOLD_K = 2;
 const FOLD_MAX = 0.8;
 const BREAK_FOLD = (135 * Math.PI) / 180;
@@ -47,6 +50,12 @@ const BREAK_TILT = Math.cos((45 * Math.PI) / 180);
 const BREAK_GAP = 5;
 /** Повернення до спільного крену, 1/с. */
 const ROLL_RETURN = 5;
+
+/** Зчеплення шин для динамічного руху причепа (dynamic) — від тягача: μ поздовжнє й множник бічного. */
+export interface TrailerTires {
+  mu: number;
+  side: number;
+}
 
 export class Trailer {
   readonly body: RAPIER.RigidBody;
@@ -309,6 +318,93 @@ export class Trailer {
     this.body.setAngvel(w, true);
   }
 
+  /** Останній крок — власні шини причепа (dynamic): тягач тоді не рахує масу й колеса причепа. */
+  dynamicStep = false;
+
+  /**
+   * Причіп у динамічному режимі king.exe (зчеплена пара — режим 3, physics.md «Динамічний режим (0x4f8260)»), за
+   * тягачем гравця в режимі шин. Тіло вільне: тягне його шарнір Rapier (інерція причепа передається тягачу — важкий
+   * причіп може винести задок тягача чи скластися), колеса тримають як шини тягача (TruckVehicle.tireStep): поперек —
+   * μ·N·φ(α, v) (kingModel.tireCurve), уздовж — кочення й гальмо 1,5·N·педаль (регулятор, як у тягача) не більше μ·N;
+   * заблоковане колесо — юзом, поперек μ·N·sin α. Сили — сухе тертя: імпульс колеса не перекидає знак швидкості його
+   * контакту. N — сили підвіски Rapier. Зчіпка — пружний упор складання king.exe (hitchDamper, king).
+   */
+  private dynamic(dt: number, brake: number, tires: TrailerTires): void {
+    for (let i = 0; i < this.wheels.length; i++) {
+      this.ctrl.setWheelBrake(i, 0);
+      this.ctrl.setWheelFrictionSlip(i, 0);
+    }
+    this.ctrl.updateVehicle(dt, undefined, undefined, this.groundRays);
+    this.updateGroundUp();
+    const n = new THREE.Vector3();
+    const on: number[] = [];
+    for (let i = 0; i < this.wheels.length; i++) {
+      const nr = this.ctrl.wheelIsInContact(i) ? this.ctrl.wheelContactNormal(i) : null;
+      if (!nr || !this.ctrl.wheelContactPoint(i)) continue;
+      n.add(nr as THREE.Vector3Like);
+      on.push(i);
+    }
+    if (!on.length || n.lengthSq() < 1e-6) return this.hitchDamper(dt, true);
+    n.normalize();
+    const r0 = this.body.rotation();
+    const ft = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(r0.x, r0.y, r0.z, r0.w));
+    ft.addScaledVector(n, -ft.dot(n));
+    if (ft.lengthSq() < 1e-6) return this.hitchDamper(dt, true);
+    ft.normalize();
+    const side = new THREE.Vector3().crossVectors(n, ft);
+    const lv = this.body.linvel();
+    const v = new THREE.Vector3(lv.x, lv.y, lv.z);
+    const av = this.body.angvel();
+    const w = new THREE.Vector3(av.x, av.y, av.z);
+    const wn = w.dot(n);
+    // Усі колеса на землі — дотична складова ваги ×0,5, як у тягача (KING.slope; Rapier за крок додасть повну).
+    const g = this.world.gravity;
+    const gt = new THREE.Vector3(g.x, g.y, g.z);
+    gt.addScaledVector(n, -gt.dot(n));
+    if (on.length === this.wheels.length) v.addScaledVector(gt, -(1 - KING.slope) * dt);
+    const vn = v.dot(n);
+    const speed = Math.hypot(v.dot(ft), v.dot(side));
+    const c = this.body.worldCom();
+    const com = new THREE.Vector3(c.x, c.y, c.z);
+    const M = this.mass;
+    const I = 1 / Math.max(1e-9, invInertia(this.body, n));
+    const pedal = brake > KING.brakeFrom ? brake : 0;
+    const dv = new THREE.Vector3();
+    let dw = 0;
+    const r = new THREE.Vector3();
+    const u = new THREE.Vector3();
+    for (const i of on) {
+      const N = Math.max(0, this.ctrl.wheelSuspensionForce(i) ?? 0);
+      if (N <= 0) continue;
+      const p = this.ctrl.wheelContactPoint(i)!;
+      r.set(p.x, p.y, p.z).sub(com);
+      r.addScaledVector(n, -r.dot(n));
+      u.crossVectors(n, r).multiplyScalar(wn).add(v);
+      const lon = u.dot(ft);
+      const lat = u.dot(side);
+      const m = tires.mu * N;
+      const b = KING.brakeLoad * N * pedal;
+      const locked = b > m && Math.abs(lon) > KING.lockSpeed;
+      // Плечі сил навколо нормалі: поздовжньої (уздовж ft) і бічної (уздовж side).
+      const armL = new THREE.Vector3().crossVectors(r, ft).dot(n);
+      const armS = new THREE.Vector3().crossVectors(r, side).dot(n);
+      const fl = Math.min(b, m) + rollingForce(N, lon, ROLLING);
+      const jl = -Math.sign(lon) * Math.min(fl * dt, Math.abs(lon) / ((1 / M + (armL * armL) / I) * on.length));
+      const alpha = Math.atan2(Math.abs(lat), Math.abs(lon));
+      const size = locked ? m * Math.abs(Math.sin(alpha)) : m * tires.side * tireCurve(alpha, speed) * Math.min(1, Math.hypot(lat, lon));
+      const js = -Math.sign(lat) * Math.min(size * dt, Math.abs(lat) / ((1 / M + (armS * armS) / I) * on.length));
+      dv.addScaledVector(ft, jl / M).addScaledVector(side, js / M);
+      dw += (armL * jl + armS * js) / I;
+    }
+    v.add(dv);
+    // Стоїть на гальмі — стоїть (як тягач).
+    if (pedal > 0 && speed < 0.3) v.copy(n).multiplyScalar(vn);
+    this.body.setLinvel(v, true);
+    w.addScaledVector(n, dw);
+    this.body.setAngvel(w, true);
+    this.hitchDamper(dt, true);
+  }
+
   get wheelCount(): number {
     return this.wheels.length;
   }
@@ -381,8 +477,11 @@ export class Trailer {
     if (n.lengthSq() > 1e-6) this.groundUp.copy(n.normalize());
   }
 
-  /** Крок фізики (до world.step): гальма й опір кочення; kinematic — рух king.exe (follow). */
-  update(dt: number, brake: number, brakePower: number, kinematic = false): void {
+  /**
+   * Крок фізики (до world.step): гальма й опір кочення; kinematic — рух king.exe: з tires (тягач гравця в режимі шин) —
+   * власні шини причепа й пружна зчіпка (dynamic), без — кінематично за шворнем (follow, боти).
+   */
+  update(dt: number, brake: number, brakePower: number, kinematic = false, tires?: TrailerTires): void {
     this.savePrev();
     this.kinematic = kinematic;
     this.updateTip();
@@ -392,9 +491,11 @@ export class Trailer {
       this.updateGroundUp();
       return;
     }
+    this.dynamicStep = kinematic && !!tires;
     if (kinematic) {
       this.hits.begin(dt);
-      this.follow(dt);
+      if (tires) this.dynamic(dt, brake, tires);
+      else this.follow(dt);
       this.hits.end();
       return;
     }
@@ -408,8 +509,11 @@ export class Trailer {
     this.hitchDamper(dt);
   }
 
-  /** Тертя й упор сідла: парні моменти на причіп і тягач навколо вертикалі причепа. */
-  private hitchDamper(dt: number): void {
+  /**
+   * Тертя й упор сідла: парні моменти на причіп і тягач навколо вертикалі причепа. king — зчіпка king.exe (0x558f20):
+   * тертя немає, від складання 32,3° (|sin θ| > 0,534) — пружний момент |s|·(|s| − 0,534)·10·I₁I₂/(I₁ + I₂) назад.
+   */
+  private hitchDamper(dt: number, king = false): void {
     const r = this.body.rotation();
     const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
@@ -418,10 +522,13 @@ export class Trailer {
     const rel = (a.x - b.x) * up.x + (a.y - b.y) * up.y + (a.z - b.z) * up.z;
     // Зведений момент інерції пари навколо вертикалі: імпульс змінює відносну кутову швидкість на impulse / I.
     const inertia = 1 / (invInertia(this.body, up) + invInertia(this.tractor.body, up));
-    let impulse = -HITCH_DAMP * inertia * rel * dt;
+    let impulse = king ? 0 : -HITCH_DAMP * inertia * rel * dt;
     const angle = this.articulation;
-    const over = Math.abs(angle) - HITCH_LIMIT;
-    if (over > 0) {
+    const s = Math.abs(Math.sin(angle));
+    if (king) {
+      if (s > FOLD_FROM) impulse = -Math.sign(angle) * s * (s - FOLD_FROM) * KING_FOLD_K * inertia * dt;
+    } else if (Math.abs(angle) - HITCH_LIMIT > 0) {
+      const over = Math.abs(angle) - HITCH_LIMIT;
       // Упор: складання далі гаситься повністю, і зчіпка повертається до межі.
       const want = -Math.sign(angle) * HITCH_RETURN * over;
       impulse = (rel - want) * Math.sign(angle) > 0 ? -inertia * (rel - want) : 0;

@@ -1485,7 +1485,7 @@ export class Ht2Drive {
     const trailerBody = this.trailer.body.handle;
     this.truck.rayFilter = (c) => c.parent()?.handle !== trailerBody;
     this.truck.setTowLoad(this.trailer.kingpinLoad);
-    this.truck.tow = { mass: this.trailer.mass, wheels: this.trailer.wheelCount };
+    this.truck.tow = { mass: this.trailer.mass, wheels: this.trailer.wheelCount, saddleLoad: this.trailer.kingpinLoad, saddleZ: g2t(rec.lowSaddle).z };
   }
 
   /**
@@ -3190,7 +3190,7 @@ export class Ht2Drive {
     const stepped = this.acc >= step;
     while (this.acc >= step) {
       this.truck.update(step, state);
-      this.trailer?.update(step, this.truck.brakePedal(state), this.def.tech.brakePower, this.truck.kinematic);
+      this.trailer?.update(step, this.truck.brakePedal(state), this.def.tech.brakePower, this.truck.kinematic, this.truck.towTires);
       this.race?.control(step);
       this.truckers?.control(step, obstacles, oncoming);
       this.traffic?.control(step);
