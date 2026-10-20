@@ -395,6 +395,8 @@ export class Presents {
     if (p.kind.cluster > 0) recolor(model.root, trucks, p.kind.cluster + 1);
     model.setSwitch?.('SupportKey', 1);
     model.setSwitch?.('refer_IconKey', 0);
+    // Без тягача світла немає: габарити, стоп і задній хід — вимкнені (у даних моделі початково горять).
+    for (const k of ['refer_SizeLightKey', 'StopFaraKeyL', 'StopFaraKeyR', 'BackFaraKeyL', 'BackFaraKeyR']) model.setSwitch?.(k, 0);
     const frame = new THREE.Group();
     frame.rotation.x = -Math.PI / 2;
     frame.add(model.root);

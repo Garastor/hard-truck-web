@@ -202,7 +202,7 @@ export function buildTruckModel(asm: SceneAssembler, def: TruckDef, dynamic = fa
   }
   // Габарит задніх ліхтарів (`StopFaraKeyX` стан 2, `TailLight1R_0`) у даних — з освітлюваними вершинами: уночі
   // Lambert малював його чорним, і ззаду горіли лише жовті габарити. На прохання користувача — світиться сам,
-  // тьмяніше за стоп (TAIL_GLOW; стоп — вершини формату 3, повна яскравість).
+  // тьмяніше за стоп у ≈ 1,6 раза (TAIL_GLOW; стоп — вершини формату 3, повна яскравість).
   const tail = new Set<THREE.Object3D>();
   root.traverse((o) => {
     if (/^StopFaraKey[LR]#2$/.test(o.name)) o.traverse((c) => tail.add(c));
@@ -238,8 +238,12 @@ export function buildTruckModel(asm: SceneAssembler, def: TruckDef, dynamic = fa
   return { root, body, wheels, wheelBase, setSwitch: dyn?.setSwitch, switchStates: dyn?.states, shadowMaterial };
 }
 
-/** Яскравість габариту задніх ліхтарів відносно стопа — на око. */
-const TAIL_GLOW = 0.6;
+/**
+ * Яскравість габариту задніх ліхтарів (множник текстури). Стоп і габарит беруть сусідні клітинки текстури
+ * `common_backlightson` майже однакової яскравості (≈ 76 і 60 за Y), тож 0,8 — стоп ≈ у 1,6 раза яскравіший
+ * (прохання користувача: 1,5–2×; 0,6 давало 2,1× і габарит ледве світився).
+ */
+const TAIL_GLOW = 0.8;
 const TAIL_MATS = new WeakMap<THREE.Material, THREE.Material>();
 
 /** Неосвітлювана копія матеріалу габариту задніх ліхтарів (колір — текстура × TAIL_GLOW). */
