@@ -432,19 +432,14 @@ export class Input {
     more.className = 'touch-more';
     more.hidden = true;
     const toggle = btn('more', '', undefined, undefined, ICONS.more, row);
-    // «•••» по колу: група «ще» → група «ще» + дві кнопки обертання камери → згорнуто.
-    const orbit: HTMLElement[] = [];
-    let moreState = 0;
+    // «•••» по колу: група «ще» → група «ще» + дві кнопки обертання камери → згорнуто. З кабіни кнопок обертання
+    // немає — друге натискання одразу згортає групу.
     toggle.addEventListener('pointerdown', () => {
-      moreState = (moreState + 1) % 3;
-      more.hidden = moreState === 0;
-      for (const b of orbit) b.hidden = moreState !== 2;
-      toggle.classList.toggle('on', moreState !== 0);
-      // Сховану кнопку, яку ще тримали, — відпустити.
-      if (moreState !== 2) {
-        this.held.delete('camLeft');
-        this.held.delete('camRight');
-      }
+      this.moreState = (this.moreState + 1) % 3;
+      if (this.moreState === 2 && !this.orbitAllowed) this.moreState = 0;
+      more.hidden = this.moreState === 0;
+      toggle.classList.toggle('on', this.moreState !== 0);
+      this.syncOrbit();
     });
     btn('reset', '', undefined, 'reset', ICONS.reset, row);
     btn('cam', '', undefined, 'camera', ICONS.cam, row);
@@ -465,9 +460,8 @@ export class Input {
     // Друге натискання «•••» дописує до групи кнопки обертання камери по колу (тримати); ракурс скидає «Камера».
     for (const [cls, a, icon] of [['orbit-left', 'camLeft', ICONS.orbitLeft], ['orbit-right', 'camRight', ICONS.orbitRight]] as const) {
       const b = btn(cls, '', a, undefined, icon, more);
-      b.dataset.orbit = '1';
       b.hidden = true;
-      orbit.push(b);
+      this.orbitBtns.push(b);
     }
     top.append(more);
     ui.append(top);
@@ -532,9 +526,25 @@ export class Input {
     return (this.held.has('camRight') ? 1 : 0) - (this.held.has('camLeft') ? 1 : 0);
   }
 
-  /** Кнопки обертання камери сірі (з кабіни камера по колу не крутиться). */
+  private moreState = 0;
+  private orbitAllowed = true;
+  private readonly orbitBtns: HTMLElement[] = [];
+
+  /** Кнопки обертання камери є лише з зовнішньою камерою: з кабіни — сховані (на прохання користувача). */
   setOrbitAvailable(on: boolean): void {
-    this.touchUi?.querySelectorAll<HTMLElement>('[data-orbit]').forEach((b) => b.classList.toggle('unavailable', !on));
+    this.orbitAllowed = on;
+    this.syncOrbit();
+  }
+
+  private syncOrbit(): void {
+    const show = this.moreState === 2 && this.orbitAllowed;
+    for (const b of this.orbitBtns) b.hidden = !show;
+    // Сховану кнопку, яку ще тримали, — відпустити.
+    if (!show) {
+      this.held.delete('camLeft');
+      this.held.delete('camRight');
+      for (const b of this.orbitBtns) b.classList.remove('pressed');
+    }
   }
 
   setToggle(cmd: Command, on: boolean, hidden = false, unavailable = false): void {
