@@ -42,12 +42,14 @@ const HALT_LOOK = 60;
 const HALT_SIDE = 4;
 const HALT_DECEL = 1.2;
 const HALT_AT = 0.5;
+/** Півширина іншої машини для ширини шляху бота (Mover.wide), м. */
+const OTHER_HALF = 1.3;
 /** Перестроюватися на обʼїзд раніше на стільки секунд ходу, ніж трафік (смуга в тягача — ≈ 4 с), с. */
 const LANE_EARLY = 2.5;
 /** Множник швидкості на кривих для тягача з причепом (driver.roadLimit). */
 const TRAILER_BEND = 0.75;
 /** Захід у поворот: частка зрізання, вікно кривизни (± м від точки керма), найбільше назовні (частка смуги), м/с зміни. */
-const OFFTRACK_K = 0.7;
+const OFFTRACK_K = 1.0;
 const OFFTRACK_WIN = 6;
 const OUT_LANE = 0.8;
 const OFFTRACK_RATE = 1.5;
@@ -106,6 +108,8 @@ export function newBot(roads: Ht2Roads, pos: THREE.Vector3, fwd: THREE.Vector3, 
   m.tail = tail;
   m.bend = reach > 0 ? TRAILER_BEND : 1;
   m.early = LANE_EARLY;
+  // Шлях — на ширину машини: півширина + 1,3 м іншого замість PATH_HALF 2,2 м легковика.
+  m.wide = Math.max(0, halfWidth + OTHER_HALF - 2.2);
   m.route = null;
   sync(m, pos, fwd, 0);
   return { m, ps: newPhysState(), want: 0, halt: null, passing: 0, squeeze: 0, reach, shift: 0, halfWidth };

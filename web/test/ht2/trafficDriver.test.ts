@@ -335,6 +335,26 @@ describe('HT2: водій трафіку', () => {
     expect(at(12) - at(0)).toBeGreaterThan(10);
   });
 
+  it('широка машина (wide): перешкода, що виступає в сусідню смугу, — не гойдається між смугами, а обʼїжджає далі', () => {
+    const lanes = road(straight(1000), 2, 0);
+    // Опозитна смуга (зустрічна) для обʼїзду: без бітів 4/8.
+    const m = newMover(lanes[1], 0, 0, 12, 3);
+    m.wide = 0.75;
+    m.early = 2.5;
+    // Гравець на правій смузі, зсунутий на 0,5 м ліворуч: від осі лівої смуги — 2,5 м (для легковика вільно, для широкої — ні).
+    const player: Obstacle = { pos: lanes[1].pts[15].clone().add(new THREE.Vector3(-0.5, 0, 0)), vel: new THREE.Vector3(), half: 2.5 };
+    let changes = 0;
+    let lane = m.line.lane;
+    let passedSide = 0;
+    run(m, 40, [player], () => {
+      if (m.line.lane !== lane) (changes++, (lane = m.line.lane));
+      if (!passedSide && m.pos.z < player.pos.z - 1) passedSide = m.pos.x - player.pos.x;
+    });
+    expect(changes).toBeLessThanOrEqual(1);
+    // Обʼїхав щонайменше на 3,4 м убік (півширини обох з запасом).
+    expect(passedSide).toBeLessThan(-3.4);
+  });
+
   it("на під'їзд заправки чи СТО не звертає, якщо є інший шлях (порт)", () => {
     const a = road(straight(200), 1, 0);
     const gas = road([0, 1, 2, 3].map((i) => new THREE.Vector3(i * 20, 0, -200)), 1, 1);

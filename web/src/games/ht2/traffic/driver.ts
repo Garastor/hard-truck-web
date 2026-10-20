@@ -181,6 +181,11 @@ export interface Mover {
   passBody?: Obstacle | null;
   /** Почати обʼїзд чи обгін сусідньою смугою раніше на стільки секунд ходу (довга машина — довше перестроюється), с. */
   early?: number;
+  /**
+   * Ширша за легковик (вантажівка), м: на стільки більше PATH_HALF для перешкод, що не їдуть назустріч, — тіло, що
+   * виступає в смугу, для неї зайняте (зустрічні в сусідній смузі — ні, інакше гальмувала б перед кожною).
+   */
+  wide?: number;
 }
 
 /** Продовження після кінця поточної лінії: за маршрутом, інакше — запланована дорога в смугу, найближчу за номером. */
@@ -651,7 +656,7 @@ export function leaderOn(
         // Бічна відстань праворуч від шляху (вектор праворуч — (−z, x)) мінус наш зсув — запланований на мить, коли
         // доїдемо до перешкоди (S-крива маневру), якщо не задано інший.
         const side = Math.abs((q.z - a.z) * ab.x - (q.x - a.x) * ab.z - (lat ?? offAt(m, s / Math.max(2, m.speed))));
-        if (side > PATH_HALF) continue;
+        if (side > PATH_HALF + (m.wide && o.vel.x * ab.x + o.vel.z * ab.z > -1 ? m.wide : 0)) continue;
         if (s <= 0.5) continue; // поруч чи позаду — не лідер
         if (tau && Math.abs(s / Math.max(2, m.speed) - tau) > CROSS_MARGIN) continue;
         const gap = s - m.halfLen - o.half;
@@ -686,7 +691,7 @@ function laneFree(m: Mover, sib: RoadLine | undefined, obstacles: readonly Obsta
     const rel = o.pos.clone().sub(p);
     const along = rel.x * fwd.x + rel.z * fwd.z;
     const side = Math.abs(rel.x * fwd.z - rel.z * fwd.x);
-    if (side >= PATH_HALF || Math.abs(along) > LOOK_LANE) continue;
+    if (side >= PATH_HALF + (m.wide ?? 0) || Math.abs(along) > LOOK_LANE) continue;
     const ov = o.vel.x * fwd.x + o.vel.z * fwd.z;
     const gap = Math.abs(along) - m.halfLen - o.half;
     if (gap < 2) return false;
@@ -821,7 +826,7 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
     const sides = leader.speed <= SLOW_OBSTACLE ? [lane - 1, lane + 1] : [lane - 1];
     let done = false;
     for (const to of sides)
-      if (to >= 0 && to < m.line.lanes && laneFree(m, m.line.siblings[to], obstacles)) {
+      if (to >= 0 && to < m.line.lanes && laneFree(m, m.line.siblings[to], obstacles) && !blocksToo(m, path, obstacles, leader.obstacle, (to - lane) * m.line.laneWidth)) {
         if (leader.speed > SLOW_OBSTACLE && m.backLane < 0) m.backLane = lane;
         changeLane(m, to);
         m.wantLane = to;
@@ -872,6 +877,12 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
   m.still = m.speed < 0.5 ? m.still + dt : 0;
   m.queued = want < 1 && ((!!leader?.obstacle.mover && leader.gap < LEADER_GAP + FOLLOW_ZONE) || m.redStop || m.waitJ > 0);
   return want;
+}
+
+/** Та сама перешкода перекриває й шлях зі зсувом lat (сусідню смугу): перестроюватися туди марно — гойдалися б між смугами. */
+function blocksToo(m: Mover, path: { pts: THREE.Vector3[]; s: number[] }, obstacles: readonly Obstacle[], o: Obstacle, lat: number): boolean {
+  const there = leaderOn(m, path, obstacles, lat);
+  return !!there && sameBody(there.obstacle, o);
 }
 
 function endBypass(m: Mover): void {
