@@ -12,6 +12,11 @@ import type { DayTime, Sky } from '../world/weather';
 export const Y_PYRAMID = 0.9;
 export const FOV = THREE.MathUtils.radToDeg(2 * Math.atan(Y_PYRAMID / 2));
 
+/** Політ стрілками: стала швидкість, м/с; із Shift — повільна. */
+const FLY_SPEED = 200;
+const FLY_SLOW = 25;
+const FLY_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+
 export interface WorldViewerOptions {
   renderer: THREE.WebGLRenderer;
   source: FileSource;
@@ -32,6 +37,20 @@ export class WorldViewer {
   private readonly sky = document.createElement('select');
   private readonly onResize = () => this.resize();
   private readonly onVisible = () => this.opts.renderer.setAnimationLoop(document.hidden ? null : () => this.frame());
+  /** Натиснуті стрілки й Shift (політ). */
+  private readonly keys = new Set<string>();
+  private slow = false;
+  private last = performance.now();
+  private readonly onKey = (e: KeyboardEvent) => {
+    this.slow = e.shiftKey;
+    if (!FLY_KEYS.has(e.code)) return;
+    // Стрілки — лише політ: інакше перемикають регіон чи час у вибраному списку.
+    e.preventDefault();
+    if (document.activeElement instanceof HTMLSelectElement) document.activeElement.blur();
+    if (e.type === 'keydown') this.keys.add(e.code);
+    else this.keys.delete(e.code);
+  };
+  private readonly onBlur = () => this.keys.clear();
 
   constructor(private readonly opts: WorldViewerOptions) {
     const { renderer } = opts;
@@ -60,6 +79,9 @@ export class WorldViewer {
     document.body.append(this.hud, this.info);
     window.addEventListener('resize', this.onResize);
     document.addEventListener('visibilitychange', this.onVisible);
+    window.addEventListener('keydown', this.onKey, true);
+    window.addEventListener('keyup', this.onKey, true);
+    window.addEventListener('blur', this.onBlur);
     this.resize();
     renderer.setAnimationLoop(() => this.frame());
   }
@@ -113,7 +135,29 @@ export class WorldViewer {
       `камера ${p.x.toFixed(0)} ${(-p.z).toFixed(0)} ${p.y.toFixed(0)} — ${this.world!.regionAt(p.x, -p.z)?.toUpperCase() ?? ''}`;
   }
 
+  /**
+   * Політ стрілками: ↑/↓ — уперед і назад за напрямом погляду (по горизонталі, висота та сама), ←/→ — убік; камера й
+   * точка обертання OrbitControls зсуваються разом. Стала швидкість FLY_SPEED, із Shift — FLY_SLOW.
+   */
+  private fly(dt: number): void {
+    const k = this.keys;
+    const fwd = (k.has('ArrowUp') ? 1 : 0) - (k.has('ArrowDown') ? 1 : 0);
+    const side = (k.has('ArrowRight') ? 1 : 0) - (k.has('ArrowLeft') ? 1 : 0);
+    if (!fwd && !side) return;
+    const dir = this.controls.target.clone().sub(this.camera.position).setY(0);
+    if (dir.lengthSq() < 1e-6) this.camera.getWorldDirection(dir).setY(0);
+    dir.normalize();
+    const right = new THREE.Vector3(-dir.z, 0, dir.x);
+    const move = dir.multiplyScalar(fwd).add(right.multiplyScalar(side)).normalize().multiplyScalar((this.slow ? FLY_SLOW : FLY_SPEED) * dt);
+    this.camera.position.add(move);
+    this.controls.target.add(move);
+  }
+
   private frame(): void {
+    const now = performance.now();
+    // Обмеження кроку: після схованої вкладки чи довгого кадру камера не стрибає.
+    this.fly(Math.min(0.1, (now - this.last) / 1000));
+    this.last = now;
     this.controls.update();
     this.world?.update(this.camera);
     if (this.world) this.opts.renderer.render(this.world.scene, this.camera);
@@ -123,6 +167,9 @@ export class WorldViewer {
     this.opts.renderer.setAnimationLoop(null);
     window.removeEventListener('resize', this.onResize);
     document.removeEventListener('visibilitychange', this.onVisible);
+    window.removeEventListener('keydown', this.onKey, true);
+    window.removeEventListener('keyup', this.onKey, true);
+    window.removeEventListener('blur', this.onBlur);
     this.controls.dispose();
     this.hud.remove();
     this.info.remove();

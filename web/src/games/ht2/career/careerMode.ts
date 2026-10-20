@@ -911,6 +911,8 @@ export class CareerMode {
     this.career.heading = [f.x, -f.z];
     if (this.drive.presents) this.career.presents = this.drive.presents.snapshot();
     if (this.drive.obstacles) this.career.obstacle = this.drive.obstacles.active;
+    const fleet = this.drive.truckers?.snapshot();
+    if (fleet) this.career.fleet = fleet;
     saveCareer(this.career);
   }
 

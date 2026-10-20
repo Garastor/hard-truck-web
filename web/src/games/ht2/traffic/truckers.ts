@@ -11,33 +11,43 @@ import { recolor, SPOT_FACING, SPOT_RANGE, spotShare } from './traffic';
 import { disposePool, makePool, setPoolFade } from './headPools';
 import { g2t } from '../engine/physics/world';
 import { Freight, type FreightCapacity, type FreightJob } from './freight';
-import { makeOrders } from '../career/economy';
-import type { Ht2Roads, RoadLine } from '../world/roads';
+import { Fleet, type FleetMember, type SavedTrucker } from './fleet';
+import { HIRED_MIN_SPEED } from '../career/hired';
+import type { Ht2Roads } from '../world/roads';
 import type { Ht2Drive } from '../drive';
 
 /**
- * Далекобійники-суперники HT2 (перша версія): у світі їх 50 (`ENV/GAME.CNF`: `(aitruck 50)`), імена — `names.sch`
- * (`("ВИТАЛИЙ" male trucker 1)`). Порт не моделює всіх 50 — довкола гравця їздять до MAX вантажівок з кузовом
- * і тягачів (клас trucker типів lorry і tractor з evehicles.sch: `(vehicle MERCEDES_LORRY2 "MercedesR" 1 lorry
- * trucker …)`, `(vehicle VOLVO_TRACTOR1 "Volvo" 0 tractor trucker …)`, число — варіант фарбування) на тому ж автопілоті,
- * що й гравець (клавіша P): зʼявляються на дорогах завантажених регіонів за SPAWN_MIN…SPAWN_MAX від гравця, зникають
- * далі за DESPAWN або перекинувшись. Це повноцінні тіла фізики: зіткнення з ними — як з гравцем. Тягач — одразу з
- * напівпричепом (тип — як presents: SEMITRAILER1–6, SEMITANK1–4, у «Шторма» — URAGAN_SEMITRAILER; гіпотеза порту: у
- * king.exe ШІ бере причіп сам, як гравець). Возять вантажі, як далекобійники ІІ king.exe (traffic/freight.ts): порожній —
- * до найближчого складу на місце з замовленням, там вантажиться, везе за маршрутом мережі до складу призначення,
- * розвантажується й бере наступне; на старті — половина вже з вантажем.
+ * Далекобійники-суперники HT2: у світі їх 50 (`ENV/GAME.CNF`: `(playertypes … (aitruck 50))`), імена — `names.sch`
+ * (`("ВИТАЛИЙ" male trucker 1)`). Кожен існує весь час (traffic/fleet.ts: рейс і позиція на мережі доріг; далеко —
+ * абстрактний рух уздовж ліній). Ближче PHYS_ON у завантаженому регіоні водій стає машиною (вантажівки з кузовом і
+ * тягачі класу trucker типів lorry і tractor з evehicles.sch: `(vehicle MERCEDES_LORRY2 "MercedesR" 1 lorry trucker …)`,
+ * `(vehicle VOLVO_TRACTOR1 "Volvo" 0 tractor trucker …)`, число — варіант фарбування) на тому ж автопілоті, що й гравець
+ * (клавіша P), з тим самим рейсом і вантажем; далі PHYS_OFF — знову абстрактний з позицією, де була машина. Машин
+ * одночасно — не більше max (4 × повзунок трафіку), ближчі — першими. Це повноцінні тіла фізики: зіткнення з ними — як з
+ * гравцем. Тягач — з напівпричепом (тип — як presents: SEMITRAILER1–6, SEMITANK1–4, у «Шторма» — URAGAN_SEMITRAILER;
+ * гіпотеза порту: у king.exe ШІ бере причіп сам, як гравець). Возять вантажі, як далекобійники ІІ king.exe
+ * (traffic/freight.ts): порожній — до найближчого складу на місце з замовленням, там вантажиться, везе за маршрутом
+ * мережі до складу призначення, розвантажується й бере наступне.
  */
 const MAX = 4;
-/** Найманий водій гравця стає машиною ближче HIRED_ON і знову абстрактним далі HIRED_OFF, м (career/hired.ts). */
-const HIRED_ON = 300;
-const HIRED_OFF = 450;
-const SPAWN_MIN = 140;
-const SPAWN_MAX = 450;
-const DESPAWN = 650;
-/** Частка ботів, що зʼявляються вже з вантажем (порт). */
-const START_LOADED = 0.5;
+/** Скільки далекобійників у світі (GAME.CNF aitruck). */
+export const AITRUCK = 50;
+/**
+ * Водій (і найманий гравця, career/hired.ts) стає машиною ближче PHYS_ON і знову абстрактним далі PHYS_OFF, м (king.exe:
+ * фізична — ближче 80 м, кінематична — до туману; порт кінематичних вантажівок не має).
+ */
+const PHYS_ON = 300;
+const PHYS_OFF = 450;
+/** На старті водії стоять не ближче за стільки від гравця, м. */
+const START_AWAY = 150;
+/** Машиною — не ближче за стільки від гравця й інших машин, м. */
+const FREE_R = 30;
+/** Перевірка, кому стати машиною, — раз на стільки, с. */
+const PROMOTE_EVERY = 0.5;
 /** Стоїть довше — застряг, с. */
 const STUCK_FOR = 30;
+/** Після перекидання чи застрягання — абстрактний щонайменше стільки, с, і машиною лише поза видимістю. */
+const HOLD = 20;
 
 export interface Rival {
   name: string;
@@ -58,6 +68,8 @@ export interface Rival {
   job: FreightJob | null;
   /** Запис vehicle.tech машини (місткість кузова для замовлень). */
   rec: ReturnType<typeof drivable>[number];
+  /** Далекобійник світу (traffic/fleet.ts), чия це машина; null — найманий гравця чи тестова машина. */
+  member: FleetMember | null;
 }
 
 /** Точки вздовж тягача й причепа — одне тіло для обʼїзду. */
@@ -83,7 +95,12 @@ export class Truckers {
   readonly list: Rival[] = [];
   /** Наймані водії гравця, що зараз машиною на дорозі (за іменем; career/hired.ts). */
   readonly hired = new Map<string, Rival>();
-  private timer = 0;
+  /** До наступної перевірки, кому стати машиною, с (1e9 — нікому: тести в браузері). */
+  timer = 0;
+  /** Усі далекобійники світу (створюються в першому after — біля гравця не ставимо). */
+  fleet: Fleet | null = null;
+  private saved: readonly SavedTrucker[] | null = null;
+  private recs: ReturnType<typeof drivable> | null = null;
   /** Фари вночі (drive: як у трафіку, за годиною й повзунками графіки). */
   lights = false;
   /** Шукати машину для прожекторів фар (drive.updateCarLamp) і чи віддано їх найближчій зустрічній (this.spot). */
@@ -91,7 +108,6 @@ export class Truckers {
   spotTaken = false;
   /** Найближча зустрічна з фарами ближче SPOT_RANGE: точки фар, напрям, відстань — кандидат на прожектори. */
   spot: { left: THREE.Vector3; right: THREE.Vector3; dir: THREE.Vector3; dist: number; rig: Rival } | null = null;
-  private nameIndex = Math.floor(Math.random() * 51);
 
   constructor(
     private readonly drive: Ht2Drive,
@@ -104,6 +120,8 @@ export class Truckers {
     private readonly semis: SemiKind[] = [],
     /** Склади й товари для рейсів (null — без рейсів, вантаж — випадкова частка місткості). */
     readonly freight: Freight | null = null,
+    /** Скільки далекобійників у світі (GAME.CNF aitruck). */
+    private readonly size = AITRUCK,
   ) {}
 
   /** Моделі машин далекобійників (evehicles.sch, клас trucker; за кожен варіант фарбування) — частка X. */
@@ -138,16 +156,19 @@ export class Truckers {
    */
   syncHired(want: readonly { name: string; carNode: string; pos: THREE.Vector3; forward: THREE.Vector3 }[], player: THREE.Vector3): void {
     const names = new Set(want.map((w) => w.name));
+    // Найнятий — уже не вільний далекобійник світу: його веде career/hired.ts (king.exe — той самий запис, порт — окремо).
+    for (let i = this.list.length - 1; i >= 0; i--) if (this.list[i].member && names.has(this.list[i].name)) this.demote(i, false);
+    for (const m of this.fleet?.members ?? []) m.off = names.has(m.name);
     for (const [name, r] of this.hired) {
-      const far = r.truck.visual.position.distanceTo(player) > HIRED_OFF;
+      const far = r.truck.visual.position.distanceTo(player) > PHYS_OFF;
       const line = this.roads.nearest(r.truck.visual.position);
       if (!names.has(name) || far || (line && !this.loaded(line.line.region)) || r.truck.body.translation().y < -500) this.dropHired(name);
     }
     for (const w of want) {
-      if (this.hired.has(w.name) || w.pos.distanceTo(player) > HIRED_ON) continue;
+      if (this.hired.has(w.name) || w.pos.distanceTo(player) > PHYS_ON) continue;
       const line = this.roads.nearest(w.pos);
       if (!line || !this.loaded(line.line.region)) continue;
-      const rec = drivable(this.drive.trucksData).find((r) => r.carNode === w.carNode);
+      const rec = this.records().find((r) => r.carNode === w.carNode);
       const r = rec && this.make(rec, 0, w.pos, w.forward, w.name);
       if (r) this.hired.set(w.name, r);
     }
@@ -164,8 +185,13 @@ export class Truckers {
     this.hired.delete(name);
   }
 
-  /** Машина далекобійника з автопілотом у точці дороги. */
-  make(rec: ReturnType<typeof drivable>[number], variant: number, at: THREE.Vector3, forward: THREE.Vector3, name: string): Rival | null {
+  /** Записи vehicle.tech, якими можна їздити. */
+  private records(): ReturnType<typeof drivable> {
+    return (this.recs ??= drivable(this.drive.trucksData));
+  }
+
+  /** Машина далекобійника з автопілотом у точці дороги; semi — напівпричіп тягача (не задано — випадковий). */
+  make(rec: ReturnType<typeof drivable>[number], variant: number, at: THREE.Vector3, forward: THREE.Vector3, name: string, semi?: SemiKind | null): Rival | null {
     const def = truckDef(this.drive.trucksData, rec);
     const model = def && buildTruckModel(this.drive.trucksData.asm, def, true);
     if (!def || !model) return null;
@@ -176,23 +202,29 @@ export class Truckers {
     const pilot = kingPilot(new AutoPilot(this.roads), truck.base);
     pilot.cruise = 50 + Math.random() * 25;
     pilot.dodge = false;
-    const trailer = rec.group === 'tractors' ? this.hitch(truck, rec) : null;
+    const kind = semi === undefined ? this.pickSemi(rec) : semi;
+    const trailer = rec.group === 'tractors' && kind ? this.hitch(truck, rec, kind) : null;
     // З напівпричепом — повільніше в поворотах, як автопілот гравця (drive: команда autopilot).
     if (trailer) Object.assign(pilot, { cruise: 45 + Math.random() * 10, bendGain: 5, bendFloor: 0.25 });
     const faras: [THREE.Vector3, THREE.Vector3] = [g2t(rec.faraFL), g2t(rec.faraFR)];
-    return { name, truck, pilot, bad: 0, trailer, idle: 0, setSwitch: model.setSwitch, faras, lit: false, pool: null, job: null, rec };
+    return { name, truck, pilot, bad: 0, trailer, idle: 0, setSwitch: model.setSwitch, faras, lit: false, pool: null, job: null, rec, member: null };
   }
 
-  /** Напівпричіп тягача (як drive.hitch): тип — випадковий з presents, у «Шторма» — свій; вантаж — частка місткості. */
-  private hitch(truck: TruckVehicle, rec: ReturnType<typeof drivable>[number]): Trailer | null {
+  /** Тип напівпричепа для тягача: випадковий з presents, у «Шторма» — свій (вантажівці — null). */
+  private pickSemi(rec: ReturnType<typeof drivable>[number]): SemiKind | null {
+    if (rec.group !== 'tractors') return null;
     const storm = /^Storm/i.test(rec.carNode);
     const pool = this.semis.filter((k) => /^STrailerStorm$/i.test(k.carNode) === storm);
-    const kind = pool[Math.floor(Math.random() * pool.length)];
+    return pool[Math.floor(Math.random() * pool.length)] ?? null;
+  }
+
+  /** Напівпричіп тягача (як drive.hitch); вантаж — частка місткості (з рейсами — ставить loadCargo). */
+  private hitch(truck: TruckVehicle, rec: ReturnType<typeof drivable>[number], kind: SemiKind): Trailer | null {
     const trucks = this.drive.trucksData;
-    const tr = kind && trucks.records.find((r) => r.carNode.toLowerCase() === kind.carNode.toLowerCase());
+    const tr = trucks.records.find((r) => r.carNode.toLowerCase() === kind.carNode.toLowerCase());
     const def = tr && truckDef(trucks, tr);
-    if (!kind || !tr || !def) return null;
-    // З рейсами вантаж ставить startJob; без них — випадкова частка місткості.
+    if (!tr || !def) return null;
+    // З рейсами вантаж ставить loadCargo; без них — випадкова частка місткості.
     const cargo = this.freight ? 0 : Math.min(tr.cargoLoad, rec.cargoLoad || tr.cargoLoad) * (0.3 + 0.7 * Math.random());
     const paint = kind.cluster > 0 ? (root: THREE.Object3D) => recolor(root, trucks, kind.cluster + 1) : undefined;
     const trailer = new Trailer(this.drive.rapierWorld, trucks.asm, def, tr, { body: truck.body, saddle: rec.lowSaddle }, cargo, paint);
@@ -207,42 +239,29 @@ export class Truckers {
 
   /** Місткість машини бота для замовлень: причіп (якщо є) чи кузов. */
   capacity(r: Rival): FreightCapacity {
-    const t = r.trailer?.rec ?? r.rec;
-    return { mass: t.cargoLoad, volume: Math.max(1, t.bodySquare * t.bodyHeight), tanker: r.trailer?.rec.trailerType === 3, trailer: !!r.trailer };
+    return capacityOf(r.rec, r.trailer?.rec ?? null);
   }
 
-  /**
-   * Перший рейс нового бота: з імовірністю START_LOADED — уже з вантажем випадкового складу до іншого (вантаж у причепі),
-   * інакше порожній — до найближчого складу (порт: king.exe розставляє своїх 50 далекобійників на початку гри, ми — довкола
-   * гравця).
-   */
-  startJob(r: Rival): void {
-    const f = this.freight;
-    if (!f) return;
-    const cap = this.capacity(r);
-    // Від тіла: візуал новоствореної машини ще не синхронізовано.
-    const t = r.truck.body.translation();
-    const pos = new THREE.Vector3(t.x, t.y, t.z);
-    let job: FreightJob | null = null;
-    if (Math.random() < START_LOADED && f.stores.length > 1) {
-      const from = f.stores[Math.floor(Math.random() * f.stores.length)];
-      const order = makeOrders(from, f.stores, f.goodsList, cap, Math.random, 1, cap.tanker, 0, cap.trailer)[0];
-      job = order ? f.sendLoaded(order) : null;
-      if (job) this.loadCargo(r, order.goods.mass * order.units);
-    }
-    this.setJob(r, job ?? f.sendEmpty(pos, cap));
+  /** Місткість машини далекобійника світу (з його напівпричепом, навіть коли він абстрактний). */
+  private memberCapacity(m: FleetMember): FreightCapacity {
+    const rec = this.records().find((r) => r.carNode === m.model);
+    const semi = m.semi;
+    const tr = semi ? this.drive.trucksData.records.find((r) => r.carNode.toLowerCase() === semi.carNode.toLowerCase()) : undefined;
+    return rec ? capacityOf(rec, tr ?? null) : { mass: 0, volume: 1, tanker: false, trailer: false };
   }
 
-  /** Рейс боту: маршрут автопілота й точка зупинки (місце складу). */
+  /** Рейс боту: маршрут автопілота й точка зупинки (місце складу); у далекобійника світу — і в його запис. */
   setJob(r: Rival, job: FreightJob): void {
     r.job = job;
+    if (r.member) r.member.job = job;
     // Лінії мережі другої гри (RoadLine) — ті самі обʼєкти, що бачить автопілот (WayLine).
     r.pilot.choose = this.freight?.route(job) as AutoPilot['choose'];
     r.pilot.halt = job.goal;
   }
 
   /** Вантаж у машині бота, кг: у причепі — маса й вага на сідлі тягача (кузов вантажівки — без зміни маси, порт). */
-  private loadCargo(r: Rival, mass: number): void {
+  loadCargo(r: Rival, mass: number): void {
+    if (r.member) r.member.cargo = mass;
     const t = r.trailer;
     if (!t) return;
     t.setCargo(mass);
@@ -280,8 +299,11 @@ export class Truckers {
     });
   }
 
-  /** Після кроку: візуал, поява й зникнення. */
-  after(dt: number, player: THREE.Vector3, alpha = 1): void {
+  /**
+   * Після кроку: візуал, рейси машин, перехід машина ↔ абстрактний; playerSpeed — швидкість гравця, м/с (абстрактні
+   * їдуть не повільніше за неї, king.exe prescribeAdvance).
+   */
+  after(dt: number, player: THREE.Vector3, alpha = 1, playerSpeed = 0): void {
     for (const r of this.rigs) {
       // Розрив зчіпки (складання, перекидання) — причіп прибираємо (гіпотеза порту: у king.exe лишається на дорозі).
       if (r.trailer?.broken) this.unhitch(r);
@@ -302,43 +324,105 @@ export class Truckers {
       const up = new THREE.Vector3(0, 1, 0).applyQuaternion(r.truck.visual.quaternion).y;
       r.bad = up < 0.5 ? r.bad + dt : 0;
       r.idle = r.truck.speedKmh < 2 ? r.idle + dt : 0;
-      // Застряг (уперся після удару, причіп зачепився) — прибрати, щойно не видно (як трафік; порт).
+      // Застряг (уперся після удару, причіп зачепився) — абстрактним, щойно не видно (як трафік; порт).
       const stuck = r.idle > STUCK_FOR && !(this.drive.traffic?.view?.sees(r.truck.visual.position) ?? false);
-      const far = stuck || r.truck.visual.position.distanceTo(player) > DESPAWN;
+      const far = r.truck.visual.position.distanceTo(player) > PHYS_OFF;
       const line = this.roads.nearest(r.truck.visual.position);
-      if (far || r.bad > 3 || (line && !this.loaded(line.line.region)) || r.truck.body.translation().y < -500) this.remove(i);
+      const fell = r.truck.body.translation().y < -500;
+      if (stuck || far || r.bad > 3 || fell || (line && !this.loaded(line.line.region))) this.demote(i, stuck || r.bad > 3, fell);
     }
-    if ((this.timer -= dt) > 0 || this.list.length >= this.max) return;
-    this.timer = 2;
-    this.spawn(player);
+    this.fleetStep(dt, player, playerSpeed);
   }
 
-  private spawn(player: THREE.Vector3): void {
-    // Не на під'їздах заправок і СТО (порт, world/roads markStations) і не на зрізалках (markShortcuts).
-    const lines = this.roads.lines.filter((l) => !l.station && !l.shortcut && this.loaded(l.region));
-    const all = drivable(this.drive.trucksData);
+  /** Відновити далекобійників світу зі збереження кар'єри (до першого after). */
+  restore(saved: readonly SavedTrucker[]): void {
+    if (!this.fleet) this.saved = saved;
+  }
+
+  /** Стан далекобійників світу для збереження (машини — з поточною позицією). */
+  snapshot(): SavedTrucker[] | undefined {
+    if (!this.fleet) return this.saved ? [...this.saved] : undefined;
+    for (const r of this.list) if (r.member) this.fleet.place(r.member, r.truck.visual.position, r.truck.forward().setY(0).normalize());
+    return this.fleet.snapshot();
+  }
+
+  /** Усі далекобійники світу: збережені чи нові на випадкових дорогах (машина — з evehicles.sch класу trucker). */
+  private makeFleet(player: THREE.Vector3): Fleet | null {
+    const all = this.records();
     const pool = this.kinds.length
-      ? this.kinds.map((k) => ({ rec: all.find((r) => r.carNode === k.model)!, variant: k.variant }))
-      : all.filter((r) => r.group === 'lorries').map((rec) => ({ rec, variant: 0 }));
-    if (!lines.length || !pool.length) return;
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const line: RoadLine = lines[Math.floor(Math.random() * lines.length)];
-      const seg = Math.floor(Math.random() * (line.pts.length - 1));
-      const a = line.pts[seg];
-      const b = line.pts[seg + 1];
-      const d = a.distanceTo(player);
-      if (d < SPAWN_MIN || d > SPAWN_MAX) continue;
-      if (this.list.some((r) => r.truck.visual.position.distanceTo(a) < 40)) continue;
-      const { rec, variant } = pool[Math.floor(Math.random() * pool.length)];
-      const forward = b.clone().sub(a).setY(0).normalize();
-      const name = this.names.length ? this.names[this.nameIndex++ % this.names.length] : rec.carNode;
-      const r = this.make(rec, variant, a, forward, name);
-      if (r) {
-        this.list.push(r);
-        this.startJob(r);
+      ? this.kinds.filter((k) => all.some((r) => r.carNode === k.model))
+      : all.filter((r) => r.group === 'lorries').map((r) => ({ model: r.carNode, variant: 0 }));
+    if (!pool.length) return null;
+    const f = new Fleet(this.roads, this.freight, (m) => this.memberCapacity(m));
+    if (this.saved?.length) f.restore(this.saved.filter((v) => all.some((r) => r.carNode === v.model)), this.semis);
+    else {
+      const lines = f.startLines();
+      for (let i = 0; i < this.size; i++) {
+        const k = pool[Math.floor(Math.random() * pool.length)];
+        const rec = all.find((r) => r.carNode === k.model)!;
+        const name = this.names.length ? this.names[i % this.names.length] : rec.carNode;
+        f.add(name, k.model, k.variant, this.pickSemi(rec), player, START_AWAY, lines);
       }
-      return;
     }
+    this.saved = null;
+    return f;
+  }
+
+  /**
+   * Далекобійники світу: абстрактний рух і рейси; ближчі PHYS_ON у завантаженому регіоні стають машинами (ближчі —
+   * першими, не більше max).
+   */
+  private fleetStep(dt: number, player: THREE.Vector3, playerSpeed: number): void {
+    const f = (this.fleet ??= this.makeFleet(player));
+    if (!f) return;
+    f.tick(dt, Math.max(HIRED_MIN_SPEED, playerSpeed));
+    if ((this.timer -= dt) > 0) return;
+    this.timer = PROMOTE_EVERY;
+    if (this.list.length >= this.max) return;
+    const near = f.members
+      .filter((m) => !m.physical && !m.off && m.hold <= 0 && this.loaded(m.line.region))
+      .map((m) => ({ m, ...f.at(m) }))
+      .map((c) => ({ ...c, d: c.pos.distanceTo(player) }))
+      .filter((c) => c.d < PHYS_ON)
+      .sort((a, b) => a.d - b.d);
+    for (const c of near) {
+      if (this.list.length >= this.max) break;
+      if (c.d < FREE_R || this.rigs.some((r) => r.truck.visual.position.distanceTo(c.pos) < FREE_R)) continue;
+      if (c.m.hidden && (this.drive.traffic?.view?.sees(c.pos) ?? false)) continue;
+      this.materialize(c.m, c.pos, c.forward);
+    }
+  }
+
+  /** Далекобійник світу стає машиною: та сама модель, напівпричіп, вантаж і рейс. */
+  private materialize(m: FleetMember, pos: THREE.Vector3, forward: THREE.Vector3): void {
+    const rec = this.records().find((r) => r.carNode === m.model);
+    const r = rec && this.make(rec, m.variant, pos, forward, m.name, m.semi);
+    if (!r) return;
+    r.member = m;
+    m.physical = true;
+    m.hidden = false;
+    this.list.push(r);
+    if (!m.job) this.fleet?.startJob(m);
+    this.loadCargo(r, m.cargo);
+    if (m.job) this.setJob(r, m.job);
+  }
+
+  /**
+   * Машина знову абстрактна: позиція — проєкція на свою смугу, рейс і вантаж лишаються (напівпричіп, відірваний у
+   * машини, повертається — порт). trouble — перекинулась чи застрягла: машиною знову не раніше HOLD і поза видимістю.
+   */
+  private demote(i: number, trouble: boolean, lost = false): void {
+    const r = this.list[i];
+    const m = r.member;
+    if (m && this.fleet) {
+      if (!lost) this.fleet.place(m, r.truck.visual.position, r.truck.forward().setY(0).normalize());
+      m.physical = false;
+      if (trouble || lost) {
+        m.hold = HOLD;
+        m.hidden = true;
+      }
+    }
+    this.remove(i);
   }
 
   /**
@@ -394,7 +478,7 @@ export class Truckers {
     this.list.splice(i, 1);
   }
 
-  /** Найближчий суперник у межах dist, м. */
+  /** Найближчий суперник-машина в межах dist, м. */
   nearest(p: THREE.Vector3, dist = 40): Rival | null {
     let best: Rival | null = null;
     let bd = dist;
@@ -412,4 +496,10 @@ export class Truckers {
     for (let i = this.list.length - 1; i >= 0; i--) this.remove(i);
     for (const name of [...this.hired.keys()]) this.dropHired(name);
   }
+}
+
+/** Місткість для замовлень: причіп (якщо є) чи кузов; цистерна — причіп типу 3. */
+function capacityOf(rec: ReturnType<typeof drivable>[number], trailer: ReturnType<typeof drivable>[number] | null): FreightCapacity {
+  const t = trailer ?? rec;
+  return { mass: t.cargoLoad, volume: Math.max(1, t.bodySquare * t.bodyHeight), tanker: trailer?.trailerType === 3, trailer: !!trailer };
 }

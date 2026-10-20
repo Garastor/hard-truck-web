@@ -4,6 +4,7 @@ import type { RivalRun } from './competition';
 import type { HiredDriver } from './company';
 import type { SavedPresent, TrailerChoice } from '../vehicles/presents';
 import type { OrderedCar } from './market';
+import type { SavedTrucker } from '../traffic/fleet';
 
 /**
  * Кар'єра Дальнобойщиків 2 (перша версія): гроші, вантажівка, стан, поточне замовлення, ігровий час. Зберігається в
@@ -87,6 +88,8 @@ export interface Ht2Career {
   radars?: number[];
   /** Ціна моделі нової — для відшкодування за крадену (0,8 ціни). */
   truckPrice?: number;
+  /** Далекобійники світу (traffic/fleet.ts): де кожен їде, рейс і вантаж. */
+  fleet?: SavedTrucker[];
   /** Остання позиція (координати гри) і склад, де стоїмо. */
   pos?: [number, number, number];
   heading?: [number, number];
