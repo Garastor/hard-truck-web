@@ -149,6 +149,12 @@ function modelMid(root: THREE.Object3D, fwd: THREE.Vector3): number {
 function viewFov(xpyramid: number): number {
   return THREE.MathUtils.radToDeg(2 * Math.atan((xpyramid / 2) * (3 / 4)));
 }
+/**
+ * Коробка над оком у системі моделі машини (clipRoof), м: півширина, низ і верх над оком, назад і вперед від ока.
+ * Козирок ScaniaR — на 0,24 м вище ока й на 1 м попереду.
+ */
+const CAB_ROOF: [number, number, number, number, number] = [1.3, 0.15, 3, 2, 2.5];
+const CAB_ROOF_CLIP = Array.from({ length: 6 }, () => new THREE.Plane());
 /** Запізнення камери за машиною, с (оригінал: відстань позаду = 8,8 м + 0,58 с × швидкість, повертається за ≈ 1,5 с). */
 const CHASE_LAG = 0.6;
 /**
@@ -2931,6 +2937,15 @@ export class Ht2Drive {
       this.cabParts = { rule: bySpace('rulespace'), speed: bySpace('speedspace'), tacho: bySpace('tachospace') };
       // Стрілки — на 10 см ближче до ока (лише глибина): на малій швидкості їх перекривала текстура панелі зліва.
       for (const n of [this.cabParts.speed, this.cabParts.tacho]) if (n) biasTowardCamera(n, NEEDLE_BIAS);
+      // Кермо — поверх панелі, без перевірки глибини: у ScaniaCab верх обода геометрично за верхом панелі й не
+      // малювався (гіпотеза: king.exe малює салон у порядку обʼєктів; звірено на око з користувачем). Матеріал —
+      // копія: текстура спільна з панеллю.
+      this.cabParts.rule?.traverse((o) => {
+        if (!(o instanceof THREE.Mesh)) return;
+        const mats = (Array.isArray(o.material) ? o.material : [o.material]).map((m: THREE.Material) => Object.assign(m.clone(), { depthTest: false }));
+        o.material = Array.isArray(o.material) ? mats : mats[0];
+        o.renderOrder = 10;
+      });
       // Скло (GlassKey, група 1) — завжди: його текстуру (краплі) малює GlassRain, суха — прозора.
       dyn.setSwitch('GlassKey', 1);
       this.cabSwitch = dyn.setSwitch;
@@ -2947,6 +2962,50 @@ export class Ht2Drive {
     }
   }
 
+  /** Машина, чиїм матеріалам задано площини CAB_ROOF_CLIP. */
+  private clipFor: TruckVehicle | null = null;
+
+  /**
+   * З кабіни не малювати модель машини над лобовим склом (на прохання користувача, власне — механізму оригіналу не
+   * знайдено): коробка CAB_ROOF у системі моделі над оком (козирок, дах спереду). У ScaniaR нижню грань зовнішнього
+   * козирка (текстура scania_kabfront1) око бачило майже з ребра — тонка зелена смуга через усе скло. Площини —
+   * спільні з копіями тієї ж моделі в трафіку, але коробка — лише біля ока гравця; поза кабіною — порожня.
+   */
+  private clipRoof(inside: boolean): void {
+    const v = this.truck.visual;
+    if (this.clipFor !== this.truck) {
+      this.clipFor = this.truck;
+      this.opts.renderer.localClippingEnabled = true;
+      v.traverse((o) => {
+        if (!(o instanceof THREE.Mesh)) return;
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+          if (m.clippingPlanes === CAB_ROOF_CLIP) continue;
+          m.clippingPlanes = CAB_ROOF_CLIP;
+          m.clipIntersection = true;
+          m.needsUpdate = true;
+        }
+      });
+    }
+    if (!inside) {
+      // Порожня коробка: «усередині» лише y > 1e9.
+      CAB_ROOF_CLIP[0].set(new THREE.Vector3(0, -1, 0), 1e9);
+      return;
+    }
+    const e = this.cockpit;
+    const [x, y0, y1, zBack, zFront] = CAB_ROOF;
+    // Нормалі — назовні коробки: фрагмент відсікається, коли він з відʼємного боку всіх шести площин.
+    const local: [number, number, number, number][] = [
+      [0, -1, 0, e.y + y0],
+      [0, 1, 0, -(e.y + y1)],
+      [1, 0, 0, -x],
+      [-1, 0, 0, -x],
+      [0, 0, 1, -(e.z + zBack)],
+      [0, 0, -1, e.z - zFront],
+    ];
+    v.updateWorldMatrix(true, false);
+    local.forEach(([nx, ny, nz, c], i) => CAB_ROOF_CLIP[i].set(new THREE.Vector3(nx, ny, nz), c).applyMatrix4(v.matrixWorld));
+  }
+
   /** Перемикачі кабіни; показаний антирадар (null — ще не задано). */
   private cabSwitch: ((name: string, group: number) => void) | null = null;
   private cabRadar: boolean | null = null;
@@ -2960,6 +3019,7 @@ export class Ht2Drive {
     // Крен кузова в поворотах з кабіни — на 30 % менший (на прохання користувача; капот і салон хиляться разом).
     this.truck.rollScale = inside ? COCKPIT_ROLL * cockpitCalm(this.truck.speedKmh) : 1;
     if (inside && !this.cab) void this.loadCab();
+    this.clipRoof(inside);
     // Модель машини з кабіни не ховається (king.exe: режим кабіни, 0x548120 → +0x2590, вимикає лише плями фар на
     // дорозі, 0x552940): крізь скло видно капот, а оболонку кабіни зсередини відсікають однобічні полігони.
     if (!this.cab) return;
