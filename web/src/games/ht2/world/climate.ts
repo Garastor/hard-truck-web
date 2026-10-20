@@ -74,7 +74,7 @@ export class Climate {
   /** Реальний час, с (пориви вітру, грім). */
   t = 0;
   /** Примусова погода (тест: `?weather=bad|good`): сталий показник w. */
-  private readonly fixed: number | null;
+  private fixed: number | null;
 
   constructor(
     /** Повзунок погоди 0…1 (типово 0,6): що більший, то частіше негода. */
@@ -86,6 +86,16 @@ export class Climate {
     // Початковий кут — wstart·2π, wstart = S·0,25 (TRUCK.INI wstart гра перезаписує повзунком).
     this.th1 = slider * 0.25 * TAU;
     this.fixed = forced === 'bad' ? 0.9 : forced === 'good' ? 0 : null;
+  }
+
+  /** Стала погода (меню вільної їзди): показник w або null — знову змінна. */
+  setFixed(w: number | null): void {
+    this.fixed = w;
+  }
+
+  /** Стала погода, якщо задана. */
+  get fixedW(): number | null {
+    return this.fixed;
   }
 
   update(realDt: number): void {

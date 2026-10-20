@@ -214,7 +214,7 @@ body.game-ht2 .drive-hud {
   padding: 6px 12px;
   border: 1px solid #8c8c8c;
   background: rgba(16, 18, 20, 0.62);
-  color: rgb(123, 255, 255);
+  color: var(--ht2-tech);
   font: 700 13px/1.25 Tahoma, Arial, sans-serif;
   white-space: pre;
   pointer-events: none;
@@ -744,4 +744,75 @@ div.ht2-mirror {
 .touch-ui > .touch-btn.brake,
 .touch-ui > .touch-btn.gas {
   z-index: 35;
+}
+
+/*
+ * Технічні написи порту (вікна modal.ts, рядок стану, налаштування вільної їзди) — зелений звичайний шрифт без
+ * піксельного ефекту (на прохання користувача; раніше — бірюзовий піксельний MENU.FON).
+ */
+:root {
+  --ht2-tech: rgb(120, 255, 120);
+}
+
+body.game-ht2 .career-box,
+body.game-ht2 .career-box h2,
+body.game-ht2 .career-box .career-actions button,
+body.game-ht2 .career-box .career-form label,
+body.game-ht2 .career-box .career-form input,
+body.game-ht2 .career-box .career-form select {
+  color: var(--ht2-tech);
+}
+
+body.game-ht2 .career-box {
+  font: 13px/18px Tahoma, Arial, sans-serif;
+}
+
+body.game-ht2 .career-box h2 {
+  font: 700 15px/20px Tahoma, Arial, sans-serif;
+}
+
+body.game-ht2 .career-box .career-actions button {
+  font: 700 14px/1 Tahoma, Arial, sans-serif;
+}
+
+body.game-ht2 .career-box .career-actions button.primary {
+  border-color: var(--ht2-tech);
+}
+
+/* Налаштування вільної їзди (ui/freeSettings.ts): підпис над списком, список на всю ширину й зручний для пальця. */
+.ht2-free .career-form label {
+  display: grid;
+  gap: 4px;
+}
+
+.ht2-free .career-form select {
+  width: 100%;
+  min-height: 40px;
+  font: 14px Tahoma, Arial, sans-serif;
+}
+
+.ht2-free .career-form option {
+  background: rgb(16, 18, 20);
+  color: var(--ht2-tech);
+}
+
+/* Телефон у ландшафті (низький екран): поля у дві колонки — усе вікно без прокручування. */
+@media (max-height: 520px) {
+  .ht2-free .career-box {
+    width: min(720px, 100%);
+    padding: 8px 14px;
+  }
+
+  .ht2-free .career-box h2 {
+    margin-bottom: 6px;
+  }
+
+  .ht2-free .career-form {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 12px;
+  }
+
+  .ht2-free .career-box .career-actions {
+    margin-top: 8px;
+  }
 }

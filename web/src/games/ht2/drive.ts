@@ -11,7 +11,7 @@ import { buildTruckModel, visibleBox, type TruckDef, type TruckModel } from './e
 import { Input, type Action, type Command } from './engine/input/input';
 import { GROUP_WORLD, addCollisionPolys, forgetSurfaces, g2t, groups, initRapier, surfaceAt } from './engine/physics/world';
 import { assoc, num, readSch, str, type SExpr } from './formats/sexpr';
-import { drivable, loadTrucks, truckDef, type Ht2Trucks } from './vehicles/trucks';
+import { drivable, loadTrucks, selectable, truckDef, type Ht2Trucks } from './vehicles/trucks';
 import { FOV } from './ui/viewer';
 import { Ht2World, toThree, yieldTask, type LoadedRegion } from './world/world';
 import { noFarClip } from './engine/render/farClip';
@@ -68,7 +68,7 @@ import { REPAIR_PER_PERCENT, restoreCareer, savedCareerRaw, type Ht2Career } fro
 import { HT2_MOD_REGIONS, readTextures } from './files';
 import { SFX_REF, saveSettings, steerGain, timeScale, type Ht2Settings } from './ui/settings';
 import { EscArt } from './ui/escArt';
-import { ukMessage, ukSign } from './ui/uk';
+import { ukMessage, ukName, ukSign } from './ui/uk';
 import { Obstacles, closedAxes, parseObstacles, type Obstacle } from './world/obstacles';
 import { EscMenu, type EscCommand } from './ui/escMenu';
 import { biasTowardCamera } from './engine/render/nearBias';
@@ -87,6 +87,7 @@ import { CarFires, enginePoint } from './traffic/carFires';
 import { Tablo } from './ui/tablo';
 import { applyTabloSkin, lcdLabel } from './ui/tabloSkin';
 import { Cards } from './ui/cards';
+import { GEAR_SVG, openFreeSettings, vehicleName, type FreeField } from './ui/freeSettings';
 
 /** «☰» — ліва група кнопок; нота — музика (значки кольору тексту). */
 const BURGER_SVG =
@@ -620,7 +621,7 @@ export class Ht2Drive {
     }
     const live = cnf ? assoc(assoc(cnf, 'playertypes')?.slice(1) ?? [], 'live') : undefined;
     const want = o.career?.truck || o.truck || (live ? str(live[2]) : 'ZilR');
-    const list = drivable(this.trucks);
+    const list = o.career ? drivable(this.trucks) : selectable(this.trucks);
     const rec = list.find((r) => r.carNode.toLowerCase() === want.toLowerCase()) ?? list[0];
     const def = rec && truckDef(this.trucks, rec);
     if (!def) throw new Error('Немає моделі вантажівки');
@@ -717,6 +718,10 @@ export class Ht2Drive {
       if (o.career.id) this.checkpoint = { id: o.career.id, raw: savedCareerRaw(o.career.id) };
       this.careerMode = new CareerMode(this, o.career, merch, messages, parseUpgrades(restable, true), parseTowns(regionMods), parseServices(regionMods));
       this.copBribes = copsTakeBribes(names);
+      this.accidents = this.makeAccidents();
+    }
+    // Міліція, мафія й гелікоптери — у кар'єрі й у вільній їзді (рівень розшуку — з меню-шестерні), не в гонці.
+    if (!o.race) {
       this.police = new Police(parseAmbushes(regionMods, this.world.regions.values()), {
         rapier: this.rapier,
         roads: this.roads,
@@ -741,7 +746,6 @@ export class Ht2Drive {
         propPositions: (name) => [...this.world.loaded.values()].flatMap((r) => (r.props.get(name) ?? []).map((o) => o.getWorldPosition(new THREE.Vector3()))),
         policeNear: (p, r) => this.police?.near(p, r) ?? false,
       });
-      this.accidents = this.makeAccidents();
       // Гелікоптери Ка-50 (Б11, re/notes/ht2/helicopters.md): модель k50 з TRUCKS.B3D, звук helicopterSound.
       this.copters = new Helicopters({
         rapier: this.rapier,
@@ -935,7 +939,17 @@ export class Ht2Drive {
       group.hidden = true;
       burger.classList.remove('on');
     });
-    this.hud.append(burger, group);
+    this.hud.append(burger);
+    // Вільна їзда: шестерня — машина, телепорт, погода, розшук (ui/freeSettings.ts, на прохання користувача).
+    if (!o.career && !o.race) {
+      const gear = document.createElement('button');
+      gear.className = 'ht2-hud-gear';
+      gear.setAttribute('aria-label', 'Налаштування вільної їзди');
+      gear.innerHTML = GEAR_SVG;
+      gear.addEventListener('click', () => this.openFreeSettings());
+      this.hud.append(gear);
+    }
+    this.hud.append(group);
     this.hudGroup = group;
     this.hudBurger = burger;
     document.addEventListener('pointerdown', this.onOutsideTap, true);
@@ -1930,7 +1944,8 @@ export class Ht2Drive {
 
   /** Інша вантажівка (купівля): нова модель і фізика на тому ж місці, свій бак, кабіна, фари. */
   changeTruck(carNode: string): void {
-    const rec = drivable(this.trucks).find((r) => r.carNode === carNode);
+    // Кар'єра купує лише вантажівки; вільна їзда (шестерня) — будь-яку машину, і легкову.
+    const rec = selectable(this.trucks).find((r) => r.carNode === carNode);
     const def = rec && truckDef(this.trucks, rec);
     if (!rec || !def) return;
     this.def = def;
@@ -1959,6 +1974,134 @@ export class Ht2Drive {
   /** Меню Esc: відкрити (пауза) чи закрити. Без графіки оригіналу — вихід, як раніше. */
   toggleEsc(): void {
     if (this.escMenu) return this.closeEsc();
+  /** Розшук у вільній їзді (меню-шестерня): міліція й мафія женуть, доки не затримають / пограбують чи не скасуєш. */
+  readonly freeWanted = { police: false, mafia: false };
+
+  /** Вікно налаштувань вільної їзди (шестерня): машина, телепорт до міста чи заправки, погода, розшук. */
+  openFreeSettings(): void {
+    if (this.freeOpen || this.rescue) return;
+    this.freeOpen = true;
+    this.freeWasPaused = this.paused;
+    this.paused = true;
+    // Однакові назви вантажівки з кузовом і тягача розрізняє позначка; легкові (і автобус) — без неї.
+    const kinds: Record<string, string> = { lorries: ' — з кузовом', tractors: ' — тягач' };
+    const vehicles = selectable(this.trucks).map((r) => ({ value: r.carNode, label: vehicleName(r.name) + (kinds[r.group] ?? '') }));
+    const places = this.teleportPlaces();
+    const weather = [
+      { value: 'auto', label: 'Змінна (як у грі)' },
+      { value: '0', label: 'Ясно' },
+      { value: '0.6', label: 'Хмарно' },
+      { value: '0.75', label: 'Дощ' },
+      { value: '0.9', label: 'Гроза' },
+    ];
+    const fixed = this.climate.fixedW;
+    const police = ['Немає', 'Погоня', 'Попередження', '«Будемо стріляти»', 'Вогонь'];
+    const mafia = ['Немає', 'Погоня', 'Попередження', 'Стрілянина'];
+    const goTo = (list: { value: string; pos: THREE.Vector3 }[], exact: boolean) => (v: string) => {
+      const p = list.find((x) => x.value === v);
+      if (p) void this.teleport(p.pos, exact);
+    };
+    const fields: FreeField[] = [
+      { label: 'Автомобіль', options: vehicles, value: () => this.def.carNode, set: (v) => this.changeTruck(v) },
+      { label: 'Телепорт до міста', options: places.towns, value: () => '', set: goTo(places.towns, false), closes: true },
+      { label: 'Телепорт до заправки', options: places.fuel, value: () => '', set: goTo(places.fuel, true), closes: true },
+      { label: 'Погода', options: weather, value: () => (fixed === null ? 'auto' : String(weather.find((w) => w.value !== 'auto' && Math.abs(Number(w.value) - fixed) < 0.01)?.value ?? 'auto')), set: (v) => this.climate.setFixed(v === 'auto' ? null : Number(v)) },
+      {
+        label: 'Розшук міліції',
+        options: police.map((label, i) => ({ value: String(i), label })),
+        value: () => String(this.freeWanted.police ? Math.max(1, this.police?.phase ?? 1) : 0),
+        set: (v) => {
+          this.freeWanted.police = v !== '0';
+          this.police?.setLevel(Number(v));
+        },
+      },
+      {
+        label: 'Розшук мафії',
+        options: mafia.map((label, i) => ({ value: String(i), label })),
+        value: () => String(this.freeWanted.mafia ? Math.max(1, this.mafia?.level ?? 1) : 0),
+        set: (v) => {
+          this.freeWanted.mafia = v !== '0';
+          this.mafia?.setLevel(Number(v));
+        },
+      },
+    ];
+    openFreeSettings(this.overlay, fields, () => {
+      this.freeOpen = false;
+      if (!this.teleporting) this.paused = this.freeWasPaused;
+    });
+  }
+  private freeOpen = false;
+  private freeWasPaused = false;
+  private teleporting = false;
+
+  /** Куди телепортувати: міста (склади з mod_*.sch) і Кільце (старт гонки в dr); заправки — з найближчим містом. */
+  private teleportPlaces(): { towns: { value: string; label: string; pos: THREE.Vector3 }[]; fuel: { value: string; label: string; pos: THREE.Vector3 }[] } {
+    const towns = this.mapPoints.filter((p) => p.kind === 'town' && p.label).map((p) => ({ value: '', label: ukName(p.label!), pos: p.pos }));
+    towns.sort((a, b) => a.label.localeCompare(b.label, 'uk'));
+    const ring = this.world.regions.get('dr')?.way.rooms.flatMap((r) => r.nodes).find((n) => n.name === 'start1_1');
+    if (ring) towns.unshift({ value: '', label: 'Кільце (гоночна траса)', pos: toThree(...ring.pos) });
+    towns.forEach((t, i) => (t.value = `t${i}`));
+    const nearest = (p: THREE.Vector3) => towns.filter((t) => !t.label.startsWith('Кільце')).reduce((a, b) => (a.pos.distanceTo(p) <= b.pos.distanceTo(p) ? a : b));
+    // У заправки кілька вузлів node_car_fuel (по колонці) — одна точка на заправку.
+    const stations: THREE.Vector3[] = [];
+    for (const p of this.mapPoints) if (p.kind === 'fuel' && !stations.some((q) => q.distanceTo(p.pos) < 80)) stations.push(p.pos);
+    const fuel = stations
+      .map((pos) => ({ pos, town: nearest(pos), km: 0 }))
+      .map((f) => ({ ...f, km: Math.round(f.pos.distanceTo(f.town.pos) / 100) / 10 }))
+      .sort((a, b) => a.town.label.localeCompare(b.town.label, 'uk') || a.km - b.km)
+      .map((f, i) => ({ value: `f${i}`, label: `Біля «${f.town.label}», ${f.km} км`, pos: f.pos }));
+    return { towns, fuel };
+  }
+
+  /**
+   * Телепорт (вільна їзда): гра на паузі, доки не завантажаться регіони місця; машина — на вісь найближчої дороги,
+   * exact — точно в точку (вузол заправки: вісь поруч могла йти крізь острівець колонок), курс — уздовж дороги.
+   */
+  async teleport(target: THREE.Vector3, exact = false): Promise<void> {
+    if (this.teleporting) return;
+    this.teleporting = true;
+    const was = this.freeOpen ? this.freeWasPaused : this.paused;
+    this.paused = true;
+    this.say('ПЕРЕНЕСЕННЯ…');
+    try {
+      await this.world.ready(target.x, -target.z);
+      if (this.disposed) return;
+      this.rapier.step(); // колайдери нових регіонів потрапляють у запити лише після кроку
+      // На саму вісь: міста — вузли складу біля вантажної платформи, зсув на праву смугу ставив машину на її край.
+      const s = this.roadPoint(target, this.truck.forward(), false);
+      const first = s && !exact ? s : { position: this.roadGround(target), forward: s?.forward ?? this.truck.forward() };
+      // Місце, де машина не зачіпає будівель (поруч зі складом чи заправкою — стіни, колонки): далі вздовж дороги.
+      let spot = first;
+      for (const k of [0, 8, -8, 16, -16, 24, -24, 32, -32, 48, -48]) {
+        const c = k === 0 ? first : this.roadPoint(first.position.clone().addScaledVector(first.forward, k), first.forward, false);
+        if (c && this.spotClear(c.position, c.forward)) {
+          spot = c;
+          break;
+        }
+      }
+      this.truck.reset({ position: spot.position.clone(), forward: spot.forward.clone() });
+      this.trailer?.reset();
+      this.safe = spot;
+      this.skipHits = 3;
+    } finally {
+      this.teleporting = false;
+      // Вікно ще відкрите — пауза лишається (її зніме закриття вікна).
+      this.paused = this.freeOpen || was;
+    }
+  }
+
+  /** Чи вміститься машина в точці (позиція — як у reset: 2,5 м над землею) без нерухомих колізій довкола кузова. */
+  private spotClear(position: THREE.Vector3, forward: THREE.Vector3): boolean {
+    const box = visibleBox(this.truck.visual.userData.model?.body ?? this.truck.visual);
+    const size = box.getSize(new THREE.Vector3());
+    const half = { x: Math.max(0.8, size.x / 2), y: 1.1, z: Math.max(1.5, size.z / 2) };
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), forward.clone().setY(0).normalize());
+    // Від 0,7 м над землею (бордюри й нерівності не рахуються) до 2,9 м.
+    const center = { x: position.x, y: position.y - 2.5 + 0.7 + half.y, z: position.z };
+    const hit = this.rapier.intersectionWithShape(center, { x: q.x, y: q.y, z: q.z, w: q.w }, new RAPIER.Cuboid(half.x, half.y, half.z), undefined, undefined, undefined, undefined, (c) => c.parent()?.isFixed() ?? true);
+    return !hit;
+  }
+
     this.fPanels?.close();
     if (!this.escArt || this.rescue) return;
     if (this.worldMap && !this.worldMap.el.hidden) return;
@@ -2109,7 +2252,7 @@ export class Ht2Drive {
   /** Міліція (Б9): пости, погоня, попередження, стрілянина, затримання (traffic/police.ts, career/law.ts). */
   private updatePolice(dt: number): void {
     const cm = this.careerMode;
-    if (!this.police || !cm || this.paused) return;
+    if (!this.police || this.paused) return;
     const lv = this.truck.body.linvel();
     const events = this.police.update(dt, {
       body: this.truck.body,
@@ -2117,7 +2260,8 @@ export class Ht2Drive {
       forward: this.truck.forward(),
       vel: new THREE.Vector3(lv.x, 0, lv.z),
       // Заборонена зона (вогонь на ураження) — той самий лічильник розшуку.
-      wanted: wanted(cm.fines) || this.zone.hot,
+      // Вільна їзда — рівень з меню-шестерні (freeWanted), штрафів немає.
+      wanted: cm ? wanted(cm.fines) || this.zone.hot : this.freeWanted.police,
       stealth: this.tuning.stealth,
       glass: this.tuning.glass,
       stray: this.strayShot,
@@ -2341,9 +2485,10 @@ export class Ht2Drive {
   /** Гелікоптери Ка-50 (Б11) і заборонена зона db (traffic/helicopters.ts). */
   private updateCopters(dt: number): void {
     const cm = this.careerMode;
-    if (!this.copters || !cm || this.paused) return;
+    if (!this.copters || this.paused) return;
     const pos = this.truck.visual.position;
-    for (const e of this.zone.update(dt, this.world.loaded.values(), pos, cm.orderRegion() === 'aa')) {
+    // Заборонена зона — лише в кар'єрі (виняток — замовлення в Алмазний); у вільній їзді гелікоптер жене розшукуваного.
+    for (const e of cm ? this.zone.update(dt, this.world.loaded.values(), pos, cm.orderRegion() === 'aa') : []) {
       // mess 87, на пейджер без звуку (0x56ae60); шлях 3 → 2 → 1 — одразу вогонь (лічильник 34).
       if (e === 'warn') this.say('ЗАБОРОНЕНА ЗОНА. ВОГОНЬ НА УРАЖЕННЯ', 6);
       else if (e === 'fire') this.police?.escalate(4);
@@ -2370,18 +2515,18 @@ export class Ht2Drive {
   /** Мафія (Б10): на прицілі — борг мафії чи «цікавий мафії»; попередження, стрілянина, напад, міни. */
   private updateMafia(dt: number): void {
     const cm = this.careerMode;
-    if (!this.mafia || !cm || this.paused) return;
+    if (!this.mafia || this.paused) return;
     const lv = this.truck.body.linvel();
-    const f = cm.fines;
+    const f = cm?.fines;
     const events = this.mafia.update(dt, {
       body: this.truck.body,
       pos: this.truck.visual.position,
       forward: this.truck.forward(),
       vel: new THREE.Vector3(lv.x, 0, lv.z),
-      hunted: (f.mafiaDebt ?? 0) > 0 || !!f.mafiaInterest,
+      hunted: f ? (f.mafiaDebt ?? 0) > 0 || !!f.mafiaInterest : this.freeWanted.mafia,
       glass: this.tuning.glass,
       stray: this.strayShot,
-      share: cm.marketShare(),
+      share: cm?.marketShare() ?? 0,
     });
     for (const e of events) {
       if (e.kind === 'warn') this.say('ЗУПИНИ МАШИНУ! ТРЕБА ПОГОВОРИТИ', 6);
@@ -2391,9 +2536,16 @@ export class Ht2Drive {
           this.audio?.play('hit_bullet');
           this.ignite(0.1);
         }
-      } else if (e.kind === 'attack')
+      } else if (e.kind === 'attack') {
         // Після пограбування (0x56ad20, подія 3) — ролик trml.bne, якщо лишився прихований вантаж, потім завжди trmm.bne.
-        void cm.robbed().then((hidden) => this.clip(...(hidden ? ['trml.bne'] : []), 'trmm.bne'));
+        if (cm) void cm.robbed().then((hidden) => this.clip(...(hidden ? ['trml.bne'] : []), 'trmm.bne'));
+        else {
+          // Вільна їзда: грабувати нічого — ролик і кінець розшуку.
+          this.freeWanted.mafia = false;
+          this.say('ВАС ПОГРАБУВАЛА МАФІЯ');
+          void this.clip('trmm.bne');
+        }
+      }
       else if (e.kind === 'mine') {
         // Вибух міни (mineExplose, 0x56f240): поштовх угору в точці міни [Г: сила], звук mineSound.
         const m = this.truck.body.mass();
@@ -2404,8 +2556,9 @@ export class Ht2Drive {
   }
 
   private policeEvent(e: PoliceEvent): void {
-    const cm = this.careerMode!;
-    if (e.kind === 'speeding') cm.speeding(e.limit, e.speed, e.degree);
+    const cm = this.careerMode;
+    // Вільна їзда: штрафів немає — перевищення не рахується.
+    if (e.kind === 'speeding') cm?.speeding(e.limit, e.speed, e.degree);
     else if (e.kind === 'warn') {
       // mess.txt 54/55 і звуки police_01/02 (king.exe 0x56ad20).
       this.say(e.n === 1 ? 'НЕГАЙНО ЗУПИНІТЬ МАШИНУ' : 'ЗУПИНІТЬСЯ, АБО БУДЕМО СТРІЛЯТИ', 6);
@@ -2416,7 +2569,12 @@ export class Ht2Drive {
     } else if (e.kind === 'arrest') {
       this.zone.hot = false;
       // Затримання (0x56ad20, подія 2): картка, потім ролик trp.bne.
-      void cm.arrest().then((done) => (done ? this.clip('trp.bne') : undefined));
+      if (cm) void cm.arrest().then((done) => (done ? this.clip('trp.bne') : undefined));
+      else {
+        this.freeWanted.police = false;
+        this.say('ВАС ЗАТРИМАЛА МІЛІЦІЯ');
+        void this.clip('trp.bne');
+      }
     }
   }
 
@@ -2749,7 +2907,7 @@ export class Ht2Drive {
   }
 
   /** Точка на дорозі біля p: вісь WAY, дотична в бік курсу heading, зсув праворуч на 0,5·W − 1,5 м. */
-  private roadPoint(p: THREE.Vector3, heading: THREE.Vector3): { position: THREE.Vector3; forward: THREE.Vector3 } | null {
+  private roadPoint(p: THREE.Vector3, heading: THREE.Vector3, lane = true): { position: THREE.Vector3; forward: THREE.Vector3 } | null {
     // Закриту завалом дорогу оминаємо: найближча точка могла б опинитися в камінні (world/obstacles.ts).
     const n = this.roads.nearestAxis(p, true) ?? this.roads.nearestAxis(p);
     if (!n) return null;
@@ -2766,8 +2924,18 @@ export class Ht2Drive {
     const forward = pts[best + 1].clone().sub(pts[best]).setY(0).normalize();
     if (forward.dot(heading) < 0) forward.negate();
     const right = new THREE.Vector3(-forward.z, 0, forward.x);
-    const at = n.point.clone().addScaledVector(right, Math.max(0, 0.5 * n.axis.width - 1.5));
-    return { position: this.groundAt(at), forward };
+    const at = n.point.clone().addScaledVector(right, lane ? Math.max(0, 0.5 * n.axis.width - 1.5) : 0);
+    return { position: this.roadGround(at), forward };
+  }
+
+  /**
+   * Земля під точкою осі дороги (висота WAY — рівень дороги): промінь з 1,5 м над нею, щоб під навісом (склад,
+   * заправка) не стати на дах — groundAt починає з 4 м і зсередини навісу ставив машину на нього.
+   */
+  private roadGround(p: THREE.Vector3): THREE.Vector3 {
+    const hit = this.rapier.castRay(new RAPIER.Ray({ x: p.x, y: p.y + 1.5, z: p.z }, { x: 0, y: -1, z: 0 }), 20, true);
+    if (hit && hit.timeOfImpact > 0) return new THREE.Vector3(p.x, p.y + 1.5 - hit.timeOfImpact + 2.5, p.z);
+    return this.groundAt(p);
   }
 
   private async finishRescue(): Promise<void> {
