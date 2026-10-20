@@ -49,6 +49,12 @@ export interface Ht2Settings {
    */
   effects: number;
   detail: number;
+  /**
+   * Найбільша частота кадрів (порт, на прохання користувача): 60, 40 чи 30 — менше нагріву телефона ціною плавності
+   * (40 — рівно кожен третій кадр екрана 120 Гц). Перемикач — на місці вибору відеокарти меню «Графіка»
+   * (ui/menuScreens.ts FPS_MODES); не задано — 60.
+   */
+  fps?: number;
   /** Перепризначені клавіші з меню «Керування»: дія → KeyboardEvent.code (engine/input Input.bind). */
   keys?: Partial<Record<Action | Command, string>>;
   /** Версія збережених налаштувань (REV). */

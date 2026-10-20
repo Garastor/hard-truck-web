@@ -7,7 +7,8 @@ import { DEFAULT_KEYS, type Action, type Command } from '../engine/input/input';
  * координати — сцена 800×600, як у одиночної гри). Написи, які гра малює кодом, — українською (у фонах лишаються
  * оригінальні). Що в порту діє:
  * - графіка — роздільність 640×480…1600×1200 (висота кадру рендерера), «Автопошук» — за екраном пристрою; повзунки
- *   «спецефекти» й «детальність» — пороги ефектів king.exe (ui/effects.ts);
+ *   «спецефекти» й «детальність» — пороги ефектів king.exe (ui/effects.ts); на місці вибору відеокарти — частота
+ *   кадрів 30 / 40 / 60 (порт; `Ht2Settings.fps`, FPS_MODES);
  * - керування — таблиця 22 дій з клавішами порту; рядок дії порту — перепризначити клавішу (наступне натискання;
  *   зайнята іншою дією — обмін), «За замовчуванням» — типові;
  * - водії — логотип (`d/logo1…8`) і фото (`d/photo01…51`) поточного водія, поле імені (нове імʼя — новий водій),
@@ -17,6 +18,19 @@ import { DEFAULT_KEYS, type Action, type Command } from '../engine/input/input';
 
 /** Висота кадру для кнопок роздільності (`[DRVn] vpas/vpam/vpal/vpasl` king.exe). */
 export const RESOLUTION_H = [480, 600, 768, 1200];
+
+/** Щільність пікселів режиму «Баланс» — коли роздільність не вибрано (drive.ts resize). */
+export const BALANCE_DPR = 1.5;
+
+/** Кнопка роздільності, найближча до висоти кадру h (пікселі буфера). */
+export function nearestResolution(h: number): number {
+  let best = 0;
+  RESOLUTION_H.forEach((r, i) => (Math.abs(r - h) < Math.abs(RESOLUTION_H[best] - h) ? (best = i) : 0));
+  return best;
+}
+
+/** Частоти кадрів перемикача меню «Графіка» (Ht2Settings.fps): 40 — рівно кожен третій кадр екрана 120 Гц. */
+export const FPS_MODES = [30, 40, 60];
 
 const TEXT = 'color:#f0e896;font:600 12px/1 Arial,sans-serif;text-shadow:0 0 3px #000;white-space:nowrap;pointer-events:none;';
 
@@ -90,17 +104,30 @@ export function ht2GraphicsScreen(art: Ht2MenuArt, o: GraphicsScreen): () => voi
       },
     }),
   );
-  // Адаптер: у порту — один (WebGL).
-  painters.push(texButton(art, stage, 'aleft', 324, 263, 'Попередня відеокарта', { ext: '.msk', disabled: true, action: () => {} }));
-  painters.push(texButton(art, stage, 'aright', 536, 263, 'Наступна відеокарта', { ext: '.msk', disabled: true, action: () => {} }));
-  text(stage, 'WEBGL', 329, 257, { width: 255, size: 14 });
+  // На місці вибору відеокарти (у порту вона одна — WebGL) — частота кадрів (порт, на прохання користувача): менше —
+  // менше нагріву телефона. Стрілки — сусіднє значення FPS_MODES.
+  const fpsLabel = text(stage, '', 329, 257, { width: 255, size: 14 });
+  const fpsAt = () => Math.max(0, FPS_MODES.indexOf(s.fps ?? 60));
+  const stepFps = (d: number) => {
+    s.fps = FPS_MODES[Math.min(FPS_MODES.length - 1, Math.max(0, fpsAt() + d))];
+    o.onChange({ ...s });
+    repaint();
+  };
+  painters.push(texButton(art, stage, 'aleft', 324, 263, 'Частота кадрів: менше', { ext: '.msk', disabled: () => fpsAt() === 0, action: () => stepFps(-1) }));
+  painters.push(texButton(art, stage, 'aright', 536, 263, 'Частота кадрів: більше', { ext: '.msk', disabled: () => fpsAt() === FPS_MODES.length - 1, action: () => stepFps(1) }));
+  const paintFps = () => (fpsLabel.textContent = `${FPS_MODES[fpsAt()]} FPS`);
+  paintFps();
+  painters.push(paintFps);
   const res: [string, number, number, string][] = [
     ['small', 329, 293, '640×480'],
     ['med', 441, 293, '800×600'],
     ['large', 329, 330, '1024×768'],
     ['huge', 441, 330, '1600×1200'],
   ];
-  res.forEach(([tex, x, y, label], i) => painters.push(texButton(art, stage, `g/${tex}`, x, y, label, { selected: () => (s.resolution ?? 2) === i, action: () => pick(i), after: repaint })));
+  // Не вибрано — світиться та, що найближча до того, що діє насправді (drive.ts «Баланс», щільність ≤ BALANCE_DPR):
+  // на телефоні це ≈ 800×600; раніше світилась 1024×768, і вибір нижчих майже не змінював картинку.
+  const current = () => s.resolution ?? nearestResolution(Math.min(window.devicePixelRatio, BALANCE_DPR) * window.innerHeight);
+  res.forEach(([tex, x, y, label], i) => painters.push(texButton(art, stage, `g/${tex}`, x, y, label, { selected: () => current() === i, action: () => pick(i), after: repaint })));
   const set = (k: 'effects' | 'detail') => (v: number) => {
     s[k] = Math.round(Math.max(0, Math.min(1, v)) * 10) / 10;
     o.onChange({ ...s });

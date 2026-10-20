@@ -43,7 +43,7 @@ import { Dents, dentGeometry, hitEnergy } from './vehicles/dents';
 import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
 import { orderVehicle, vehicleOffers, vehiclePowers, vehiclePrices } from './career/carOrder';
 import { HIRED_MIN_SPEED, HiredOnRoads } from './career/hired';
-import { keyName, RESOLUTION_H } from './ui/menuScreens';
+import { BALANCE_DPR, keyName, RESOLUTION_H } from './ui/menuScreens';
 import { driverCosts, hiredLoad, upgradeDriver } from './career/company';
 import { routeLength } from './career/economy';
 import { terrainCollider } from './world/terrain';
@@ -109,9 +109,8 @@ const SPAWN_LANE = 1.75;
  * (S/M/L/H — 170…480 px: розмір за роздільністю, гіпотеза; ≈ 30 % ширини екрана — тут найдетальніша H, масштабована).
  * Вікно рамки H — x 10…469, y 10…159. Кут огляду — підібраний (у king.exe не знайдено).
  */
-/** Режим «Баланс» (оптимізація для телефона, як типовий у першій грі): частота кадрів і щільність пікселів. */
+/** Режим «Баланс» (оптимізація для телефона, як типовий у першій грі): частота кадрів; щільність — BALANCE_DPR (меню). */
 const MAX_FPS = 60;
-const BALANCE_DPR = 1.5;
 /** Дзеркало оновлюється не частіше (к/с): друге малювання світу — найдорожча частина виду з кабіни. */
 const MIRROR_FPS = 20;
 /** Скільки прожекторів буває в сцені: без фар, фари гравця, фари гравця й зустрічної (compileLit). */
@@ -258,6 +257,18 @@ const GROUND_RAY = groups(GROUP_WORLD, GROUP_WORLD);
  */
 function cabAmbient(hour: number): number {
   return 0.5 + 0.5 * Math.sin((hour * Math.PI) / 24) ** 2;
+}
+
+/** Найдовше очікування готовності шейдерів compileAsync, мс. */
+const COMPILE_WAIT = 2000;
+
+/**
+ * compileAsync з межею часу: шейдери вже створено (синхронна частина), чекаємо лише готовності. У Safari (iPhone)
+ * готовність (KHR_parallel_shader_compile) може не настати, доки програму не використано, — завантаження гри
+ * висіло б на «Підготовці шейдерів». Після межі — далі: недоготовану програму рендерер дочекається сам.
+ */
+function compileWithin(r: THREE.WebGLRenderer, root: THREE.Object3D, camera: THREE.Camera, scene: THREE.Scene): Promise<unknown> {
+  return Promise.race([r.compileAsync(root, camera, scene).catch(() => undefined), new Promise((res) => setTimeout(res, COMPILE_WAIT))]);
 }
 
 /** Звільнити GPU-ресурси салону: збирач CABINES не зберігається (loadCab), тож геометрія, матеріали й текстури — лише його. */
@@ -419,6 +430,8 @@ export class Ht2Drive {
   }
   private acc = 0;
   private last = performance.now();
+  /** Коли можна малювати наступний кадр (розклад межі частоти кадрів, frame), мс. */
+  private nextFrame = 0;
   /** Остання надійна точка на дорозі (для відновлення після падіння). */
   private safe: { position: THREE.Vector3; forward: THREE.Vector3 } | null = null;
   private safeTimer = 0;
@@ -1121,7 +1134,7 @@ export class Ht2Drive {
       for (const l of real) l.visible = false;
       this.warmLamps.forEach((l, i) => (l.visible = i < count));
       // compileAsync будує шейдери синхронно з поточними світлами — одразу після виклику стан можна повернути.
-      tasks.push(r.compileAsync(root, this.camera, scene).catch(() => undefined));
+      tasks.push(compileWithin(r, root, this.camera, scene));
       for (const l of this.warmLamps) l.visible = false;
       real.forEach((l, i) => (l.visible = was[i]));
       await yieldTask();
@@ -1143,7 +1156,7 @@ export class Ht2Drive {
       await this.compileLit(c);
     }
     // Салон — своя сцена зі своїм світлом (фари на нього не діють).
-    if (this.cab) await this.opts.renderer.compileAsync(this.cab, this.camera, this.overlayScene).catch(() => undefined);
+    if (this.cab) await compileWithin(this.opts.renderer, this.cab, this.camera, this.overlayScene);
   }
 
   /**
@@ -3116,9 +3129,13 @@ export class Ht2Drive {
    */
   private frame(time = performance.now()): void {
     const now = time;
-    // Не частіше за MAX_FPS: екрани 90/120 Гц інакше малюють у півтора-два рази частіше (допуск 2 мс — щоб 60 Гц
-    // не губили кадри через тремтіння таймера).
-    if (now - this.last < 1000 / MAX_FPS - 2) return;
+    // Не частіше за MAX_FPS (чи 30/40 к/с з меню «Графіка» — менше нагріву телефона): екрани 90/120 Гц інакше
+    // малюють у півтора-два рази частіше. Розклад кадрів (nextFrame += інтервал), а не «від попереднього»: 40 к/с на
+    // екрані 60 Гц — кадри через 2 і 1 оновлення по черзі (у середньому 40), а не 30; допуск 2 мс — тремтіння таймера.
+    const interval = 1000 / (this.opts.settings?.fps ?? MAX_FPS);
+    if (now < this.nextFrame - 2) return;
+    // Після паузи (вкладка у фоні, довгий кадр) — розклад від поточного моменту, без «наздоганяння».
+    this.nextFrame = Math.max(this.nextFrame + interval, now);
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.update(dt);
