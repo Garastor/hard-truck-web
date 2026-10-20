@@ -71,7 +71,8 @@ const ICONS = {
 
 /**
  * «Різко» (Ctrl) на сенсорному екрані (на прохання користувача; окремої кнопки немає): на кнопці керма — зсунути палець
- * у бік повороту на SHARP_SLIDE ширини кнопки (назад до SHARP_SLIDE_OFF — вимкнути), або сильно натиснути, де екран
+ * у бік повороту на SHARP_SLIDE ширини кнопки (назад до SHARP_SLIDE_OFF — вимкнути), на кнопці газу — угору на
+ * SHARP_SLIDE висоти (газ без антибукса — колеса можна зірвати, як Ctrl+газ king.exe), або сильно натиснути, де екран
  * міряє силу (3D Touch на iPhone: PointerEvent.pressure, без датчика — 0,5): від SHARP_FORCE, вимкнути нижче
  * SHARP_FORCE_OFF. Діє, доки кнопку тримають; кнопка в цей час мерехтить (клас sharp-on).
  */
@@ -420,7 +421,7 @@ export class Input {
     this.sharpGesture(btn('left', '', 'left', undefined, ICONS.left), -1);
     this.sharpGesture(btn('right', '', 'right', undefined, ICONS.right), 1);
     btn('brake', '', 'brake', undefined, ICONS.brake);
-    btn('gas', '', 'gas', undefined, ICONS.gas);
+    this.sharpGesture(btn('gas', '', 'gas', undefined, ICONS.gas), -1, 'y');
     // Група «ще» (згорнута): фари, дзеркало (лише з кабіни), двірники, двигун (клавіші L, M, W, пробіл) і сигнал;
     // кабіни 2D у другій грі немає — кнопку прибрано.
     const more = document.createElement('div');
@@ -456,8 +457,11 @@ export class Input {
 
   private touchUi: HTMLElement | null = null;
 
-  /** «Різко» на кнопці керма: зсув пальця в бік повороту dir (−1 ліворуч, 1 праворуч) чи сильне натискання. */
-  private sharpGesture(b: HTMLElement, dir: number): void {
+  /**
+   * «Різко» на кнопці: зсув пальця вздовж axis у бік dir (кермо — x: −1 ліворуч, 1 праворуч; газ — y: −1 угору) чи
+   * сильне натискання.
+   */
+  private sharpGesture(b: HTMLElement, dir: number, axis: 'x' | 'y' = 'x'): void {
     if (!this.profile?.sharp) return;
     let x0 = 0;
     let slide = false;
@@ -476,7 +480,7 @@ export class Input {
       else if (e.pressure < SHARP_FORCE_OFF) force = false;
     };
     b.addEventListener('pointerdown', (e) => {
-      x0 = e.clientX;
+      x0 = axis === 'x' ? e.clientX : e.clientY;
       slide = false;
       force = false;
       pressure(e);
@@ -484,8 +488,9 @@ export class Input {
     });
     b.addEventListener('pointermove', (e) => {
       if (!b.classList.contains('pressed')) return;
-      const w = Math.max(40, b.getBoundingClientRect().width);
-      const d = ((e.clientX - x0) * dir) / w;
+      const r = b.getBoundingClientRect();
+      const w = Math.max(40, axis === 'x' ? r.width : r.height);
+      const d = (((axis === 'x' ? e.clientX : e.clientY) - x0) * dir) / w;
       if (d >= SHARP_SLIDE) slide = true;
       else if (d < SHARP_SLIDE_OFF) slide = false;
       pressure(e);

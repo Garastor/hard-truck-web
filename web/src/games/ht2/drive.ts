@@ -1601,7 +1601,20 @@ export class Ht2Drive {
 
   private toggleTrailer(): void {
     const c = this.opts.career;
-    if (!c || !this.hitched || this.race || !this.presents) return;
+    if (!this.hitched || this.race) return;
+    // Вільна їзда (кинутих причепів — presents — немає): причіп зникає й зʼявляється знову на сідлі (порт; раніше
+    // клавіша тут мовчки нічого не робила).
+    if (!c || !this.presents) {
+      if (this.truck.speedKmh > 5) return this.say(this.trailer ? 'ЗУПИНІТЬСЯ, ЩОБ ВІДЧЕПИТИ ПРИЧІП' : 'ЗУПИНІТЬСЯ, ЩОБ ПРИЧЕПИТИ ПРИЧІП');
+      if (this.trailer) {
+        this.dropTrailer();
+        this.say('ПРИЧІП ВІДЧЕПЛЕНО');
+      } else {
+        this.hitch();
+        if (this.trailer) this.say('ПРИЧІП ПРИЧЕПЛЕНО');
+      }
+      return;
+    }
     if (this.trailer) {
       if (this.truck.speedKmh > 5) return this.say('ЗУПИНІТЬСЯ, ЩОБ ВІДЧЕПИТИ ПРИЧІП');
       this.dropTrailer();

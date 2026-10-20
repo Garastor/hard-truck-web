@@ -941,6 +941,7 @@ export class TruckVehicle {
     const wheels: KingWheel[] = [];
     const M = this.mass;
     const share = (M * KING.g) / this.wheels;
+    const statics = this.staticLoads();
     let onGround = 0;
     for (let i = 0; i < this.wheels; i++) {
       const nr = ctrl.wheelIsInContact(i) ? ctrl.wheelContactNormal(i) : null;
@@ -948,7 +949,7 @@ export class TruckVehicle {
         n.add(nr as THREE.Vector3Like);
         onGround++;
       }
-      wheels.push({ ground: !!nr, driven: this.driven[i], load: nr ? share * Math.abs(nr.y) : 0, mu, brake: KING.brakeLoad * share * this.brakeFactor });
+      wheels.push({ ground: !!nr, driven: this.driven[i], load: nr ? share * Math.abs(nr.y) : 0, mu, brake: KING.brakeLoad * statics[i] * this.brakeFactor });
     }
     if (!onGround || n.lengthSq() < 1e-6) {
       this.slip.fill(0);
@@ -971,15 +972,23 @@ export class TruckVehicle {
     const vn = v.dot(n);
     const vt = v.clone().addScaledVector(n, -vn);
     const vFwd = vt.dot(ft);
-    if (K.tires) this.tireLoads(dt, wheels, n, ft);
+    if (K.tires) {
+      this.tireLoads(dt, wheels, n, ft);
+      // Регулятор гальмівних сил (порт, на прохання користувача; у king.exe B_i = 1,5·N_ст): гальмо колеса — від його
+      // поточного навантаження, тож усі колеса блокуються разом (педаль > μ/1,5) і машину несе юзом прямо. Зі
+      // статичним гальмом розвантажений гальмуванням задок блокувався першим уже на педалі ≈ 0,26 — розвертало.
+      for (let i = 0; i < this.wheels; i++) if (wheels[i].ground) wheels[i].brake = KING.brakeLoad * wheels[i].load * this.brakeFactor;
+    }
 
     // Поздовжні сили: двигун і гальма; ручне — задні колеса на повну; кочення; мʼяке покриття понад його швидкість.
     // Без газу двигун лише гальмує (0x4aa320) — проти руху й до зупинки, з наростанням від нуля, як кочення: інакше
     // гальмування холостими обертами на передачі штовхало вантажівку з місця назад.
     const engineBraking = this.engine.throttle === 0;
     let drive = engineBraking ? 0 : this.engine.force;
-    // АПС (0x4ff660) не діє з Ctrl: у 0x4ff800 гілка «різко» ([0x2714] = 2) обмеження газу оминає.
-    if (this.tractionControl && drive > 0 && !sharp) {
+    // Антибукс (0x4ff660): газ ≤ 0,81 межі зчеплення ведучих. Газ із клавіші king.exe обмежує завжди (0x4ff800: гілка
+    // [0x2714] = 1 іде на 0x4ffc5d), без покращення; покращення ABS ([0x2754]) потрібне лише аналоговому газу — тут
+    // машинам без режиму шин (трафік). Ctrl («різко», [0x2714] = 2) обмеження оминає — колеса можна зірвати.
+    if ((this.tractionControl || K.tires) && drive > 0 && !sharp) {
       let grip = 0;
       for (const w of wheels) if (w.ground && w.driven) grip += w.mu * w.load;
       drive = Math.min(drive, 0.81 * grip);
@@ -1109,7 +1118,11 @@ export class TruckVehicle {
       const alpha = Math.atan2(Math.abs(lat), Math.abs(lon));
       // Колесо, що буксує (+1) чи заблоковане (−1), вбік не тримає (king.exe: у дампі такі колеса мають нульову
       // силу ковзання) — газ з Ctrl зриває задні ведучі, і задок заносить; гальмо блокує розвантажені колеса.
-      const size = this.slip[i] ? 0 : wheels[i].mu * sideMu * wheels[i].load * tireCurve(alpha, speed) * Math.min(1, Math.hypot(lat, lon));
+      // Заблоковане ж колесо (порт, на прохання користувача) ковзає юзом: тертя μ·N — проти всієї швидкості контакту,
+      // тож поперек — μ·N·sin α (уздовж гальмує wheelForces). Без цього розвантажений гальмуванням задок тягача
+      // блокувався й не тримав зовсім — машину розвертало на 70–80° до зупинки.
+      const m = wheels[i].mu * sideMu * wheels[i].load;
+      const size = this.slip[i] === -1 ? m * Math.abs(Math.sin(alpha)) : this.slip[i] ? 0 : m * tireCurve(alpha, speed) * Math.min(1, Math.hypot(lat, lon));
       // Сухе тертя (як 0x4f4110): імпульс колеса не більший, ніж гасить бічну швидкість його контакту, — з поділом на
       // число коліс (діють одночасно), щоб разом не перекинути знак.
       const arm = new THREE.Vector3().crossVectors(r, d).dot(n);
@@ -1158,6 +1171,33 @@ export class TruckVehicle {
    * Сили шин на рівні дороги (KING_COM_HEIGHT нижче ЦМ) кренять і хитають кузов; нерівність дороги (roadBump) —
    * під колесом. Сума N — не обовʼязково вага: кузов підстрибує (у записі — 28…69 кН при 65 кН).
    */
+  /**
+   * Статичне навантаження кожного колеса, Н (king.exe 0x4ef480 → [0x2650]): вага ділиться між осями за плечима від
+   * центру мас (передня — l_r/L, задні — l_f/L), усередині осі — порівну. Від нього — сила гальма колеса
+   * B_i = 1,5·N_ст (0x4ee540): у тягача без причепа задок легкий, і рівний поділ гальм блокував задні колеса вже на
+   * малій педалі — машину розвертало. Геометрія невдала — рівний поділ.
+   */
+  private staticLoads(): number[] {
+    const Mg = this.mass * KING.g;
+    const equal = new Array<number>(this.wheels).fill(Mg / this.wheels);
+    const com = this.body.localCom().z;
+    let f = 0;
+    let r = 0;
+    const nf = Math.min(2, this.wheels);
+    const nr = this.wheels - nf;
+    for (let i = 0; i < this.wheels; i++) {
+      const z = this.ctrl.wheelChassisConnectionPointCs(i)?.z;
+      if (z === undefined) return equal;
+      // Уперед — −z: плече передньої осі com − z, задніх z − com.
+      if (i < nf) f += com - z;
+      else r += z - com;
+    }
+    const lf = f / nf;
+    const lr = nr ? r / nr : 0;
+    if (!(lf > 0.3 && lr > 0.3)) return equal;
+    return equal.map((_, i) => (i < nf ? (Mg * lr) / (lf + lr) / nf : (Mg * lf) / (lf + lr) / nr));
+  }
+
   private tireLoads(dt: number, wheels: KingWheel[], n: THREE.Vector3, ft: THREE.Vector3): void {
     const c = this.body.worldCom();
     const com = new THREE.Vector3(c.x, c.y, c.z);
