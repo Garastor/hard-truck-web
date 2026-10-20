@@ -11,6 +11,7 @@ import type { TruckVehicle } from '../engine/vehicle/truckVehicle';
 import type { Ht2Trucks } from '../vehicles/trucks';
 import { disposePool, makePool, setPoolFade } from './headPools';
 import { markMover } from '../world/roomVisibility';
+import { Blinkers } from './blinkers';
 
 /**
  * Трафік Дальнобойщиків 2: машини з `evehicles.sch` класу `dumb` («тупі» легковики, автобус, пікапи) — запис
@@ -59,13 +60,6 @@ const PHYS_SPEED = 18;
  * лежать до ±1,3 м від настилу, тож модель «пливла» й підскакувала при переході у фізику). Замір раз на GROUND_EVERY с,
  * висота згладжена з GROUND_LAG с; модель піднята на REST_LIFT — як фізична машина на підвісці в спокої.
  */
-/**
- * Покажчики повороту — відступ порту на прохання користувача (у king.exe їх немає): відблиск оригінальної текстури
- * `Ka50_GlowO` (помаранчева мигалка Ка-50, TRUCKS.B3D) біля передніх фар і задніх вогнів (StopFaraKeyL/R) свого
- * боку, 1,5 Гц; коли — driver.turnSignal. Далеким абстрактним машинам — нічого.
- */
-const BLINK_HZ = 1.5;
-const BLINK_SIZE = 0.55;
 /** Справжній прожектор фар (drive.ts) — найближчій зустрічній машині з фарами ближче за SPOT_RANGE, м. */
 export const SPOT_RANGE = 90;
 /** Зустрічна: курс машини на гравця, косинус кута не менший за SPOT_FACING. */
@@ -191,14 +185,13 @@ export class Traffic {
     // king.exe 0x434780: період updateGhosts = 15^(1 − 0,7·T) · 2,667 с.
     this.ghostPeriod = Math.pow(15, 1 - 0.7 * config.density) * 2.667;
     this.totalLength = roads.lines.reduce((s, l) => s + l.length, 0);
+    this.blinkers = new Blinkers(trucks);
   }
 
   /** Фари машин, що зʼявляються (king.exe: при створенні — з 22:00 до 6:00; ставить режим їзди). */
   lights = false;
-  private blinkTime = 0;
-  private blinkMat: THREE.SpriteMaterial | null | undefined;
-  /** Точки покажчиків моделі (Three.js, від початку координат моделі): перед лів., зад лів., перед прав., зад прав. */
-  private readonly blinkPts = new Map<string, THREE.Vector3[] | null>();
+  /** Покажчики повороту (traffic/blinkers.ts; далеким абстрактним машинам — нічого). */
+  private readonly blinkers: Blinkers;
 
   /**
    * Справжні прожектори фар — найближчій зустрічній машині з фарами (точки лівої й правої фари й напрям, Three.js),
@@ -393,8 +386,7 @@ export class Traffic {
 
   /** Покажчики повороту: на моделі (кінематичній чи фізичній) — блимають, коли водій сигналить. */
   private updateSignals(dt: number): void {
-    this.blinkTime += dt;
-    const on = (this.blinkTime * BLINK_HZ) % 1 < 0.5;
+    this.blinkers.tick(dt);
     for (const c of this.cars) {
       const side = turnSignal(c);
       if (!side && !c.blink) continue;
@@ -402,76 +394,17 @@ export class Traffic {
       if (!host) continue;
       if (!c.blink || c.blink.parent !== host) {
         c.blink?.removeFromParent();
-        c.blink = this.makeBlink(c, host);
+        // Кінематична модель піднята обгорткою (frame) над початком координат root.
+        c.blink = this.blinkers.make(host, c.kind.model, !c.vehicle && c.root ? (c.root.children[0]?.position ?? null) : null);
         if (!c.blink) continue;
       }
-      c.blink.children.forEach((s, i) => (s.visible = on && side !== 0 && (i < 2 ? side < 0 : side > 0)));
+      this.blinkers.show(c.blink, side);
     }
   }
 
-  /** Відблиски покажчиків на моделі машини (кінематична — над обгорткою моделі, фізична — у системі моделі). */
-  private makeBlink(c: Car, host: THREE.Object3D): THREE.Group | null {
-    const pts = this.signalPoints(c.kind.model);
-    if (this.blinkMat === undefined) {
-      const mats = this.trucks.asm.b3d.materials.map((m) => m.toLowerCase());
-      const i = mats.indexOf('ka50_glowo');
-      const map = i >= 0 ? (this.trucks.asm.lib.material(i) as THREE.MeshBasicMaterial).map : null;
-      this.blinkMat = map ? new THREE.SpriteMaterial({ map, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }) : null;
-    }
-    if (!pts || !this.blinkMat) return null;
-    const g = new THREE.Group();
-    g.name = 'TurnSignals';
-    // Кінематична модель піднята обгорткою (frame) над початком координат root.
-    if (!c.vehicle && c.root) g.position.copy(c.root.children[0]?.position ?? new THREE.Vector3());
-    for (const p of pts) {
-      const s = new THREE.Sprite(this.blinkMat);
-      s.position.copy(p);
-      s.scale.setScalar(BLINK_SIZE);
-      s.visible = false;
-      g.add(s);
-    }
-    host.add(g);
-    return g;
-  }
-
-  /**
-   * Точки покажчиків моделі: перед — краї фар (refer_HeadLightKey, стан 1), зад — задні вогні (StopFaraKeyL/R, стан 1);
-   * без них — кути габаритів моделі. Ліво — −x (уперед — −Z).
-   */
+  /** Точки покажчиків моделі (краї фар і задні вогні) — і для плям фар. */
   private signalPoints(model: string): THREE.Vector3[] | null {
-    if (this.blinkPts.has(model)) return this.blinkPts.get(model)!;
-    let out: THREE.Vector3[] | null = null;
-    const dyn = this.trucks.asm.dynamicObject(model);
-    if (dyn) {
-      const frame = new THREE.Group();
-      frame.rotation.x = -Math.PI / 2;
-      frame.add(dyn.root);
-      frame.updateMatrixWorld(true);
-      const body = visibleBox(dyn.root);
-      const part = (name: string): THREE.Box3 | null => {
-        let o: THREE.Object3D | null = null;
-        dyn.root.traverse((x) => {
-          if (!o && x.name === name) o = x;
-        });
-        if (!o) return null;
-        const b = new THREE.Box3().setFromObject(o);
-        return b.isEmpty() ? null : b;
-      };
-      const head = part('refer_HeadLightKey#1');
-      const rl = part('StopFaraKeyL#1');
-      const rr = part('StopFaraKeyR#1');
-      const y = head ? head.getCenter(new THREE.Vector3()).y : body.min.y + 0.4 * (body.max.y - body.min.y);
-      const fz = (head ? head.min.z : body.min.z) - 0.05;
-      const rear = (b: THREE.Box3 | null, x: number) => (b ? b.getCenter(new THREE.Vector3()).setZ(b.max.z + 0.05) : new THREE.Vector3(x, y, body.max.z + 0.05));
-      out = [
-        new THREE.Vector3((head ? head.min.x : body.min.x) + 0.15, y, fz),
-        rear(rl, body.min.x + 0.2),
-        new THREE.Vector3((head ? head.max.x : body.max.x) - 0.15, y, fz),
-        rear(rr, body.max.x - 0.2),
-      ];
-    }
-    this.blinkPts.set(model, out);
-    return out;
+    return this.blinkers.points(model);
   }
 
   /** Перед кожним кроком фізики: педалі й кермо фізичних машин. */

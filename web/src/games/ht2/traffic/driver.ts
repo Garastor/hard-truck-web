@@ -82,6 +82,8 @@ const BYPASS_WAIT = 3;
 const PREDICT = 3;
 const PREDICT_STEP = 0.25;
 const CROSS_MARGIN = 1.5;
+/** Точка обʼїзду (перед тіла, яке обʼїжджаємо) далі за стільки — обʼїзд скасовано, м. */
+const BYPASS_LOST = 80;
 /** Зустрічна має бути вільна на стільки вперед, м. */
 const BYPASS_CLEAR = 120;
 /**
@@ -164,6 +166,26 @@ export interface Mover {
   offDur: number;
   /** Розворот перед закритою завалом дорогою (null — немає). */
   uturn?: UTurn | null;
+  /**
+   * Маршрут (бот-далекобійник з рейсом, traffic/botDriver.ts): точна лінія після стику (Freight.next — найкоротший шлях
+   * до місця складу); null чи немає — як трафік (цілі-міста й випадкова дорога).
+   */
+  route?: ((l: RoadLine) => RoadLine | null) | null;
+  /** Лінія після стику за маршрутом (route); null — без маршруту чи шляху немає. */
+  via?: RoadLine | null;
+  /** Довжина позаду понад halfLen (напівпричіп тягача), м: обʼїзд закінчується й перестроювання дивиться ззаду з нею. */
+  tail?: number;
+  /** Множник швидкості на кривих (тягач з причепом — повільніше), 1 — як трафік. */
+  bend?: number;
+  /** Тіло, яке обганяємо по зустрічній (усі його точки — не лідер). */
+  passBody?: Obstacle | null;
+  /** Почати обʼїзд чи обгін сусідньою смугою раніше на стільки секунд ходу (довга машина — довше перестроюється), с. */
+  early?: number;
+}
+
+/** Продовження після кінця поточної лінії: за маршрутом, інакше — запланована дорога в смугу, найближчу за номером. */
+function nextOf(m: Mover): RoadLine | null {
+  return m.via ?? (m.plan === null ? null : nextLine(m.line, m.plan, m.line.lane));
 }
 
 /**
@@ -437,7 +459,31 @@ function winding(l: RoadLine): number {
   return w;
 }
 
+/** Перепланувати продовження (новий маршрут бота). */
+export function replan(m: Mover): void {
+  planNext(m);
+}
+
+/**
+ * Маршрут бота: наступна лінія — з route; смуга — як у трафіку (права, перед лівим поворотом — ліва), але лише серед
+ * сусідніх смуг, з яких маршрут теж веде до цілі. false — маршруту немає (план — як у трафіку).
+ */
+function planRoute(m: Mover): boolean {
+  m.via = m.route ? m.route(m.line) : null;
+  if (!m.via) return false;
+  m.plan = m.via.road;
+  const left = turnAngle(m.line, m.via) < -0.35;
+  let want = m.line.lane;
+  for (const sib of m.line.siblings) {
+    if (sib === m.line || sib.pts.length !== m.line.pts.length || !m.route!(sib)) continue;
+    if (left ? sib.lane < want : sib.lane > want) want = sib.lane;
+  }
+  m.wantLane = want;
+  return true;
+}
+
 function planNext(m: Mover): void {
+  if (m.route !== undefined && planRoute(m)) return;
   // Закриту завалом дорогу оминаємо, якщо є інша (world/obstacles.ts).
   const all = m.line.next as RoadLine[];
   const open = all.filter((l) => !l.closed);
@@ -474,6 +520,8 @@ function planNext(m: Mover): void {
 
 /** Лівий поворот не з лівої смуги: інша дорога після стику — прямо чи праворуч, якщо така є; смуга — права. */
 function giveUpLeft(m: Mover): void {
+  // За маршрутом дорога одна: продовження з цієї смуги теж веде до цілі.
+  if (m.via) return;
   const roads = [...new Set(offBase(m.line.next as RoadLine[]).map((l) => l.road))];
   const ok = roads.filter((r) => {
     const to = nextLine(m.line, r, m.line.lane);
@@ -524,7 +572,7 @@ export function pathAhead(m: Mover, maxDist: number): { pts: THREE.Vector3[]; s:
   let total = 0;
   for (let guard = 0; guard < 500 && total < maxDist; guard++) {
     if (i >= line.pts.length) {
-      const nx = first ? nextLine(line, m.plan, line.lane) : straightest(line);
+      const nx = first ? nextOf(m) : straightest(line);
       first = false;
       if (!nx) return { pts, s, deadEnd: total };
       line = nx;
@@ -562,7 +610,7 @@ export function roadLimit(m: Mover, path: { pts: THREE.Vector3[]; s: number[]; d
   const there = tangentAt(path, L);
   const yaw = Math.atan2(here.dir.x * there.dir.z - here.dir.z * there.dir.x, here.dir.dot(there.dir));
   const k = (4 * Math.abs(yaw)) / L;
-  if (k > K_LIMIT) v = Math.min(v, Math.max(V_CURVE_MIN, Math.sqrt(5 / k)));
+  if (k > K_LIMIT) v = Math.min(v, Math.max(V_CURVE_MIN, Math.sqrt(5 / k)) * (m.bend ?? 1));
   const kv = (4 * (there.pitch - here.pitch)) / L;
   if (kv < -K_LIMIT) v /= Math.abs(kv) * (200 / Math.PI);
   if (path.deadEnd < 50) v = Math.min(v, v * path.deadEnd * 0.02 + 1);
@@ -645,7 +693,7 @@ function laneFree(m: Mover, sib: RoadLine | undefined, obstacles: readonly Obsta
     // Попереду: не ближче GAP_AHEAD і не менше T_AHEAD с наздоганяння; ззаду: не ближче GAP_BEHIND і не менше T_BEHIND с,
     // доки задній наздожене (гравець ззаду на швидкості — не підрізати).
     if (along > 0 && (gap < GAP_AHEAD || gap < (m.speed - ov) * T_AHEAD)) return false;
-    if (along <= 0 && (gap < GAP_BEHIND || gap < (ov - m.speed) * T_BEHIND)) return false;
+    if (along <= 0 && (gap - (m.tail ?? 0) < GAP_BEHIND || gap - (m.tail ?? 0) < (ov - m.speed) * T_BEHIND)) return false;
   }
   return true;
 }
@@ -654,10 +702,14 @@ function laneFree(m: Mover, sib: RoadLine | undefined, obstacles: readonly Obsta
 function changeLane(m: Mover, to: number): void {
   const sib = m.line.siblings[to];
   if (!sib || sib === m.line || sib.pts.length !== m.line.pts.length) return;
+  // За маршрутом — лише в смугу, з якої шлях до цілі теж є.
+  const via = m.route ? m.route(sib) : null;
+  if (m.route && !via) return;
   const d = (m.line.lane - to) * m.line.laneWidth;
   m.lat += d;
   m.off += d;
   m.line = sib;
+  if (via) m.via = via;
   shiftTo(m, m.latGoal);
 }
 
@@ -724,7 +776,8 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
   updateOff(m, dt);
   const path = pathAhead(m, LEADER_RANGE);
   // Машину, яку обганяємо, лідером не вважаємо (вона збоку чи позаду).
-  const others = m.overtaking && m.bypass ? obstacles.filter((o) => o.pos !== m.bypass) : obstacles;
+  const pass = m.passBody;
+  const others = m.overtaking && m.bypass ? obstacles.filter((o) => o.pos !== m.bypass && !(pass && sameBody(o, pass))) : obstacles;
   const leader = leaderOn(m, path, others);
   const junction = net ? junctionAhead(m, net) : null;
 
@@ -734,7 +787,7 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
   if (m.bypass) {
     // Перешкоду минули — назад у смугу.
     const rel = m.bypass.clone().sub(m.pos);
-    if (rel.x * m.heading.x + rel.z * m.heading.z < -(m.halfLen + 8) || rel.lengthSq() > 2500) endBypass(m);
+    if (rel.x * m.heading.x + rel.z * m.heading.z < -(m.halfLen + (m.tail ?? 0) + 8) || rel.lengthSq() > BYPASS_LOST * BYPASS_LOST) endBypass(m);
     else if (m.overtaking) {
       // Порт: на зустрічній хтось зʼявився, а ми ще не порівнялися — повернутися за лідера.
       const ahead = rel.x * m.heading.x + rel.z * m.heading.z;
@@ -747,7 +800,7 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
   const settled = m.latGoal === 0 && Math.abs(m.lat) < 0.3 * m.line.laneWidth;
   const canShift = settled && !(m.seg === 0 && m.from);
   // Лідер повільніший за нас (порт: обгін рухомих; king.exe обʼїжджає лише тих, хто стоїть).
-  const slow = !!leader && leader.gap < LEADER_GAP + FOLLOW_ZONE && (leader.speed <= SLOW_OBSTACLE || (!!leader.obstacle.mover && leader.speed < m.cruise - OVERTAKE_DV));
+  const slow = !!leader && leader.gap < LEADER_GAP + FOLLOW_ZONE + (m.early ?? 0) * m.speed && (leader.speed <= SLOW_OBSTACLE || (!!leader.obstacle.mover && leader.speed < m.cruise - OVERTAKE_DV));
   if (settled && leader && (!leader.obstacle.mover || stalled(leader.obstacle.mover)) && m.waited > BYPASS_WAIT) {
     // Своя смуга заблокована гравцем, суперником чи машиною після ДТП: сусідня смуга, інакше зустрічна, інакше узбіччя.
     const w = m.line.laneWidth;
@@ -823,6 +876,7 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
 
 function endBypass(m: Mover): void {
   m.bypass = null;
+  m.passBody = null;
   m.latGoal = 0;
   m.overtaking = false;
 }
@@ -835,15 +889,16 @@ function tryOncoming(m: Mover, leader: { gap: number; speed: number; obstacle: O
   if (m.line.flags & 12) return;
   const goal = -(m.line.lane + 1) * m.line.laneWidth;
   const rel = Math.max(2, m.cruise + OVERTAKE_BOOST - leader.speed);
-  const need = leader.gap + 2 * m.halfLen + 2 * leader.obstacle.half + 16;
+  const need = leader.gap + 2 * m.halfLen + (m.tail ?? 0) + 2 * leader.obstacle.half + 16;
   const time = need / rel;
   if (remaining(m) < need + time * leader.speed + 30) return;
   const clear = Math.min(400, time * (m.cruise + OVERTAKE_BOOST + 20) + 40);
   const path = pathAhead(m, clear);
   if (roadLimit(m, path) < m.cruise * 0.95) return;
-  if (leaderOn(m, path, obstacles.filter((o) => o !== leader.obstacle), goal)) return;
+  if (leaderOn(m, path, obstacles.filter((o) => !sameBody(o, leader.obstacle)), goal)) return;
   m.latGoal = goal;
-  m.bypass = leader.obstacle.pos;
+  m.bypass = frontOf(leader.obstacle, obstacles, m.heading);
+  m.passBody = leader.obstacle;
   m.overtaking = true;
 }
 
@@ -917,7 +972,7 @@ export function turnSignal(m: Mover): -1 | 0 | 1 {
 }
 
 function plannedTurn(m: Mover): number {
-  const to = m.plan === null ? null : nextLine(m.line, m.plan, m.line.lane);
+  const to = nextOf(m);
   return to ? turnAngle(m.line, to) : 0;
 }
 
@@ -999,7 +1054,7 @@ export function sync(m: Mover, p: THREE.Vector3, fwd: THREE.Vector3, speed: numb
     m.t = bestT;
     // За кінцем лінії — на заплановану наступну.
     if (best === m.line.pts.length - 2 && bestT >= 1) {
-      const nx = nextLine(m.line, m.plan, m.line.lane);
+      const nx = nextOf(m);
       if (!nx && turnBack(m)) continue;
       if (!nx) {
         m.gone = true;
@@ -1069,7 +1124,7 @@ function advance(m: Mover, move: number): void {
     m.seg++;
     m.from = null;
     if (m.seg + 1 >= m.line.pts.length) {
-      const nx = nextLine(m.line, m.plan, m.line.lane);
+      const nx = nextOf(m);
       // Тупик чи дорогу перекрито завалом — розворот на зустрічну смугу (без неї — прибрати).
       if (!nx) {
         m.seg = m.line.pts.length - 2;

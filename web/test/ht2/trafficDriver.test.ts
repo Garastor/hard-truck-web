@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import type { RoadLine } from '@ht2/world/roads';
-import { newMover, step, type Mover, type Net, type Obstacle } from '@ht2/traffic/driver';
+import { newMover, replan, step, turnSignal, type Mover, type Net, type Obstacle } from '@ht2/traffic/driver';
 
 /** Дорога з n смуг одного напрямку за точками осі (смуги — праворуч, по 3 м). */
 function road(axis: THREE.Vector3[], lanes: number, id: number, nodes: [number, number] = [-1, -1]): RoadLine[] {
@@ -288,6 +288,51 @@ describe('HT2: водій трафіку', () => {
     // Іншого шляху немає — на базу (тупик інакше).
     a[0].next.splice(1);
     expect(newMover(a[0], 0, 0, 20, 2).plan).toBe(1);
+  });
+
+  it('бот за маршрутом (route) звертає туди, куди веде маршрут, і сигналить поворот', () => {
+    const a = road(straight(200), 1, 0);
+    const right = road([0, 1, 2, 3, 4].map((i) => new THREE.Vector3(i * 20, 0, -200)), 1, 1);
+    const ahead = road(straight(200).map((p) => p.clone().setZ(p.z - 200)), 1, 2);
+    a[0].next.push(ahead[0], right[0]);
+    for (let s = 1; s <= 10; s++) {
+      vi.spyOn(Math, 'random').mockImplementation(seeded(s));
+      const m = newMover(a[0], 0, 0, 15, 2);
+      m.route = (l) => (l === a[0] ? right[0] : null);
+      replan(m);
+      expect(m.via).toBe(right[0]);
+      let signalled = false;
+      run(m, 25, [], () => (signalled ||= turnSignal(m) === 1));
+      expect(m.line).toBe(right[0]);
+      expect(signalled).toBe(true);
+    }
+  });
+
+  it('бот за маршрутом не перестроюється в смугу, з якої шляху до цілі немає', () => {
+    const a = road(straight(1000), 2, 0);
+    const m = newMover(a[1], 0, 0, 20, 2);
+    // Маршрут — лише з правої смуги; стоїть машина попереду: сусідня (ліва) смуга без маршруту — стоїть за нею.
+    m.route = (l) => (l === a[1] ? a[1] : null);
+    replan(m);
+    const stopped: Obstacle = { pos: a[1].pts[20].clone(), vel: new THREE.Vector3(), half: 2, mover: Object.assign(newMover(a[1], 20, 0, 0, 2), { still: 0, queued: true }) };
+    run(m, 20, [stopped]);
+    expect(m.line).toBe(a[1]);
+  });
+
+  it('тягач з причепом (tail) повертається в смугу, лише коли причіп минув перешкоду', () => {
+    const at = (tail: number) => {
+      const lanes = road(straight(1000), 1, 0);
+      const m = newMover(lanes[0], 0, 0, 20, 3);
+      m.tail = tail;
+      const player: Obstacle = { pos: lanes[0].pts[20].clone(), vel: new THREE.Vector3(), half: 2.5 };
+      let back = Infinity;
+      run(m, 40, [player], () => {
+        if (back === Infinity && m.pos.z < player.pos.z && m.latGoal === 0 && m.bypass === null && m.waited === 0 && Math.abs(m.lat) > 1) back = player.pos.z - m.pos.z;
+      });
+      return back;
+    };
+    // Без причепа повертається одразу за перешкодою, з причепом 12 м — на 12 м пізніше.
+    expect(at(12) - at(0)).toBeGreaterThan(10);
   });
 
   it("на під'їзд заправки чи СТО не звертає, якщо є інший шлях (порт)", () => {

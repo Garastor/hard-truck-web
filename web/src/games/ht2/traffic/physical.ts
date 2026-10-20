@@ -39,8 +39,11 @@ export function steerFor(delta: number): number {
   return Math.sign(delta) * (Math.abs(delta) / (Math.PI / 4) / k.steerScale) ** (1 / k.steerPower);
 }
 
-/** Педалі й кермо на крок; want — цільова швидкість водія, м/с; blocked — лідер близько (не застрягання). */
-export function control(m: Mover, v: TruckVehicle, ps: PhysState, want: number, blocked: boolean, dt: number): ControlState {
+/**
+ * Педалі й кермо на крок; want — цільова швидкість водія, м/с; blocked — лідер близько (не застрягання); shift — ще
+ * зсув точки праворуч від курсу, м (тягач з причепом заходить у поворот ширше, traffic/botDriver.ts).
+ */
+export function control(m: Mover, v: TruckVehicle, ps: PhysState, want: number, blocked: boolean, dt: number, shift = 0): ControlState {
   const c = ps.ctrl;
   const speed = v.speedKmh / 3.6;
   if (ps.reverse > 0) {
@@ -62,8 +65,9 @@ export function control(m: Mover, v: TruckVehicle, ps: PhysState, want: number, 
   const pos = new THREE.Vector3(bt.x, bt.y, bt.z);
   const fwd = v.forward();
   const target = carrot(m, CARROT_MIN + 0.8 * speed);
-  const to = target.sub(pos).setY(0);
   const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+  if (shift) target.addScaledVector(right, shift);
+  const to = target.sub(pos).setY(0);
   const angle = Math.atan2(to.dot(right), to.dot(fwd));
   const delta = Math.atan((2 * v.base * Math.sin(angle)) / Math.max(4, to.length()));
   c.steer = THREE.MathUtils.clamp(steerFor(delta), -1, 1);

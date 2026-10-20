@@ -59,6 +59,8 @@ import { Trailer } from './vehicles/trailer';
 import { headlightMask } from './vehicles/headlights';
 import { setPoolLight } from './traffic/headPools';
 import { AITRUCK, Truckers, truckerKinds, truckerNames } from './traffic/truckers';
+// Точки вздовж машини у світі — для трафіку й ботів (навколо кожної півдовжина 2,5 м).
+import { alongPoints } from './traffic/botDriver';
 import { parseUpgrades, tireGrip, tuning, type Tuning } from './career/upgrades';
 import { parseServices, parseTowns } from './career/economy';
 import { Music } from './ui/music';
@@ -186,20 +188,6 @@ const COLLIDER_CHUNK = 2500;
 /** Далі за стільки метрів від свого місця камера не «доганяє», а переставляється (телепорт, 911). */
 const CHASE_JUMP = 60;
 
-/**
- * Точки вздовж машини у світі — для трафіку (traffic.update: навколо кожної півдовжина 2,5 м): від заду до переду
- * габариту, крайні — на 2 м всередину, крок не більше 4 м.
- */
-function alongPoints(v: TruckVehicle): THREE.Vector3[] {
-  const g = v.lightGeometry;
-  const a = g.frontZ + 2;
-  const b = Math.max(a, g.backZ - 2);
-  const n = Math.max(1, Math.ceil((b - a) / 4));
-  v.visual.updateMatrix();
-  const out: THREE.Vector3[] = [];
-  for (let i = 0; i <= n; i++) out.push(new THREE.Vector3(0, 0, a + ((b - a) * i) / n).applyMatrix4(v.visual.matrix));
-  return out;
-}
 /** Займання від удару об нерухоме: сила удару (зміна швидкості з урахуванням рами), м/с (king.exe 0x554c20: x > 35). */
 const IMPACT_FIRE = 35;
 /** Вибух машини (_Blow) у кар'єрі: +0,4 пошкодження (0x555550(−0,4)). */
@@ -3606,10 +3594,11 @@ export class Ht2Drive {
     const me = [this.truck.visual.position, ...alongPoints(this.truck), ...(this.trailer?.points() ?? [])];
     const rigs = (this.truckers?.rigs ?? []).map((r) => [...alongPoints(r.truck), ...(r.trailer?.points() ?? [])]);
     this.traffic?.update(dt, this.truck.visual.position, [me, ...rigs]);
-    // Для автопілотів ботів гравець — точками вздовж машини (одна точка в центрі лишала передок і задок «невидимими»).
-    const obstacles = [...me, ...(this.traffic?.cars.map((c) => c.pos) ?? [])];
-    // Зустрічні для розминання ботів: гравець і трафік (позиція й курс).
+    // Водії ботів (як у трафіку, traffic/botDriver.ts): гравець — точками вздовж машини з причепом; зустрічні для
+    // розминання — гравець і трафік (позиція й курс).
     const oncoming = [{ pos: this.truck.visual.position, forward: this.truck.forward().setY(0).normalize() }, ...(this.traffic?.cars.map((c) => ({ pos: c.pos, forward: c.heading })) ?? [])];
+    const lv = this.truck.body.linvel();
+    this.truckers?.think(dt, me, new THREE.Vector3(lv.x, lv.y, lv.z), oncoming);
     this.updateSurface();
     this.acc += dt;
     const step = this.rapier.timestep;
@@ -3620,7 +3609,7 @@ export class Ht2Drive {
       this.truck.update(step, state);
       this.trailer?.update(step, this.truck.brakePedal(state), this.def.tech.brakePower, this.truck.kinematic, this.truck.towTires);
       this.race?.control(step);
-      this.truckers?.control(step, obstacles, oncoming);
+      this.truckers?.control(step);
       this.traffic?.control(step);
       this.police?.control(step);
       this.mafia?.control(step);

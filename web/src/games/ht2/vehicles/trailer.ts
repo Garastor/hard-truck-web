@@ -405,6 +405,11 @@ export class Trailer {
     this.hitchDamper(dt, true);
   }
 
+  /** Від шворня до середньої осі, м (колісна база причепа: наскільки він зрізає поворот). */
+  get reach(): number {
+    return Math.abs(this.axleZ - this.kingpin.z);
+  }
+
   get wheelCount(): number {
     return this.wheels.length;
   }

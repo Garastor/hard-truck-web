@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { kingCar, kingPilot } from '../vehicles/controls';
-import { AutoPilot, type Oncoming } from '../engine/vehicle/autopilot';
+import { kingCar } from '../vehicles/controls';
+import type { Oncoming } from '../engine/vehicle/autopilot';
 import { TruckVehicle } from '../engine/vehicle/truckVehicle';
 import { buildTruckModel } from '../engine/vehicle/trucks';
 import { isList, num, str, type SExpr } from '../formats/sexpr';
@@ -16,6 +16,9 @@ import { Fleet, type FleetMember, type SavedTrucker } from './fleet';
 import { HIRED_MIN_SPEED } from '../career/hired';
 import type { Ht2Roads } from '../world/roads';
 import type { Ht2Drive } from '../drive';
+import { alongPoints, newBot, POINT_HALF, setRoute, steer, think, type BotDriver } from './botDriver';
+import { turnSignal, type Obstacle } from './driver';
+import { Blinkers } from './blinkers';
 
 /**
  * Далекобійники-суперники HT2: у світі їх 50 (`ENV/GAME.CNF`: `(playertypes … (aitruck 50))`), імена — `names.sch`
@@ -55,7 +58,8 @@ const HOLD = 20;
 export interface Rival {
   name: string;
   truck: TruckVehicle;
-  pilot: AutoPilot;
+  /** Водій — як у трафіку (traffic/botDriver.ts). */
+  bot: BotDriver;
   bad: number;
   /** Напівпричіп тягача (null — вантажівка з кузовом чи причіп відірвало). */
   trailer: Trailer | null;
@@ -74,6 +78,9 @@ export interface Rival {
   rec: ReturnType<typeof drivable>[number];
   /** Далекобійник світу (traffic/fleet.ts), чия це машина; null — найманий гравця чи тестова машина. */
   member: FleetMember | null;
+  /** Покажчики повороту на тягачі й (задні) на напівпричепі (traffic/blinkers.ts). */
+  blink: THREE.Group | null;
+  blinkTrailer: THREE.Group | null;
 }
 
 /** Точки вздовж тягача й причепа — одне тіло для обʼїзду. */
@@ -107,6 +114,8 @@ export class Truckers {
   fleet: Fleet | null = null;
   private saved: readonly SavedTrucker[] | null = null;
   private recs: ReturnType<typeof drivable> | null = null;
+  /** Покажчики повороту (створюються з першим ботом). */
+  private blinkers: Blinkers | null = null;
   /** Фари вночі (drive: як у трафіку, за годиною й повзунками графіки). */
   lights = false;
   /** Шукати машину для прожекторів фар (drive.updateCarLamp) і чи віддано їх найближчій зустрічній (this.spot). */
@@ -203,18 +212,23 @@ export class Truckers {
     if (!def || !model) return null;
     if (variant > 0) recolor(model.root, this.drive.trucksData, variant + 1);
     // Рух king.exe, як у гравця (kingModel), автопілот — переслідування по дузі з базою машини.
+    if (!this.roads.nearest(at, forward)) return null;
     const truck = new TruckVehicle(this.drive.rapierWorld, def, model, { position: this.drive.groundAtPublic(at), forward }, kingCar(rec.suspension));
     markMover(truck.visual);
     this.drive.world.scene.add(truck.visual);
-    const pilot = kingPilot(new AutoPilot(this.roads), truck.base);
-    pilot.cruise = 50 + Math.random() * 25;
-    pilot.dodge = false;
     const kind = semi === undefined ? this.pickSemi(rec) : semi;
     const trailer = rec.group === 'tractors' && kind ? this.hitch(truck, rec, kind) : null;
-    // З напівпричепом — повільніше в поворотах, як автопілот гравця (drive: команда autopilot).
-    if (trailer) Object.assign(pilot, { cruise: 45 + Math.random() * 10, bendGain: 5, bendFloor: 0.25 });
+    // Довжина: до переду — від центру тягача; позаду — до заду кузова чи напівпричепа.
+    truck.syncVisual(1);
+    trailer?.syncVisual(1);
+    const g = truck.lightGeometry;
+    const halfLen = Math.max(2, -g.frontZ);
+    const rear = trailer ? truck.visual.position.distanceTo(trailer.points()[2]) + 2 : g.backZ;
+    // Крейсерська (як була в автопілоті): 50–75 км/год, з напівпричепом — 45–55 (і повільніше на кривих, botDriver).
+    const cruise = (trailer ? 45 + Math.random() * 10 : 50 + Math.random() * 25) / 3.6;
+    const bot = newBot(this.roads, truck.visual.position, truck.forward().setY(0).normalize(), cruise, halfLen, Math.max(0, rear - halfLen), trailer?.reach ?? 0, g.width / 2)!;
     const faras: [THREE.Vector3, THREE.Vector3] = [g2t(rec.faraFL), g2t(rec.faraFR)];
-    return { name, truck, pilot, bad: 0, trailer, idle: 0, setSwitch: model.setSwitch, faras, lit: null, pool: null, job: null, rec, member: null };
+    return { name, truck, bot, bad: 0, trailer, idle: 0, setSwitch: model.setSwitch, faras, lit: null, pool: null, job: null, rec, member: null, blink: null, blinkTrailer: null };
   }
 
   /** Тип напівпричепа для тягача: випадковий з presents, у «Шторма» — свій (вантажівці — null). */
@@ -262,9 +276,7 @@ export class Truckers {
   setJob(r: Rival, job: FreightJob): void {
     r.job = job;
     if (r.member) r.member.job = job;
-    // Лінії мережі другої гри (RoadLine) — ті самі обʼєкти, що бачить автопілот (WayLine).
-    r.pilot.choose = this.freight?.route(job) as AutoPilot['choose'];
-    r.pilot.halt = job.goal;
+    setRoute(r.bot, this.freight?.route(job) ?? null, job.goal);
   }
 
   /** Вантаж у машині бота, кг: у причепі — маса й вага на сідлі тягача (кузов вантажівки — без зміни маси, порт). */
@@ -283,6 +295,10 @@ export class Truckers {
     this.drive.world.scene.remove(r.trailer.visual);
     r.trailer.dispose();
     r.trailer = null;
+    r.blinkTrailer = null;
+    r.bot.m.tail = Math.max(0, r.truck.lightGeometry.backZ - r.bot.m.halfLen);
+    r.bot.reach = 0;
+    r.bot.m.bend = 1;
     r.truck.towing = false;
     r.truck.rayFilter = undefined;
     r.truck.setTowLoad(0);
@@ -290,21 +306,56 @@ export class Truckers {
   }
 
   /**
-   * Перед кроком фізики: автопілот кожного (оминає гравця, трафік і одне одного); oncoming — інші машини з курсом
-   * (гравець, трафік), з якими розминатися, коли їдуть назустріч (боти — додаються тут).
+   * Раз на кадр (після traffic.update): рішення водіїв ботів — як у трафіку. me — точки гравця (з причепом), meVel —
+   * його швидкість; oncoming — гравець і трафік з курсом (розминання; боти додаються тут). Перешкоди: машини трафіку
+   * (з їхніми водіями: черга, пропуск, обгін), гравець і інші боти — тілом з точок.
    */
-  control(dt: number, obstacles: readonly THREE.Vector3[], oncoming: readonly Oncoming[] = []): void {
+  think(dt: number, me: readonly THREE.Vector3[], meVel: THREE.Vector3, oncoming: readonly Oncoming[] = []): void {
     const rigs = this.rigs;
-    const points = rigs.map(rigPoints);
+    if (!rigs.length) return;
+    const traffic = this.drive.traffic;
+    const all: Obstacle[] = (traffic?.cars ?? []).map((c) => ({ pos: c.pos, vel: c.heading.clone().multiplyScalar(c.speed), half: c.halfLen, mover: c }));
+    for (const p of me) all.push({ pos: p, vel: meVel, half: POINT_HALF, group: me });
+    for (const r of rigs) {
+      const tv = r.truck.body.linvel();
+      const vel = new THREE.Vector3(tv.x, tv.y, tv.z);
+      for (const p of alongPoints(r.truck)) all.push({ pos: p, vel, half: POINT_HALF, mover: r.bot.m, group: r });
+      if (r.trailer) {
+        const lv = r.trailer.body.linvel();
+        const tvel = new THREE.Vector3(lv.x, lv.y, lv.z);
+        for (const p of r.trailer.points()) all.push({ pos: p, vel: tvel, half: POINT_HALF, mover: r.bot.m, group: r });
+      }
+    }
     const heads = rigs.map((r): Oncoming => ({ pos: r.truck.visual.position, forward: r.truck.forward().setY(0).normalize() }));
     rigs.forEach((r, i) => {
-      const p = r.truck.body.translation();
-      const others = [...obstacles, ...points.filter((_, j) => j !== i).flat()];
+      const others = all.filter((o) => o.group !== r);
       const meet = [...oncoming, ...heads.filter((_, j) => j !== i)];
-      const state = r.pilot.update(new THREE.Vector3(p.x, p.y, p.z), r.truck.forward(), r.truck.speedKmh, dt, others, meet);
+      const stopAt = traffic?.signals?.stopAhead(r.truck.visual.position, r.bot.m.heading) ?? Infinity;
+      think(r.bot, this.roads, r.truck, dt, others, meet, stopAt);
+    });
+  }
+
+  /** Перед кожним кроком фізики: педалі й кермо ботів (рішення — think). */
+  control(dt: number): void {
+    for (const r of this.rigs) {
+      const state = steer(r.bot, r.truck, dt);
       r.truck.update(dt, state);
       r.trailer?.update(dt, r.truck.brakePedal(state), r.truck.def.tech.brakePower, r.truck.kinematic);
-    });
+    }
+  }
+
+  /** Покажчики повороту ботів: блимають, коли водій сигналить (driver.turnSignal). */
+  private updateSignals(dt: number): void {
+    const bl = (this.blinkers ??= new Blinkers(this.drive.trucksData));
+    bl.tick(dt);
+    for (const r of this.rigs) {
+      const side = turnSignal(r.bot.m);
+      if (!side && !r.blink && !r.blinkTrailer) continue;
+      r.blink ??= bl.make(r.truck.visual, r.rec.carNode);
+      if (r.trailer) r.blinkTrailer ??= bl.make(r.trailer.visual, r.trailer.rec.carNode, null, true);
+      if (r.blink) bl.show(r.blink, side);
+      if (r.blinkTrailer) bl.show(r.blinkTrailer, side);
+    }
   }
 
   /**
@@ -319,6 +370,7 @@ export class Truckers {
       r.trailer?.syncVisual(alpha);
     }
     this.updateLights(player);
+    this.updateSignals(dt);
     // Рейси: прибуття на місце складу, вантаження й розвантаження, наступний рейс.
     if (this.freight)
       for (const r of this.list) {
