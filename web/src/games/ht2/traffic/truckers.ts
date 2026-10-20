@@ -65,7 +65,8 @@ export interface Rival {
   setSwitch: ((name: string, state: number) => void) | undefined;
   /** Фари (Fara_FL/FR vehicle.tech, система моделі Three.js); увімкнені й світлові плями (headPools.ts). */
   faras: [THREE.Vector3, THREE.Vector3];
-  lit: boolean;
+  /** Стан фар, поставлений перемикачам; null — ще не ставили (у даних моделі початково горить усе, і задній хід). */
+  lit: boolean | null;
   pool: THREE.Group | null;
   /** Рейс (null — найманий чи без даних складів: стала випадкова гілка на розвилках). */
   job: FreightJob | null;
@@ -213,7 +214,7 @@ export class Truckers {
     // З напівпричепом — повільніше в поворотах, як автопілот гравця (drive: команда autopilot).
     if (trailer) Object.assign(pilot, { cruise: 45 + Math.random() * 10, bendGain: 5, bendFloor: 0.25 });
     const faras: [THREE.Vector3, THREE.Vector3] = [g2t(rec.faraFL), g2t(rec.faraFR)];
-    return { name, truck, pilot, bad: 0, trailer, idle: 0, setSwitch: model.setSwitch, faras, lit: false, pool: null, job: null, rec, member: null };
+    return { name, truck, pilot, bad: 0, trailer, idle: 0, setSwitch: model.setSwitch, faras, lit: null, pool: null, job: null, rec, member: null };
   }
 
   /** Тип напівпричепа для тягача: випадковий з presents, у «Шторма» — свій (вантажівці — null). */
@@ -455,6 +456,8 @@ export class Truckers {
           sw?.('refer_SizeLightKey', on);
           sw?.('StopFaraKeyL', on ? 2 : 0);
           sw?.('StopFaraKeyR', on ? 2 : 0);
+          sw?.('BackFaraKeyL', 0);
+          sw?.('BackFaraKeyR', 0);
         }
       }
       const host = r.truck.visual;
