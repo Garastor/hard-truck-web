@@ -53,7 +53,8 @@ export class HiredOnRoads {
         break;
       }
       s -= line.length;
-      const next = line.next.filter((l) => (l as RoadLine).length > 0) as RoadLine[];
+      // Зрізалками (world/roads markShortcuts) наймані не їздять — лише гравець.
+      const next = line.next.filter((l) => (l as RoadLine).length > 0 && !(l as RoadLine).shortcut) as RoadLine[];
       // Тупик — розворот: лінія, що починається біля кінця цієї (зустрічна), інакше — на місці.
       const pool = next.length ? next : this.startsNear(line.pts[line.pts.length - 1], line);
       if (!pool.length) {
@@ -67,7 +68,7 @@ export class HiredOnRoads {
 
   /** Лінії, що починаються ближче 25 м від точки (крім except). */
   private startsNear(p: THREE.Vector3, except: RoadLine): RoadLine[] {
-    return this.roads.lines.filter((l) => l !== except && l.length > 0 && l.pts[0].distanceTo(p) < 25);
+    return this.roads.lines.filter((l) => l !== except && l.length > 0 && !l.shortcut && l.pts[0].distanceTo(p) < 25);
   }
 
   /**
@@ -125,6 +126,7 @@ export class HiredOnRoads {
       }
       if (dl > (dist.get(cur) ?? Infinity)) continue;
       for (const n of cur.next as RoadLine[]) {
+        if (n.shortcut && !goals.has(n)) continue;
         const nd = dl + cur.length;
         if (nd < (dist.get(n) ?? Infinity)) {
           dist.set(n, nd);

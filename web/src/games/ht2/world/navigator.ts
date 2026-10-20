@@ -10,6 +10,11 @@ import { isFork, type Ht2Roads, type RoadLine } from './roads';
  */
 export type NavTurn = 'left' | 'straight' | 'right';
 
+/**
+ * Штраф зрізалки, м (world/roads markShortcuts; king.exe: маршрути ІІ оминають дороги з 0x40): маршрути трафіку, ботів,
+ * погоні й стрілка навігатора туди не ведуть, якщо є хоч якийсь інший шлях.
+ */
+const SHORTCUT_COST = 1_000_000;
 /** Розвилка далі за цю відстань — стрілки ще немає, м. */
 const NEAR = 400;
 /** Лінії, що проходять ближче за це до цілі, — кінцеві, м. */
@@ -37,7 +42,7 @@ export class Navigator {
     for (const l of roads.lines) {
       let len = 0;
       for (let i = 1; i < l.pts.length; i++) len += l.pts[i].distanceTo(l.pts[i - 1]);
-      this.length.set(l, len + (extra?.(l) ?? 0));
+      this.length.set(l, len + (extra?.(l) ?? 0) + (l.shortcut ? SHORTCUT_COST : 0));
       for (const n of l.next) (this.prev.get(n as RoadLine) ?? this.prev.set(n as RoadLine, []).get(n as RoadLine)!).push(l);
     }
   }

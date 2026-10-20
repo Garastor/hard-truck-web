@@ -399,10 +399,10 @@ export function routePenalty(l: RoadLine): number {
   return TURN_COST * winding(l) + (l.base ? BASE_COST : 0) + (l.station ? STATION_COST : 0);
 }
 
-/** Продовження без вʼїзду на базу, заправку чи СТО (world/roads markBases, markStations), якщо таке є. */
+/** Продовження без вʼїзду на базу, заправку, СТО чи зрізалку (world/roads markBases, markStations, markShortcuts), якщо таке є. */
 function offBase(lines: RoadLine[]): RoadLine[] {
-  const out = lines.filter((l) => !l.base && !l.station);
-  return out.length ? out : lines;
+  const out = lines.filter((l) => !l.base && !l.station && !l.shortcut);
+  return out.length ? out : lines.filter((l) => !l.shortcut);
 }
 
 /**
@@ -479,8 +479,9 @@ function giveUpLeft(m: Mover): void {
 
 /** Продовження лінії на дорогу road — у смугу, найближчу за номером. */
 function nextLine(line: RoadLine, road: number | null, lane: number): RoadLine | null {
-  // На закриту завалом дорогу не заїжджаємо (з закритої — можна: машина вже там і має з неї виїхати).
-  const all = (line.next as RoadLine[]).filter((l) => line.closed || !l.closed);
+  // На закриту завалом дорогу й на зрізалку не заїжджаємо (з закритої — можна: машина вже там і має з неї виїхати);
+  // дорога, що далі веде лише на зрізалки (ag_010, ah_010), — тупик: розворот.
+  const all = (line.next as RoadLine[]).filter((l) => (line.closed || !l.closed) && (line.shortcut || !l.shortcut));
   const cand = road === null ? all : all.filter((l) => l.road === road);
   const list = cand.length ? cand : all;
   let best: RoadLine | null = null;
@@ -493,6 +494,7 @@ function straightest(line: RoadLine): RoadLine | null {
   let best: RoadLine | null = null;
   let bestTurn = Infinity;
   for (const l of line.next as RoadLine[]) {
+    if (l.shortcut && !line.shortcut) continue;
     const a = Math.abs(turnAngle(line, l)) + (l.lane === line.lane ? 0 : 0.01);
     if (a < bestTurn) {
       bestTurn = a;

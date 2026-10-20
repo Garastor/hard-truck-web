@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { EscArt } from './escArt';
 import type { RoadLine } from '../world/roads';
 import type { MapPoint } from '../world/worldMap';
+import { roadPath, type MapReveal } from '../world/mapReveal';
 import { hudScale } from '../engine/ui/pixelFont';
 
 /**
@@ -21,8 +22,8 @@ import { hudScale } from '../engine/ui/pixelFont';
  * Відхилення порту на малих екранах: рамка мінікарти не заходить на кнопки (верхній ряд і сенсорні), масштаб
  * мінікарти не дрібніший, ніж у king.exe при 1024×768; гравець — у центрі рамки; рамка на 15% менша.
  * Гіпотези: колір підписів (палітра екрана, індекс 5, не розібрано); оригінал показує суперників лише з певним
- * прапорцем гравця (0x80, імовірно покращення) чи в мережевій грі — у порту завжди; дороги з прапорцем 0x20
- * оригінал ховає, доки їх не «відкриє» подія (0x529850) — у порту видно всі.
+ * прапорцем гравця (0x80, імовірно покращення) чи в мережевій грі — у порту завжди. Дороги з прапорцем 0x20 сховано,
+ * доки гравець їх не проїде (world/mapReveal.ts, king.exe 0x42cf50 → 0x529850).
  */
 export type TabMapState = 0 | 1 | 2;
 
@@ -67,7 +68,9 @@ export interface TabMapScene {
 export class TabMap {
   readonly canvas = document.createElement('canvas');
   private readonly ctx: CanvasRenderingContext2D;
-  private readonly roads = new Path2D();
+  private roads = new Path2D();
+  /** Версія `reveal`, з якою зібрано `roads`. */
+  private roadsVersion = -1;
   private readonly bounds = new THREE.Box2();
   state: TabMapState = 0;
   private time = 0;
@@ -86,15 +89,11 @@ export class TabMap {
   constructor(
     private readonly art: EscArt,
     parent: HTMLElement,
-    lines: readonly RoadLine[],
+    private readonly lines: readonly RoadLine[],
     private readonly points: readonly MapPoint[],
+    private readonly reveal: MapReveal | null = null,
   ) {
-    for (const l of lines)
-      l.pts.forEach((p, i) => {
-        if (i) this.roads.lineTo(p.x, p.z);
-        else this.roads.moveTo(p.x, p.z);
-        this.bounds.expandByPoint(new THREE.Vector2(p.x, p.z));
-      });
+    for (const l of lines) for (const p of l.pts) this.bounds.expandByPoint(new THREE.Vector2(p.x, p.z));
     this.canvas.className = 'ht2-tabmap';
     this.canvas.hidden = true;
     this.ctx = this.canvas.getContext('2d')!;
@@ -286,6 +285,13 @@ export class TabMap {
     const vy0 = (ry - oy) / k;
     const vx1 = (rx + rw - ox) / k;
     const vy1 = (ry + rh - oy) / k;
+    // Відкрилась нова ділянка — дороги й кеш наново.
+    const version = this.reveal?.version ?? 0;
+    if (version !== this.roadsVersion) {
+      this.roadsVersion = version;
+      this.roads = roadPath(this.lines, this.reveal);
+      this.cache = null;
+    }
     const c = this.cache;
     const fits = c && c.k === k && c.dpr === dpr && c.w >= rw * margin && c.h >= rh * margin && vx0 >= c.x0 && vy0 >= c.y0 && vx1 <= c.x0 + c.w / k && vy1 <= c.y0 + c.h / k;
     if (fits) return c;
@@ -311,3 +317,4 @@ export class TabMap {
     this.canvas.remove();
   }
 }
+

@@ -32,10 +32,12 @@ import { playVideo } from './engine/video/player';
 import { sharedContext } from './engine/audio/engineAudio';
 import { glassDrops, precipitation, trafficHeadlights, trafficLamp } from './ui/effects';
 import { WeatherRooms } from './world/weatherRooms';
+import { markMover } from './world/roomVisibility';
 import { WIN_SHARE } from './career/share';
 import { Signs } from './world/signs';
 import { Markets, parseMarkets } from './career/market';
 import { WorldMap, type MapPoint } from './world/worldMap';
+import { MapReveal } from './world/mapReveal';
 import { GlassRain } from './engine/render/glassRain';
 import { Dents, dentGeometry, hitEnergy } from './vehicles/dents';
 import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
@@ -149,6 +151,17 @@ function viewFov(xpyramid: number): number {
 }
 /** Запізнення камери за машиною, с (оригінал: відстань позаду = 8,8 м + 0,58 с × швидкість, повертається за ≈ 1,5 с). */
 const CHASE_LAG = 0.6;
+/**
+ * Камера поза стінами (keepOffWalls): куля навколо камери. У king.exe радіус 0,3 м (0x599210, 0x3e99999a); у порту —
+ * 1 м, як ближня площина відсікання камери за машиною (near = 1): з 0,3 м ближня площина зрізала стіну поруч, і крізь
+ * неї знову було видно.
+ */
+const CAM_BALL = new RAPIER.Ball(1);
+const IDENTITY_Q = { x: 0, y: 0, z: 0, w: 1 };
+/** Звідки летить куля — висота над точкою машини, м (усередині кузова — колайдер машини не рахується). */
+const CAM_WALL_FROM = 2;
+/** Віддалення камери від стіни назад на своє місце, с (наближення — одразу). */
+const CAM_WALL_BACK = 0.3;
 /** Точка погляду — на цій відстані від місця камери в спокої під нахилом CHASE_PITCH (біля машини), м. */
 const CHASE_LOOK = 10;
 /** Текстур нового регіону на GPU за одне завдання (решта — у наступних, між кадрами). */
@@ -429,6 +442,9 @@ export class Ht2Drive {
   private signs: Signs | null = null;
   markets: Markets | null = null;
   private worldMap: WorldMap | null = null;
+  /** Приховані дороги карти й відкриття проїздом (world/mapReveal.ts); відкрите — у кар'єрі (`mapOpened`). */
+  mapReveal: MapReveal | null = null;
+  private revealTimer = 0;
   /** Коротке повідомлення на табло (текст і скільки ще показувати, с). */
   private notice: { text: string; time: number } | null = null;
   /** Графіка інтерфейсу оригіналу (COMMON/esc16.RES) і верхнє табло з пейджером; без файлу — табло порту. */
@@ -660,7 +676,14 @@ export class Ht2Drive {
         }
     for (const m of parseMarkets(regionMods, this.world.regions.values())) if (!m.hidden) points.push({ pos: m.spots[0].pos, kind: 'market', label: m.name });
     this.mapPoints = points;
-    this.worldMap = new WorldMap(document.body, this.roads.axes, points);
+    this.mapReveal = new MapReveal(this.roads, o.career?.mapOpened ?? []);
+    this.mapReveal.onOpen = () => {
+      const cm = this.careerMode;
+      if (!cm) return;
+      cm.career.mapOpened = this.mapReveal!.keys();
+      cm.persist();
+    };
+    this.worldMap = new WorldMap(document.body, this.roads.axes, points, this.mapReveal);
     this.worldMap.onClose = () => {
       this.paused = false;
     };
@@ -947,7 +970,7 @@ export class Ht2Drive {
         },
         say: (t) => this.say(t),
       });
-      this.tabMap = new TabMap(art, o.overlay, this.roads.axes, this.mapPoints);
+      this.tabMap = new TabMap(art, o.overlay, this.roads.axes, this.mapPoints, this.mapReveal);
       // Одразу — мінікарта (стан 2): у порту її видно з початку їзди (king.exe починає зі схованої карти).
       this.tabMap.show(2);
       document.body.classList.add('ht2-orig-ui');
@@ -1968,6 +1991,8 @@ export class Ht2Drive {
     });
     v.body.setLinvel({ x: forward.x * speed, y: 0, z: forward.z * speed }, true);
     v.engine.engageFor(speed);
+    // Малюється лише з кімнатою, у якій стоїть (world/roomVisibility.ts) — не крізь зворотний бік пагорба.
+    markMover(v.visual);
     this.world.scene.add(v.visual);
     if (model.setSwitch) this.carSwitches.set(v, model.setSwitch);
     // Фари трафіку, що став фізичним (кінематична модель мала їх з появи вночі): раніше гасли ближче 80 м.
@@ -2228,6 +2253,14 @@ export class Ht2Drive {
     // Двигун — у передній третині машини, 1,5 м над її центром (гіпотеза).
     const p = this.truck.visual.position.clone().addScaledVector(this.truck.forward(), 2).setY(this.truck.visual.position.y + 1.5);
     this.blastFx().carFire(new THREE.Vector3(p.x, -p.z, p.y));
+  }
+
+  /** Відкриття прихованих доріг карти проїздом (world/mapReveal.ts, king.exe updatePlayerBoxes 0x42cf50). */
+  private updateReveal(dt: number): void {
+    if (!this.mapReveal || this.paused || (this.revealTimer -= dt) > 0) return;
+    // 10 разів на секунду (king.exe — щокадру; габарит від цього майже не змінюється).
+    this.revealTimer = 0.1;
+    this.mapReveal.update(this.truck.visual.position);
   }
 
   /**
@@ -3097,6 +3130,7 @@ export class Ht2Drive {
     this.updatePolice(dt);
     this.updateCopters(dt);
     this.updateRadars(dt);
+    this.updateReveal(dt);
     this.updateSirens();
     this.updateFire(dt);
     this.updateMafia(dt);
@@ -3396,9 +3430,33 @@ export class Ht2Drive {
       const len = d.length();
       this.camLook.set(Math.sin(this.camYaw) * Math.cos(this.camPitch), Math.sin(this.camPitch), Math.cos(this.camYaw) * Math.cos(this.camPitch)).multiplyScalar(len).add(this.camPos);
     }
-    this.chaseJump = false;
+    // Камера не заходить за стіни й у рельєф: інакше видно зворотні (непомальовані) боки стін, дахів і пагорбів, а
+    // крізь них — машини й порожнечу.
     this.camera.position.copy(this.camPos);
+    this.keepOffWalls(v.position.clone().addScaledVector(up, CAM_WALL_FROM), this.camera.position, dt);
+    this.chaseJump = false;
     this.camera.lookAt(this.camLook);
+  }
+
+  /** Частка відстані від машини до камери, вільна від стін (згладжена при віддаленні; keepOffWalls). */
+  private camReach = 1;
+
+  /**
+   * Камера за машиною — поза колізіями світу, як у king.exe (0x599210 → 0x599120: куля 0,3 м навколо камери
+   * виштовхується з колізій кімнати, до 10 спроб, далі — обертання навколо машини; re/notes/ht2/steering.md). Порт —
+   * простіше: куля CAM_BALL летить від точки над машиною до камери, і камера стає там, де куля вперлася в стіну, дах,
+   * міст чи схил (лише нерухомі колайдери світу — без машин і причепів). Наближається одразу, віддаляється за
+   * CAM_WALL_BACK с — щоб не стрибала за стовпом чи деревом.
+   */
+  private keepOffWalls(from: THREE.Vector3, cam: THREE.Vector3, dt: number): void {
+    const dir = cam.clone().sub(from);
+    const dist = dir.length();
+    if (dist < 0.5) return;
+    dir.divideScalar(dist);
+    const hit = this.rapier.castShape(from, IDENTITY_Q, dir, CAM_BALL, 0, dist, false, undefined, undefined, undefined, undefined, (c) => !c.parent());
+    const free = hit ? hit.time_of_impact / dist : 1;
+    this.camReach = free < this.camReach || this.chaseJump ? free : this.camReach + (free - this.camReach) * (1 - Math.exp(-dt / CAM_WALL_BACK));
+    if (this.camReach < 1) cam.copy(from).addScaledVector(dir, dist * this.camReach);
   }
 
   dispose(): void {

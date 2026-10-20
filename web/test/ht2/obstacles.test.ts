@@ -71,7 +71,8 @@ describe.skipIf(!has)('HT2: обвали й повені', () => {
       const first = roads.pick(l)!;
       roads.setClosed(first.road, true);
       const next = roads.pick(l)!;
-      if (l.next.some((n) => !(n as typeof l).closed)) expect(next.closed, l.name).toBeFalsy();
+      // Зрізалки автопілоту недоступні (world/roads markShortcuts) — відкрита гілка має бути звичайною дорогою.
+      if (l.next.some((n) => !(n as typeof l).closed && !(n as typeof l).shortcut)) expect(next.closed, l.name).toBeFalsy();
       roads.setClosed(first.road, false);
     }
   });

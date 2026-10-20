@@ -326,7 +326,8 @@ export class Mafia {
   private dispatch(pl: MafiaPlayer): void {
     const ring: { a: THREE.Vector3; b: THREE.Vector3 }[] = [];
     for (const line of this.deps.roads.lines) {
-      if (line.lane < 0) continue;
+      // Не на зрізалках (world/roads markShortcuts): ними їздить лише гравець.
+      if (line.lane < 0 || line.shortcut) continue;
       for (let i = 0; i + 1 < line.pts.length; i++) {
         const d = line.pts[i].distanceTo(pl.pos);
         if (d > SPAWN_MIN && d < SPAWN_MAX) ring.push({ a: line.pts[i], b: line.pts[i + 1] });

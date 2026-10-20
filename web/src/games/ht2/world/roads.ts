@@ -71,6 +71,16 @@ export interface RoadLine extends WayLine {
   base?: boolean;
   /** Під'їзд заправки чи СТО (порт, `markStations`): трафік і боти туди не звертають, якщо є інший шлях. */
   station?: boolean;
+  /**
+   * «Зрізалка» — ґрунтовка чи стежка з бітами 0x20 і 0x40 (king.exe: маршрути ІІ оминають 0x40, випадкові точки появи —
+   * 0x20/0x40; `markShortcuts`): їздить лише гравець — трафік, боти, міліція й мафія туди не звертають і не зʼявляються.
+   */
+  shortcut?: boolean;
+  /**
+   * Ділянка карти, що відкривається проїздом (індекс `Ht2Roads.sections`; лише осі з бітом 0x20 без 0x10). Осі з 0x20 без
+   * ділянки (0x30: бази, під'їзди станцій, двори) на карті не показуються ніколи (king.exe 0x42cf50).
+   */
+  section?: number;
   /** Від центру смуги до стіни праворуч після `clearWalls`, м (розминання автопілота не заїжджає далі). */
   wallRight?: number;
   /** Дорогу закрито завалом (world/obstacles.ts; king.exe прапорець 0x40 смуг): маршрути її оминають. */
@@ -88,6 +98,16 @@ export interface RoadNode {
   degree: number;
 }
 
+/** Прихована ділянка карти (`Ht2Roads.sections`): відкривається вся разом, коли гравець проїде нею (world/mapReveal.ts). */
+export interface MapSection {
+  /** Стала назва для збереження кар'єри: регіон і назва першої осі. */
+  key: string;
+  /** Осі ділянки (індекси `Ht2Roads.axes`). */
+  axes: number[];
+  /** Діагональ габариту ділянки в плані, м (king.exe: діагональ коробки дороги ІІ). */
+  span: number;
+}
+
 interface Directed {
   axis: number;
   /** 1 — уздовж точок осі, −1 — проти. */
@@ -103,6 +123,8 @@ export class Ht2Roads {
   readonly axes: RoadLine[] = [];
   /** Вузли (стики осей); перехрестя — degree ≥ 3. */
   readonly nodes: RoadNode[] = [];
+  /** Приховані ділянки карти, що відкриваються проїздом (`markShortcuts`). */
+  readonly sections: MapSection[] = [];
   private readonly grid = new Map<string, RoadLine[]>();
   private readonly axisGrid = new Map<string, RoadLine[]>();
   private readonly byRoad = new Map<string, RoadLine[]>();
@@ -194,6 +216,48 @@ export class Ht2Roads {
     }
     this.markBases(spots);
     this.markStations(stations);
+    this.markShortcuts();
+  }
+
+  /**
+   * Зрізалки й приховані ділянки карти (king.exe, re/notes/ht2/traffic.md «Приховані дороги»): осі з 0x20 і 0x40 —
+   * `shortcut` (ґрунтовки, стежки: 408 осей, 24 км; лише 23 кінці стикуються зі звичайними дорогами). Ділянки —
+   * ланцюжки осей з 0x20 без 0x10 через вузли без розвилок (гіпотеза: так king.exe групує сегменти в дороги ІІ, які
+   * відкриває на карті цілком).
+   */
+  private markShortcuts(): void {
+    for (const a of this.axes) {
+      if ((a.flags & 0x60) !== 0x60) continue;
+      a.shortcut = true;
+      for (const l of this.linesOf(a.road)) l.shortcut = true;
+    }
+    const hidden = (a: RoadLine) => (a.flags & 0x30) === 0x20;
+    const atNode = new Map<number, RoadLine[]>();
+    for (const a of this.axes) if (hidden(a)) for (const n of [a.startNode, a.endNode]) (atNode.get(n) ?? atNode.set(n, []).get(n)!).push(a);
+    for (const first of this.axes) {
+      if (!hidden(first) || first.section !== undefined) continue;
+      const id = this.sections.length;
+      const axes: number[] = [];
+      const box = new THREE.Box2();
+      const todo = [first];
+      first.section = id;
+      while (todo.length) {
+        const a = todo.pop()!;
+        axes.push(a.road);
+        for (const p of a.pts) box.expandByPoint(new THREE.Vector2(p.x, p.z));
+        for (const n of [a.startNode, a.endNode]) {
+          if (this.nodes[n].degree !== 2) continue;
+          for (const b of atNode.get(n) ?? [])
+            if (b.section === undefined) {
+              b.section = id;
+              todo.push(b);
+            }
+        }
+      }
+      axes.sort((x, y) => x - y);
+      for (const r of axes) for (const l of this.linesOf(r)) l.section = id;
+      this.sections.push({ key: `${first.region}:${this.axes[axes[0]].name}`, axes, span: box.min.distanceTo(box.max) });
+    }
   }
 
   /**
@@ -441,11 +505,12 @@ export class Ht2Roads {
 
   /**
    * Продовження лінії для автопілота: стала для лінії гілка (без смикання), крім тупикових і закритих завалом
-   * (world/obstacles.ts; із закритої лінії — можна, машина з неї виїжджає), якщо є інші.
+   * (world/obstacles.ts; із закритої лінії — можна, машина з неї виїжджає), якщо є інші; на зрізалки — ніколи.
    */
   pick(line: RoadLine): RoadLine | null {
-    if (!line.next.length) return null;
-    const all = line.next as RoadLine[];
+    // Зрізалки (markShortcuts) — лише для гравця: дорога, що далі веде лише на них, для автопілота — кінець.
+    const all = (line.next as RoadLine[]).filter((n) => line.shortcut || !n.shortcut);
+    if (!all.length) return null;
     const passable = all.filter((n) => line.closed || !n.closed);
     const open = passable.filter((n) => !this.deadEnd(n));
     const pool0 = open.length ? open : passable.length ? passable : all;
@@ -517,7 +582,8 @@ function reaches(line: RoadLine, left: number, tried: Map<RoadLine, number>): bo
   // Уже пробували звідси з не меншим запасом — і не дійшли.
   if ((tried.get(line) ?? -1) >= left) return false;
   tried.set(line, left);
-  return (line.next as RoadLine[]).some((n) => reaches(n, left - line.length, tried));
+  // Зрізалки ботам недоступні: дорога, що веде лише на них, — тупикова.
+  return (line.next as RoadLine[]).some((n) => (line.shortcut || !n.shortcut) && reaches(n, left - line.length, tried));
 }
 
 function hashPick(s: string, n: number): number {

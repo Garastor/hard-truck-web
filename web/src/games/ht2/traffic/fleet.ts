@@ -81,9 +81,9 @@ export class Fleet {
     for (const l of roads.lines) this.byName.set(l.name, l);
   }
 
-  /** Лінії, де можна поставити водія на старті: не під'їзди станцій, не закриті, не нульові. */
+  /** Лінії, де можна поставити водія на старті: не під'їзди станцій, не зрізалки, не закриті, не нульові. */
   startLines(): RoadLine[] {
-    return this.roads.lines.filter((l) => !l.station && !l.closed && this.len(l) > 1 && !this.roads.deadEnd(l));
+    return this.roads.lines.filter((l) => !l.station && !l.shortcut && !l.closed && this.len(l) > 1 && !this.roads.deadEnd(l));
   }
 
   /**
@@ -225,7 +225,8 @@ export class Fleet {
     const line = m.line;
     const routed = m.job && this.freight?.next(m.job, line);
     if (routed) return routed;
-    const all = (line.next as RoadLine[]).filter((n) => this.len(n) > 0);
+    // Зрізалки (world/roads markShortcuts) — лише для гравця.
+    const all = (line.next as RoadLine[]).filter((n) => this.len(n) > 0 && (line.shortcut || !n.shortcut));
     const passable = all.filter((n) => line.closed || !n.closed);
     const open = passable.filter((n) => !this.roads.deadEnd(n));
     const pool0 = open.length ? open : passable;
@@ -234,7 +235,7 @@ export class Fleet {
     const pool = roads.length ? roads : pool0;
     if (pool.length) return pool[Math.floor(this.rnd() * pool.length)];
     const end = line.pts[line.pts.length - 1];
-    const back = this.roads.lines.filter((l) => l !== line && !l.station && this.len(l) > 0 && l.pts[0].distanceTo(end) < UTURN_R);
+    const back = this.roads.lines.filter((l) => l !== line && !l.station && !l.shortcut && this.len(l) > 0 && l.pts[0].distanceTo(end) < UTURN_R);
     return back.length ? back[Math.floor(this.rnd() * back.length)] : null;
   }
 
