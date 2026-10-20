@@ -827,3 +827,26 @@ body.game-ht2 .career-box .career-actions button.primary {
     margin-top: 8px;
   }
 }
+
+/* Обертання камери по колу (друге натискання «•••», engine/input): окремим 4-м рядом під групою «ще», не збоку
+   (на прохання користувача). Ряд — неявний, тієї ж висоти, що й решта. */
+.touch-more {
+  grid-auto-rows: calc(44px * var(--ui, 1));
+}
+
+body.ht2-orig-ui .touch-more {
+  grid-auto-rows: 34px;
+}
+
+.touch-more > .touch-btn.orbit-left,
+.touch-more > .touch-btn.orbit-right {
+  grid-row: 4;
+}
+
+.touch-more > .touch-btn.orbit-left {
+  grid-column: 1;
+}
+
+.touch-more > .touch-btn.orbit-right {
+  grid-column: 2;
+}

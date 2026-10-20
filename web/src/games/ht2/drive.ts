@@ -354,6 +354,8 @@ export interface Ht2DriveOptions {
 
 type CamMode = 'chase' | 'cockpit' | 'far';
 /** Порядок камер (клавіша C): з кабіни → за машиною (як в оригіналі) → згори. */
+/** Швидкість обертання камери навколо машини, рад/с (king.exe 0x650af0: π/3 — 60°/с). */
+const ORBIT_RATE = Math.PI / 3;
 const NEXT_CAM: Record<CamMode, CamMode> = { cockpit: 'chase', chase: 'far', far: 'cockpit' };
 
 export class Ht2Drive {
@@ -888,6 +890,9 @@ export class Ht2Drive {
     this.input.onCommand = (cmd) => {
       if (cmd === 'camera') {
         this.camMode = NEXT_CAM[this.camMode];
+        // Ракурс по колу скидається разом із перемиканням камери.
+        this.camOrbit = 0;
+        this.input.setOrbitAvailable(this.camMode !== 'cockpit');
         // Нова камера — одразу на своєму місці: стара позиція лишилась там, де камеру вимкнули, і камера «летіла» до машини.
         this.chaseJump = true;
       }
@@ -920,6 +925,7 @@ export class Ht2Drive {
     };
     document.body.classList.add('driving');
     this.touch = this.input.mountTouch(o.overlay);
+    this.input.setOrbitAvailable(this.camMode !== 'cockpit');
     // Межа керма за зчепленням для клавіатури (king.exe 0x500850) — від поточної вантажівки.
     this.input.steerLimit = () => this.truck.steerLimitNow();
     this.hud.className = 'ht2-hud';
@@ -3750,6 +3756,11 @@ export class Ht2Drive {
 
   /** Згладжені курс і нахил погляду камери за машиною (NaN — почати з поточних); стрибок — нова машина. */
   private camYaw = NaN;
+  /**
+   * Кут зовнішньої камери навколо машини, рад (0 — позаду): king.exe 0x59a030 крутить його клавішами «камера
+   * ліворуч/праворуч» на ±ORBIT_RATE·dt і тримає в −π…π; з кабіни не діє.
+   */
+  private camOrbit = 0;
   private camPitch = 0;
   private chaseJump = false;
   /** Згладжені кути голови в кабіні (рад): уперед і вбік (king.exe 0x535a70); місце водія без гойдання. */
@@ -3826,6 +3837,13 @@ export class Ht2Drive {
     const dist = far ? 28 * tow : (CHASE_BACK - this.chaseMid) * tow;
     const height = (far ? 12 : CHASE_UP) * tow;
     const flat = fwd.clone().setY(0).normalize();
+    const turn = this.input.camTurn;
+    if (turn) {
+      this.camOrbit += turn * ORBIT_RATE * dt;
+      this.camOrbit = Math.atan2(Math.sin(this.camOrbit), Math.cos(this.camOrbit));
+    }
+    // «Ліворуч» — камера обходить машину з її лівого боку (кут < 0), «праворуч» — з правого.
+    if (this.camOrbit) flat.applyAxisAngle(up, this.camOrbit);
     // Висота машини для камери — згладжена (0,35 с): тряска кузова від нерівностей і підвіски не передається в кадр,
     // підйоми й спуски дороги камера відстежує (як в оригіналі — камера над машиною стала, без тремтіння).
     const ky = 1 - Math.exp(-dt / 0.35);

@@ -32,7 +32,8 @@ export interface InputProfile {
   steerRate?: (t: number, v: number, sharp: boolean) => number;
 }
 
-export type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake' | 'sharp';
+/** camLeft/camRight — обертання зовнішньої камери навколо машини (king.exe 0x59a030, поки клавіша натиснута). */
+export type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake' | 'sharp' | 'camLeft' | 'camRight';
 /** Значок сигналу (ріжок, за зразком користувача) — однотонний контур, як решта кнопок. */
 const HORN_SVG =
   '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M2.5 8.6v4.6M2.5 10.9H5"/><path d="M5 9h7.5c3.2 0 6-1.6 8-4.3.6-.8 1.5-.4 1.5.5v13.4c0 .9-.9 1.3-1.5.5-2-2.4-3.5-3.6-5.6-4.2"/><path d="M5 12.9h1.4"/><path d="M6.4 12.9c0 2.4 1.2 3.8 3.4 3.8h3.4"/><rect x="8.6" y="12.6" width="6.4" height="2.9" rx="1.45"/></svg>';
@@ -58,6 +59,9 @@ const ICONS = {
   swap: svg('<rect x="1.5" y="8.5" width="7" height="7" rx="1.4"/><rect x="15.5" y="8.5" width="7" height="7" rx="1.4"/><path d="M3.9 12l2.4-1.6v3.2zM20.1 12l-2.4-1.6v3.2z" fill="currentColor" stroke-width="1"/><path d="M8 6.6c2.3-2.6 5.7-2.6 8 0M16 17.4c-2.3 2.6-5.7 2.6-8 0"/><path d="M16.6 4.7l-.4 2.4-2.3-.5M7.4 19.3l.4-2.4 2.3.5"/>', 1.6),
   // Відеокамера — перемикання виду.
   cam: svg('<rect x="2" y="6" width="13.5" height="12" rx="2.5"/><path d="M15.5 10.5l6-3.5v10l-6-3.5z"/>'),
+  // Камера по колу: дуга навколо машини (прямокутник) зі стрілкою ліворуч / праворуч.
+  orbitLeft: svg('<rect x="9" y="9.5" width="6" height="9" rx="1.2"/><path d="M19.5 12.5A8 8 0 0 0 5.2 8.2"/><path d="M4.2 4.4l1 3.8 3.8-1"/>', 1.8),
+  orbitRight: svg('<rect x="9" y="9.5" width="6" height="9" rx="1.2"/><path d="M4.5 12.5A8 8 0 0 1 18.8 8.2"/><path d="M19.8 4.4l-1 3.8-3.8-1"/>', 1.8),
   // Напівпричіп збоку зі шворнем спереду — причепити / відчепити (VVK_ATTACH_SEMITRAILER).
   attach: svg('<path d="M7 6.5h14.5v9H7z"/><path d="M7 15.5H4.5v-3H2"/><circle cx="16" cy="17.8" r="1.7"/><circle cx="19.8" cy="17.8" r="1.7"/><path d="M8.5 15.5v2.5" stroke-width="1.6"/>'),
   // Кругова стрілка за годинниковою — відновитися.
@@ -428,9 +432,19 @@ export class Input {
     more.className = 'touch-more';
     more.hidden = true;
     const toggle = btn('more', '', undefined, undefined, ICONS.more, row);
+    // «•••» по колу: група «ще» → група «ще» + дві кнопки обертання камери → згорнуто.
+    const orbit: HTMLElement[] = [];
+    let moreState = 0;
     toggle.addEventListener('pointerdown', () => {
-      more.hidden = !more.hidden;
-      toggle.classList.toggle('on', !more.hidden);
+      moreState = (moreState + 1) % 3;
+      more.hidden = moreState === 0;
+      for (const b of orbit) b.hidden = moreState !== 2;
+      toggle.classList.toggle('on', moreState !== 0);
+      // Сховану кнопку, яку ще тримали, — відпустити.
+      if (moreState !== 2) {
+        this.held.delete('camLeft');
+        this.held.delete('camRight');
+      }
     });
     btn('reset', '', undefined, 'reset', ICONS.reset, row);
     btn('cam', '', undefined, 'camera', ICONS.cam, row);
@@ -448,6 +462,13 @@ export class Input {
       ['horn', 'horn', HORN_SVG],
     ];
     for (const [cls, cmd, icon] of items) btn(cls, '', undefined, cmd, icon, more).dataset.cmd = cmd;
+    // Друге натискання «•••» дописує до групи кнопки обертання камери по колу (тримати); ракурс скидає «Камера».
+    for (const [cls, a, icon] of [['orbit-left', 'camLeft', ICONS.orbitLeft], ['orbit-right', 'camRight', ICONS.orbitRight]] as const) {
+      const b = btn(cls, '', a, undefined, icon, more);
+      b.dataset.orbit = '1';
+      b.hidden = true;
+      orbit.push(b);
+    }
     top.append(more);
     ui.append(top);
     parent.append(ui);
@@ -506,6 +527,16 @@ export class Input {
   }
   /** Підсвітка увімкнених функцій у групі «ще» (фари, дзеркало…); hidden — кнопку не показувати. */
   /** unavailable — функції немає (навігація без «НС»): кнопка видна, але сіра. */
+  /** Обертання камери: −1 ліворуч, 1 праворуч, 0 — не крутити (клавіші чи кнопки, поки натиснуті). */
+  get camTurn(): number {
+    return (this.held.has('camRight') ? 1 : 0) - (this.held.has('camLeft') ? 1 : 0);
+  }
+
+  /** Кнопки обертання камери сірі (з кабіни камера по колу не крутиться). */
+  setOrbitAvailable(on: boolean): void {
+    this.touchUi?.querySelectorAll<HTMLElement>('[data-orbit]').forEach((b) => b.classList.toggle('unavailable', !on));
+  }
+
   setToggle(cmd: Command, on: boolean, hidden = false, unavailable = false): void {
     const b = this.touchUi?.querySelector<HTMLElement>(`[data-cmd="${cmd}"]`);
     if (!b) return;
@@ -523,7 +554,7 @@ export class Input {
 
 /** Налаштування керування обох ігор: кермо праворуч, педалі ліворуч (body.swap-controls; зберігається в браузері). */
 const SWAP_KEY = 'ht.swapControls';
-const ACTIONS = ['left', 'right', 'gas', 'brake', 'handbrake', 'sharp'] as const;
+const ACTIONS = ['left', 'right', 'gas', 'brake', 'handbrake', 'sharp', 'camLeft', 'camRight'] as const;
 
 /** Типові клавіші дій і команд (перша — показується в меню «Керування»). */
 export const DEFAULT_KEYS: Partial<Record<Action | Command, string[]>> = {
@@ -539,6 +570,10 @@ export const DEFAULT_KEYS: Partial<Record<Action | Command, string[]>> = {
   f4: ['F4'],
   f5: ['F5'],
   camera: ['KeyC'],
+  // Порту: Del і PgDn — крайні клавіші ряду Del–End–PgDn (типові клавіші king.exe не з'ясовано; їхні назви
+  // задає конструктор таблиці клавіш, re/notes/ht2/menu-screens.md — гіпотеза).
+  camLeft: ['Delete'],
+  camRight: ['PageDown'],
   reset: ['KeyR', 'Digit0', 'Numpad0'],
   horn: ['KeyH'],
   autopilot: ['KeyP'],
