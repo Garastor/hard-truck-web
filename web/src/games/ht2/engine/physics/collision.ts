@@ -214,11 +214,13 @@ export function openPortals(col: LevelCollision, portals: { a: [number, number];
   const walls: Poly[] = [];
   const rooms: string[] = [];
   const fences: boolean[] = [];
+  const switches: string[] = [];
   col.walls.forEach((w, i) => {
     const keep = (p: Poly, fence: boolean) => {
       walls.push(p);
       rooms.push(col.wallRoom[i]);
       fences.push(fence);
+      switches.push(col.wallSwitch[i]);
     };
     if (!col.wallFence[i] || w.length !== 4) return keep(w, col.wallFence[i]);
     const [a, b] = [w[0], w[1]];
@@ -253,6 +255,7 @@ export function openPortals(col: LevelCollision, portals: { a: [number, number];
   col.walls = walls;
   col.wallRoom = rooms;
   col.wallFence = fences;
+  col.wallSwitch = switches;
   return cut;
 }
 

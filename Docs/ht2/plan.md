@@ -171,6 +171,8 @@ interface GameProfile {
 - [x] `vehicle.tech` → `TruckDef` (`games/ht2/trucks.ts`), фізика й двигун — спільні з HT1 (`TruckVehicle` тепер на N коліс)
 - [x] Моделі з `TRUCKS.B3D`: колеса — групи `<prefix>wheelN`; перемикачі відстані HT2 — група 0 «зблизька»
 - [x] Їзда у світі: колізії з `hit_*` завантажених регіонів, старт і вантажівка з `ENV/GAME.CNF`, звук з common1.res
+  (стіни кімнати діють лише на машини в цій кімнаті, як у king.exe — `engine/physics/roomBounds.ts`,
+  `re/notes/ht2/physics.md` «Колізії кімнат»)
 - [x] 3D-кабіни `CABINES.B3D` (`<prefixCab>Cab`, блок 4 — деталь у просторі), кермо, стрілки (шкали з vehicle.tech)
 - [x] Доба (ігровий час ×10, пора доби → світло й туман WEATHER.INI), фари — прожектори на Fara_FL/FR (L)
 - [x] Ореоли ліхтарів (`$$DynamicGlow`) у сутінках і вночі

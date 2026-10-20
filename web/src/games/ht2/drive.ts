@@ -3,7 +3,8 @@ import { HT2_ENGINE, HT2_INPUT, HT2_KING, HT2_KING_BRAKE, HT2_KING_ENGINE, HT2_R
 import * as THREE from 'three';
 import type { FileSource } from '@shared/source';
 import { EngineAudio } from './engine/audio/engineAudio';
-import { instanceCollision, levelCollision } from './engine/physics/collision';
+import { instanceCollision, levelCollision, openPortals } from './engine/physics/collision';
+import { RoomBounds } from './engine/physics/roomBounds';
 import { TruckVehicle } from './engine/vehicle/truckVehicle';
 import { ROUGH_ASPHALT, ROUGH_GROUND } from './engine/vehicle/kingModel';
 import { buildTruckModel, visibleBox, type TruckDef, type TruckModel } from './engine/vehicle/trucks';
@@ -306,6 +307,8 @@ const NEXT_CAM: Record<CamMode, CamMode> = { cockpit: 'chase', chase: 'far', far
 export class Ht2Drive {
   readonly camera = new THREE.PerspectiveCamera(FOV, 1, 0.5, 4000);
   private rapier!: RAPIER.World;
+  /** Стіни кімнат лише для машин у своїй кімнаті (як king.exe); крок фізики — через неї. */
+  private roomBounds!: RoomBounds;
   truck!: TruckVehicle;
   /** Напівпричіп (лише в тягачів). */
   trailer: Trailer | null = null;
@@ -569,6 +572,7 @@ export class Ht2Drive {
   private async init(): Promise<void> {
     const o = this.opts;
     this.rapier = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    this.roomBounds = new RoomBounds(this.rapier);
     this.objects = new WorldObjects(this.rapier);
     this.rapier.timestep = 1 / 60;
     // CCD-розвʼязувач Rapier вимкнено: CCD тут ніде не вмикається, а він однаково обрізав крок машини гравця біля
@@ -1023,6 +1027,10 @@ export class Ht2Drive {
     const cs: RAPIER.Collider[] = [];
     this.colliders.set(reg.id, cs);
     const col = levelCollision(reg.built.assembler.b3d);
+    // Проходи в межах-огорожах там, де на їхній лінії портал (межі ar_047…049 лежать на порталах): машина на самій
+    // межі вже в сусідній кімнаті за підлогою, але ще торкається межі своєї.
+    const portals = [...reg.portals.values()].flat().filter((p) => p.normal);
+    openPortals(col, portals.map((p) => ({ a: [p.corners[0].x, -p.corners[0].z] as [number, number], b: [p.corners[1].x, -p.corners[1].z] as [number, number] })));
     await yieldTask();
     if (!alive()) return;
     // Колізії гілок перемикачів (обвали) — окремо: діють лише в стані своєї гілки.
@@ -1036,7 +1044,19 @@ export class Ht2Drive {
       (t ? part(t).floors : floors).push(p);
       (t ? part(t).surfaces : surfaces).push(col.floorSurface[i]);
     });
-    col.walls.forEach((p, i) => (col.wallSwitch[i] ? part(col.wallSwitch[i]).walls : wallPolys).push(p));
+    // Стіни кімнат — по кімнатах: діють лише на машини в тій самій кімнаті (engine/physics/roomBounds.ts).
+    const roomWalls = new Map<string, number[][][]>();
+    col.walls.forEach((p, i) => {
+      if (col.wallSwitch[i]) return part(col.wallSwitch[i]).walls.push(p);
+      const r = col.wallRoom[i];
+      (roomWalls.get(r) ?? roomWalls.set(r, []).get(r)!).push(p);
+    });
+    const roomFloors = new Map<string, number[][][]>();
+    col.floors.forEach((p, i) => {
+      const r = col.floorRoom[i];
+      (roomFloors.get(r) ?? roomFloors.set(r, []).get(r)!).push(p);
+    });
+    for (const [r, polys] of roomFloors) this.roomBounds.addFloors(reg.id, r, polys);
     // Будівлі складів, СТО, заправки — окремі обʼєкти колізій, розставлені екземплярами.
     const asm = reg.built.assembler;
     const inst = instanceCollision(asm.b3d, (n) => asm.block(n) ?? this.world.common.block(n), (n) => asm.space(n));
@@ -1054,6 +1074,10 @@ export class Ht2Drive {
         await yieldTask();
         if (!alive()) return;
       }
+    for (const [r, polys] of roomWalls) {
+      const c = this.roomBounds.addWalls(reg.id, r, polys);
+      if (c) cs.push(c);
+    }
     const switched = new Map<string, RAPIER.Collider[]>();
     for (const [tag, g] of parts) {
       const list = [addCollisionPolys(this.rapier, g.floors, 1.0, g.surfaces), addCollisionPolys(this.rapier, g.walls, 0.4)].filter((c): c is RAPIER.Collider => !!c);
@@ -1084,6 +1108,7 @@ export class Ht2Drive {
   };
 
   private removeRegion(id: string): void {
+    this.roomBounds.removeRegion(id, this.colliders.get(id) ?? []);
     for (const c of this.colliders.get(id) ?? []) {
       forgetSurfaces(c);
       this.rapier.removeCollider(c, false);
@@ -3020,7 +3045,7 @@ export class Ht2Drive {
       this.traffic?.control(step);
       this.police?.control(step);
       this.mafia?.control(step);
-      this.rapier.step();
+      this.roomBounds.step();
       this.acc -= step;
       // Розрив зчіпки (складання понад 135°, перекидання, крен) — причіп відривається, як клавішею (physics.md).
       if (this.trailer?.broken && !this.race) {
