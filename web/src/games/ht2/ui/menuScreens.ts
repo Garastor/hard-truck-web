@@ -6,7 +6,8 @@ import { DEFAULT_KEYS, type Action, type Command } from '../engine/input/input';
  * Екрани меню LOAD.RES «Графіка», «Керування», «Водії», «Відеоплеєр» — розклад king.exe (re/notes/ht2/menu-screens.md;
  * координати — сцена 800×600, як у одиночної гри). Написи, які гра малює кодом, — українською (у фонах лишаються
  * оригінальні). Що в порту діє:
- * - графіка — роздільність 640×480…1600×1200 (висота кадру рендерера), «Автопошук» — за екраном пристрою; повзунки
+ * - графіка — роздільність 640×480…1600×1200 (ПК — висота кадру рендерера, телефон — кількість пікселів;
+ *   resolutionDpr), «Автопошук» — за екраном пристрою; повзунки
  *   «спецефекти» й «детальність» — пороги ефектів king.exe (ui/effects.ts); на місці вибору відеокарти — частота
  *   кадрів 30 / 40 / 60 (порт; `Ht2Settings.fps`, FPS_MODES);
  * - керування — таблиця 22 дій з клавішами порту; рядок дії порту — перепризначити клавішу (наступне натискання;
@@ -16,16 +17,37 @@ import { DEFAULT_KEYS, type Action, type Command } from '../engine/input/input';
  * - відеоплеєр — записів (файли .tr/.mvp оригіналу) у порту немає: список порожній, кнопки неактивні.
  */
 
-/** Висота кадру для кнопок роздільності (`[DRVn] vpas/vpam/vpal/vpasl` king.exe). */
+/** Роздільності кнопок меню «Графіка» (`[DRVn] vpas/vpam/vpal/vpasl` king.exe): ширина й висота. */
+export const RESOLUTION_W = [640, 800, 1024, 1600];
 export const RESOLUTION_H = [480, 600, 768, 1200];
 
 /** Щільність пікселів режиму «Баланс» — коли роздільність не вибрано (drive.ts resize). */
 export const BALANCE_DPR = 1.5;
 
-/** Кнопка роздільності, найближча до висоти кадру h (пікселі буфера). */
-export function nearestResolution(h: number): number {
+/**
+ * Щільність пікселів рендерера для кнопки роздільності i на екрані w×h (CSS-пікселі), не вище за екран:
+ * - ПК — висота кадру = висота роздільності (640×480 → 480 рядків), як було;
+ * - телефон (сенсорний екран) — стільки ж пікселів, скільки в роздільності (на прохання користувача): широкий екран
+ *   за висотою давав зайве — «640×480» на iPhone було 1038×480 (500 тис. пікселів), тепер ≈ 815×377 (307 тис.).
+ */
+export function resolutionDpr(i: number, w: number, h: number): number {
+  return Math.min(window.devicePixelRatio, resolutionScale(i, w, h));
+}
+
+/** Те саме без межі екрана (Автопошук — чи вміщається роздільність у фізичні пікселі). */
+function resolutionScale(i: number, w: number, h: number): number {
+  return touchScreen() ? Math.sqrt((RESOLUTION_W[i] * RESOLUTION_H[i]) / (w * h)) : RESOLUTION_H[i] / h;
+}
+
+/** Телефон чи планшет (сенсорний екран) — як в оболонці (app/platform/quality.ts). */
+function touchScreen(): boolean {
+  return matchMedia('(pointer: coarse)').matches;
+}
+
+/** Кнопка роздільності, найближча за щільністю пікселів dpr до тієї, що діє на екрані w×h. */
+export function nearestResolution(dpr: number, w: number, h: number): number {
   let best = 0;
-  RESOLUTION_H.forEach((r, i) => (Math.abs(r - h) < Math.abs(RESOLUTION_H[best] - h) ? (best = i) : 0));
+  RESOLUTION_H.forEach((_, i) => (Math.abs(resolutionDpr(i, w, h) - dpr) < Math.abs(resolutionDpr(best, w, h) - dpr) ? (best = i) : 0));
   return best;
 }
 
@@ -92,14 +114,13 @@ export function ht2GraphicsScreen(art: Ht2MenuArt, o: GraphicsScreen): () => voi
     o.onChange({ ...s });
     repaint();
   };
-  // «Автопошук»: найбільша роздільність, що не вища за фізичну висоту екрана (гіпотеза порту замість частоти ЦП і
-  // відеопамʼяті king.exe).
+  // «Автопошук»: найбільша роздільність, що вміщається у фізичні пікселі екрана (ПК — за висотою, телефон — за
+  // кількістю пікселів; гіпотеза порту замість частоти ЦП і відеопамʼяті king.exe).
   painters.push(
     texButton(art, stage, 'g/detect', 348, 157, 'Автопошук', {
       action: () => {
-        const h = window.innerHeight * window.devicePixelRatio;
         let i = 0;
-        RESOLUTION_H.forEach((r, k) => (r <= h ? (i = k) : 0));
+        RESOLUTION_H.forEach((_, k) => (resolutionScale(k, window.innerWidth, window.innerHeight) <= window.devicePixelRatio ? (i = k) : 0));
         pick(i);
       },
     }),
@@ -126,7 +147,7 @@ export function ht2GraphicsScreen(art: Ht2MenuArt, o: GraphicsScreen): () => voi
   ];
   // Не вибрано — світиться та, що найближча до того, що діє насправді (drive.ts «Баланс», щільність ≤ BALANCE_DPR):
   // на телефоні це ≈ 800×600; раніше світилась 1024×768, і вибір нижчих майже не змінював картинку.
-  const current = () => s.resolution ?? nearestResolution(Math.min(window.devicePixelRatio, BALANCE_DPR) * window.innerHeight);
+  const current = () => s.resolution ?? nearestResolution(Math.min(window.devicePixelRatio, BALANCE_DPR), window.innerWidth, window.innerHeight);
   res.forEach(([tex, x, y, label], i) => painters.push(texButton(art, stage, `g/${tex}`, x, y, label, { selected: () => current() === i, action: () => pick(i), after: repaint })));
   const set = (k: 'effects' | 'detail') => (v: number) => {
     s[k] = Math.round(Math.max(0, Math.min(1, v)) * 10) / 10;

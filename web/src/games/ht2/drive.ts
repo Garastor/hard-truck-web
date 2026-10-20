@@ -43,7 +43,7 @@ import { Dents, dentGeometry, hitEnergy } from './vehicles/dents';
 import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
 import { orderVehicle, vehicleOffers, vehiclePowers, vehiclePrices } from './career/carOrder';
 import { HIRED_MIN_SPEED, HiredOnRoads } from './career/hired';
-import { BALANCE_DPR, keyName, RESOLUTION_H } from './ui/menuScreens';
+import { BALANCE_DPR, keyName, resolutionDpr } from './ui/menuScreens';
 import { driverCosts, hiredLoad, upgradeDriver } from './career/company';
 import { routeLength } from './career/economy';
 import { terrainCollider } from './world/terrain';
@@ -3111,7 +3111,8 @@ export class Ht2Drive {
     // Не задано — режим «Баланс» (як типовий у першій грі): щільність пікселів не вище BALANCE_DPR — кількість
     // пікселів найбільше гріє телефон.
     const res = this.opts.settings?.resolution;
-    this.opts.renderer.setPixelRatio(Math.min(window.devicePixelRatio, res !== undefined ? RESOLUTION_H[res] / h : BALANCE_DPR));
+    // Телефон і ПК — різні набори (ui/menuScreens.ts resolutionDpr): на телефоні — за кількістю пікселів.
+    this.opts.renderer.setPixelRatio(res !== undefined ? resolutionDpr(res, w, h) : Math.min(window.devicePixelRatio, BALANCE_DPR));
     this.opts.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
