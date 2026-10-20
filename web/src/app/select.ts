@@ -44,7 +44,8 @@ export function gameSelectScreen(cards: GameCard[], fonts: { small: TextFont | n
     let H = 0;
     const pick = (i: number) => {
       window.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', fit);
+      window.removeEventListener('resize', refit);
+      window.removeEventListener('orientationchange', refit);
       root.remove();
       // in-menu лишається, поки гра вантажиться: її меню саме зніме його, закриваючись (інакше на мить видно
       // технічну панель першої гри).
@@ -124,19 +125,42 @@ export function gameSelectScreen(cards: GameCard[], fonts: { small: TextFont | n
         pick(focus);
       }
     };
+    // Безпечна зона (виріз/«бровка», рядок стану, смуга жестів): сцену вписуємо всередину неї.
+    const safe = document.createElement('div');
+    safe.className = 'game-select-safe';
+    root.append(safe);
     const fit = () => {
-      const p = window.innerHeight > window.innerWidth;
+      // Розміри — самого екрана вибору, не window.inner*: застосунок з головного екрана iPhone після повороту в
+      // портрет віддає innerHeight, менший на висоту рядка стану (797 замість 844), і сцена зʼїжджала вгору.
+      const rw = root.clientWidth || window.innerWidth;
+      const rh = root.clientHeight || window.innerHeight;
+      const p = rh > rw;
       if (p !== portrait) {
         portrait = p;
         build();
       }
-      const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+      const cs = getComputedStyle(safe);
+      const top = parseFloat(cs.paddingTop) || 0;
+      const bottom = parseFloat(cs.paddingBottom) || 0;
+      const left = parseFloat(cs.paddingLeft) || 0;
+      const right = parseFloat(cs.paddingRight) || 0;
+      const aw = Math.max(1, rw - left - right);
+      const ah = Math.max(1, rh - top - bottom);
+      const s = Math.min(aw / W, ah / H);
+      stage.style.left = `${left + aw / 2}px`;
+      stage.style.top = `${top + ah / 2}px`;
       stage.style.transform = `translate(-50%, -50%) scale(${s})`;
     };
+    // iOS повідомляє нові розміри після повороту із запізненням — перевпорядкувати ще раз трохи згодом.
+    const refit = () => {
+      fit();
+      setTimeout(fit, 300);
+    };
     window.addEventListener('keydown', onKey);
-    window.addEventListener('resize', fit);
-    fit();
+    window.addEventListener('resize', refit);
+    window.addEventListener('orientationchange', refit);
     document.body.append(root);
+    fit();
     document.body.classList.add('in-menu');
   });
 }

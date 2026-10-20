@@ -37,3 +37,22 @@
 .game-card:active {
   filter: brightness(1.25);
 }
+
+/* Застосунок з головного екрана (iPhone): після повороту в портрет «вікно» коротше за екран на висоту рядка стану —
+   екран вибору тягнемо на весь екран (100lvh), щоб не було смуги знизу й сцена не зʼїжджала під «бровку». */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  .game-select {
+    bottom: auto;
+    height: 100vh;
+    height: 100lvh;
+  }
+}
+
+/* Невидимий замір безпечної зони (select.ts читає padding). */
+.game-select-safe {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom))
+    max(8px, env(safe-area-inset-left));
+}
