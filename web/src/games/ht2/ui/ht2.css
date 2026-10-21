@@ -205,7 +205,7 @@ body.game-ht2 .drive-hud {
 .ht2-drive-bar {
   position: fixed;
   /* Ліворуч, за кнопкою «Меню»: праворуч угорі — сенсорні кнопки (вид, відновитися, сигнал, «•••»). */
-  left: calc(max(8px, env(safe-area-inset-left)) + 84px);
+  left: calc(max(8px, var(--sal)) + 84px);
   top: max(8px, env(safe-area-inset-top));
   max-width: calc(100vw - 84px - 4 * 52px - 24px);
   overflow: hidden;
@@ -222,7 +222,7 @@ body.game-ht2 .drive-hud {
 
 .ht2-hud {
   position: fixed;
-  left: max(8px, env(safe-area-inset-left));
+  left: max(8px, var(--sal));
   top: max(8px, env(safe-area-inset-top));
   z-index: 5;
   display: flex;
@@ -262,7 +262,7 @@ body.game-ht2 .drive-hud {
 
 .ht2-info {
   position: fixed;
-  right: max(8px, env(safe-area-inset-right));
+  right: max(8px, var(--sar));
   bottom: max(8px, env(safe-area-inset-bottom));
   z-index: 5;
   max-width: 50vw;
@@ -291,7 +291,7 @@ body.game-ht2 .drive-hud {
 .ht2-worldmap-close {
   position: absolute;
   top: max(8px, env(safe-area-inset-top));
-  right: max(8px, env(safe-area-inset-right));
+  right: max(8px, var(--sar));
   width: 44px;
   height: 44px;
   border: 1px solid #58c8b0;
@@ -303,7 +303,7 @@ body.game-ht2 .drive-hud {
 
 .ht2-worldmap-legend {
   position: absolute;
-  left: max(12px, env(safe-area-inset-left));
+  left: max(12px, var(--sal));
   top: max(10px, env(safe-area-inset-top));
   display: flex;
   gap: 12px;
@@ -369,7 +369,7 @@ body.ht2-orig-ui .touch-btn.more {
 /* Картка події (mess<N>.msk) — праворуч під табло; дотик ховає. */
 .ht2-card {
   position: fixed;
-  right: env(safe-area-inset-right, 0px);
+  right: var(--sar);
   z-index: 6;
   image-rendering: pixelated;
 }
@@ -388,8 +388,8 @@ body.ht2-orig-ui .touch-btn.more {
   pointer-events: none;
   image-rendering: pixelated;
   /* Безпечна зона (виріз, «бровка») для огляду: tabMap.ts читає її з обчисленого стилю — env() із JS не прочитати. */
-  scroll-margin-left: env(safe-area-inset-left, 0px);
-  scroll-margin-right: env(safe-area-inset-right, 0px);
+  scroll-margin-left: var(--sal);
+  scroll-margin-right: var(--sar);
 }
 
 .ht2-tabmap[hidden] {
@@ -422,7 +422,7 @@ body.ht2-esc-open .ht2-drive-bar {
 }
 
 .ht2-panel.right {
-  right: env(safe-area-inset-right, 0px);
+  right: var(--sar);
 }
 
 /* Панелі по центру екрана (рація F5: king.exe ставить корпус і розмову посередині). */
@@ -432,7 +432,7 @@ body.ht2-esc-open .ht2-drive-bar {
 }
 
 .ht2-panel.left {
-  left: env(safe-area-inset-left, 0px);
+  left: var(--sal);
 }
 
 .ht2-panel-stage {
@@ -557,7 +557,7 @@ body.ht2-esc-open .ht2-drive-bar {
 body.ht2-orig-ui .touch-top {
   top: calc(env(safe-area-inset-top, 0px) + var(--ht2-tablo-h, 0px) + 6px);
   /* Як ліва група (.ht2-hud): 8 px від краю, а не 16 (--sr). */
-  right: max(8px, env(safe-area-inset-right));
+  right: max(8px, var(--sar));
   /* Ціле число пікселів (не 8 px × --ui): дробовий проміжок ставив групу «•••» на півпіксель, і ряди клітинок
      округлювалися до пікселів екрана по-різному на ПК і телефоні. */
   gap: 6px;
@@ -567,20 +567,20 @@ body.ht2-orig-ui .touch-top {
    − 4 px: на iPhone виріз («острівець», ≈49 px) інакше накривав край кнопки ☰ (безпечна зона 59 px, 60% — 43 px). */
 @media (pointer: coarse) and (orientation: landscape) {
   body.ht2-orig-ui .ht2-hud {
-    left: max(calc(var(--sl) * 0.6), calc(env(safe-area-inset-left, 0px) - 4px));
+    left: max(calc(var(--sl) * 0.6), calc(var(--sal) - 4px));
   }
 
   body.ht2-orig-ui .touch-top {
-    right: max(calc(var(--sr) * 0.6), calc(env(safe-area-inset-right, 0px) - 4px));
+    right: max(calc(var(--sr) * 0.6), calc(var(--sar) - 4px));
   }
 
   /* Бічні панелі — на 40% ближче до краю: 60% безпечної зони (виріз), а не вся вона. */
   .ht2-panel.right {
-    right: calc(env(safe-area-inset-right, 0px) * 0.6);
+    right: calc(var(--sar) * 0.6);
   }
 
   .ht2-panel.left {
-    left: calc(env(safe-area-inset-left, 0px) * 0.6);
+    left: calc(var(--sal) * 0.6);
   }
 }
 
@@ -799,12 +799,12 @@ body.ht2-right-open.ht2-right-stack.swap-controls .touch-ui > .touch-btn.right {
 
 body.ht2-right-open.ht2-right-stack:not(.swap-controls) .touch-ui > .touch-btn.brake,
 body.ht2-right-open.ht2-right-stack.swap-controls .touch-ui > .touch-btn.left {
-  left: var(--sl);
+  left: var(--cl);
 }
 
 body.ht2-right-open.ht2-right-stack:not(.swap-controls) .touch-ui > .touch-btn.gas,
 body.ht2-right-open.ht2-right-stack.swap-controls .touch-ui > .touch-btn.right {
-  left: calc(var(--sl) + 92px * var(--ui, 1));
+  left: calc(var(--cl) + 92px * var(--ui, 1));
 }
 
 /* Меню Esc («Проблеми в дорозі»): усі кнопки керування — під ним і його затемненням (на прохання користувача). */
@@ -1106,7 +1106,7 @@ body.ht2-orig-ui .touch-more {
 /* У заїзді: гравці праворуч «ім'я ■» кольором гравця (власний елемент порту, як у першій грі). */
 .ht2-net-roster {
   position: fixed;
-  right: max(8px, env(safe-area-inset-right));
+  right: max(8px, var(--sar));
   top: 30vh;
   z-index: 2;
   display: flex;

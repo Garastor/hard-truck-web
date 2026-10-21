@@ -9,6 +9,7 @@ import type { GameModule, SelectArt, TextFont } from '@shared/gameContext';
 import { isIos, isStandalone, registerServiceWorker } from './platform/pwa';
 import { QUALITY, loadQuality } from './platform/quality';
 import { blockPageZoom } from './platform/mobile';
+import { watchNotch } from './platform/notch';
 import { uiScale } from './platform/scale';
 import { setSoftFont } from './platform/softUi';
 import { GAMES, GAME_IDS, detectGame, gameFromLocation, lastGame, setLastGame, type GameId } from './registry';
@@ -37,6 +38,7 @@ function setUiScale(): void {
 window.addEventListener('resize', setUiScale);
 setUiScale();
 blockPageZoom();
+watchNotch();
 rememberMute();
 // Кермо й педалі місцями (налаштування спільне для ігор; ключ — той самий, що в керуванні ігор).
 document.body.classList.toggle('swap-controls', loadSwap());

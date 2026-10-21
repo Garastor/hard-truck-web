@@ -7,15 +7,40 @@
   --gutter: 12px;
   /* Бокові відступи: у ландшафті на телефоні — з запасом під «острівок» / виріз, навіть якщо браузер
      не повідомляє safe-area (Safari з панеллю вкладок). */
-  --sl: max(16px, env(safe-area-inset-left));
-  --sr: max(16px, env(safe-area-inset-right));
+  /* Безпечна зона з боків: з боку, протилежного «бровці», — 0 (platform/notch.ts ставить data-notch). */
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sl: max(16px, var(--sal));
+  --sr: max(16px, var(--sar));
+  /* Кнопки руху (кермо, педалі, «Різко») — симетрично, на бровку не реагують (на прохання користувача). */
+  --cl: max(16px, env(safe-area-inset-left));
+  --cr: max(16px, env(safe-area-inset-right));
   color-scheme: dark;
+}
+
+:root[data-notch='left'] {
+  --sar: 0px;
+}
+
+:root[data-notch='right'] {
+  --sal: 0px;
 }
 
 @media (pointer: coarse) and (orientation: landscape) {
   :root {
-    --sl: max(52px, calc(env(safe-area-inset-left) + 12px));
-    --sr: max(52px, calc(env(safe-area-inset-right) + 12px));
+    --sl: max(52px, calc(var(--sal) + 12px));
+    --sr: max(52px, calc(var(--sar) + 12px));
+    --cl: max(52px, calc(env(safe-area-inset-left) + 12px));
+    --cr: max(52px, calc(env(safe-area-inset-right) + 12px));
+  }
+
+  /* Бік бровки відомий — з протилежного боку запас лише на заокруглений кут екрана. */
+  :root[data-notch='left'] {
+    --sr: 20px;
+  }
+
+  :root[data-notch='right'] {
+    --sl: 20px;
   }
 }
 
@@ -273,24 +298,24 @@ button.active {
 }
 
 .touch-btn.left {
-  left: var(--sl);
+  left: var(--cl);
 }
 
 .touch-btn.right {
-  left: calc(var(--sl) + 92px * var(--ui, 1));
+  left: calc(var(--cl) + 92px * var(--ui, 1));
 }
 
 .touch-btn.gas {
-  right: var(--sr);
+  right: var(--cr);
 }
 
 .touch-btn.brake {
-  right: calc(var(--sr) + 92px * var(--ui, 1));
+  right: calc(var(--cr) + 92px * var(--ui, 1));
 }
 
 /* «Різко» (Дальнобойщики 2, Ctrl): смуга над педалями (ліворуч над кермом — мінікарта), перемикач. */
 .touch-btn.sharp {
-  right: var(--sr);
+  right: var(--cr);
   bottom: calc(max(20px, env(safe-area-inset-bottom)) + 92px * var(--ui, 1));
   width: calc(172px * var(--ui, 1));
   height: calc(36px * var(--ui, 1));
@@ -364,22 +389,22 @@ button.active {
 /* Налаштування «поміняти місцями»: кермо праворуч, педалі ліворуч (гальмо — ближче до краю). */
 body.swap-controls .touch-btn.left {
   left: auto;
-  right: calc(var(--sr) + 92px * var(--ui, 1));
+  right: calc(var(--cr) + 92px * var(--ui, 1));
 }
 
 body.swap-controls .touch-btn.right {
   left: auto;
-  right: var(--sr);
+  right: var(--cr);
 }
 
 body.swap-controls .touch-btn.brake {
   right: auto;
-  left: var(--sl);
+  left: var(--cl);
 }
 
 body.swap-controls .touch-btn.gas {
   right: auto;
-  left: calc(var(--sl) + 92px * var(--ui, 1));
+  left: calc(var(--cl) + 92px * var(--ui, 1));
 }
 
 

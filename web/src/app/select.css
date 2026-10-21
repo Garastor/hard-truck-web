@@ -53,6 +53,6 @@
   position: absolute;
   visibility: hidden;
   pointer-events: none;
-  padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom))
-    max(8px, env(safe-area-inset-left));
+  padding: max(8px, env(safe-area-inset-top)) max(8px, var(--sar)) max(8px, env(safe-area-inset-bottom))
+    max(8px, var(--sal));
 }
