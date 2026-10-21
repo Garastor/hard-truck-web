@@ -84,6 +84,8 @@ export class TabMap {
   /** Межі кнопок порту, з-під яких зсувається мінікарта. */
   private avoid: DOMRect[] = [];
   private avoidAt = -1;
+  /** Лівий край групи ☰ (CSS px), коли бік бровки відомий; −1 — прямокутник king.exe (W/20). */
+  private hudLeft = -1;
   /** Висота табло (CSS px) і коли її перечитано. */
   private top = 0;
   private topAt = -1;
@@ -123,6 +125,14 @@ export class TabMap {
         // Видимі (не display: none); offsetParent не годиться — у position: fixed (.ht2-hud) він завжди null.
         .filter((e) => e.getClientRects().length > 0)
         .map((e) => e.getBoundingClientRect());
+      // Бік бровки відомий (platform/notch.ts, телефон у ландшафті): лівий край мінікарти — по лівій групі кнопок
+      // (☰), яка вже стоїть за вирізом або біля краю, коли виріз з протилежного боку.
+      const hud = document.documentElement.dataset.notch ? document.querySelector<HTMLElement>('.ht2-hud') : null;
+      this.hudLeft = hud && hud.getClientRects().length > 0 ? Math.round(hud.getBoundingClientRect().left) : -1;
+    }
+    if (this.hudLeft >= 0) {
+      box.x1 += this.hudLeft - box.x0;
+      box.x0 = this.hudLeft;
     }
     let y0 = box.y0;
     let y1 = box.y1;

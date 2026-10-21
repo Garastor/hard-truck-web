@@ -582,6 +582,16 @@ body.ht2-orig-ui .touch-top {
   .ht2-panel.left {
     left: calc(var(--sal) * 0.6);
   }
+
+  /* Бік бровки відомий (platform/notch.ts): з її боку панель — повністю за вирізом, як кнопки ☰ і «•••»
+     (безпечна зона − 4 px), з протилежного — біля краю (--sal/--sar там 0). */
+  :root[data-notch] .ht2-panel.right {
+    right: max(0px, calc(var(--sar) - 4px));
+  }
+
+  :root[data-notch] .ht2-panel.left {
+    left: max(0px, calc(var(--sal) - 4px));
+  }
 }
 
 body.ht2-orig-ui .ht2-hud,
