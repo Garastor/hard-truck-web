@@ -779,6 +779,30 @@ body.ht2-right-open.swap-controls .touch-ui > .touch-btn.right {
   translate: calc(-1 * var(--ht2-right-panel-w, 0px)) 0;
 }
 
+/* Широка панель (СТО: 640 з 812 px ландшафту iPhone) лишає ліворуч місце лише для однієї пари (ui/panel.ts
+   rightPairCramped): праву пару ставимо другим рядом над лівою — сітка 2×2 біля лівого краю (на прохання
+   користувача). Гальмо — над «ліворуч», газ — над «праворуч»; з swap-controls навпаки: «ліворуч» над гальмом,
+   «праворуч» над газом. Крок 92 — як у style.css. Положення стрибком, без анімації зсуву. */
+body.ht2-right-open.ht2-right-stack:not(.swap-controls) .touch-ui > .touch-btn.brake,
+body.ht2-right-open.ht2-right-stack:not(.swap-controls) .touch-ui > .touch-btn.gas,
+body.ht2-right-open.ht2-right-stack.swap-controls .touch-ui > .touch-btn.left,
+body.ht2-right-open.ht2-right-stack.swap-controls .touch-ui > .touch-btn.right {
+  translate: none;
+  transition: none;
+  right: auto;
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 92px * var(--ui, 1));
+}
+
+body.ht2-right-open.ht2-right-stack:not(.swap-controls) .touch-ui > .touch-btn.brake,
+body.ht2-right-open.ht2-right-stack.swap-controls .touch-ui > .touch-btn.left {
+  left: var(--sl);
+}
+
+body.ht2-right-open.ht2-right-stack:not(.swap-controls) .touch-ui > .touch-btn.gas,
+body.ht2-right-open.ht2-right-stack.swap-controls .touch-ui > .touch-btn.right {
+  left: calc(var(--sl) + 92px * var(--ui, 1));
+}
+
 /* Меню Esc («Проблеми в дорозі»): усі кнопки керування — під ним і його затемненням (на прохання користувача). */
 body.ht2-esc-open .touch-ui > .touch-btn.left,
 body.ht2-esc-open .touch-ui > .touch-btn.right,

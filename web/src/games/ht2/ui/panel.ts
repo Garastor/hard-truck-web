@@ -21,14 +21,41 @@ const TEXT_SQUEEZE = 0.88;
 /**
  * Відкриті панелі праворуч (вікна станцій: закупівля, сервіс, заправка…). Поки є хоч одна, на body — клас
  * `ht2-right-open` і `--ht2-right-panel-w` (ширина панелі на екрані): праві кнопки керування відсуваються з-під неї
- * (ht2.css) і повертаються після закриття.
+ * (ht2.css) і повертаються після закриття. Якщо широка панель (СТО) не лишає місця для пари кнопок поряд — вони
+ * налазили б на ліві, — на body ще `ht2-right-stack`: праві кнопки стають другим рядом над лівими.
  */
 const rightPanels = new Map<SidePanel, number>();
 
+/** Проміжок між лівою й правою групами кнопок, менше якого праву групу ставимо у два ряди (px). */
+const STACK_GAP = 8;
+
 function syncRightPanels(): void {
   const w = Math.max(0, ...rightPanels.values());
-  document.body.classList.toggle('ht2-right-open', rightPanels.size > 0);
-  document.body.style.setProperty('--ht2-right-panel-w', `${w}px`);
+  const body = document.body;
+  body.classList.toggle('ht2-right-open', rightPanels.size > 0);
+  body.style.setProperty('--ht2-right-panel-w', `${w}px`);
+  // Міряємо базове положення кнопок — без розкладки у два ряди.
+  body.classList.remove('ht2-right-stack');
+  body.classList.toggle('ht2-right-stack', rightPanels.size > 0 && rightPairCramped(w));
+}
+
+/**
+ * Чи налазить пара правих кнопок, відсунута на ширину панелі `w`, на ліву пару. Положення — offsetLeft (без зсуву
+ * translate, тож не залежить від анімації); кнопки сховані (ПК, кермо нахилом) — місця вистачає. Тоді праву пару
+ * ставимо над лівою (ht2.css `ht2-right-stack`).
+ */
+function rightPairCramped(w: number): boolean {
+  const swap = document.body.classList.contains('swap-controls');
+  const pick = (cls: string) => document.querySelector<HTMLElement>(`.touch-ui > .touch-btn.${cls}`);
+  const leftSide = (swap ? ['brake', 'gas'] : ['left', 'right']).map(pick);
+  const rightSide = (swap ? ['left', 'right'] : ['brake', 'gas']).map(pick);
+  const shown = (b: HTMLElement | null): b is HTMLElement => !!b && b.offsetWidth > 0;
+  const right = rightSide.filter(shown);
+  if (right.length < 2) return false;
+  const leftEdge = Math.min(...right.map((b) => b.offsetLeft)) - w;
+  const left = leftSide.filter(shown);
+  const leftEnd = left.length ? Math.max(...left.map((b) => b.offsetLeft + b.offsetWidth)) : 0;
+  return leftEdge < leftEnd + STACK_GAP;
 }
 
 export type ButtonState = 'p' | 'a' | 'ap' | 'pp' | 'n' | 'ok' | 'f';
