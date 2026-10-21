@@ -19,7 +19,7 @@
 | План / журнал | `Docs/progress.md` (рушій, структура) | `Docs/ht1/roadmap.md`, `Docs/ht1/progress.md` | `Docs/ht2/plan.md`, `Docs/ht2/progress.md` |
 | Реверс / нотатки | — | Ghidra `re/htruck`, `re/notes/ht1/` | Ghidra `re/king`, `re/notes/ht2/` |
 | Телеметрія оригіналу | `tools/re/procmem.py` (читання памʼяті) | `tools/re/ht1/`, дані `re/telemetry/*` | `tools/re/ht2/`, дані `re/telemetry/ht2/`, скіл `ht2-telemetry` |
-| Збереження (localStorage) | `ht.swapControls`, `ht.quality` | `ht.careers.v1`, `ht.*` | `ht2.save.<id>` (збереження), `ht2.drivers.v1`, `ht2.settings.v1` |
+| Збереження (localStorage) | `ht.swapControls`, `ht.quality` | `ht.careers.v1`, `ht.*` | `ht2.save.<id>` (збереження), `ht2.drivers.v1`, `ht2.settings.v1`, `ht2.netcar.v1` (машина мережевої гри) |
 
 - `web/src/app/` — оболонка: вибір гри (`registry.ts`, `select.ts`), імпорт файлів, рендерер, PWA (`platform/`). Гра
   для оболонки — `games/<гра>/index.ts` (GameModule: набір файлів, dev-сервер, `selectArt()` — фон і шрифти екрана
@@ -50,7 +50,8 @@
   `Docs/ht2/cockpit.md`, дим/пара/частинки (як народжуються клуби, умови вихлопу й пари, як додати й перевірити
   ефект) `Docs/ht2/effects.md`, **рух машини гравця й напівпричепа** (тяга, антибукс, гальма, занос, Ctrl, зчіпка; стенд для замірів) `Docs/ht2/vehicle.md`,
   **трафік, боти-далекобійники, автопілот, перекидання, причепи на базах, ринки** (режими
-  машин, рішення водія, де крутити, як вимірювати в браузері) `Docs/ht2/traffic.md`
+  машин, рішення водія, де крутити, як вимірювати в браузері) `Docs/ht2/traffic.md`, **мережева гра** (коди QR,
+  лобі `n/backMult`/`h/backHost`, гонка до 8 гравців, перевірка двома вкладками) `Docs/ht2/multiplayer.md`
 - Спільне: формат B3D `Docs/formats/b3d.md`, архітектура `Docs/03-architecture.md`, структура
   `Docs/09-structure-plan.md`, реверс `Docs/07-reverse-engineering.md`, гра на телефоні `Docs/play-on-phone.md`
 

@@ -137,8 +137,17 @@ vtable 0x64e32c; показ 0x51b5a0). Координати — лівий ве�
 - Погода й час доби — звичайні (WEATHER.INI), керовані повзунками сервера (насиченість трафіку, тривалість доби,
   погода); окремої погоди трас не знайдено [К 0x571f20].
 
+### Машини екрана «Мережева гра» [Д, Г]
+Картинки `n\<марка><колір>.msk` (`n\%s%d.msk`, рядок 0x2773f4): bmw daf frei gaz inter kamaz kenw mack mers patrol
+peter reno scania sobol storm volvo zil × 4 кольори. Поруч у king.exe — таблиці назв (0x275fe4…0x2761b4): car_node
+`Cayman Toyota Gazelle Patrol BmwM5 ZilR VolvoR StormR ScaniaR RenaultR MercedesR KamazR Sobol DafR Storm
+International Kenworth Renault Freightliner Mercedes Peterbilt` і короткі `Mack Kenw Reno Kamaz Daf Zil Scania Volvo
+Frei Mers Peter` (тягачі). Порт бере для марки вантажівку `…R`, де вона є, інакше тягач чи легковий — гіпотеза за
+назвами (код вибору не читали); `web/src/games/ht2/ui/netScreens.ts` `NET_CARS`.
+
 ## 5. Що є в порту і чого бракує
-- Є: `race.ts` — гонка на Кільці кар'єрного світу (ENV\dr, 7 суперників, 3 кола, світлофор, гумова нитка) з «Демо»;
+- Є: мережева гра (Docs/ht2/multiplayer.md) — екрани `n\backMult` і `h\backHost`, гонка на Кільці у світі до 8
+  гравців; `race.ts` — гонка на Кільці кар'єрного світу (ENV\dr, 7 суперників, 3 кола, світлофор, гумова нитка) з «Демо»;
   `world/terrain.ts` — рельєф `aa` (але з `MTR\terrain*` — для кар'єри має бути `ENV\terrain*`); `files.ts` уже
   перелічує файли MENV/MTR/MTB.
 - Бракує: екран сервера `h\backHost` (вибір траси, складність, 3 повзунки) як вхід у «трасові» режими (одиночний
