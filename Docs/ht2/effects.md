@@ -101,6 +101,13 @@
   (дощ, не під дахом, повзунки `glassDrops()`, прапорець `rain` набору погоди кімнати). Буфер вивантажується на
   відеокарту лише зміненими прямокутниками — тому після згортання застосунку (`visibilitychange`) і
   `webglcontextrestored` `GlassRain` вивантажує його цілком (`WaterBuffer.invalidate`) і робить нову копію кадру.
+- **Водяна плівка** (власний ефект порту, на прохання користувача — щоб невичищене скло заважало їхати): другий
+  буфер `film` 64×64 у `GlassRain`. Під дощем рівномірно росте (`WaterBuffer.grow`): повна — за `FILM_TIME` 45 с на
+  місці, на ходу швидше × (1 + v / `FILM_SPEED`), v у м/с (90 км/год — ≈ 13 с). Двірники стирають її лише у своєму
+  секторі (`wipeFilm`), краї скла лишаються затягнутими; без дощу висихає за 8 с, як краплі. Шейдер
+  (`WATER_FRAGMENT`): t = товщина², розмиття 16 вибірками радіуса `FILM_LOOK.blur`·t (7 px кадру 640×480) і
+  безбарвний серпанок `FILM_LOOK.mist`·t (0,6); краплі — поверх плівки. Де крутити: `FILM_TIME`, `FILM_SPEED`
+  (`glassRain.ts`), `FILM_LOOK` (`waterBuffer.ts`).
 
 ## 5. Дані з vehicle.tech
 
@@ -125,6 +132,8 @@
   `drive.precip.group.visible` true/false (пікселі й середня різниця); краплі на склі — те саме з
   `glassRain.uniforms.wet` = 0. Згортання — `document.dispatchEvent(new Event('visibilitychange'))` або
   `WEBGL_lose_context` (`loseContext()` → `restoreContext()`), далі кадри вручну (`drive.frame(t)`, панель прихована).
+- Плівка: `drive.wipersManual = false`, прогнати ≈ 40 с кадрів вручну — вид розмитий і сірий; `wipersManual = true`
+  на 4 с — сектор двірників чистий, краї ні. Середній рівень — `drive.glassRain.film.levels` (повна ≈ 255).
 
 Панель браузера Claude часто прихована — `requestAnimationFrame` майже стоїть, клуби не народжуються. Кадри
 проганяти синхронно повним `frame()` (фізика, ефекти, камера, рендер):
