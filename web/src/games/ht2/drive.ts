@@ -55,7 +55,8 @@ import { Freight } from './traffic/freight';
 import { Climate, sunHeight, trafficLights } from './world/climate';
 import { iniGet, iniNum, parseIni } from './engine/formats/ini';
 import { decodeCp1251 } from './engine/formats/binary';
-import { RaceMode, type NetRace } from './race';
+import { RaceMode, compassSector, type CourseKind, type NetRace } from './race';
+import type { Arena } from './world/world';
 import { FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, STATE_RATE } from './net/state';
 import { Trailer } from './vehicles/trailer';
 import { headlightMask } from './vehicles/headlights';
@@ -345,6 +346,10 @@ export interface Ht2DriveOptions {
   net?: NetRace | null;
   /** Колір своєї машини (0…3 — варіант матеріалів моделі, як у трафіку; екран «Мережева гра»). */
   color?: number;
+  /** Арена мережевої гри (MENV — Кільце, MTR — Тріал): світ — лише її регіон, без ENV. */
+  arena?: Arena | null;
+  /** Вид траси гонки: Кільце (3 кола) чи Тріал (зони 0 → 1 → 2). */
+  course?: CourseKind;
 }
 
 type CamMode = 'chase' | 'cockpit' | 'far';
@@ -633,7 +638,7 @@ export class Ht2Drive {
     // Графіка інтерфейсу (esc16.RES, 57 МБ) — паралельно зі світом; init чекає її перед показом інтерфейсу.
     void EscArt.load(opts.source);
     await initRapier();
-    const world = await Ht2World.create(opts.source);
+    const world = await Ht2World.create(opts.source, opts.arena ?? undefined);
     const trucks = await loadTrucks(opts.source, world.common.lib.palette);
     const d = new Ht2Drive(opts, world, trucks);
     await d.init();
@@ -655,13 +660,13 @@ export class Ht2Drive {
     this.world.prepare = (root) => this.prepareRegion(root);
     this.roads = new Ht2Roads(this.world.regions.values());
 
-    // Старт і вантажівка гравця — з ENV/GAME.CNF.
-    const cnf = await o.source.read('ENV/GAME.CNF').then(readSch).catch(() => null);
+    // Старт і вантажівка гравця — з ENV/GAME.CNF (арена — свій GAME.CNF: MENV, MTR; у MTB немає).
+    const cnf = await o.source.read(`${o.arena ?? 'ENV'}/GAME.CNF`).then(readSch).catch(() => null);
     const sp = cnf ? assoc(cnf, 'startposition') : undefined;
     let start: [number, number, number] = sp ? [num(sp[1]), num(sp[2]), num(sp[3])] : [-3020, -4625, 20];
     if (o.race) {
-      // Гонка — старт на решітці Кільця (start1_1 у ENV/dr.way).
-      const node = this.world.regions.get('dr')?.way.rooms.flatMap((r) => r.nodes).find((n) => n.name === 'start1_1');
+      // Гонка — старт на решітці (start1_1 у ENV/dr.way чи WAY арени).
+      const node = [...this.world.regions.values()].flatMap((g) => g.way.rooms.flatMap((r) => r.nodes)).find((n) => n.name === 'start1_1');
       if (node) start = node.pos;
     }
     const live = cnf ? assoc(assoc(cnf, 'playertypes')?.slice(1) ?? [], 'live') : undefined;
@@ -808,7 +813,7 @@ export class Ht2Drive {
     if (o.race) {
       const ms = await o.source.read('Ms.sch').then(readSch).catch(() => []);
       for (const m of ms) if (Array.isArray(m) && typeof m[0] === 'string') this.raceMessages.set(m[0], ukMessage(m[0], str(m[m.length - 1])));
-      this.race = new RaceMode(this, this.roads, (k, fb) => this.raceMessages.get(k) ?? fb, false, o.net ?? null);
+      this.race = new RaceMode(this, this.roads, (k, fb) => this.raceMessages.get(k) ?? fb, false, o.net ?? null, o.course ?? 'ring');
       this.race.onFinish = () => o.onExit();
     }
     // Погода: повзунок «погода» і TRUCK.INI [EFFECTS] wtemp (період зміни, реальних годин); ?weather=bad|good — стала.
@@ -3780,7 +3785,7 @@ export class Ht2Drive {
       // Причепи з вантажем (дорожні місії) — I_trailer; порожні на базах — без значка (0x529890).
       trailers: this.presents?.withCargo.map((p) => p.pos) ?? [],
       debris: this.obstacles?.activeObstacle ? [this.obstacles.activeObstacle.pos] : [],
-      finishLabel: 'КІЛЬЦЕ',
+      finishLabel: this.race?.finishLabel ?? 'КІЛЬЦЕ',
     });
     const drive = `${Math.round(this.truck.speedKmh)} км/год   ${this.truck.gear < 0 ? 'R' : this.truck.gear === 0 ? 'N' : this.truck.gear}   ${Math.round(this.truck.rpm)} об/хв`;
     // Поруч далекобійник — його імʼя й машина (names.sch, vehicle.tech).
@@ -3817,6 +3822,12 @@ export class Ht2Drive {
     else this.notice = { text, time };
   }
 
+  /** Компас Тріалу на табло: сектор напрямку на наступну точку (race.compassTarget) чи null. */
+  private compass(): number | null {
+    const t = this.race?.compassTarget();
+    return t ? compassSector(this.truck.forward(), t.clone().sub(this.truck.visual.position)) : null;
+  }
+
   private drawTablo(dt: number, handbrake: boolean): void {
     const c = this.careerMode?.career;
     const o = c?.order;
@@ -3831,7 +3842,8 @@ export class Ht2Drive {
       fuel: c ? (c.fuel ?? this.tank) / this.tank : 1,
       condition: c ? 1 - c.damage : this.race ? 1 : 1 - this.freeDamage,
       nav: this.navTurn,
-      position: this.careerMode?.race ?? null,
+      position: this.careerMode?.race ?? (this.race?.net ? this.race.standing() : null),
+      compass: this.compass(),
       licences: this.careerMode?.licenceInfo() ?? null,
     });
   }

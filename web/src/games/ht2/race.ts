@@ -11,6 +11,61 @@ import type { Ht2Drive } from './drive';
 import { recolor } from './traffic/traffic';
 import { FIRST_RIVAL, FLAG_REVERSE, RemoteTrack, emptyState, packFleet, readFleet, type TruckState } from './net/state';
 import type { NetCar } from './net/peer';
+import type { Block } from './engine/formats/b3d';
+
+/**
+ * Вид траси: `ring` — Кільце (3 кола маршрутом через check_point1…3), `trial` — Тріал (арена MTR, tracks.md §3):
+ * зони-коробки `check_point_0 → 1 → 2` по черзі, одне проходження, фініш у зоні 2.
+ */
+export type CourseKind = 'ring' | 'trial';
+
+/** Зона-тригер B3D (блок 13 з i1 = 7, i2 — номер точки): площини (блоки 9) шляху до нього, координати гри. */
+type ZonePlanes = { v: [number, number, number, number]; front: boolean }[];
+
+/** Контрольні зони Тріалу в блоках арени: номер → площини. */
+export function checkZones(blocks: readonly Block[]): Map<number, ZonePlanes> {
+  const out = new Map<number, ZonePlanes>();
+  const visit = (b: Block, planes: ZonePlanes) => {
+    if (b.data.t === 13 && b.data.trigger.i1 === 7) {
+      out.set(b.data.trigger.i2, planes);
+      return;
+    }
+    const plane = b.data.t === 9 && b.data.shape.kind === 5 ? (b.data.shape.v as [number, number, number, number]) : null;
+    (b.groups ?? []).forEach((g, gi) => {
+      const next = plane && gi < 2 ? [...planes, { v: plane, front: gi === 0 }] : planes;
+      for (const c of g) visit(c, next);
+    });
+  };
+  for (const b of blocks) if (b.data.t === 19) visit(b, []);
+  return out;
+}
+
+/** Точка Three.js усередині зони (площини в координатах гри: x, y — план, z — угору). */
+export function inZone(planes: ZonePlanes, p: THREE.Vector3): boolean {
+  const x = p.x;
+  const y = -p.z;
+  const z = p.y;
+  return planes.length > 0 && planes.every(({ v, front }) => v[0] * x + v[1] * y + v[2] * z + v[3] >= 0 === front);
+}
+
+/**
+ * Компас Тріалу на табло (king.exe 0x569ab0): 8 секторів за проєкціями напрямку на ціль на осі машини (пороги ±0,35 і
+ * ±0,85), символи icon.fon. Порядок символів — за картинками стрілок шрифту (ui/tablo.ts COMPASS).
+ */
+export function compassSector(forward: THREE.Vector3, toTarget: THREE.Vector3): number {
+  const f = forward.clone().setY(0).normalize();
+  const d = toTarget.clone().setY(0).normalize();
+  const right = new THREE.Vector3(-f.z, 0, f.x);
+  const a = d.dot(f);
+  const s = d.dot(right);
+  // 0 — уперед, далі за годинниковою стрілкою: 1 праворуч-уперед, 2 праворуч, 3 праворуч-назад, 4 назад, 5…7 — ліворуч
+  // (вісь «праворуч» Three.js: (−f.z, 0, f.x)).
+  if (a > 0.85) return 0;
+  if (a < -0.85) return 4;
+  if (Math.abs(a) < 0.35) return s > 0 ? 2 : 6;
+  if (a > 0) return s > 0 ? 1 : 7;
+  return s > 0 ? 3 : 5;
+}
 
 /**
  * Мережева гонка (net/): номер свого гравця (місце на решітці: start1_<номер + 1>), чи ми господар, гравці з
@@ -242,6 +297,11 @@ interface Racer {
   name: string;
   /** Номер машини в мережевій гонці (гравець — 0…7, суперник господаря — від FIRST_RIVAL). */
   id?: number;
+  /** Тріал: наступна зона (0…2; 3 — фініш) і власний маршрут суперника (start → check1 → fline). */
+  stage?: number;
+  route?: RouteNet;
+  /** Тріал: зона, у якій машина зараз (повідомлення лише при вʼїзді). */
+  inside?: number;
   /** Машина з мережі: пакети стану, показ із запізненням; gone — гравець вийшов, waiting — стану ще не було. */
   remote?: { track: RemoteTrack; state: TruckState; gone: boolean; waiting: boolean };
 }
@@ -266,11 +326,35 @@ export class RaceMode {
     private readonly messages: (key: string, fb: string) => string,
     private readonly career = false,
     net: NetRace | null = null,
+    readonly kind: CourseKind = 'ring',
   ) {
     const nodes = new Map<string, THREE.Vector3>();
     for (const r of drive.world.regions.values())
-      for (const room of r.way.rooms) for (const n of room.nodes) if (/^(start1_\d|check_point\d)$/.test(n.name)) nodes.set(n.name, toThree(...n.pos));
+      for (const room of r.way.rooms) for (const n of room.nodes) if (/^(start1_\d|check_point\d|check1_\d|fline1_\d)$/.test(n.name)) nodes.set(n.name, toThree(...n.pos));
     const start = nodes.get('start1_1')!;
+    if (kind === 'trial') {
+      // Тріал: зони з тригерів арени; центри точок 1 і 2 — вузли check1_* і fline1_* (там їде ІІ); маршрут гравця для
+      // відновлення й карти — дорогами start1_1 → check1_1 → fline1_1. Решітка — вузли start1_k як є (два ряди).
+      for (const reg of drive.world.loaded.values()) for (const [i, z] of checkZones(reg.built.assembler.b3d.blocks)) this.zones.set(i, z);
+      const mean = (re: RegExp) => {
+        const ps = [...nodes].filter(([k]) => re.test(k)).map(([, p]) => p);
+        return ps.reduce((a, p) => a.add(p), new THREE.Vector3()).divideScalar(Math.max(1, ps.length));
+      };
+      this.targets = [start.clone(), mean(/^check1_/), mean(/^fline1_/)];
+      const head = this.targets[1].clone().sub(start).setY(0).normalize();
+      this.trialRoute = (k: number) => {
+        const from = nodes.get(`start1_${k}`) ?? start;
+        const a = path(roads, from, nodes.get(`check1_${k}`) ?? this.targets[1], head);
+        const b = path(roads, a[a.length - 1], nodes.get(`fline1_${k}`) ?? this.targets[2]);
+        return new RouteNet(despike([...a, ...b.slice(1)]));
+      };
+      this.route = this.trialRoute(1);
+      // Напрям — уздовж рядів решітки, до першої зони (start1_* — x 2205…2270, check_point_0 — x 2272…2288).
+      this.dir = toThree(1, 0, 0);
+      this.slot = (k) => nodes.get(`start1_${k}`)?.clone();
+      this.place0(net, career);
+      return;
+    }
     const cps = ['check_point1', 'check_point2', 'check_point3'].map((k) => nodes.get(k)!);
     // Напрям старту — до першої контрольної точки (решітка стоїть поперек траси).
     const head = cps[0].clone().sub(start).setY(0).normalize();
@@ -284,12 +368,20 @@ export class RaceMode {
     // Гравець — на start1_1, суперники — на решітці 2…8, усі вздовж маршруту.
     const rp = this.route.pts;
     const dir = rp[Math.min(5, rp.length - 1)].clone().sub(rp[0]).setY(0).normalize();
-    const player = drive.truck;
     const side = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
     // Решітка — одна колона вздовж траси; машини — у два ряди за номером (±1,75 м, як смуги 0x4d43a0).
     const slot = (k: number) => nodes.get(`start1_${k}`)?.clone().addScaledVector(side, k % 2 ? LANE : -LANE);
     this.dir = dir;
     this.slot = slot;
+    this.place0(net, career, start);
+  }
+
+  /** Розстановка: гравець, машини з мережі, суперники (ring без мережі — start ставить гравця на start1_1). */
+  private place0(net: NetRace | null, career: boolean, start?: THREE.Vector3): void {
+    const drive = this.drive;
+    const player = drive.truck;
+    const slot = this.slot;
+    const dir = this.dir;
     if (net) {
       // Мережа: кожен — на своєму місці за номером (king.exe ставить живих гравців на start<в>_<k+1> за мережевим
       // номером, tracks.md §3 «Старт»).
@@ -308,7 +400,8 @@ export class RaceMode {
       });
       return;
     }
-    if (!career) player.reset({ position: drive.groundAtPublic(start), forward: dir });
+    const at = start ?? slot(1);
+    if (!career && at) player.reset({ position: drive.groundAtPublic(at), forward: dir });
     this.racers.push({ truck: player, pilot: null, laps: 0, last: career ? this.route.along(player.visual.position) : 0, halfway: false, finished: null, name: 'Ви' });
     const pool = rivalPool(drive, career);
     for (let k = career ? 1 : 2; k <= (career ? CAREER_RIVALS : GRID_SLOTS); k++) this.addAi(pool[(k * 5) % pool.length], k);
@@ -317,8 +410,12 @@ export class RaceMode {
   /** Напрям старту й місце на решітці start1_<k> (з рядом). */
   private readonly dir: THREE.Vector3;
   private readonly slot: (k: number) => THREE.Vector3 | undefined;
+  /** Тріал: зони за номером, центри точок 0…2, маршрут суперника з місця k. */
+  private readonly zones = new Map<number, ZonePlanes>();
+  private targets: THREE.Vector3[] = [];
+  private trialRoute: ((k: number) => RouteNet) | null = null;
   /** Мережева гонка (null — одиночна). */
-  readonly net: NetRace | null = null;
+  net: NetRace | null = null;
 
   /** Суперник на автопілоті на місці решітки k (рух king.exe, як у гравця; автопілот — переслідування по дузі). */
   private addAi(rec: ReturnType<typeof drivable>[number] | undefined, k: number, id?: number, color = 0): void {
@@ -330,10 +427,12 @@ export class RaceMode {
     if (color > 0) recolor(model.root, drive.trucksData, color + 1);
     const truck = new TruckVehicle(drive.rapierWorld, def, model, { position: drive.groundAtPublic(p), forward: this.dir }, kingCar(rec.suspension));
     drive.world.scene.add(truck.visual);
-    const pilot = kingPilot(new AutoPilot(this.route), truck.base);
+    // Тріал: у кожного свій маршрут дорогами арени до check1_k і fline1_k (0x422400), смуги — по осі.
+    const route = this.trialRoute?.(k);
+    const pilot = kingPilot(new AutoPilot(route ?? this.route), truck.base);
     pilot.cruise = 75 + (k % 4) * 6;
-    pilot.lane = k % 2 ? LANE : -LANE;
-    this.racers.push({ truck, pilot, laps: 0, last: 0, halfway: false, finished: null, name: rec.carNode, cruise: pilot.cruise, id });
+    pilot.lane = route ? 0 : k % 2 ? LANE : -LANE;
+    this.racers.push({ truck, pilot, laps: 0, last: 0, halfway: false, finished: null, name: rec.carNode, cruise: pilot.cruise, id, route, stage: route ? 1 : undefined });
   }
 
   /**
@@ -432,7 +531,22 @@ export class RaceMode {
 
   /** Старт і фініш кола (start1_1) — для значка на карті. */
   get finishPos(): THREE.Vector3 {
-    return this.route.pts[0];
+    return this.kind === 'trial' ? this.targets[2] : this.route.pts[0];
+  }
+
+  /** Підпис фінішу на карті: mess.txt 88 «Кольцо»; Тріал — фініш. */
+  get finishLabel(): string {
+    return this.kind === 'trial' ? 'ФІНІШ' : 'КІЛЬЦЕ';
+  }
+
+  /** Тріал: куди показує компас (наступна точка після нульової; далі 10 м — нічого) — null, якщо не показувати. */
+  compassTarget(): THREE.Vector3 | null {
+    if (this.kind !== 'trial') return null;
+    const me = this.racers[0];
+    const st = me.stage ?? 0;
+    if (st < 1 || st > 2 || me.finished !== null) return null;
+    const t = this.targets[st];
+    return t && t.distanceTo(me.truck.visual.position) > 10 ? t : null;
   }
 
   /** Перед кроком фізики: керування суперників (до відліку — стоять). */
@@ -480,7 +594,7 @@ export class RaceMode {
         // Упав крізь світ, перекинувся (2 с) чи далеко від маршруту (4 с) — назад на маршрут, де був.
         const y = r.truck.body.translation().y;
         const up = new THREE.Vector3(0, 1, 0).applyQuaternion(r.truck.visual.quaternion).y;
-        const off = this.route.nearest(r.truck.visual.position)?.dist ?? 0;
+        const off = (r.route ?? this.route).nearest(r.truck.visual.position)?.dist ?? 0;
         r.bad = up < 0.5 ? (r.bad ?? 0) + dt * 2 : off > OFF_ROUTE ? (r.bad ?? 0) + dt : 0;
         // Стоїть після старту (застряг за перешкодою чи в купі машин) — теж відновлення, як «застряглий» водій.
         r.idle = this.countdown <= 0 && r.finished === null && r.truck.speedKmh < 3 ? (r.idle ?? 0) + dt : 0;
@@ -492,6 +606,10 @@ export class RaceMode {
         }
       } else if (r.remote && !r.remote.gone && !r.remote.waiting) r.truck.syncVisual(alpha);
       if (r.finished !== null || this.countdown > 0 || r.remote?.gone) continue;
+      if (this.kind === 'trial') {
+        this.trialStep(r);
+        continue;
+      }
       const s = this.route.along(r.truck.visual.position);
       const L = this.route.length;
       if (s > L * 0.4 && s < L * 0.6) r.halfway = true;
@@ -553,7 +671,7 @@ export class RaceMode {
    * машина знову ставала в ту саму купу).
    */
   private respawn(r: Racer, ahead = 0): void {
-    const route = this.route;
+    const route = r.route ?? this.route;
     const n = route.nearest(r.truck.visual.position.clone().setY(route.pts[0].y));
     let seg = n?.seg ?? 0;
     const N = route.pts.length;
@@ -575,6 +693,15 @@ export class RaceMode {
   }
 
   private progress(r: Racer): number {
+    if (this.kind === 'trial') {
+      // Пряма відстань, що лишилась (як прогрес ІІ king.exe 0x4171a0): до точки 1 і від неї до фінішу, після точки 1 —
+      // до фінішу.
+      if (r.finished !== null) return 1e9 - r.finished;
+      const p = r.truck.visual.position;
+      const [, c1, c2] = this.targets;
+      const left = (r.stage ?? 0) >= 2 ? p.distanceTo(c2) : p.distanceTo(c1) + c1.distanceTo(c2);
+      return 1e6 - left;
+    }
     // До середини кола «кінець маршруту» — це ще позаду старту (від’ємний поступ), а не майже ціле коло.
     const L = this.route.length;
     const s = !r.halfway && r.last > L * 0.8 ? r.last - L : r.last;
@@ -596,7 +723,42 @@ export class RaceMode {
     if (this.hold) return 'Чекаємо, поки всі завантажать трасу…';
     if (this.countdown > 0) return `Старт через ${Math.ceil(this.countdown)}…`;
     const all = this.racers.filter((r) => !r.remote?.gone).length;
-    return `Коло ${Math.min(LAPS, me.laps + 1)} з ${LAPS}   місце ${this.place(me)} з ${all}   ${this.clock.toFixed(1)} с`;
+    const where = this.kind === 'trial' ? `Точка ${Math.min(3, (me.stage ?? 0) + 1)} з 3` : `Коло ${Math.min(LAPS, me.laps + 1)} з ${LAPS}`;
+    return `${where}   місце ${this.place(me)} з ${all}   ${this.clock.toFixed(1)} с`;
+  }
+
+  /** Місце гравця серед машин на трасі — для табло («ПОЗИЦІЯ N З M»). */
+  standing(): { place: number; of: number } {
+    return { place: this.place(this.racers[0]), of: this.racers.filter((r) => !r.remote?.gone).length };
+  }
+
+  /**
+   * Тріал (king.exe 0x56ffd0, подія 7): зони лише по черзі 0 → 1 → 2; вʼїзд у наступну — «Контрольна точка» (mess.txt 6),
+   * у пізнішу — «Порядок проходження маршруту порушено» (mess.txt 4); зона 2 — фініш. Суперники починають з точки 1
+   * (їхня ціль одразу check1/fline, 0x422400). Без тригерів у даних — зона за 15 м від центру точки.
+   */
+  private trialStep(r: Racer): void {
+    const p = r.truck.visual.position;
+    let inside = -1;
+    if (this.zones.size) {
+      for (const [i, z] of this.zones)
+        if (inZone(z, p)) {
+          inside = i;
+          break;
+        }
+    } else inside = this.targets.findIndex((t) => t.distanceTo(p) < 15);
+    const was = r.inside;
+    r.inside = inside;
+    if (inside < 0 || inside === was) return;
+    const st = r.stage ?? 0;
+    const me = r === this.racers[0];
+    if (inside === st) {
+      r.stage = st + 1;
+      if (r.stage >= 3) {
+        r.finished = this.clock;
+        if (!me && r.pilot && this.racers[0].finished === null) this.drive.say(this.messages('COMPETITOR_ARRIVED', 'ВАШ КОНКУРЕНТ ЩОЙНО ПРИБУВ. ПОКВАПТЕСЯ'));
+      } else if (me) this.drive.say('КОНТРОЛЬНА ТОЧКА');
+    } else if (inside > st && me) this.drive.say('ПОРЯДОК ПРОХОДЖЕННЯ МАРШРУТУ ПОРУШЕНО');
   }
 
   dispose(): void {

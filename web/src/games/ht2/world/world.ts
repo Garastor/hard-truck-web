@@ -6,7 +6,10 @@ import { parseRmp, type RmpArchive } from '../engine/formats/rmp';
 import { decodeCp1251 } from '../engine/formats/binary';
 import { parseWay, type Way } from '../formats/way';
 import { SKY_LIGHT, SceneAssembler, buildSceneAsync, type BuiltScene } from '../engine/render/sceneBuilder';
-import { HT2_REGIONS, readTextures, regionFiles, type TexLevel } from '../files';
+import { HT2_REGIONS, HT2_TRACKS, readTextures, regionFiles, type TexLevel } from '../files';
+
+/** Арена мережевої гри — окрема тека з одним регіоном (MENV — Кільце, MTR — Тріал, MTB — Автобол). */
+export type Arena = keyof typeof HT2_TRACKS;
 import { DAY_TIME_HOUR, Weather, WeatherCycle, type DayTime, type Sky } from './weather';
 import { TREE_LIGHT, buildGlows, buildTrees, type TreeUpdate } from './trees';
 import { illumOn, sunDirection, sunHeight } from './climate';
@@ -33,6 +36,8 @@ export interface RegionInfo {
   way: Way;
   /** Межі доріг регіону в координатах гри: [x0, y0, x1, y1]. */
   bounds: [number, number, number, number];
+  /** Тека файлів регіону (ENV; арени — MENV, MTR, MTB). */
+  dir?: string;
 }
 
 export interface LoadedRegion {
@@ -115,7 +120,10 @@ export async function loadRegion(source: FileSource, id: string, common: SceneAs
     try {
       // Кар'єра читає ENV/terrain*.raw (king.exe 0x5726e3; MTR/ — для мережевого «Тріалу», terrain1 там інший, до
       // 70 м); старий імпорт без ENV-файлів — MTR (re/notes/ht2/tracks.md).
-      const tile = (i: number) => source.read(`ENV/terrain${i}.raw`).catch(() => source.read(`MTR/terrain${i}.raw`)).then(parseHeightmap);
+      // Арена «Тріал» — свої MTR/terrain*.raw (king.exe 0x5726e3: у мережевій грі — MTR).
+      const first = dir === 'MTR' ? 'MTR' : 'ENV';
+      const other = first === 'MTR' ? 'ENV' : 'MTR';
+      const tile = (i: number) => source.read(`${first}/terrain${i}.raw`).catch(() => source.read(`${other}/terrain${i}.raw`)).then(parseHeightmap);
       const tiles = await Promise.all([0, 1, 2].map(tile));
       terrain = terrainHeights(tiles);
       await yieldTask();
@@ -247,16 +255,24 @@ export class Ht2World {
     this.setClimate(14, 0);
   }
 
-  static async create(source: FileSource): Promise<Ht2World> {
+  /**
+   * Світ: усі регіони ENV або (arena) один регіон арени мережевої гри — завантажений увесь час (межі без краю), без
+   * WAY в Автобола (MTB/tb — дороги не потрібні).
+   */
+  static async create(source: FileSource, arena?: Arena): Promise<Ht2World> {
+    const ids: readonly string[] = arena ? [HT2_TRACKS[arena]] : HT2_REGIONS;
+    const dir = arena ?? 'ENV';
     const [common, weather, ways] = await Promise.all([
       loadCommon(source),
       source.read('WEATHER.INI').then((b) => Weather.parse(decodeCp1251(b))).catch(() => null),
-      Promise.all(HT2_REGIONS.map((id) => source.read(regionFiles(id).way).then(parseWay).catch(() => null))),
+      Promise.all(ids.map((id) => source.read(regionFiles(id, '', dir).way).then(parseWay).catch(() => null))),
     ]);
     const w = new Ht2World(source, common.asm, common.rmp, weather);
-    HT2_REGIONS.forEach((id, i) => {
-      const way = ways[i];
-      if (way) w.regions.set(id, { id, way, bounds: boundsOf(way) });
+    ids.forEach((id, i) => {
+      const way = ways[i] ?? (arena ? { map: id, rooms: [], unknown: [] } : null);
+      if (!way) return;
+      const all: [number, number, number, number] = [-1e7, -1e7, 1e7, 1e7];
+      w.regions.set(id, { id, way, bounds: arena ? all : boundsOf(way), dir });
     });
     return w;
   }
@@ -441,7 +457,7 @@ export class Ht2World {
     const next = this.wanted(x, y).find((id) => !this.loaded.has(id));
     if (!next) return;
     this.loading = next;
-    void loadRegion(this.source, next, this.common)
+    void loadRegion(this.source, next, this.common, '', this.regions.get(next)?.dir)
       .then(async (reg) => {
         await this.prepare?.(reg.built.root);
         this.loaded.set(next, reg);

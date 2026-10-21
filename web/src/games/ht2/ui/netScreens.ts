@@ -226,8 +226,8 @@ function hostScreen(art: Ht2MenuArt, from: NetSetup): Promise<NetSetup | null> {
         texButton(art, stage, `h/${tex}`, x, 202, label, {
           selected: () => s.track === key,
           action: () => {
-            // Тріал і Автобол — окремі арени (MTR, MTB), у порті ще не зроблені.
-            if (key !== 'ring') return void modal(root, 'Мережева гра', `${TRACK_NAME[key]} — у наступних кроках порту. Поки що — гонка на Кільці.`, ['Гаразд']);
+            // Автобол — арена MTB, у порті ще не зроблений.
+            if (key === 'ball') return void modal(root, 'Мережева гра', `${TRACK_NAME[key]} — у наступних кроках порту. Поки що — Кільце й Тріал.`, ['Гаразд']);
             s.track = key;
           },
           after: repaint,

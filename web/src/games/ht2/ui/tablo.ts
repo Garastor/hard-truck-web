@@ -30,7 +30,20 @@ export interface TabloState {
   condition: number;
   /** Навігатор: поворот на найближчій розвилці (лише з покращенням «навигатор»). */
   nav?: 'left' | 'straight' | 'right' | null;
+  /**
+   * Компас Тріалу в мережевій грі (king.exe 0x569ab0): сектор 0…7 напрямку на наступну точку (0 — уперед, далі за
+   * годинниковою стрілкою; race.ts compassSector) — на місці значка стану машини; null — не показувати.
+   */
+  compass?: number | null;
 }
+
+/**
+ * Символи компаса icon.fon за сектором (0 — уперед, за годинниковою стрілкою). У king.exe перелік — від «праворуч»
+ * (de fg hi jk lm no `a bc; за картинками: de →, fg ↘, hi ↓, jk ↙, `a ↑, bc ↗). Гліфів l…o у icon.fon немає (порожні,
+ * ширина 3) — «ліворуч» і «ліворуч-уперед» малюємо дзеркалом «праворуч» і «праворуч-уперед» (COMPASS_MIRROR).
+ */
+export const COMPASS = ['`a', 'bc', 'de', 'fg', 'hi', 'jk', 'lm', 'no'];
+const COMPASS_MIRROR: Partial<Record<number, number>> = { 6: 2, 7: 1 };
 
 interface Layout {
   /** Ширина полотна (пікселі оригіналу) і висота. */
@@ -162,7 +175,7 @@ export class Tablo {
     const key = [
       this.layout.w, this.layout.h, this.blink, s.position?.place, s.position?.of, t(s.timeLeft), s.licences?.count, t(s.licences?.left),
       Math.round(s.mph ? s.speed / 1.609 : s.speed), s.mph, s.handbrake, s.gear, s.automatic, Math.round(s.rpm / 100), s.trailer,
-      Math.round(s.fuel * 10), s.fuel > 0.3, Math.round(s.condition * 10), s.condition > 0.3, s.nav, pager?.shown, pager?.icon,
+      Math.round(s.fuel * 10), s.fuel > 0.3, Math.round(s.condition * 10), s.condition > 0.3, s.nav, s.compass, pager?.shown, pager?.icon,
       this.art.matrix && this.art.icon ? 1 : 0,
     ].join('|');
     if (!this.bgDrawn) this.drawFrame();
@@ -208,7 +221,20 @@ export class Tablo {
     icon(o + 458, 40, coupled ? 'MN' : 'KL');
     const level = (v: number) => String.fromCharCode(0x50 + Math.max(0, Math.min(10, Math.round(v * 10))));
     if (s.fuel > 0.3 || this.blink) icon(o + 512, 40, `?${level(s.fuel)}`);
-    if (s.condition > 0.3 || this.blink) icon(o + 553, 40, `O${level(s.condition)}`);
+    if (s.compass != null) {
+      const t = COMPASS[s.compass] ?? '';
+      const m = COMPASS_MIRROR[s.compass];
+      if (ic.measure(t) > 8 || m === undefined) icon(o + 553, 40, t);
+      else {
+        const w = ic.measure(COMPASS[m]);
+        ctx.save();
+        ctx.translate(2 * (o + 553) + w, 0);
+        ctx.scale(-1, 1);
+        icon(o + 553, 40, COMPASS[m]);
+        ctx.restore();
+      }
+    }
+    else if (s.condition > 0.3 || this.blink) icon(o + 553, 40, `O${level(s.condition)}`);
     // Стрілка навігатора блимає (king.exe: спільний прапорець блимання).
     if (s.nav && this.blink) icon(o + 608, 40, s.nav === 'left' ? ';' : s.nav === 'right' ? '=' : '<');
     if (pager) this.drawPager(pager);

@@ -24,8 +24,14 @@ import { DEFAULT_CAR, ht2NetMenu, type NetStart } from './ui/netScreens';
 import type { NetCar } from './net/peer';
 import type { NetSession } from './net/session';
 import { joinNetDrive } from './netPlay';
+import type { Arena } from './world/world';
 
 type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files' | 'exit' | 'net';
+
+/** Налагодження: ?tab=race&arena=MTR&course=trial — гонка на арені мережевої гри без мережі. */
+function arenaParam(v: string | null): Arena | null {
+  return v === 'MENV' || v === 'MTR' || v === 'MTB' ? v : null;
+}
 
 /** Машина мережевої гри (екран n/backMult) — запамʼятовується в браузері. */
 const NET_CAR_KEY = 'ht2.netcar.v1';
@@ -360,6 +366,9 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           truck: mine.truck,
           color: mine.color,
           race: true,
+          // Арени king.exe (0x5125b0): Кільце — MENV, Тріал — MTR.
+          arena: start.setup.track === 'trial' ? 'MTR' : 'MENV',
+          course: start.setup.track === 'trial' ? 'trial' : 'ring',
           net: { myId, host: session.host, players: start.players.map((p) => ({ id: p.id, name: p.name, truck: p.truck, color: p.color })), rivals: start.rivals },
           settings: netSettings,
         })
@@ -418,7 +427,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           direct = next === 'exit' ? (ctx.exit ? 'exit' : null) : (next ?? null);
           resolve();
         };
-        Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck'), trailer: params.get('trailer'), weather: params.get('weather'), career, race: choice === 'race', settings })
+        Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck'), trailer: params.get('trailer'), weather: params.get('weather'), career, race: choice === 'race', settings, arena: arenaParam(params.get('arena')), course: params.get('course') === 'trial' ? 'trial' : 'ring' })
           .then((d) => {
             drive = d;
             Object.assign(window, { ht2: { drive } });
