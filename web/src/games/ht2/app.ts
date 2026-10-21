@@ -20,8 +20,31 @@ import { WorldViewer } from './ui/viewer';
 import { Ht2Drive } from './drive';
 import { DEFAULT_DRIVER, currentDriver, deleteDriver, formatMoney, listDrivers, listSaves, loadCareer, newCareer, putDriver, selectDriver, type Ht2Career } from './career/career';
 import { modal, setHudFont } from './engine/ui/modal';
+import { DEFAULT_CAR, ht2NetMenu, type NetStart } from './ui/netScreens';
+import type { NetCar } from './net/peer';
+import type { NetSession } from './net/session';
+import { joinNetDrive } from './netPlay';
 
-type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files' | 'exit';
+type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files' | 'exit' | 'net';
+
+/** Машина мережевої гри (екран n/backMult) — запамʼятовується в браузері. */
+const NET_CAR_KEY = 'ht2.netcar.v1';
+function loadNetCar(): NetCar {
+  try {
+    const v = JSON.parse(localStorage.getItem(NET_CAR_KEY) ?? 'null') as NetCar | null;
+    if (v && typeof v.truck === 'string' && typeof v.color === 'number') return { truck: v.truck, color: v.color & 3 };
+  } catch {
+    // немає сховища — типова машина
+  }
+  return { ...DEFAULT_CAR };
+}
+function saveNetCar(car: NetCar): void {
+  try {
+    localStorage.setItem(NET_CAR_KEY, JSON.stringify(car));
+  } catch {
+    // приватний режим — не запамʼятовуємо
+  }
+}
 
 /**
  * Дальнобойщики 2 у порті: джерело файлів (пристрій або ПК), меню з LOAD.RES гри, режими. Свій цикл кадрів і сцена —
@@ -130,15 +153,19 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   // &tab=career — кар'єра.
   const params = new URLSearchParams(location.search);
   const tab = params.get('tab');
-  let direct: Choice | null = tab === 'world' || tab === 'drive' || tab === 'career' || tab === 'race' ? tab : null;
+  let direct: Choice | null = tab === 'world' || tab === 'drive' || tab === 'career' || tab === 'race' || tab === 'net' ? tab : null;
   // Збереження, яке завантажити («Завантажити гру» на екрані «Гра»; у меню Esc — збереження поточної гри).
   let loadId: string | undefined;
+  // Мережева гра: сесія, до якої повернутися із заїзду, і заїзд, який почав сервер, поки ми ще їхали.
+  let netFrom: NetSession | null = null;
+  let netNext: NetStart | null = null;
   for (;;) {
     const driver = currentDriver();
     const note = driver ? `За кермом: ${driver.name}` : 'Дальнобойщики 2 — порт у розробці';
     // Кругла кнопка рамки → дія (null — лишитися в меню). «Демо» — режими порту (вільна їзда, гонка, огляд, файли).
     const round = async (key: RoundKey, parent: HTMLElement): Promise<Choice | null> => {
       if (key === 'singl') return 'single';
+      if (key === 'multi' && art) return 'net';
       if (key === 'exit') {
         if (ctx.exit) return 'exit';
         await modal(parent, 'Вихід з гри', 'Щоб вийти, закрийте вкладку чи застосунок.', ['Гаразд']);
@@ -289,6 +316,71 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
     }
     if (choice === 'files') {
       await manageFiles(ctx);
+      continue;
+    }
+    if (choice === 'net' && art) {
+      // «Мережева гра»: вибір машини, сервер/клієнт, сесія (ui/netScreens.ts) → заїзд → назад до сесії.
+      const driverName = currentDriver()?.name ?? DEFAULT_DRIVER;
+      const start = netNext ?? (await ht2NetMenu(art, { driver: driverName, car: loadNetCar(), from: netFrom, onCar: saveNetCar }));
+      netNext = null;
+      netFrom = null;
+      if (!start) continue;
+      if (typeof start === 'string') {
+        const c = await round(start, ctx.overlay);
+        if (c) direct = c;
+        continue;
+      }
+      await new Promise<void>((resolve) => {
+        let drive: Ht2Drive | null = null;
+        let unlink = () => {};
+        let ended = false;
+        const end = (why: string) => {
+          if (ended) return;
+          ended = true;
+          console.info('HT2 мережа: кінець заїзду —', why);
+          unlink();
+          drive?.dispose();
+          ctx.setStatus(null);
+          if (!start.session.closed) netFrom = start.session;
+          direct = 'net';
+          resolve();
+        };
+        const { session } = start;
+        const myId = session.myId;
+        const mine = start.players.find((p) => p.id === myId) ?? session.me;
+        // Доба, погода й складність — сервера (однакові в усіх); звук, графіка й клавіші — свої.
+        const netSettings: Ht2Settings = { ...settings, arcade: start.setup.arcade, traffic: start.setup.traffic, dayLength: start.setup.dayLength, weather: start.setup.weather };
+        Ht2Drive.start({
+          renderer: ctx.renderer,
+          source,
+          overlay: ctx.overlay,
+          setStatus: ctx.setStatus,
+          // Будь-який вихід з їзди (меню Esc) — до сесії.
+          onExit: () => end('вихід з їзди'),
+          truck: mine.truck,
+          color: mine.color,
+          race: true,
+          net: { myId, host: session.host, players: start.players.map((p) => ({ id: p.id, name: p.name, truck: p.truck, color: p.color })), rivals: start.rivals },
+          settings: netSettings,
+        })
+          .then((d) => {
+            drive = d;
+            if (ended) return d.dispose();
+            Object.assign(window, { ht2: { drive, session } });
+            unlink = joinNetDrive(d, start, driverName, {
+              onRestart: (next) => {
+                netNext = next;
+                end('сервер почав новий заїзд');
+              },
+              onLobby: () => end('до сесії'),
+            });
+          })
+          .catch((e) => {
+            console.error(e);
+            ctx.setStatus(`Помилка: ${(e as Error).message}`);
+            setTimeout(() => end('помилка'), 4000);
+          });
+      });
       continue;
     }
     if (choice === 'drive' || choice === 'career' || choice === 'new' || choice === 'race') {

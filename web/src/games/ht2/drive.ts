@@ -55,7 +55,8 @@ import { Freight } from './traffic/freight';
 import { Climate, sunHeight, trafficLights } from './world/climate';
 import { iniGet, iniNum, parseIni } from './engine/formats/ini';
 import { decodeCp1251 } from './engine/formats/binary';
-import { RaceMode } from './race';
+import { RaceMode, type NetRace } from './race';
+import { FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, STATE_RATE } from './net/state';
 import { Trailer } from './vehicles/trailer';
 import { headlightMask } from './vehicles/headlights';
 import { setPoolLight } from './traffic/headPools';
@@ -340,6 +341,10 @@ export interface Ht2DriveOptions {
   career?: Ht2Career | null;
   /** Гонка на Кільці (регіон dr) з суперниками. */
   race?: boolean;
+  /** Мережева гонка (net/, разом з race): гравці, суперники, свій номер. */
+  net?: NetRace | null;
+  /** Колір своєї машини (0…3 — варіант матеріалів моделі, як у трафіку; екран «Мережева гра»). */
+  color?: number;
 }
 
 type CamMode = 'chase' | 'cockpit' | 'far';
@@ -494,6 +499,13 @@ export class Ht2Drive {
   cards: Cards | null = null;
   private disposed = false;
   race: RaceMode | null = null;
+  /** Мережева гонка: пакет стану своєї машини (і суперників господаря) — STATE_RATE разів на секунду. */
+  onNetState: ((data: ArrayBuffer) => void) | null = null;
+  private netTimer = 0;
+  /** Мережева гра не зупиняється (меню Esc, карта): інші гравці їдуть далі, свій стан — і далі в мережу. */
+  private get canPause(): boolean {
+    return !this.race?.net;
+  }
   truckers: Truckers | null = null;
   private raceMessages = new Map<string, string>();
   private music: Music | null = null;
@@ -694,6 +706,7 @@ export class Ht2Drive {
     // Динамічна модель: перемикачі пошкоджень і вогнів (вмʼятини, габарити).
     const model = buildTruckModel(this.trucks.asm, def, true);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня`);
+    if (o.color) recolor(model.root, this.trucks, o.color + 1);
     this.cargoMass = o.career?.order ? o.career.order.goods.mass * o.career.order.units : 0;
     this.truck = new TruckVehicle(this.rapier, def, model, spawn, this.setup(this.cargoMass));
     this.truck.visual.userData.model = model;
@@ -795,7 +808,7 @@ export class Ht2Drive {
     if (o.race) {
       const ms = await o.source.read('Ms.sch').then(readSch).catch(() => []);
       for (const m of ms) if (Array.isArray(m) && typeof m[0] === 'string') this.raceMessages.set(m[0], ukMessage(m[0], str(m[m.length - 1])));
-      this.race = new RaceMode(this, this.roads, (k, fb) => this.raceMessages.get(k) ?? fb);
+      this.race = new RaceMode(this, this.roads, (k, fb) => this.raceMessages.get(k) ?? fb, false, o.net ?? null);
       this.race.onFinish = () => o.onExit();
     }
     // Погода: повзунок «погода» і TRUCK.INI [EFFECTS] wtemp (період зміни, реальних годин); ?weather=bad|good — стала.
@@ -883,7 +896,8 @@ export class Ht2Drive {
     this.traffic = new Traffic(this.world.scene, this.rapier, this.roads, this.trucks, trafficKinds(vehicles, this.trucks), (r) => this.world.loaded.has(r), {
       dumb: count('dumb', 70),
       ghost: count('ghost', 25),
-      density: o.settings?.traffic ?? 1,
+      // Мережева гонка — без трафіку (MENV/GAME.CNF: dumb 0; у кожного телефона свій трафік не збігався б).
+      density: o.net ? 0 : (o.settings?.traffic ?? 1),
     });
     this.traffic.signals = this.lights;
     // Цілі маршрутів трафіку — вузли WAY з FLAG & 2 (міста біля стоянок; king.exe 0x45cdc0).
@@ -1430,7 +1444,7 @@ export class Ht2Drive {
   /** Карта світу поверх гри (гра на паузі, поки карта відкрита). */
   openMap(): void {
     if (!this.worldMap || this.paused) return;
-    this.paused = true;
+    this.paused = this.canPause;
     const t = this.truck.body.translation();
     this.worldMap.open(new THREE.Vector3(t.x, t.y, t.z), this.truck.forward(), this.careerMode?.target() ?? null);
   }
@@ -2297,7 +2311,7 @@ export class Ht2Drive {
     this.fPanels?.close();
     if (!this.escArt || this.rescue) return;
     if (this.worldMap && !this.worldMap.el.hidden) return;
-    this.paused = true;
+    this.paused = this.canPause;
     this.escMenu = new EscMenu(this.escArt, this.opts.overlay, {
       career: !!this.careerMode,
       settings: this.opts.settings ?? undefined,
@@ -3611,7 +3625,9 @@ export class Ht2Drive {
     const tp = this.truck.body.translation();
     const rivals = this.truckers?.positions ?? [];
     let state = this.autopilot ? this.autopilot.update(new THREE.Vector3(tp.x, tp.y, tp.z), this.truck.forward(), this.truck.speedKmh, dt, [...(this.traffic?.cars.map((c) => c.pos) ?? []), ...rivals]) : manual;
-    if (this.race?.holding) state = { ...state, throttle: 0, brake: 1 };
+    // До старту машина стоїть на ручнику, без газу й гальма: утримане гальмо на місці вмикає задній хід — машина
+    // їхала назад під час відліку (як і в першій грі).
+    if (this.race?.holding) state = { ...state, throttle: 0, brake: 0, handbrake: true };
     if (this.rescue) {
       state = { ...state, throttle: 0, brake: 1 };
       this.rescue.left -= dt;
@@ -3675,6 +3691,11 @@ export class Ht2Drive {
       }
     }
     this.race?.after(dt, alpha);
+    if (this.race?.net && this.onNetState && (this.netTimer -= dt) <= 0) {
+      this.netTimer = Math.max(0, this.netTimer + 1 / STATE_RATE);
+      const flags = (this.lamps[0]?.visible ? FLAG_LIGHTS : 0) | (this.truck.brakePedal(state) > 0 ? FLAG_BRAKE : 0) | (this.truck.gear < 0 ? FLAG_REVERSE : 0);
+      this.onNetState(this.race.netPacket(flags));
+    }
     this.detectHits();
     this.detectTrailerHits();
     if (this.careerMode && !this.paused) this.accidents?.update(dt);

@@ -247,6 +247,24 @@ const SHARP_BLEND_OFF = 1.5;
 const WHEEL_TMP = new THREE.Matrix4();
 const SLERP_TMP = new THREE.Quaternion();
 /**
+ * Машина з мережі (followRemote, як у першій грі): далі цього від пози — переносимо одразу, м; повернення до пози, с;
+ * наближення швидкості тіла до бажаної, с.
+ */
+const REMOTE_SNAP = 10;
+const REMOTE_FOLLOW = 0.2;
+const REMOTE_BLEND = 0.1;
+const REMOTE_V = Array.from({ length: 6 }, () => new THREE.Vector3());
+const REMOTE_Q = new THREE.Quaternion();
+
+/** Кутова швидкість повороту dq за 1/rate с (вісь × кут · rate). */
+function angularVelocity(dq: THREE.Quaternion, rate: number, out: THREE.Vector3): THREE.Vector3 {
+  if (dq.w < 0) dq.set(-dq.x, -dq.y, -dq.z, -dq.w);
+  const angle = 2 * Math.acos(Math.min(1, dq.w));
+  const sin = Math.sqrt(Math.max(0, 1 - dq.w * dq.w));
+  const k = sin > 1e-6 ? (angle / sin) * rate : 0;
+  return out.set(dq.x * k, dq.y * k, dq.z * k);
+}
+/**
  * Перекидання (порт): промені підвіски Rapier нахиляються разом із кузовом, і на крені ≈ 45° точки опору зсуваються під
  * центр мас — машина «стояла» й їхала на двох колесах. Кузов відхилився від нормалі ґрунту понад TIP_ON — колеса не
  * тримають (сила пружин 0, без тяги й бічних сил): машина падає на бік або повертається на колеса; знову на колесах —
@@ -1575,7 +1593,81 @@ export class TruckVehicle {
     }
   }
 
+  /**
+   * Машина іншого гравця в мережевій грі: тіло з масою машини, але без тяжіння — його веде стан із мережі
+   * (followRemote). Не кінематичне: кінематичне тіло для фізики — нерухома стіна (наїзд зупиняв би свою машину на
+   * місці); з масою удар ділиться між машинами. Перенесено з першої гри (там перевірено на телефонах).
+   */
+  makeRemote(): void {
+    this.body.setGravityScale(0, true);
+    this.remote = true;
+  }
+
+  /** Машина з мережі (makeRemote) — її не веде ні гравець, ні автопілот. */
+  remote = false;
+
+  /** Поза машини з мережі на попередньому кроці — для швидкості, з якою рухається сама поза. */
+  private readonly remotePrev = { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), set: false };
+
+  /**
+   * Крок машини з мережі (до world.step): кут коліс, оберти й швидкість — з мережі; підвіска й обертання коліс —
+   * променями контролера, як у своєї машини (його поштовхи тілу відкидаємо: без тяжіння підвіска підкидала б машину).
+   * Бажана швидкість тіла — рух самої пози плюс пружне повернення до неї за REMOTE_FOLLOW с; швидкість тіла
+   * наближається до неї за REMOTE_BLEND с, тож поштовх від удару живе кілька кроків. Далеко від пози (відновлення,
+   * новий старт) — одразу туди.
+   */
+  followRemote(dt: number, pos: THREE.Vector3, quat: THREE.Quaternion, steer: number, rpm: number, speedKmh: number, reverse: boolean): void {
+    this.savePrev();
+    this.steerAngle = steer;
+    for (let i = 0; i < this.wheels; i++) {
+      this.ctrl.setWheelEngineForce(i, 0);
+      this.ctrl.setWheelBrake(i, 0);
+      this.ctrl.setWheelFrictionSlip(i, 0);
+      this.ctrl.setWheelSteering(i, i < 2 ? steer : 0);
+    }
+    // Швидкості після минулого кроку (з поштовхами від ударів) — до поштовхів підвіски.
+    const lv = this.body.linvel();
+    const av = this.body.angvel();
+    const vNow = REMOTE_V[4].set(lv.x, lv.y, lv.z);
+    const wNow = REMOTE_V[5].set(av.x, av.y, av.z);
+    this.ctrl.updateVehicle(dt, undefined, undefined, this.groundRays);
+    const prev = this.remotePrev;
+    const t = this.body.translation();
+    const d = REMOTE_V[0].set(pos.x - t.x, pos.y - t.y, pos.z - t.z);
+    if (!prev.set || d.lengthSq() > REMOTE_SNAP ** 2) {
+      this.body.setTranslation(pos, true);
+      this.body.setRotation(quat, true);
+      this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      this.savePrev();
+    } else {
+      const k = Math.min(1, dt / REMOTE_BLEND);
+      const want = REMOTE_V[1].copy(pos).sub(prev.pos).divideScalar(dt).addScaledVector(d, 1 / REMOTE_FOLLOW);
+      vNow.lerp(want, k);
+      this.body.setLinvel({ x: vNow.x, y: vNow.y, z: vNow.z }, true);
+      // Кутова: поворот пози за крок + повернення до неї (поворот, що лишився: ціль · поточний⁻¹).
+      const r = this.body.rotation();
+      const w = angularVelocity(REMOTE_Q.copy(prev.quat).invert().premultiply(quat), 1 / dt, REMOTE_V[2]);
+      const back = angularVelocity(REMOTE_Q.set(r.x, r.y, r.z, r.w).invert().premultiply(quat), 1 / REMOTE_FOLLOW, REMOTE_V[3]);
+      wNow.lerp(w.add(back), k);
+      this.body.setAngvel({ x: wNow.x, y: wNow.y, z: wNow.z }, true);
+    }
+    prev.pos.copy(pos);
+    prev.quat.copy(quat);
+    prev.set = true;
+    this.rpm = rpm;
+    this.speedKmh = speedKmh;
+    this.vNow = (reverse ? -speedKmh : speedKmh) / 3.6;
+    this.gear = reverse ? -1 : 1;
+  }
+
+  /** Кут керованих коліс, рад (+ — уліво) — для стану в мережі. */
+  get wheelSteer(): number {
+    return this.steerAngle;
+  }
+
   reset(spawn: { position: THREE.Vector3; forward: THREE.Vector3 }): void {
+    this.remotePrev.set = false;
     const f = spawn.forward.clone().setY(0).normalize();
     const q = new THREE.Quaternion().setFromRotationMatrix(
       new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(f, new THREE.Vector3(0, 1, 0)), new THREE.Vector3(0, 1, 0), f.clone().negate()),
