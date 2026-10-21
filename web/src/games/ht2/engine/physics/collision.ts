@@ -94,6 +94,25 @@ export function levelCollision(b3d: B3d): LevelCollision {
       isFence = false;
     });
   }
+  // Рівень без обʼєктів колізій `hit_*` (арена Автобола MTB/tb): огорожі (блоки 20) — межі поля й ворота — у
+  // верхній групі `$$$Group_3_test` (5). Беремо лише їх; кімната — єдина кімната рівня (у tb — room_tb_000), підлога —
+  // з видимої геометрії (groundFromMeshes).
+  const rooms = b3d.blocks.filter((b) => b.data.t === 19 && b.name);
+  if (!b3d.blocks.some((b) => /^hit_(road|obj)_/i.test(b.name)))
+    for (const top of b3d.blocks) {
+      if (top.data.t === 19) continue;
+      room = rooms.length === 1 ? rooms[0].name : '';
+      const box = roomBoxes.get(room.toLowerCase()) ?? null;
+      shapes(top, [], box, (p, fence, t, s, tag) => {
+        if (t !== 20) return;
+        stats[t] = (stats[t] ?? 0) + 1;
+        isFence = fence;
+        surface = s;
+        sw = tag;
+        add(p);
+        isFence = false;
+      });
+    }
   return { floors, floorRoom, floorSurface, floorSwitch, walls, wallRoom, wallFence, wallSwitch, hasFloor: floors.length > walls.length / 4, stats };
 }
 

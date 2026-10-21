@@ -12,12 +12,19 @@ import { recolor } from './traffic/traffic';
 import { FIRST_RIVAL, FLAG_REVERSE, RemoteTrack, emptyState, packFleet, readFleet, type TruckState } from './net/state';
 import type { NetCar } from './net/peer';
 import type { Block } from './engine/formats/b3d';
+import { BALL_WIN, BallGame, ballSlot, readGates } from './ball';
 
 /**
  * Вид траси: `ring` — Кільце (3 кола маршрутом через check_point1…3), `trial` — Тріал (арена MTR, tracks.md §3):
  * зони-коробки `check_point_0 → 1 → 2` по черзі, одне проходження, фініш у зоні 2.
  */
-export type CourseKind = 'ring' | 'trial';
+export type CourseKind = 'ring' | 'trial' | 'ball';
+
+/** Номер м'яча Автобола в пакеті машин (гравці — 0…7, суперники — від FIRST_RIVAL). */
+export const BALL_ID = 15;
+/** М'яч у гостей іде за станом із мережі: пружина до пози, с; далі цього — одразу туди, м. */
+const BALL_FOLLOW = 0.15;
+const BALL_SNAP = 8;
 
 /** Зона-тригер B3D (блок 13 з i1 = 7, i2 — номер точки): площини (блоки 9) шляху до нього, координати гри. */
 type ZonePlanes = { v: [number, number, number, number]; front: boolean }[];
@@ -302,6 +309,8 @@ interface Racer {
   route?: RouteNet;
   /** Тріал: зона, у якій машина зараз (повідомлення лише при вʼїзді). */
   inside?: number;
+  /** Автобол: очки. */
+  points?: number;
   /** Машина з мережі: пакети стану, показ із запізненням; gone — гравець вийшов, waiting — стану ще не було. */
   remote?: { track: RemoteTrack; state: TruckState; gone: boolean; waiting: boolean };
 }
@@ -331,6 +340,23 @@ export class RaceMode {
     const nodes = new Map<string, THREE.Vector3>();
     for (const r of drive.world.regions.values())
       for (const room of r.way.rooms) for (const n of room.nodes) if (/^(start1_\d|check_point\d|check1_\d|fline1_\d)$/.test(n.name)) nodes.set(n.name, toThree(...n.pos));
+    if (kind === 'ball') {
+      // Автобол: поле без доріг; «маршрут» — лише точка в центрі (для значка на карті й відновлення не потрібен).
+      const center = drive.groundAtPublic(toThree(0, 0, 10));
+      this.route = new RouteNet([center, center.clone().add(new THREE.Vector3(1, 0, 0))]);
+      this.dir = toThree(1, 0, 0);
+      this.slot = (k) => {
+        const s = ballSlot(k - 1);
+        return toThree(s.x, s.y, 10);
+      };
+      this.slotDir = (k) => {
+        const s = ballSlot(k - 1);
+        return toThree(s.dir[0], s.dir[1], 0).normalize();
+      };
+      this.setupBall(!net || net.host);
+      this.place0(net, career);
+      return;
+    }
     const start = nodes.get('start1_1')!;
     if (kind === 'trial') {
       // Тріал: зони з тригерів арени; центри точок 1 і 2 — вузли check1_* і fline1_* (там їде ІІ); маршрут гравця для
@@ -387,9 +413,9 @@ export class RaceMode {
       // номером, tracks.md §3 «Старт»).
       this.net = net;
       const mine = slot(net.myId + 1);
-      if (mine) player.reset({ position: drive.groundAtPublic(mine), forward: dir });
+      if (mine) player.reset({ position: drive.groundAtPublic(mine), forward: this.slotDir?.(net.myId + 1) ?? dir });
       this.racers.push({ truck: player, pilot: null, laps: 0, last: 0, halfway: false, finished: null, name: 'Ви', id: net.myId });
-      for (const p of net.players) if (p.id !== net.myId) this.addRemote(p.id, p, p.name, slot(p.id + 1), false);
+      for (const p of net.players) if (p.id !== net.myId) this.addRemote(p.id, p, p.name, slot(p.id + 1), false, this.slotDir?.(p.id + 1));
       // Суперники — на вільних місцях решітки за порядком.
       const free = Array.from({ length: GRID_SLOTS }, (_, i) => i).filter((i) => !net.players.some((p) => p.id === i));
       net.rivals.forEach((c, k) => {
@@ -401,8 +427,10 @@ export class RaceMode {
       return;
     }
     const at = start ?? slot(1);
-    if (!career && at) player.reset({ position: drive.groundAtPublic(at), forward: dir });
+    if (!career && at) player.reset({ position: drive.groundAtPublic(at), forward: this.slotDir?.(1) ?? dir });
     this.racers.push({ truck: player, pilot: null, laps: 0, last: career ? this.route.along(player.visual.position) : 0, halfway: false, finished: null, name: 'Ви' });
+    // Автобол без суперників на автопілоті (MTB: GAME.CNF немає, ІІ не створюється, 0x512920).
+    if (this.kind === 'ball') return;
     const pool = rivalPool(drive, career);
     for (let k = career ? 1 : 2; k <= (career ? CAREER_RIVALS : GRID_SLOTS); k++) this.addAi(pool[(k * 5) % pool.length], k);
   }
@@ -414,6 +442,90 @@ export class RaceMode {
   private readonly zones = new Map<number, ZonePlanes>();
   private targets: THREE.Vector3[] = [];
   private trialRoute: ((k: number) => RouteNet) | null = null;
+  /** Автобол: напрям машини на місці k (обличчям до центру), м'яч, чи рахуємо його тут (сервер чи гра без мережі). */
+  private slotDir: ((k: number) => THREE.Vector3) | null = null;
+  ball: BallGame | null = null;
+  private ballAuthority = true;
+  private readonly ballTrack = new RemoteTrack();
+  private readonly ballState = emptyState();
+  private ballSeen = false;
+  /** Автобол: гол (сервер — розіслати) і кінець гри (очки гравців). */
+  onBallGoal: ((id: number, gate: number, total: number) => void) | null = null;
+  onBallOver: ((scores: { id: number; name: string; points: number }[]) => void) | null = null;
+
+  /** М'яч Автобола: рухомий предмет anmobj0251000 арени, ворота з огорож, лампи — перемикачі світу. */
+  private setupBall(authority: boolean): void {
+    const drive = this.drive;
+    const mv = drive.worldObjects.movable('anmobj0251000');
+    const blocks = [...drive.world.loaded.values()].flatMap((r) => r.built.assembler.b3d.blocks);
+    if (!mv) return;
+    this.ballAuthority = authority;
+    this.ball = new BallGame(drive.rapierWorld, mv.body, readGates(blocks), {
+      onGoal: (id, gate) => this.goal(id, gate),
+      setLamp: (k, on) => drive.setWorldSwitch(k, on ? 1 : 0),
+    });
+    mv.body.wakeUp();
+    // У гостя м'яч веде сервер: тіло з масою без тяжіння, швидкість — до пози з мережі (удар машини відчутний).
+    if (!authority) mv.body.setGravityScale(0, true);
+  }
+
+  /**
+   * М'яч у гостя (щокроку фізики): поза з мережі із запізненням (RemoteTrack), швидкість тіла — рух пози плюс пружина до
+   * неї; далі BALL_SNAP — одразу туди (гол: м'яч на старті).
+   */
+  private followBall(): void {
+    const s = this.ballTrack.sample(this.simNow, this.ballState);
+    const body = this.ball!.body;
+    if (!s) return;
+    const t = body.translation();
+    const d = new THREE.Vector3(s.pos.x - t.x, s.pos.y - t.y, s.pos.z - t.z);
+    if (!this.ballSeen || d.length() > BALL_SNAP) {
+      this.ballSeen = true;
+      body.setTranslation(s.pos, true);
+      body.setLinvel(s.vel, true);
+      return;
+    }
+    const v = s.vel.clone().addScaledVector(d, 1 / BALL_FOLLOW);
+    body.setLinvel({ x: v.x, y: v.y, z: v.z }, true);
+    body.wakeUp();
+  }
+
+  /** Гол (сервер чи гра без мережі): очки, лампа, оплески; сервер розсилає. */
+  private goal(id: number, gate: number): void {
+    const r = this.racers.find((x) => (x.id ?? 0) === id);
+    const g = this.ball?.gates[gate];
+    if (!r || !g) return;
+    r.points = (r.points ?? 0) + g.points;
+    this.scored(r, gate);
+    this.onBallGoal?.(id, gate, r.points);
+  }
+
+  /** Гол з мережі: очки гравця id (разом), лампа й оплески. */
+  netGoal(id: number, gate: number, total: number): void {
+    const r = this.racers.find((x) => x.id === id);
+    if (!r) return;
+    r.points = total;
+    this.scored(r, gate);
+  }
+
+  private scored(r: Racer, gate: number): void {
+    this.ball?.lightGate(gate);
+    this.drive.playSound('ovation1');
+    // mess.txt 0x56 «ВАША СУММА $%d» — лише своєму гравцю (0x576670).
+    if (r === this.racers[0]) this.drive.say(`ВАША СУМА $${r.points}`);
+    if ((r.points ?? 0) >= BALL_WIN && !this.done) {
+      this.done = true;
+      this.onBallOver?.(this.ballScores());
+    }
+  }
+
+  /** Очки гравців (без суперників), за спаданням. */
+  ballScores(): { id: number; name: string; points: number }[] {
+    return this.racers
+      .filter((r) => !r.pilot)
+      .map((r) => ({ id: r.id ?? 0, name: r.name, points: r.points ?? 0 }))
+      .sort((a, b) => b.points - a.points);
+  }
   /** Мережева гонка (null — одиночна). */
   net: NetRace | null = null;
 
@@ -439,14 +551,14 @@ export class RaceMode {
    * Машина з мережі: гравець (стоїть на своєму місці, доки не прийде стан) чи суперник господаря (схований, доки не
    * прийде перший стан). Тіло з масою, без тяжіння — його веде стан із мережі (TruckVehicle.followRemote).
    */
-  private addRemote(id: number, car: NetCar, name: string, at: THREE.Vector3 | undefined, hidden: boolean): void {
+  private addRemote(id: number, car: NetCar, name: string, at: THREE.Vector3 | undefined, hidden: boolean, forward = this.dir): void {
     const drive = this.drive;
     const rec = drive.trucksData.records.find((r) => r.carNode === car.truck) ?? drivable(drive.trucksData)[0];
     const def = rec && truckDef(drive.trucksData, rec);
     const model = def && buildTruckModel(drive.trucksData.asm, def, false);
     if (!rec || !def || !model) return;
     if (car.color > 0) recolor(model.root, drive.trucksData, car.color + 1);
-    const truck = new TruckVehicle(drive.rapierWorld, def, model, { position: drive.groundAtPublic(at ?? this.route.pts[0]), forward: this.dir }, kingCar(rec.suspension));
+    const truck = new TruckVehicle(drive.rapierWorld, def, model, { position: drive.groundAtPublic(at ?? this.route.pts[0]), forward }, kingCar(rec.suspension));
     truck.makeRemote();
     truck.syncVisual();
     drive.world.scene.add(truck.visual);
@@ -491,6 +603,22 @@ export class RaceMode {
       s.flags = r.pilot ? (r.truck.gear < 0 ? FLAG_REVERSE : 0) : flags;
       cars.push({ id: r.id, s });
     }
+    // М'яч Автобола — у пакеті сервера (номер BALL_ID).
+    if (this.ball && this.ballAuthority && this.net) {
+      const s = (this.sendStates[cars.length] ??= emptyState());
+      const b = this.ball.body;
+      const t = b.translation();
+      const q = b.rotation();
+      const v = b.linvel();
+      s.time = now;
+      s.pos.set(t.x, t.y, t.z);
+      s.quat.set(q.x, q.y, q.z, q.w);
+      s.vel.set(v.x, v.y, v.z);
+      s.steer = 0;
+      s.rpm = 0;
+      s.flags = 0;
+      cars.push({ id: BALL_ID, s });
+    }
     return packFleet(cars);
   }
 
@@ -500,6 +628,10 @@ export class RaceMode {
   pushFleet(data: ArrayBuffer): void {
     const now = performance.now() / 1000;
     readFleet(data, (id, s) => {
+      if (id === BALL_ID) {
+        if (!this.ballAuthority) this.ballTrack.push(s, now);
+        return;
+      }
       const r = this.racers.find((x) => x.remote && x.id === id);
       if (!r?.remote || r.remote.gone) return;
       r.remote.track.push(s, now);
@@ -531,12 +663,13 @@ export class RaceMode {
 
   /** Старт і фініш кола (start1_1) — для значка на карті. */
   get finishPos(): THREE.Vector3 {
+    if (this.kind === 'ball') return this.ball?.pos ?? this.route.pts[0];
     return this.kind === 'trial' ? this.targets[2] : this.route.pts[0];
   }
 
   /** Підпис фінішу на карті: mess.txt 88 «Кольцо»; Тріал — фініш. */
   get finishLabel(): string {
-    return this.kind === 'trial' ? 'ФІНІШ' : 'КІЛЬЦЕ';
+    return this.kind === 'ball' ? 'МʼЯЧ' : this.kind === 'trial' ? 'ФІНІШ' : 'КІЛЬЦЕ';
   }
 
   /** Тріал: куди показує компас (наступна точка після нульової; далі 10 м — нічого) — null, якщо не показувати. */
@@ -555,6 +688,7 @@ export class RaceMode {
     // 0,25 с (пауза, довгий кадр) — знову за годинником.
     const real = performance.now() / 1000;
     this.simNow = this.simNow < 0 || Math.abs(real - this.simNow) > 0.25 ? real : this.simNow + dt;
+    if (this.ball && !this.ballAuthority) this.followBall();
     const others = this.racers.filter((r) => !r.remote?.gone && !r.remote?.waiting).map((r) => r.truck.visual.position);
     // «Гумова нитка» — від гравця; у мережі — від найдальшого з живих гравців.
     const me = this.net ? Math.max(...this.racers.filter((r) => !r.pilot && !r.remote?.gone).map((r) => this.progress(r))) : this.progress(this.racers[0]);
@@ -610,6 +744,7 @@ export class RaceMode {
         this.trialStep(r);
         continue;
       }
+      if (this.kind === 'ball') continue;
       const s = this.route.along(r.truck.visual.position);
       const L = this.route.length;
       if (s > L * 0.4 && s < L * 0.6) r.halfway = true;
@@ -623,6 +758,16 @@ export class RaceMode {
         }
       }
       r.last = s;
+    }
+    if (this.kind === 'ball') {
+      this.ball?.update(dt);
+      // Хто торкався й голи — лише там, де м'яч рахується (сервер чи гра без мережі); до старту м'яч ще не в грі.
+      if (this.ball && this.ballAuthority && !this.done && this.countdown <= 0) {
+        const cars = new Map<number, number>();
+        for (const r of this.racers) if (!r.pilot && !r.remote?.gone) cars.set(r.truck.body.handle, r.id ?? 0);
+        this.ball.step(cars);
+      }
+      return;
     }
     const me = this.racers[0];
     if (this.done || this.countdown > 0) return;
@@ -693,6 +838,7 @@ export class RaceMode {
   }
 
   private progress(r: Racer): number {
+    if (this.kind === 'ball') return r.points ?? 0;
     if (this.kind === 'trial') {
       // Пряма відстань, що лишилась (як прогрес ІІ king.exe 0x4171a0): до точки 1 і від неї до фінішу, після точки 1 —
       // до фінішу.
@@ -723,7 +869,8 @@ export class RaceMode {
     if (this.hold) return 'Чекаємо, поки всі завантажать трасу…';
     if (this.countdown > 0) return `Старт через ${Math.ceil(this.countdown)}…`;
     const all = this.racers.filter((r) => !r.remote?.gone).length;
-    const where = this.kind === 'trial' ? `Точка ${Math.min(3, (me.stage ?? 0) + 1)} з 3` : `Коло ${Math.min(LAPS, me.laps + 1)} з ${LAPS}`;
+    const where =
+      this.kind === 'ball' ? `Очки ${me.points ?? 0} з ${BALL_WIN}` : this.kind === 'trial' ? `Точка ${Math.min(3, (me.stage ?? 0) + 1)} з 3` : `Коло ${Math.min(LAPS, me.laps + 1)} з ${LAPS}`;
     return `${where}   місце ${this.place(me)} з ${all}   ${this.clock.toFixed(1)} с`;
   }
 

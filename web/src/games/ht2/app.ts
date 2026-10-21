@@ -366,9 +366,9 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           truck: mine.truck,
           color: mine.color,
           race: true,
-          // Арени king.exe (0x5125b0): Кільце — MENV, Тріал — MTR.
-          arena: start.setup.track === 'trial' ? 'MTR' : 'MENV',
-          course: start.setup.track === 'trial' ? 'trial' : 'ring',
+          // Арени king.exe (0x5125b0): Кільце — MENV, Тріал — MTR, Автобол — MTB.
+          arena: start.setup.track === 'trial' ? 'MTR' : start.setup.track === 'ball' ? 'MTB' : 'MENV',
+          course: start.setup.track,
           net: { myId, host: session.host, players: start.players.map((p) => ({ id: p.id, name: p.name, truck: p.truck, color: p.color })), rivals: start.rivals },
           settings: netSettings,
         })
@@ -427,7 +427,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           direct = next === 'exit' ? (ctx.exit ? 'exit' : null) : (next ?? null);
           resolve();
         };
-        Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck'), trailer: params.get('trailer'), weather: params.get('weather'), career, race: choice === 'race', settings, arena: arenaParam(params.get('arena')), course: params.get('course') === 'trial' ? 'trial' : 'ring' })
+        Ht2Drive.start({ renderer: ctx.renderer, source, overlay: ctx.overlay, setStatus: ctx.setStatus, onExit: exit, truck: params.get('truck'), trailer: params.get('trailer'), weather: params.get('weather'), career, race: choice === 'race', settings, arena: arenaParam(params.get('arena')), course: params.get('course') === 'trial' ? 'trial' : params.get('course') === 'ball' ? 'ball' : 'ring' })
           .then((d) => {
             drive = d;
             Object.assign(window, { ht2: { drive } });

@@ -69,7 +69,12 @@ const MASS: Record<string, number> = {
   anmobj0209: 200,
   anmobj0231: 10000,
   anmobj0241: 10000,
+  // М'яч Автобола (арена MTB, Ball_0): запис 11 таблиці trash boxes vehicle.tech — 50 кг, сфера R 2,5 (objects.md).
+  anmobj0251: 50,
 };
+/** М'яч: радіус сфери (vehicle.tech, trash box 11) і пружність відскоку (гіпотеза порту: у даних rubber 0,1 — для ящиків). */
+export const BALL_RADIUS = 2.5;
+const BALL_BOUNCE = 0.5;
 /** Бочки й каністри — циліндри (восьмигранна призма в exe), решта — бруси. */
 const ROUND = /^anmobj020[3-9]$/;
 
@@ -500,20 +505,29 @@ export class WorldObjects {
     const size = box.getSize(new THREE.Vector3());
     const c = box.getCenter(new THREE.Vector3());
     const mass = MASS[def.type];
-    const shape = ROUND.test(def.type)
+    const ball = def.type === 'anmobj0251';
+    const shape = ball
+      ? RAPIER.ColliderDesc.ball(BALL_RADIUS)
+      : ROUND.test(def.type)
       ? RAPIER.ColliderDesc.cylinder(size.z / 2, Math.max(size.x, size.y) / 2).setRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2))
       : RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
     this.rapier.createCollider(
       shape
         .setTranslation(c.x, c.y, c.z)
         .setMass(mass)
-        .setFriction(0.6)
-        .setRestitution(0.1)
+        .setFriction(ball ? 0.3 : 0.6)
+        .setRestitution(ball ? BALL_BOUNCE : 0.1)
         .setCollisionGroups(groups(GROUP_MOVABLE, 0xffff)),
       body,
     );
     if (!saved) body.sleep();
     return { body, parentInv };
+  }
+
+  /** Тіло рухомого предмета за іменем екземпляра (`anmobj0251000` — м'яч Автобола). */
+  movable(name: string): { body: RAPIER.RigidBody; object: THREE.Object3D } | null {
+    for (const list of this.movables.values()) for (const m of list) if (m.def.name === name) return { body: m.body, object: m.def.object };
+    return null;
   }
 
   dispose(): void {

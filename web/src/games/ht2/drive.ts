@@ -56,6 +56,7 @@ import { Climate, sunHeight, trafficLights } from './world/climate';
 import { iniGet, iniNum, parseIni } from './engine/formats/ini';
 import { decodeCp1251 } from './engine/formats/binary';
 import { RaceMode, compassSector, type CourseKind, type NetRace } from './race';
+import { modal } from './engine/ui/modal';
 import type { Arena } from './world/world';
 import { FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, STATE_RATE } from './net/state';
 import { Trailer } from './vehicles/trailer';
@@ -815,6 +816,10 @@ export class Ht2Drive {
       for (const m of ms) if (Array.isArray(m) && typeof m[0] === 'string') this.raceMessages.set(m[0], ukMessage(m[0], str(m[m.length - 1])));
       this.race = new RaceMode(this, this.roads, (k, fb) => this.raceMessages.get(k) ?? fb, false, o.net ?? null, o.course ?? 'ring');
       this.race.onFinish = () => o.onExit();
+      // Автобол без мережі: 1000 очок — вікно з рахунком і назад у меню (у мережі — таблиця netPlay).
+      if (!o.net)
+        this.race.onBallOver = (scores) =>
+          void modal(this.overlay, 'Автобол', `Ви набрали $${scores[0]?.points ?? 0}`, ['Гаразд']).then(() => o.onExit());
     }
     // Погода: повзунок «погода» і TRUCK.INI [EFFECTS] wtemp (період зміни, реальних годин); ?weather=bad|good — стала.
     const ini = await o.source.read('TRUCK.INI').then((b) => parseIni(decodeCp1251(b))).catch(() => null);
@@ -901,8 +906,9 @@ export class Ht2Drive {
     this.traffic = new Traffic(this.world.scene, this.rapier, this.roads, this.trucks, trafficKinds(vehicles, this.trucks), (r) => this.world.loaded.has(r), {
       dumb: count('dumb', 70),
       ghost: count('ghost', 25),
-      // Мережева гонка — без трафіку (MENV/GAME.CNF: dumb 0; у кожного телефона свій трафік не збігався б).
-      density: o.net ? 0 : (o.settings?.traffic ?? 1),
+      // Мережева гонка й арени — без трафіку (MENV/MTR GAME.CNF: dumb 0, у MTB доріг немає; у кожного телефона свій
+      // трафік не збігався б).
+      density: o.net || o.arena ? 0 : (o.settings?.traffic ?? 1),
     });
     this.traffic.signals = this.lights;
     // Цілі маршрутів трафіку — вузли WAY з FLAG & 2 (міста біля стоянок; king.exe 0x45cdc0).
@@ -2142,6 +2148,11 @@ export class Ht2Drive {
     const loads = (this.truckers?.models ?? []).map((m) => recs.find((r) => r.carNode === m)?.cargoLoad).filter((x): x is number => x != null);
     return loads.length ? loads.reduce((a, b) => a + b, 0) / loads.length : (recs.find((r) => r.carNode === 'ZilR')?.cargoLoad ?? 6000);
   }
+  /** Збивні стовпи й рухомі предмети світу (м'яч Автобола — RaceMode). */
+  get worldObjects(): WorldObjects {
+    return this.objects;
+  }
+
   get rapierWorld(): RAPIER.World {
     return this.rapier;
   }

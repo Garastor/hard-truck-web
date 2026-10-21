@@ -11,7 +11,7 @@ import { decodeSignal, encodeSignal, sdpFromSignal, sdpMid, signalFromSdp, Signa
  * Версія протоколу: різні версії порту не з'єднуються (повідомлення гравцям). Своя в другої гри — коди `HT2:` і так
  * не підходять першій (signal.ts).
  */
-export const NET_VERSION = 1;
+export const NET_VERSION = 2;
 /** Скільки чекати збору адрес (у локальній мережі — частки секунди), мс. */
 const GATHER_TIMEOUT = 4000;
 /** Пінг і обрив: без жодного повідомлення довше за LOST_AFTER — зв'язок втрачено, мс. */
@@ -39,6 +39,8 @@ export type NetMessage =
   | { t: 'ready'; id: number }
   /** Господар: обидва готові — відлік (світлофор) почався. */
   | { t: 'go' }
+  /** Автобол, сервер — усім: гравець id забив у ворота gate (індекс у readGates), у нього тепер total очок. */
+  | { t: 'goal'; id: number; gate: number; total: number }
   /** Гравець id фінішував: час заїзду від зеленого, с; місце серед усіх (з суперниками). */
   | { t: 'finish'; time: number; place: number; id: number };
 

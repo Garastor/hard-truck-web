@@ -9,7 +9,6 @@ import { DEFAULT_SETUP, NetPeer, type CloseReason, type NetCar, type NetPlayer, 
 import { MAX_PLAYERS, NetSession } from '../net/session';
 import { PLAYER_COLORS } from '../net/state';
 import { QrScanner, cameraAvailable, qrCanvas } from '../net/qr';
-import { modal } from '../engine/ui/modal';
 import { screen, texButton, type Ht2MenuArt, type RoundKey } from './menu';
 
 /** Скільки чекати з'єднання після обміну кодами, мс. */
@@ -72,6 +71,8 @@ export interface NetStart {
  * легкових і Storm — довгий для решітки), кольори по колу.
  */
 function pickRivals(session: NetSession): NetCar[] {
+  // Автобол — без суперників на автопілоті (MTB: GAME.CNF не читається, 0x512920).
+  if (session.setup.track === 'ball') return [];
   const taken = new Set([...session.players.values()].map((p) => p.truck));
   const pool = NET_CARS.filter((c) => !['BmwM5', 'Patrol', 'Sobol', 'Gazelle', 'StormR'].includes(c.truck));
   const free = pool.filter((c) => !taken.has(c.truck));
@@ -218,7 +219,7 @@ function hostScreen(art: Ht2MenuArt, from: NetSetup): Promise<NetSetup | null> {
       resolve(v);
     };
     const sc = screen(art, 'h/backhost.txr');
-    const { stage, root } = sc;
+    const { stage } = sc;
     const painters: (() => void)[] = [];
     const repaint = () => painters.forEach((p) => p());
     const track = (key: NetTrack, tex: string, x: number, label: string) =>
@@ -226,8 +227,6 @@ function hostScreen(art: Ht2MenuArt, from: NetSetup): Promise<NetSetup | null> {
         texButton(art, stage, `h/${tex}`, x, 202, label, {
           selected: () => s.track === key,
           action: () => {
-            // Автобол — арена MTB, у порті ще не зроблений.
-            if (key === 'ball') return void modal(root, 'Мережева гра', `${TRACK_NAME[key]} — у наступних кроках порту. Поки що — Кільце й Тріал.`, ['Гаразд']);
             s.track = key;
           },
           after: repaint,

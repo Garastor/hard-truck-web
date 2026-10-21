@@ -275,6 +275,7 @@ export class NetSession {
       }
       case 'go':
       case 'finish':
+      case 'goal':
         break;
       default:
         return;

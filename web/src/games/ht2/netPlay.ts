@@ -98,6 +98,19 @@ export function joinNetDrive(d: Ht2Drive, net: NetStart, driver: string, ev: Net
     renderTable();
     void modal(d.overlay, 'Фініш', table, ['До сесії']).then(() => ev.onLobby());
   };
+  // Автобол: голи рахує сервер і розсилає (0x3B9); 1000 очок — кінець гри для всіх (0x3B8) — таблиця за очками.
+  race.onBallGoal = (id, gate, total) => {
+    if (session.host) session.send({ t: 'goal', id, gate, total });
+  };
+  race.onBallOver = (scores) => {
+    if (table) return;
+    table = document.createElement('div');
+    table.className = 'ht2-net-results';
+    table.textContent = scores.map((s, i) => `${i + 1}. ${nameOf(s.id)} — $${s.points}`).join('\n');
+    // Перший — свій гравець: youwinSound, інакше youlostSound (0x574530).
+    d.playSound(scores[0]?.id === me ? 'youwin' : 'youlost');
+    void modal(d.overlay, 'Автобол', table, ['До сесії']).then(() => ev.onLobby());
+  };
   session.events = {
     onFast: (data) => race.pushFleet(data),
     // Гравець зник зі списку господаря (відключився) — його машину прибрати (у господаря — onLeave).
@@ -111,6 +124,9 @@ export function joinNetDrive(d: Ht2Drive, net: NetStart, driver: string, ev: Net
           return;
         case 'go':
           go();
+          return;
+        case 'goal':
+          race.netGoal(m.id, m.gate, m.total);
           return;
         case 'ready':
           tryGo();
