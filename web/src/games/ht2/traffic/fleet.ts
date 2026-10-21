@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { makeOrders, type Order } from '../career/economy';
-import { isPocket, type Ht2Roads, type RoadLine } from '../world/roads';
+import { isPocket, toStation, type Ht2Roads, type RoadLine } from '../world/roads';
 import type { SemiKind } from '../vehicles/presents';
 import type { Freight, FreightCapacity, FreightJob, FreightPhase } from './freight';
 
@@ -239,7 +239,7 @@ export class Fleet {
     const open = passable.filter((n) => !this.roads.deadEnd(n));
     const pool0 = open.length ? open : passable;
     // Паркувальні кишені й під'їзди станцій — лише якщо іншого шляху немає (як roads.pick).
-    const roads = pool0.filter((n) => !isPocket(n) && !n.station);
+    const roads = pool0.filter((n) => !isPocket(n) && !toStation(n));
     const pool = roads.length ? roads : pool0;
     if (pool.length) return pool[Math.floor(this.rnd() * pool.length)];
     const end = line.pts[line.pts.length - 1];

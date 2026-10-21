@@ -90,6 +90,25 @@ describe.skipIf(!has)('HT2: зрізалки й приховані дороги 
     }
   });
 
+  it('водій трафіку не звертає до заправки чи СТО — ні на під\'їзд, ні на смугу, що веде лише туди', () => {
+    const only = (l: RoadLine) => l.next.length > 0 && l.next.every((n) => (n as RoadLine).station);
+    const bad = (l: RoadLine) => l.station || only(l);
+    const at = roads.lines.filter((l) => !bad(l) && l.next.some((n) => bad(n as RoadLine)) && l.next.some((n) => !bad(n as RoadLine)));
+    expect(at.length).toBeGreaterThan(40);
+    const goalPts = roads.nodes.filter((_, i) => roads.isJunction(i)).filter((_, i) => i % 97 === 0).map((n) => n.pos);
+    for (const withGoals of [false, true]) {
+      setGoals(withGoals ? goalPts.map((p) => new Navigator(roads, routePenalty).distances(p)) : []);
+      const wrong: string[] = [];
+      for (let k = 0; k < 5; k++)
+        for (const l of at) {
+          const m = newMover(l, Math.max(0, l.pts.length - 2), 0, 15, 2);
+          for (let i = 0; i < 200 && m.line === l; i++) coast(m, 0.1);
+          if (m.line !== l && bad(m.line)) wrong.push(`${l.name} → ${m.line.name}`);
+        }
+      expect(wrong).toEqual([]);
+    }
+  });
+
   it('ділянка відкривається, коли проїхав ≈ 83 % її розмаху; відкрите зберігається', () => {
     // Ділянка з однієї довгої осі-зрізалки.
     const s = roads.sections.findIndex((x) => x.axes.length === 1 && roads.axes[x.axes[0]].shortcut && x.span > 200);

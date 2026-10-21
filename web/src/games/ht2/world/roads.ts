@@ -33,8 +33,15 @@ const BEZIER_STEP = 3;
 const BASE_R = 30;
 /** Під'їзд заправки чи СТО — вісь з бітом 0x20 ближче за стільки (у плані) від вузла колонки чи СТО, м (markStations). */
 const STATION_R = 10;
+/**
+ * Вузли заправок і СТО в WAY: колонки `node_car_fuel*`, `benzo_*`/`node_benzo_*`, СТО `sto_*`/`node_sto_*` і місця
+ * ремонту `node_car_repair_*` (СТО ca має лише `node_sto_ca` і `node_car_repair_ca`).
+ */
+const STATION_NODE = /^(sto_|node_sto_|node_car_fuel|node_car_repair|benzo_|node_benzo_)/i;
 /** Під'їзд вужчий за вулицю (3–8 м); ширша вісь біля колонки — вулиця повз заправку (ar_048, aj_032: 12 м), м. */
 const STATION_W = 10;
+/** Вузька вісь 0x20, що прилягає до під'їзду, не довша за це, — в'їзд у двір станції, м (СТО bb, bd: 19–36 м). */
+const STATION_ENTRY = 40;
 /** Від центру смуги бази чи вузької петлі до стіни праворуч — щонайменше, м (clearWalls; вантажівка — 2,5 м). */
 const WALL_CLEAR = 3;
 /** Найбільший зсув лінії від стіни, м. */
@@ -137,7 +144,7 @@ export class Ht2Roads {
     for (const { id, way } of regions)
       for (const room of way.rooms) {
         for (const n of room.nodes) if (/^(pos_base_|node_store_)/i.test(n.name)) spots.push(toThree(...n.pos));
-        for (const n of room.nodes) if (/^(sto_|node_car_fuel)/i.test(n.name)) stations.push(toThree(...n.pos));
+        for (const n of room.nodes) if (STATION_NODE.test(n.name)) stations.push(toThree(...n.pos));
         for (const s of room.segments) {
           const n = s.points.length / 3;
           if (n < 2) continue;
@@ -293,7 +300,13 @@ export class Ht2Roads {
           const other = (atNode.get(String(n)) ?? []).filter((b) => b !== a);
           return other.length > 0 && other.every((b) => seen.has(b));
         });
-        if (!spur) continue;
+        // Короткий в'їзд у двір станції з розвилкою (СТО bb, bd: дві паралельні петлі, вузли ступеня 3–4) — теж під'їзд.
+        // Вузол спільний з під'їздом і всередині двору (лише вузькі осі 0x20): перехрестя з вулицею не рахується.
+        const entry = a.length <= STATION_ENTRY && [a.startNode, a.endNode].some((n) => {
+          const at = atNode.get(String(n)) ?? [];
+          return at.some((b) => b !== a && seen.has(b)) && at.every(narrow);
+        });
+        if (!spur && !entry) continue;
         seen.add(a);
         todo.push(a);
         changed = true;
@@ -541,7 +554,7 @@ export class Ht2Roads {
     const pool0 = open.length ? open : passable.length ? passable : all;
     // Паркувальні кишені бази й під'їзди заправок і СТО — лише якщо іншого шляху немає (боти-автопілоти виписували
     // кишенями зигзаги).
-    const roads = pool0.filter((n) => !isPocket(n) && !n.station);
+    const roads = pool0.filter((n) => !isPocket(n) && !toStation(n));
     const pool = roads.length ? roads : pool0;
     return pool[hashPick(line.name, pool.length)];
   }
@@ -572,6 +585,15 @@ export class Ht2Roads {
     }
     return cur;
   }
+}
+
+/**
+ * На станцію (порт): під'їзд заправки чи СТО (`station`) або смуга, з якої далі шлях лише на під'їзд чи зрізалку —
+ * трикутник розвилки перед СТО db (db_028), з'їзди розв'язки ba05 до заправки ba14. Трафік і боти туди не звертають,
+ * якщо є інше продовження.
+ */
+export function toStation(l: RoadLine): boolean {
+  return !!l.station || (l.next.length > 0 && (l.next as RoadLine[]).every((n) => n.station || n.shortcut));
 }
 
 /**

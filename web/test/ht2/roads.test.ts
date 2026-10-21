@@ -16,6 +16,22 @@ describe.skipIf(!has)('HT2: мережа доріг', () => {
   const regions = (has ? HT2_REGIONS : []).map((id) => ({ id, way: parseWay(new Uint8Array(readFileSync(join(HT2_DIR, 'ENV', `${id}.way`)))) }));
   const roads = new Ht2Roads(regions);
 
+  it('під\'їзди заправок і СТО: усі вузли станцій, в\'їзди у двори з розвилкою (markStations)', () => {
+    const st = (name: string) => roads.axes.find((a) => a.name.endsWith(name))?.station;
+    expect(roads.axes.filter((a) => a.station).length).toBe(138);
+    // СТО ca — лише вузли node_sto_ca і node_car_repair_ca.
+    for (const n of ['#1617', '#1618', '#1619', '#1620']) expect(st(n)).toBe(true);
+    // Двори СТО bb і bd: короткі в'їзди з магістралі.
+    for (const n of ['#1367', '#1370', '#1371', '#1374', '#1487', '#1488']) expect(st(n)).toBe(true);
+    // З'єднання великого перехрестя bd з магістраллю — не в'їзд.
+    for (const n of ['#1489', '#1490']) expect(st(n)).toBeFalsy();
+    // Смуги, з яких шлях лише на станцію, без позначки (водій їх оминає, driver offBase): трикутник розвилки перед СТО db
+    // і з'їзди розв'язки ba05 на західний вихід, що веде лише до заправки ba14.
+    const trap = roads.lines.filter((l) => !l.station && l.next.length > 0 && l.next.every((n) => (n as RoadLine).station));
+    expect(trap.length).toBe(14);
+    expect(trap.every((l) => /^room_(db_028#202[45]|ba05#13(27|31|35|36|38|39)):/.test(l.name))).toBe(true);
+  });
+
   it('смуги — за шириною (king.exe 0x4d4620)', () => {
     const byWidth = new Map<number, number>();
     for (const a of roads.axes) byWidth.set(a.width, a.lanes);

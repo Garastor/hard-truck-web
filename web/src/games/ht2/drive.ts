@@ -18,6 +18,7 @@ import { noFarClip } from './engine/render/farClip';
 import { AutoPilot } from './engine/vehicle/autopilot';
 import { Ht2Roads } from './world/roads';
 import { Traffic, recolor, spotShare, trafficKinds } from './traffic/traffic';
+import { groundNear } from './traffic/layers';
 import { Accidents } from './traffic/accidents';
 import { TrafficLights } from './world/trafficLights';
 import { CareerMode } from './career/careerMode';
@@ -2452,10 +2453,12 @@ export class Ht2Drive {
       }
   }
 
-  /** Поверхня дороги під точкою (лише нерухомі колізії — не дах іншої машини); null — колізій немає. */
+  /**
+   * Поверхня дороги під точкою (лише нерухомі колізії — не дах іншої машини), найближча за висотою до p.y: під мостом
+   * перша згори — настил (traffic/layers.ts); null — колізій немає.
+   */
   private surfaceAt(p: THREE.Vector3): number | null {
-    const hit = this.rapier.castRay(new RAPIER.Ray({ x: p.x, y: p.y + 6, z: p.z }, { x: 0, y: -1, z: 0 }), 16, true, undefined, undefined, undefined, undefined, (c) => c.parent()?.isFixed() ?? true);
-    return hit ? p.y + 6 - hit.timeOfImpact : null;
+    return groundNear(this.rapier, p, 6, 10, 0)?.y ?? null;
   }
 
   private removeCar(v: TruckVehicle): void {

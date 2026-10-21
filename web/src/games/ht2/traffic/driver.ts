@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { RoadLine } from '../world/roads';
+import { toStation, type RoadLine } from '../world/roads';
 
 /**
  * Водій машини трафіку за king.exe (re/notes/ht2/traffic.md) — без фізики: машина котиться лінією смуги, а
@@ -437,7 +437,8 @@ export function routePenalty(l: RoadLine): number {
 
 /** Продовження без вʼїзду на базу, заправку, СТО чи зрізалку (world/roads markBases, markStations, markShortcuts), якщо таке є. */
 function offBase(lines: RoadLine[]): RoadLine[] {
-  const out = lines.filter((l) => !l.base && !l.station && !l.shortcut);
+  // toStation — і смуга, з якої далі шлях лише туди (трикутник розвилки перед СТО db: db_028 — дорога, не під'їзд).
+  const out = lines.filter((l) => !l.base && !l.shortcut && !toStation(l));
   return out.length ? out : lines.filter((l) => !l.shortcut);
 }
 

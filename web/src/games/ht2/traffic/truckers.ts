@@ -14,6 +14,7 @@ import { g2t } from '../engine/physics/world';
 import { Freight, type FreightCapacity, type FreightJob } from './freight';
 import { Fleet, type FleetMember, type SavedTrucker } from './fleet';
 import { HIRED_MIN_SPEED } from '../career/hired';
+import { layered } from './layers';
 import type { Ht2Roads } from '../world/roads';
 import type { Ht2Drive } from '../drive';
 import { alongPoints, botCruise, newBot, POINT_HALF, setRoute, steer, think, type BotDriver } from './botDriver';
@@ -456,6 +457,8 @@ export class Truckers {
       if (this.list.length >= this.max) break;
       if (c.d < FREE_R || this.rigs.some((r) => r.truck.visual.position.distanceTo(c.pos) < FREE_R)) continue;
       if (c.m.hidden && (this.drive.traffic?.view?.sees(c.pos) ?? false)) continue;
+      // Порт: не на мосту й не під ним (traffic/layers.ts) — тягач з причепом опинявся на настилі над дорогою.
+      if (layered(this.drive.rapierWorld, c.pos)) continue;
       this.materialize(c.m, c.pos, c.forward);
     }
   }

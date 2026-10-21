@@ -12,6 +12,7 @@ import type { Ht2Trucks } from '../vehicles/trucks';
 import { disposePool, makePool, setPoolFade } from './headPools';
 import { markMover } from '../world/roomVisibility';
 import { Blinkers } from './blinkers';
+import { groundNear, layered } from './layers';
 
 /**
  * Трафік Дальнобойщиків 2: машини з `evehicles.sch` класу `dumb` («тупі» легковики, автобус, пікапи) — запис
@@ -272,7 +273,8 @@ export class Traffic {
       c.age += dt;
       if (c.vehicle) {
         // Фізична → кінематична (0x4cee70).
-        if (!loaded || d > PHYS_OFF || (d > PHYS_BACK && Math.abs(c.lat) <= 0.5 && !c.bypass && c.flipped === 0)) this.unphysical(c);
+        // На мосту чи під ним лишається фізичною, доки не зʼїде (порт: кінематична ставала не на той поверх).
+        if (!loaded || d > PHYS_OFF || (d > PHYS_BACK && Math.abs(c.lat) <= 0.5 && !c.bypass && c.flipped === 0 && !layered(this.rapier, c.pos))) this.unphysical(c);
         continue;
       }
       if (c.root && this.physics && d < PHYS_ON && loaded) {
@@ -280,7 +282,8 @@ export class Traffic {
         if (c.vehicle) continue;
       }
       if (!c.root) {
-        if (loaded && (d < R - 100 || (d < R && !this.sees(c.pos)))) this.activate(c);
+        // На мосту й під ним модель не зʼявляється (порт, traffic/layers.ts): машина лишається абстрактною до кінця мосту.
+        if (loaded && (d < R - 100 || (d < R && !this.sees(c.pos))) && !layered(this.rapier, c.pos)) this.activate(c);
       } else if (!loaded || d > R + VISIBLE_DROP || (d > R + 50 && !this.sees(c.pos))) this.deactivate(c);
     }
     this.cars = this.all.filter((c) => c.root || c.vehicle);
@@ -446,6 +449,8 @@ export class Traffic {
     if (!this.physics) return;
     // Порт: не на в'їзді в поворот — машина, швидша за дозволене дорогою попереду, у фізиці не встигає загальмувати.
     if (c.speed > roadLimit(c, pathAhead(c, 150)) + 1) return;
+    // Порт: не на мосту й не під ним — фізична зʼявлялася на настилі над дорогою чи падала з нього.
+    if (layered(this.rapier, c.pos)) return;
     // Спершу прибрати кінематичне тіло: інакше промінь до землі при створенні влучає в дах самої машини.
     this.deactivate(c);
     const v = this.physics.make(c.kind, c.pos, c.heading, Math.min(PHYS_SPEED, c.speed), c.lit);
@@ -638,15 +643,13 @@ export class Traffic {
     c.body.setNextKinematicRotation(c.root.quaternion);
   }
 
-  /** Поверхня під точкою: промінь униз до нерухомих колізій (дорога, рельєф); null — колізій там немає. */
+  /**
+   * Поверхня під точкою: нерухома колізія (дорога, рельєф), найближча за висотою до лінії дороги (traffic/layers.ts:
+   * під мостом перша згори — настил); null — колізій там немає.
+   */
   private groundUnder(p: THREE.Vector3): Ground | null {
-    const from = { x: p.x, y: p.y + GROUND_UP, z: p.z };
-    const hit = this.rapier.castRayAndGetNormal(new RAPIER.Ray(from, { x: 0, y: -1, z: 0 }), GROUND_UP + GROUND_DOWN, true, undefined, undefined, undefined, undefined, (col) => col.parent()?.isFixed() ?? true);
-    if (!hit) return null;
-    const n = new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z);
-    if (n.y < 0.7) return null;
-    const y = from.y - hit.timeOfImpact;
-    return { y, goal: y, n, t: GROUND_EVERY };
+    const g = groundNear(this.rapier, p, GROUND_UP, GROUND_DOWN);
+    return g && { y: g.y, goal: g.y, n: g.n, t: GROUND_EVERY };
   }
 
   dispose(): void {
