@@ -61,6 +61,7 @@ export function levelCollision(b3d: B3d): LevelCollision {
   const wallSwitch: string[] = [];
   const stats: Record<string, number> = {};
   const roomBoxes = roomBounds(b3d);
+  const owners = hitOwners(b3d);
   let room = '';
   let isFence = false;
   let surface = 0;
@@ -82,7 +83,7 @@ export function levelCollision(b3d: B3d): LevelCollision {
   for (const top of b3d.blocks) {
     const m = /^hit_(road|obj)_(.+)$/i.exec(top.name);
     if (!m) continue;
-    room = `room_${m[2]}`;
+    room = owners.get(top.name.toLowerCase()) ?? `room_${m[2]}`;
     const box = roomBoxes.get(room.toLowerCase()) ?? null;
     shapes(top, [], box, (p, fence, t, s, tag) => {
       stats[t] = (stats[t] ?? 0) + 1;
@@ -429,6 +430,24 @@ function fence(a: number[], b: number[], box: Box | null): Poly {
     [b[0], b[1], b[2] + FENCE_HEIGHT],
     [a[0], a[1], a[2] + FENCE_HEIGHT],
   ];
+}
+
+/**
+ * Чия колізія `hit_*`: кімната (блок 19) посилається на неї вузлом 5 (`road_XXX`/`obj_XXX`, поле `name1`), як читає
+ * king.exe (re/notes/ht2/physics.md «Колізії кімнат»). Імена зазвичай збігаються, але не завжди: у cb `room_cb15` →
+ * `hit_road_cb15a` — за іменем підлога діставалась неіснуючій кімнаті без порталів, і на межах із сусідами колеса
+ * її не бачили (машина провалювалась). Ключ — імʼя `hit_*` малими літерами.
+ */
+export function hitOwners(b3d: B3d): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const room of b3d.blocks) {
+    if (room.data.t !== 19) continue;
+    for (const [blk] of walk([room])) {
+      const d = blk.data;
+      if (d.t === 5 && /^hit_/i.test(d.name1)) out.set(d.name1.toLowerCase(), room.name);
+    }
+  }
+  return out;
 }
 
 type Box = { min: number[]; max: number[] };

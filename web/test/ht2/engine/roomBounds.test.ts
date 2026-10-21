@@ -1,10 +1,10 @@
 // Стіни кімнат лише для машин у своїй кімнаті (engine/physics/roomBounds.ts) — на даних регіону dr.
 import { beforeAll, describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { parseB3d } from '@ht2/engine/formats/b3d';
-import { levelCollision } from '@ht2/engine/physics/collision';
+import { hitOwners, levelCollision } from '@ht2/engine/physics/collision';
 import { RoomBounds } from '@ht2/engine/physics/roomBounds';
 import { addCollisionPolys, initRapier } from '@ht2/engine/physics/world';
 import { readPortals } from '@ht2/world/roomVisibility';
@@ -135,5 +135,27 @@ describe.skipIf(!existsSync(aw) || !existsSync(av))('HT2: підлога кім�
     world.removeRigidBody(body);
     expect(t.x).toBeGreaterThan(-2468);
     expect(t.y).toBeLessThan(21.5);
+  });
+});
+
+// Колізія кімнати — за посиланням з кімнати (вузол 5 `road_XXX` → `hit_road_YYY`), не за іменем: у cb `room_cb15` →
+// `hit_road_cb15a`; за іменем підлога діставалась неіснуючій кімнаті без порталів, і машина провалювалась на межах.
+const envDir = join(HT2_DIR, 'ENV');
+
+describe.skipIf(!existsSync(join(envDir, 'cb.b3d')))('HT2: кімната колізій hit_* — за посиланням з кімнати', () => {
+  it('cb: hit_road_cb15a належить room_cb15', () => {
+    const b3d = parseB3d(new Uint8Array(readFileSync(join(envDir, 'cb.b3d'))));
+    expect(hitOwners(b3d).get('hit_road_cb15a')).toBe('room_cb15');
+    expect(new Set(levelCollision(b3d).floorRoom)).not.toContain('room_cb15a');
+  });
+
+  it('у всіх регіонах підлога належить наявній кімнаті', () => {
+    const bad: string[] = [];
+    for (const f of readdirSync(envDir).filter((n) => /^[a-z]{2}\.b3d$/i.test(n))) {
+      const b3d = parseB3d(new Uint8Array(readFileSync(join(envDir, f))));
+      const rooms = new Set(b3d.blocks.filter((b) => b.data.t === 19).map((b) => b.name.toLowerCase()));
+      for (const r of new Set(levelCollision(b3d).floorRoom)) if (r && !rooms.has(r.toLowerCase())) bad.push(`${f}: ${r}`);
+    }
+    expect(bad).toEqual([]);
   });
 });
