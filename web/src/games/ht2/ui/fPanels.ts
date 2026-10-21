@@ -29,9 +29,27 @@ export interface FPanelData {
   fire(i: number): void;
   /** Мережева гра: F2 — `BackF2Tball` (місце, імʼя, час чи сума; 0x5756f0 → 0x574810) замість рейтингу кар'єри. */
   net?: NetRow[] | null;
+  /** Мережева кар'єра (М6): інші гравці — після себе, перед далекобійниками ІІ. */
+  netRating?: { name: string; share: number; hired: number; tons: number }[];
 }
 
 const VALUE = 'rgb(240, 232, 150)';
+/**
+ * Рядки рейтингу (імʼя, частка %, найнято, тонни) через 33 — сітка F2 `BackF2`; та сама сітка (зсунута) — у вікні
+ * `BackLoose1` «рынок монополизирован вашим конкурентом» (ui/gameOver.ts).
+ */
+export function writeRating(p: SidePanel, rows: readonly [string, number, number, number][], dx = 0, dy = 0): void {
+  rows.forEach(([name, share, hired, tons], i) => {
+    const y = 491 + dy + i * 33;
+    // Стовпчик «МЕСТО» сітки — x 16…49 (лінії фону BackF2).
+    p.write(32 + dx, y, String(i + 1), VALUE, undefined, 'center', 26);
+    p.write(64 + dx, y, name, VALUE, undefined, 'left', 76);
+    p.write(168 + dx, y, `${share}%`, VALUE, undefined, 'center', 60);
+    p.write(253 + dx, y, String(hired), VALUE, undefined, 'center', 60);
+    p.write(328 + dx, y, tons.toFixed(1), VALUE, undefined, 'center', 60);
+  });
+}
+
 /** Висота рядка кнопок порту під табло, CSS px. */
 const HUD_ROW = 40;
 const BAR = 'rgb(165, 205, 174)';
@@ -158,15 +176,10 @@ export class FPanels {
     const me = d.info;
     const rows: [string, number, number, number][] = [];
     if (me) rows.push([me.driver, Math.round(d.share * 100), d.company.length, me.tons]);
+    for (const p of d.netRating ?? []) rows.push([p.name, Math.round(p.share * 100), p.hired, p.tons]);
     // Суперники — однакова частка (машин не міняють, share.ts); найнятих і перевезеного порт за них не веде.
     for (const n of d.rivals) rows.push([n, Math.round(d.rivalShare * 100), 0, 0]);
-    rows.slice(0, 10).forEach(([name, share, hired, tons], i) => {
-      const y = 491 + i * 33;
-      p.write(64, y, name, VALUE, undefined, 'left', 76);
-      p.write(168, y, `${share}%`, VALUE, undefined, 'center', 60);
-      p.write(253, y, String(hired), VALUE, undefined, 'center', 60);
-      p.write(328, y, tons.toFixed(1), VALUE, undefined, 'center', 60);
-    });
+    writeRating(p, rows.slice(0, 10));
   }
 
   /** F3: замовлення, премія, гроші й машина, смуги вантажу й стану, схема з покращеннями. */

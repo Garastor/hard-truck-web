@@ -36,6 +36,8 @@ export interface Ht2Career {
   driver: string;
   /** Збереження (`ht2.save.<id>`) і коли записано (Date.now()). */
   id?: string;
+  /** Мережева кар'єра (М6, `net-<водій>`): немає в списку збережень одиночної гри. */
+  net?: boolean;
   savedAt?: number;
   /** Логотип (0…7, `d/logo1…8`) і фото (0…50, `d/photo01…51`) водія — меню «Водії» (king.exe .pl1). */
   logo?: number;
@@ -181,7 +183,7 @@ export function listSaves(): Ht2Career[] {
 
 /** Збереження за id; без id — найновіше. */
 export function loadCareer(id?: string): Ht2Career | null {
-  if (id === undefined) return listSaves()[0] ?? null;
+  if (id === undefined) return listSaves().find((c) => !c.net) ?? null;
   migrate();
   try {
     const s = get(SAVE_PREFIX + id);

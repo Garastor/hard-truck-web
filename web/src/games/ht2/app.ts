@@ -23,7 +23,7 @@ import { modal, setHudFont } from './engine/ui/modal';
 import { DEFAULT_CAR, ht2NetMenu, type NetStart } from './ui/netScreens';
 import type { NetCar } from './net/peer';
 import type { NetSession } from './net/session';
-import { joinNetDrive } from './netPlay';
+import { joinNetCareer, joinNetDrive } from './netPlay';
 import type { Arena } from './world/world';
 
 type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files' | 'exit' | 'net';
@@ -31,6 +31,18 @@ type Choice = 'world' | 'drive' | 'race' | 'career' | 'new' | 'single' | 'files'
 /** Налагодження: ?tab=race&arena=MTR&course=trial — гонка на арені мережевої гри без мережі. */
 function arenaParam(v: string | null): Arena | null {
   return v === 'MENV' || v === 'MTR' || v === 'MTB' ? v : null;
+}
+
+/**
+ * Мережева кар'єра водія (М6): окреме збереження `net-<водій>` з позначкою net (у списку збережень одиночної гри його
+ * немає); немає — нова, з машиною з екрана «Мережева гра».
+ */
+function netCareer(driver: string, truck: string): Ht2Career {
+  const id = `net-${driver}`;
+  const c = loadCareer(id) ?? { ...newCareer(driver, truck), id, net: true };
+  const d = listDrivers().find((x) => x.name === driver);
+  if (d) Object.assign(c, { logo: d.logo, photo: d.photo });
+  return c;
 }
 
 /** Машина мережевої гри (екран n/backMult) — запамʼятовується в браузері. */
@@ -286,7 +298,9 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
       // Екран одиночної гри оригіналу: нова гра / завантажити, режим, повзунки; круглі кнопки — інші розділи.
       // Збереження — заново: у меню «Водії» водія з його іграми могли стерти вже після того, як відкрилось меню.
       // Список — усіх водіїв, найновіші першими; стрілки гортають.
-      const saves = listSaves().map((c) => ({ id: c.id!, text: `${c.driver}\n${formatMoney(c.money)}\nдоставок: ${c.delivered}` }));
+      const saves = listSaves()
+        .filter((c) => !c.net)
+        .map((c) => ({ id: c.id!, text: `${c.driver}\n${formatMoney(c.money)}\nдоставок: ${c.delivered}` }));
       const next = await new Promise<Choice | null>((resolve) => {
         let busy = false;
         const close = ht2SingleScreen(art, {
@@ -354,29 +368,39 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
         const { session } = start;
         const myId = session.myId;
         const mine = start.players.find((p) => p.id === myId) ?? session.me;
-        // Доба, погода й складність — сервера (однакові в усіх); звук, графіка й клавіші — свої.
-        const netSettings: Ht2Settings = { ...settings, arcade: start.setup.arcade, traffic: start.setup.traffic, dayLength: start.setup.dayLength, weather: start.setup.weather };
-        Ht2Drive.start({
+        const players = start.players.map((p) => ({ id: p.id, name: p.name, truck: p.truck, color: p.color }));
+        const track = start.setup.track;
+        const common = {
           renderer: ctx.renderer,
           source,
           overlay: ctx.overlay,
           setStatus: ctx.setStatus,
           // Будь-який вихід з їзди (меню Esc) — до сесії.
           onExit: () => end('вихід з їзди'),
-          truck: mine.truck,
           color: mine.color,
-          race: true,
-          // Арени king.exe (0x5125b0): Кільце — MENV, Тріал — MTR, Автобол — MTB.
-          arena: start.setup.track === 'trial' ? 'MTR' : start.setup.track === 'ball' ? 'MTB' : 'MENV',
-          course: start.setup.track,
-          net: { myId, host: session.host, players: start.players.map((p) => ({ id: p.id, name: p.name, truck: p.truck, color: p.color })), rivals: start.rivals },
-          settings: netSettings,
-        })
+        };
+        // Мережева кар'єра (М6): своє збереження `net-<водій>` (окреме від одиночних), доба й погода — свої.
+        const career = track === 'career' ? netCareer(driverName, mine.truck) : null;
+        // Доба, погода й складність трас — сервера (однакові в усіх); звук, графіка й клавіші — свої.
+        const netSettings: Ht2Settings = { ...settings, arcade: start.setup.arcade, traffic: start.setup.traffic, dayLength: start.setup.dayLength, weather: start.setup.weather };
+        (career
+          ? Ht2Drive.start({ ...common, career, netCareer: { myId, host: session.host, players, rivals: [] }, settings })
+          : Ht2Drive.start({
+              ...common,
+              truck: mine.truck,
+              race: true,
+              // Арени king.exe (0x5125b0): Кільце — MENV, Тріал — MTR, Автобол — MTB.
+              arena: track === 'trial' ? 'MTR' : track === 'ball' ? 'MTB' : 'MENV',
+              course: track === 'career' ? 'ring' : track,
+              net: { myId, host: session.host, players, rivals: start.rivals },
+              settings: netSettings,
+            })
+        )
           .then((d) => {
             drive = d;
             if (ended) return d.dispose();
             Object.assign(window, { ht2: { drive, session } });
-            unlink = joinNetDrive(d, start, driverName, {
+            unlink = (career ? joinNetCareer : joinNetDrive)(d, start, driverName, {
               onRestart: (next) => {
                 netNext = next;
                 end('сервер почав новий заїзд');

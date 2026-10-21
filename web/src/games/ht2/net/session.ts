@@ -252,6 +252,9 @@ export class NetSession {
           this.ready.add(from);
           break;
         case 'finish':
+        case 'stand':
+        case 'taken':
+        case 'won':
           relay({ ...m, id: from });
           break;
         case 'lobby':
@@ -292,6 +295,9 @@ export class NetSession {
       case 'go':
       case 'finish':
       case 'goal':
+      case 'stand':
+      case 'taken':
+      case 'won':
         break;
       default:
         return;

@@ -20,6 +20,25 @@ export function fleetLoad(c: Ht2Career, load: (carNode: string) => number): numb
   return load(c.truck) + (c.company ?? []).reduce((s, d) => s + load(d.truck), 0);
 }
 
+/** Флот гравця мережевої кар'єри: вантажопідйомність (своя машина + наймані), кг, і скільки найнято. */
+export interface FleetStanding {
+  load: number;
+  hired: number;
+}
+
+/**
+ * Частка X у мережевій кар'єрі (М6, «змагання за ринок» — власний режим порту; у king.exe мережевої кар'єри немає):
+ * інші гравці — такі самі конкуренти, як гравець, поза пулом RIVALS; наймані будь-ким — з пулу далекобійників ІІ.
+ * X_i = load_i ÷ (Σ load усіх гравців + max(0, RIVALS − Σ найнятих усіма)·rivalLoad) — однакова на всіх телефонах.
+ */
+export function netMarketShare(mine: FleetStanding, others: readonly FleetStanding[], rivalLoad: number, rivals = RIVALS): number {
+  const players = [mine, ...others];
+  const load = players.reduce((s, p) => s + p.load, 0);
+  const hired = players.reduce((s, p) => s + p.hired, 0);
+  const total = load + Math.max(0, rivals - hired) * rivalLoad;
+  return total > 0 ? mine.load / total : 0;
+}
+
 /** Частка X 0…1; rivalLoad — вантажопідйомність машини далекобійника ІІ, кг. */
 export function marketShare(c: Ht2Career, load: (carNode: string) => number, rivalLoad: number, rivals = RIVALS): number {
   const mine = fleetLoad(c, load);

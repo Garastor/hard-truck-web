@@ -11,7 +11,7 @@ import { decodeSignal, encodeSignal, sdpFromSignal, sdpMid, signalFromSdp, Signa
  * Версія протоколу: різні версії порту не з'єднуються (повідомлення гравцям). Своя в другої гри — коди `HT2:` і так
  * не підходять першій (signal.ts).
  */
-export const NET_VERSION = 3;
+export const NET_VERSION = 4;
 /** Скільки чекати збору адрес (у локальній мережі — частки секунди), мс. */
 const GATHER_TIMEOUT = 4000;
 /**
@@ -49,11 +49,23 @@ export type NetMessage =
   | { t: 'go' }
   /** Автобол, сервер — усім: гравець id забив у ворота gate (індекс у readGates), у нього тепер total очок. */
   | { t: 'goal'; id: number; gate: number; total: number }
+  /**
+   * Мережева кар'єра (М6), кожен — усім раз на 8 с: флот (вантажопідйомність, кг; найнято), перевезено тонн — для
+   * спільної частки ринку й рейтингу F2.
+   */
+  | { t: 'stand'; id: number; load: number; hired: number; tons: number }
+  /** Мережева кар'єра: гравець id узяв замовлення на місці dock складу store — в інших це місце порожнє. */
+  | { t: 'taken'; id: number; store: number; dock: number }
+  /** Мережева кар'єра: гравець id захопив ринок (частка ≥ 0,51) — для інших кінець гри (BackLoose1). */
+  | { t: 'won'; id: number }
   /** Гравець id фінішував: час заїзду від зеленого, с; місце серед усіх (з суперниками). */
   | { t: 'finish'; time: number; place: number; id: number };
 
-/** Траси мережевої гри king.exe (кнопки екрана «Сервер»): КОЛЬЦО (MENV), ТРИАЛ (MTR), АВТОБОЛ (MTB). */
-export type NetTrack = 'ring' | 'trial' | 'ball';
+/**
+ * Траси мережевої гри king.exe (кнопки екрана «Сервер»): КОЛЬЦО (MENV), ТРИАЛ (MTR), АВТОБОЛ (MTB); `career` —
+ * мережева кар'єра порту (М6, «змагання за ринок»; у king.exe її немає).
+ */
+export type NetTrack = 'ring' | 'trial' | 'ball' | 'career';
 
 /**
  * Вибір господаря — поля екрана «Сервер» king.exe (re/notes/ht2/tracks.md §2): траса, аркада чи симулятор,

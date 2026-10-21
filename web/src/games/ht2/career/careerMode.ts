@@ -15,7 +15,7 @@ import { CareerRaces } from './races';
 import { ukMessage } from '../ui/uk';
 import { StoreZones } from './storeZones';
 import { arrestCard, ILLEGAL_FINE, noFines, SPEEDING_PER_DEGREE, type Fines } from './law';
-import { fleetLoad, marketShare } from './share';
+import { fleetLoad, marketShare, netMarketShare, type FleetStanding } from './share';
 import type { MissionLot } from '../vehicles/presents';
 import type { CacheLot } from '../vehicles/caches';
 import type { TechRecord } from '../formats/tech';
@@ -413,6 +413,11 @@ export class CareerMode {
       cached = { orders: makeOrders(store, this.stores, this.goods, this.capacity(), Math.random, n, this.drive.trailer?.rec.trailerType === 3, this.marketShare(), !!this.drive.trailer, (a, b) => this.drive.storeRoute(a, b)), time: c.time };
       this.storeOrders.set(store.id, cached);
     }
+    const taken = this.blockedDocks.get(`${store.id}:${dock}`);
+    if (taken && c.time < taken.until) {
+      this.drive.say(`Склад «${store.town}»: замовлення з цього місця забрав ${taken.by}`);
+      return;
+    }
     const o = cached.orders[dock % cached.orders.length];
     if (!o) {
       this.drive.say(`Склад «${store.town}»: замовлень немає`);
@@ -440,6 +445,7 @@ export class CareerMode {
           c.order = { ...o, deadline: o.deadline * this.drive.timeScale, taken: c.time, integrity: 1 };
           this.attachRivals(c.order);
           cached!.orders = cached!.orders.filter((x) => x !== o);
+          this.onOrderTaken?.(store.id, dock);
           this.drive.setCargo(o.goods.mass * o.units);
           this.drive.say(`${o.goods.name} → ${to?.town ?? '?'}`);
           this.recountGuilt();
@@ -628,10 +634,42 @@ export class CareerMode {
     return fleetLoad(this.career, (n) => recs.find((r) => r.carNode === n)?.cargoLoad ?? 0);
   }
 
-  /** Частка X гравця — «доля перевезень» (share.ts, king.exe 0x41fcf0). */
+  /** Частка X гравця — «доля перевезень» (share.ts, king.exe 0x41fcf0); у мережевій кар'єрі — серед усіх гравців. */
   marketShare(): number {
     const recs = this.drive.trucksData.records;
+    if (this.netOthers) return netMarketShare(this.standing(), [...this.netOthers.values()], this.drive.rivalLoad);
     return marketShare(this.career, (n) => recs.find((r) => r.carNode === n)?.cargoLoad ?? 0, this.drive.rivalLoad);
+  }
+
+  /** Свій флот для мережевої кар'єри: вантажопідйомність, найнято, перевезено тонн. */
+  standing(): FleetStanding & { tons: number } {
+    return { load: this.fleetLoad(), hired: this.career.company?.length ?? 0, tons: this.info().tons };
+  }
+
+  /**
+   * Мережева кар'єра (М6, «змагання за ринок»): флоти інших гравців за номером (повідомлення `stand` раз на 8 с) —
+   * спільна частка ринку й рейтинг F2; null — одиночна кар'єра.
+   */
+  netOthers: Map<number, FleetStanding & { name: string; tons: number }> | null = null;
+  /** Мережева кар'єра: місця складів, з яких замовлення вже забрав інший гравець (`<склад>:<місце>` → хто, до якого часу). */
+  private readonly blockedDocks = new Map<string, { by: string; until: number }>();
+  /** Мережева кар'єра: свій гравець узяв замовлення на місці dock складу store — повідомити інших. */
+  onOrderTaken: ((store: number, dock: number) => void) | null = null;
+
+  /**
+   * Інший гравець узяв замовлення на місці dock складу store: у нас це місце порожнє до наступного оновлення дошки
+   * (3600 с гри, як storePanel).
+   */
+  blockDock(store: number, dock: number, by: string): void {
+    this.blockedDocks.set(`${store}:${dock}`, { by, until: this.career.time + 3600 });
+  }
+
+  /** Рейтинг інших гравців для F2: імʼя, частка (та сама формула, що в них), найнято, тонни. */
+  netRating(): { name: string; share: number; hired: number; tons: number }[] {
+    if (!this.netOthers) return [];
+    const me = this.standing();
+    const all = [...this.netOthers.values()];
+    return all.map((o) => ({ name: o.name, share: netMarketShare(o, [me, ...all.filter((x) => x !== o)], this.drive.rivalLoad), hired: o.hired, tons: o.tons }));
   }
 
   /** Купівля машини на ринку: крадена — прапорець (без повідомлення); уживана — king.exe mess 0x77. */

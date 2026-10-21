@@ -32,20 +32,7 @@ export function joinNetDrive(d: Ht2Drive, net: NetStart, driver: string, ev: Net
   d.onNetState = (data) => session.sendFast(data);
 
   // Гравці праворуч і маркери над машинами інших гравців (колір за номером, PLAYER_COLORS).
-  const roster = document.createElement('div');
-  roster.className = 'ht2-net-roster';
-  for (const p of [...net.players].sort((a, b) => a.id - b.id)) {
-    const row = document.createElement('div');
-    row.dataset.id = String(p.id);
-    if (p.id === me) row.className = 'me';
-    const name = document.createElement('span');
-    name.textContent = nameOf(p.id);
-    const sq = document.createElement('i');
-    sq.style.background = PLAYER_COLORS[p.id] ?? '#fff';
-    row.append(name, sq);
-    roster.append(row);
-  }
-  d.overlay.append(roster);
+  const roster = playerRoster(d, net, me, nameOf);
   for (const r of race.racers) if (r.remote && r.id !== undefined && r.id < FIRST_RIVAL) r.truck.visual.add(playerMarker(PLAYER_COLORS[r.id] ?? '#fff', r.truck.visual));
 
   const gone = new Set<number>();
@@ -150,6 +137,106 @@ export function joinNetDrive(d: Ht2Drive, net: NetStart, driver: string, ev: Net
     roster.remove();
     result?.close();
     d.onNetState = null;
+  };
+}
+
+/** Список гравців праворуч «імʼя ■» кольором гравця (власний елемент порту, як у першій грі). */
+function playerRoster(d: Ht2Drive, net: NetStart, me: number, nameOf: (id: number) => string): HTMLElement {
+  const roster = document.createElement('div');
+  roster.className = 'ht2-net-roster';
+  for (const p of [...net.players].sort((a, b) => a.id - b.id)) {
+    const row = document.createElement('div');
+    row.dataset.id = String(p.id);
+    if (p.id === me) row.className = 'me';
+    const name = document.createElement('span');
+    name.textContent = nameOf(p.id);
+    const sq = document.createElement('i');
+    sq.style.background = PLAYER_COLORS[p.id] ?? '#fff';
+    row.append(name, sq);
+    roster.append(row);
+  }
+  d.overlay.append(roster);
+  return roster;
+}
+
+/** Як часто гравець мережевої кар'єри шле свій флот (king.exe перераховує частку X раз на 8 с, 0x41fcf0), мс. */
+const STAND_EVERY = 8000;
+
+/**
+ * Мережева кар'єра (М6, «змагання за ринок» — власний режим порту): кожен у своїй кар'єрі в одному світі. Свій стан
+ * машини — іншим (NetCars), флот раз на 8 с (`stand`) — спільна частка ринку й F2; узяв замовлення на місці складу —
+ * `taken` (в інших місце порожнє); захопив ринок (X ≥ 0,51) — `won`, у решти кінець гри BackLoose1. Повертає
+ * прибирання.
+ */
+export function joinNetCareer(d: Ht2Drive, net: NetStart, driver: string, ev: NetDriveEvents): () => void {
+  const cm = d.careerMode;
+  const cars = d.netCars;
+  const { session } = net;
+  const me = session.myId;
+  if (!cm || !cars) return () => {};
+  const names = new Map(net.players.map((p) => [p.id, p.id === me ? driver : p.name]));
+  const nameOf = (id: number) => names.get(id) ?? `Водій ${id + 1}`;
+  d.netNames = new Map(names);
+  d.onNetState = (data) => session.sendFast(data);
+  const roster = playerRoster(d, net, me, nameOf);
+  for (const c of cars.cars) c.truck.visual.add(playerMarker(PLAYER_COLORS[c.id] ?? '#fff', c.truck.visual));
+  cm.netOthers = new Map();
+  const stand = () => session.send({ t: 'stand', id: me, ...cm.standing() });
+  stand();
+  const standTimer = window.setInterval(stand, STAND_EVERY);
+  cm.onOrderTaken = (store, dock) => session.send({ t: 'taken', id: me, store, dock });
+  d.onNetVictory = () => session.send({ t: 'won', id: me });
+  const gone = new Set<number>();
+  const markStalled = (id: number, stalled: boolean) => roster.querySelector(`[data-id="${id}"]`)?.classList.toggle('stalled', stalled);
+  const leave = (id: number, text: string) => {
+    if (gone.has(id)) return;
+    gone.add(id);
+    d.say(`${nameOf(id)}: ${text}`, 4);
+    cars.remoteGone((x) => x === id);
+    // Вийшов — його флот більше не в частці ринку.
+    cm.netOthers?.delete(id);
+    roster.querySelector(`[data-id="${id}"]`)?.classList.add('gone');
+  };
+  session.events = {
+    onFast: (data) => cars.pushFleet(data),
+    onChange: () => {
+      for (const p of net.players) if (p.id !== me && !session.players.has(p.id)) leave(p.id, 'з’єднання закрито');
+      for (const p of session.players.values()) if (p.id !== me) markStalled(p.id, !!p.stalled);
+    },
+    onStall: (id, stalled) => {
+      markStalled(id, stalled);
+      const who = id === 0 && !session.host ? 'ЗВʼЯЗОК ІЗ СЕРВЕРОМ' : `${nameOf(id)}: ЗВʼЯЗОК`;
+      d.say(stalled ? `${who} ПЕРЕРВАНО, ЧЕКАЄМО…` : `${who} ВІДНОВЛЕНО`, 4);
+    },
+    onMessage: (m) => {
+      switch (m.t) {
+        case 'stand':
+          if (!gone.has(m.id)) cm.netOthers?.set(m.id, { name: nameOf(m.id), load: m.load, hired: m.hired, tons: m.tons });
+          return;
+        case 'taken':
+          cm.blockDock(m.store, m.dock, nameOf(m.id));
+          return;
+        case 'won':
+          d.say(`${nameOf(m.id)} ЗАХОПИВ РИНОК`, 6);
+          d.netDefeat();
+          return;
+        case 'start':
+          ev.onRestart({ session, setup: m.setup, players: m.players, rivals: m.rivals });
+          return;
+        case 'lobby':
+          leave(m.id, 'повернувся до сесії');
+          return;
+      }
+    },
+    onLeave: (id) => leave(id, 'з’єднання закрито'),
+  };
+  return () => {
+    clearInterval(standTimer);
+    session.events = {};
+    roster.remove();
+    d.onNetState = null;
+    d.onNetVictory = null;
+    cm.onOrderTaken = null;
   };
 }
 

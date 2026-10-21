@@ -56,7 +56,7 @@ export function carName(truck: string): string {
   return NET_CARS.find((c) => c.truck === truck)?.name ?? truck;
 }
 
-const TRACK_NAME: Record<NetTrack, string> = { ring: 'Кільце', trial: 'Тріал', ball: 'Автобол' };
+const TRACK_NAME: Record<NetTrack, string> = { ring: 'Кільце', trial: 'Тріал', ball: 'Автобол', career: 'кар’єра' };
 
 /** Початок заїзду: сесія, вибір господаря, гравці з машинами, машини суперників (номери від FIRST_RIVAL). */
 export interface NetStart {
@@ -71,8 +71,8 @@ export interface NetStart {
  * легкових і Storm — довгий для решітки), кольори по колу.
  */
 function pickRivals(session: NetSession): NetCar[] {
-  // Автобол — без суперників на автопілоті (MTB: GAME.CNF не читається, 0x512920).
-  if (session.setup.track === 'ball') return [];
+  // Автобол — без суперників на автопілоті (MTB: GAME.CNF не читається, 0x512920); кар'єра — далекобійники світу.
+  if (session.setup.track === 'ball' || session.setup.track === 'career') return [];
   const taken = new Set([...session.players.values()].map((p) => p.truck));
   const pool = NET_CARS.filter((c) => !['BmwM5', 'Patrol', 'Sobol', 'Gazelle', 'StormR'].includes(c.truck));
   const free = pool.filter((c) => !taken.has(c.truck));
@@ -500,6 +500,10 @@ function sessionPanel(art: Ht2MenuArt, driver: string, session: NetSession): Pro
     };
     const add = host ? button('+ ГРАВЕЦЬ', () => done('add')) : null;
     if (host) button('ТРАСА', () => done('setup'));
+    // Мережева кар'єра (М6, власний режим порту): кнопка порту поруч із вибором траси; ще раз — назад до трас.
+    const mode = host
+      ? button('КАРʼЄРА', () => session.setSetup({ ...session.setup, track: session.setup.track === 'career' ? 'ring' : 'career' }))
+      : null;
     const renderList = () => {
       head.textContent = `МЕРЕЖЕВА ГРА · ${session.players.size} з ${MAX_PLAYERS}`;
       list.replaceChildren(
@@ -524,13 +528,19 @@ function sessionPanel(art: Ht2MenuArt, driver: string, session: NetSession): Pro
     const render = () => {
       renderList();
       const s = session.setup;
-      setupLine.textContent = `Траса: ${TRACK_NAME[s.track]} · ${s.arcade ? 'аркада' : 'симулятор'}`;
+      const career = s.track === 'career';
+      setupLine.textContent = career ? 'Мережева кар’єра: змагання за ринок' : `Траса: ${TRACK_NAME[s.track]} · ${s.arcade ? 'аркада' : 'симулятор'}`;
       if (add) add.hidden = session.full;
+      if (mode) mode.textContent = career ? 'ГОНКИ' : 'КАРʼЄРА';
       foot.textContent = host
         ? session.players.size > 1
-          ? 'ДАЛІ — старт: усі завантажать трасу разом з вами. Суперники займуть вільні місця.'
+          ? career
+            ? 'ДАЛІ — кожен у своїй мережевій кар’єрі, в одному світі. Хто перший захопить 51 % ринку — виграв.'
+            : 'ДАЛІ — старт: усі завантажать трасу разом з вами. Суперники займуть вільні місця.'
           : 'Додайте гравця (+ ГРАВЕЦЬ), щоб почати гру.'
-        : 'Трасу обирає сервер. Чекаємо, поки він натисне ДАЛІ.';
+        : career
+          ? 'Мережева кар’єра: чекаємо, поки сервер натисне ДАЛІ.'
+          : 'Трасу обирає сервер. Чекаємо, поки він натисне ДАЛІ.';
     };
     const timer = window.setInterval(renderList, 1000);
     const done = (v: NetStart | 'add' | 'setup' | string | null) => {

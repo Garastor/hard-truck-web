@@ -57,6 +57,7 @@ import { iniGet, iniNum, parseIni } from './engine/formats/ini';
 import { decodeCp1251 } from './engine/formats/binary';
 import { RaceMode, compassSector, type CourseKind, type NetRace } from './race';
 import { modal } from './engine/ui/modal';
+import { NetCars } from './netCars';
 import type { Arena } from './world/world';
 import { FIRST_RIVAL, FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, PLAYER_COLORS, STATE_RATE } from './net/state';
 import { Trailer } from './vehicles/trailer';
@@ -351,6 +352,8 @@ export interface Ht2DriveOptions {
   arena?: Arena | null;
   /** Вид траси гонки: Кільце (3 кола) чи Тріал (зони 0 → 1 → 2). */
   course?: CourseKind;
+  /** Мережева кар'єра (М6): гравці (машини інших — NetCars у відкритому світі), свій номер; разом з career. */
+  netCareer?: NetRace | null;
 }
 
 type CamMode = 'chase' | 'cockpit' | 'far';
@@ -505,6 +508,27 @@ export class Ht2Drive {
   cards: Cards | null = null;
   private disposed = false;
   race: RaceMode | null = null;
+  /** Мережева кар'єра (М6): машини інших гравців у світі. */
+  netCars: NetCars | null = null;
+  /** Мережева кар'єра: свій гравець захопив ринок — повідомити інших (netPlay). */
+  onNetVictory: (() => void) | null = null;
+
+  /** Мережева кар'єра: ринок захопив інший гравець — кінець гри (king.exe: подія 0xC чужого гравця → BackLoose1). */
+  netDefeat(): void {
+    this.gameOver('BackLoose1');
+  }
+
+  /** Рейтинг для вікна BackLoose1: свій гравець, інші гравці й далекобійники ІІ за часткою ринку. */
+  private ratingRows(): [string, number, number, number][] {
+    const cm = this.careerMode;
+    if (!cm) return [];
+    const d = this.fData();
+    const rows: [string, number, number, number][] = [[cm.career.driver, Math.round(d.share * 100), cm.career.company?.length ?? 0, cm.info().tons]];
+    for (const p of d.netRating ?? []) rows.push([p.name, Math.round(p.share * 100), p.hired, p.tons]);
+    for (const n of d.rivals.slice(0, 3)) rows.push([n, Math.round(d.rivalShare * 100), 0, 0]);
+    return rows.sort((a, b) => b[1] - a[1]);
+  }
+
   /** Мережева гра: імена гравців за номером (netPlay) — таблиця F2, мінікарта. */
   netNames = new Map<number, string>();
   /** Мережева гонка: пакет стану своєї машини (і суперників господаря) — STATE_RATE разів на секунду. */
@@ -512,7 +536,7 @@ export class Ht2Drive {
   private netTimer = 0;
   /** Мережева гра не зупиняється (меню Esc, карта): інші гравці їдуть далі, свій стан — і далі в мережу. */
   private get canPause(): boolean {
-    return !this.race?.net;
+    return !this.race?.net && !this.netCars;
   }
   truckers: Truckers | null = null;
   private raceMessages = new Map<string, string>();
@@ -711,6 +735,12 @@ export class Ht2Drive {
       const ahead = spawn.position.clone().addScaledVector(spawn.forward, 10);
       spawn.position.copy(this.groundAt(ahead.setY(ahead.y - 2.5)));
     }
+    // Нова мережева кар'єра: усі стартують з тієї самої точки GAME.CNF — гравці на 20 м один за одним уздовж дороги
+    // (за номером), інакше машини з'являлися б одна в одній.
+    if (o.netCareer && !saved && o.netCareer.myId > 0) {
+      const p = spawn.position.clone().addScaledVector(spawn.forward, 20 * o.netCareer.myId);
+      spawn.position.copy(this.groundAt(p.setY(p.y - 2.5)));
+    }
     // Динамічна модель: перемикачі пошкоджень і вогнів (вмʼятини, габарити).
     const model = buildTruckModel(this.trucks.asm, def, true);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня`);
@@ -772,6 +802,7 @@ export class Ht2Drive {
       ]);
       if (o.career.id) this.checkpoint = { id: o.career.id, raw: savedCareerRaw(o.career.id) };
       this.careerMode = new CareerMode(this, o.career, merch, messages, parseUpgrades(restable, true), parseTowns(regionMods), parseServices(regionMods));
+      if (o.netCareer) this.netCars = new NetCars(this, o.netCareer.players, o.netCareer.myId);
       this.copBribes = copsTakeBribes(names);
       this.accidents = this.makeAccidents();
     }
@@ -2549,14 +2580,21 @@ export class Ht2Drive {
     this.burning = -1;
     this.blasts?.carFire(null);
     this.truck.engineOn = false;
-    void this.clip(screen === 'BackLoose5' ? 'trbn.bne' : 'TRirr.bne').then(async () => {
+    // Ринок захопив інший гравець (BackLoose1) — без ролика (upgrades.md «Вибування гравця»).
+    void this.clip(...(screen === 'BackLoose5' ? ['trbn.bne'] : screen === 'BackLoose1' ? [] : ['TRirr.bne'])).then(async () => {
       // Екран кінця гри не тримається в памʼяті (ui/escArt.ts LAZY) — довантажити.
       await this.escArt?.ensure(`m_16\\${screen}.txr`);
       this.audio?.play('youlost');
-      showGameOver(this.escArt, this.overlay, screen, {
-        main: () => this.opts.onExit(),
-        restart: () => this.opts.onExit('new'),
-      });
+      showGameOver(
+        this.escArt,
+        this.overlay,
+        screen,
+        {
+          main: () => this.opts.onExit(),
+          restart: () => this.opts.onExit('new'),
+        },
+        screen === 'BackLoose1' ? this.ratingRows() : undefined,
+      );
     });
   }
 
@@ -2586,6 +2624,8 @@ export class Ht2Drive {
   private async victory(): Promise<void> {
     const cm = this.careerMode!;
     cm.career.won = true;
+    // Мережева кар'єра: решта гравців програли (BackLoose1 «рынок монополизирован вашим конкурентом»).
+    this.onNetVictory?.();
     cm.persist();
     this.paused = true;
     await this.clip('TRw1.bne');
@@ -3063,6 +3103,7 @@ export class Ht2Drive {
     };
     return {
       net: this.race?.net ? this.race.netRows(this.netNames) : null,
+      netRating: this.careerMode?.netRating(),
       info: this.careerMode?.info() ?? null,
       company: this.careerMode?.career.company ?? [],
       licences: this.careerMode?.career.licences?.length ?? 0,
@@ -3679,6 +3720,7 @@ export class Ht2Drive {
       this.truck.update(step, state);
       this.trailer?.update(step, this.truck.brakePedal(state), this.def.tech.brakePower, this.truck.kinematic, this.truck.towTires);
       this.race?.control(step);
+      this.netCars?.control(step);
       this.truckers?.control(step);
       this.traffic?.control(step);
       this.police?.control(step);
@@ -3710,10 +3752,11 @@ export class Ht2Drive {
       }
     }
     this.race?.after(dt, alpha);
-    if (this.race?.net && this.onNetState && (this.netTimer -= dt) <= 0) {
+    this.netCars?.after(alpha);
+    if ((this.race?.net || this.netCars) && this.onNetState && (this.netTimer -= dt) <= 0) {
       this.netTimer = Math.max(0, this.netTimer + 1 / STATE_RATE);
       const flags = (this.lamps[0]?.visible ? FLAG_LIGHTS : 0) | (this.truck.brakePedal(state) > 0 ? FLAG_BRAKE : 0) | (this.truck.gear < 0 ? FLAG_REVERSE : 0);
-      this.onNetState(this.race.netPacket(flags));
+      this.onNetState(this.race?.net ? this.race.netPacket(flags) : this.netCars!.packet(flags));
     }
     this.detectHits();
     this.detectTrailerHits();
@@ -3791,7 +3834,9 @@ export class Ht2Drive {
       // далекобійники й трафік на карті не показуються (career-misc.md §4). Конкуренти за вантаж — на їхній частці
       // маршруту гравця (careerMode.rivalMarks, порт: їдуть без моделей).
       rivals: this.race ? this.race.racers.slice(1).filter((r) => !this.netPlayer(r)).map((r) => r.truck.visual.position) : (this.careerMode?.rivalMarks ?? []),
-      players: this.race?.net ? this.race.racers.slice(1).filter((r) => this.netPlayer(r)).map((r) => ({ pos: r.truck.visual.position, color: PLAYER_COLORS[r.id!] ?? '#fff' })) : undefined,
+      players: this.race?.net
+        ? this.race.racers.slice(1).filter((r) => this.netPlayer(r)).map((r) => ({ pos: r.truck.visual.position, color: PLAYER_COLORS[r.id!] ?? '#fff' }))
+        : this.netCars?.visible().map((c) => ({ pos: c.pos, color: PLAYER_COLORS[c.id] ?? '#fff' })),
       target: this.careerMode?.target() ?? null,
       // Фініш гонки — значок I_race з написом mess.txt 88 «Кольцо».
       finish: this.race?.finishPos ?? null,
@@ -4143,6 +4188,7 @@ export class Ht2Drive {
     this.markets?.dispose();
     this.worldMap?.dispose();
     this.race?.dispose();
+    this.netCars?.dispose();
     this.truckers?.dispose();
     this.trailer?.dispose();
     this.presents?.dispose();
