@@ -163,8 +163,24 @@ export class GlassRain {
     void inv;
   }
 
+  /**
+   * Після згортання застосунку (телефон) чи відновлення контексту WebGL — вода на склі й копія кадру заново й цілком:
+   * вивантаження лише змінених прямокутників (waterBuffer.ts) інакше лягало б на текстуру, якої на відеокарті вже немає.
+   */
+  private readonly refresh = (): void => {
+    if (document.visibilityState === 'hidden') return;
+    this.water.invalidate();
+    this.copy.dispose();
+  };
+  private canvas: HTMLCanvasElement | null = null;
+
   /** Перед малюванням кабіни (у кадрі вже світ): зміни буфера — на відеокарту, копія кадру для заломлення. */
   prepare(renderer: THREE.WebGLRenderer): void {
+    if (!this.canvas) {
+      this.canvas = renderer.domElement;
+      this.canvas.addEventListener('webglcontextrestored', this.refresh);
+      document.addEventListener('visibilitychange', this.refresh);
+    }
     this.water.upload(renderer);
     this.uniforms.wet.value = this.water.empty ? 0 : 1;
     if (this.water.empty) return;
@@ -302,6 +318,8 @@ export class GlassRain {
   }
 
   dispose(): void {
+    this.canvas?.removeEventListener('webglcontextrestored', this.refresh);
+    document.removeEventListener('visibilitychange', this.refresh);
     this.water.dispose();
     this.copy.dispose();
   }

@@ -20,6 +20,14 @@ import type { SceneAssembler } from '../engine/render/sceneBuilder';
  * — не зʼясовано); яскравість снігу (поле погоди +0x224) — яскравість кольору туману; змішування — звичайна прозорість.
  */
 const MAX = 2000;
+/**
+ * Порт (на прохання користувача): на малому екрані телефона краплі й сніжинки ширші й непрозоріші — у розмірах
+ * king.exe риска на екрані 375 px заввишки ≈ 1–2 px, а текстура rain.txr прозора щонайменше на 67 %, і дощ губиться.
+ * Множник — SCREEN_REF / висота вікна (CSS px), 1…SCREEN_MAX: на ширину частинки й на непрозорість (opacity
+ * матеріалу > 1 підсилює альфу текстури, результат обрізається до 1). На ПК (вікно від 720 px) — як в оригіналі.
+ */
+const SCREEN_REF = 720;
+const SCREEN_MAX = 2.5;
 const LIFE_DECAY = 0.06;
 const NEAR = 2;
 const BELOW = 2;
@@ -67,7 +75,7 @@ class Emitter {
   }
 
   /** cam — камера (гра), fwd — горизонтальний напрям уперед (гра, одиничний), a — кут ромба, limit — ліміт живих. */
-  update(dt: number, w: number, wind: number, cam: THREE.Vector3, fwd: THREE.Vector2, speed: number, a: number, limit: number, color: THREE.Color, alpha: number): void {
+  update(dt: number, w: number, wind: number, cam: THREE.Vector3, fwd: THREE.Vector2, speed: number, a: number, limit: number, color: THREE.Color, alpha: number, widen = 1): void {
     const k = this.kind;
     const on = cam.z > k.zMin && cam.z < k.zMax && w >= 0.7;
     // Рух і загибель.
@@ -124,11 +132,12 @@ class Emitter {
       // Не накопичувати борг випуску, коли ліміт досягнуто.
       this.timer = Math.min(this.timer, interval);
     } else this.timer = 0;
-    this.build(cam, fwd, wind, color, alpha);
+    (this.mesh.material as THREE.MeshBasicMaterial).opacity = widen;
+    this.build(cam, fwd, wind, color, alpha, widen);
   }
 
-  /** Трикутники частинок (координати three.js: x, z, −y гри). */
-  private build(cam: THREE.Vector3, fwd: THREE.Vector2, wind: number, color: THREE.Color, alpha: number): void {
+  /** Трикутники частинок (координати three.js: x, z, −y гри); widen — множник ширини (малий екран). */
+  private build(cam: THREE.Vector3, fwd: THREE.Vector2, wind: number, color: THREE.Color, alpha: number, widen: number): void {
     const s = this.kind.size;
     // σ = вгору × уперед — горизонтальний бічний вектор.
     const sx = -fwd.y;
@@ -146,12 +155,12 @@ class Emitter {
       let shift = 0;
       if (this.rain) {
         top = s * (8 + 0.5 * d);
-        half = s * (0.25 + 0.025 * d);
+        half = s * (0.25 + 0.025 * d) * widen;
         shift = 0.025 * wind;
       } else {
         const m = 0.2 + 0.1 * d;
-        top = s * m;
-        half = s * m;
+        top = s * m * widen;
+        half = s * m * widen;
       }
       const v = t * 9;
       // Вершина.
@@ -231,11 +240,12 @@ export class Precipitation {
     // Дощ: колір туману, L + 0,425, S × 0,5, непрозорий.
     fog.getHSL(this.hsl);
     this.color.setHSL(this.hsl.h, this.hsl.s * 0.5, Math.min(1, this.hsl.l + 0.425));
-    this.rain.update(dt, ww, wind, this.cam, this.fwd, speed, a, limit, this.color, 1);
+    const widen = Math.min(SCREEN_MAX, Math.max(1, SCREEN_REF / Math.max(1, window.innerHeight)));
+    this.rain.update(dt, ww, wind, this.cam, this.fwd, speed, a, limit, this.color, 1, widen);
     // Сніг: сірий clamp(1,25·яскравість; 0,25; 0,76), альфа 0,75.
     const g = Math.max(0.25, Math.min(0.76, 1.25 * (0.299 * fog.r + 0.587 * fog.g + 0.114 * fog.b)));
     this.color.setRGB(g, g, g);
-    this.snow.update(dt, ww, wind, this.cam, this.fwd, speed, a, limit, this.color, 0.75);
+    this.snow.update(dt, ww, wind, this.cam, this.fwd, speed, a, limit, this.color, 0.75, widen);
   }
 
   /** Живих частинок (налагодження). */

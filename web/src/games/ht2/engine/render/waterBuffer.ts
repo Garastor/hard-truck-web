@@ -151,6 +151,11 @@ export class WaterBuffer {
     this.fadeStep = 0;
   }
 
+  /** Наступне вивантаження — уся текстура (після повернення з фону чи втрати контексту WebGL). */
+  invalidate(): void {
+    this.full = true;
+  }
+
   /** Передати зміни на відеокарту (перед малюванням). */
   upload(renderer: THREE.WebGLRenderer): void {
     if (!this.full && !this.rects.length) return;
@@ -258,6 +263,7 @@ export class SceneCopy {
 
   dispose(): void {
     this.tex?.dispose();
+    this.tex = null;
   }
 }
 
