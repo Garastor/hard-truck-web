@@ -279,7 +279,7 @@ export const WATER_VERTEX = 'varying vec2 vUv; void main() { vUv = uv; gl_Positi
  * (bias 3 — 8 × 8 ≈ 2 см скла); від lo до hi — перехід від окремих крапель до суцільної води; wave — підсилення
  * нахилу згладженої поверхні (пологі хвилі).
  */
-const WATER_MERGE = { mergeLo: 0.12, mergeHi: 0.3, mergeBias: 3, mergeWave: 0.4 };
+const WATER_MERGE = { mergeLo: 0.05, mergeHi: 0.15, mergeBias: 3, mergeWave: 0.6 };
 
 /**
  * Заломлення й світлотінь (на око): зсув у px екрана на одиницю нахилу та межа, яскравість, частка води на краях
