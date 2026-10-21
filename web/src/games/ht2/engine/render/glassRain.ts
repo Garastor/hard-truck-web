@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { RgbaImage } from '../formats/binary';
-import { SceneCopy, WATER_FRAGMENT, WATER_LOOK, WATER_VERTEX, WaterBuffer, toLevels, waterUniforms, type Levels } from './waterBuffer';
+import { FILM_LOOK, SceneCopy, WATER_FRAGMENT, WATER_LOOK, WATER_VERTEX, WaterBuffer, toLevels, waterUniforms, type Levels } from './waterBuffer';
 
 /**
  * Вода на лобовому склі 3D-кабіни й двірники. В оригіналі текстура скла `glass.txr` позначена `noload` — гра
@@ -43,6 +43,16 @@ const RUN_TICK = 1;
 const SIZE = 512;
 /** Нахил поверхні води — різниця рівнів через стільки пікселів буфера. */
 const SLOPE_SPAN = 2;
+/**
+ * Водяна плівка (власний ефект порту, на прохання користувача — щоб невичищене скло заважало їхати): під дощем
+ * скло поступово затягує суцільною водою, що розмиває й туманить вид (шейдер — waterBuffer.ts, FILM_LOOK). Повна
+ * плівка — за FILM_TIME с на місці; на ходу швидше: × (1 + v / FILM_SPEED), v — м/с (90 км/год — у 3,5 раза,
+ * ≈ 13 с). Двірники стирають плівку лише у своєму секторі; без дощу вона висихає, як краплі. FILM_SIZE —
+ * роздільність буфера плівки (лінійна фільтрація згладжує межу сектора двірника).
+ */
+const FILM_TIME = 45;
+const FILM_SPEED = 10;
+const FILM_SIZE = 64;
 /** Найбільший крок часу, с (після паузи двірник проскочив би межу помаху). */
 const MAX_DT = 0.1;
 
@@ -61,8 +71,9 @@ export class GlassRain {
   /** Площина скла в системі кабіни: точка, два ребра і їхні UV — для переведення точки в UV. */
   private glass: { o: THREE.Vector3; e1: THREE.Vector3; e2: THREE.Vector3; uv0: THREE.Vector2; du1: THREE.Vector2; du2: THREE.Vector2 } | null = null;
   private readonly water = new WaterBuffer(SIZE, SIZE, true);
+  private readonly film = new WaterBuffer(FILM_SIZE, FILM_SIZE, true);
   private readonly copy = new SceneCopy();
-  private readonly uniforms = waterUniforms(this.water.texture, SLOPE_SPAN / SIZE, SLOPE_SPAN / SIZE);
+  private readonly uniforms = waterUniforms(this.water.texture, SLOPE_SPAN / SIZE, SLOPE_SPAN / SIZE, this.film.texture);
   private readonly drop: Levels | null;
   private readonly runner: Levels | null;
   private readonly runners: { a: number; b: number; acc: number }[] = [];
@@ -170,6 +181,7 @@ export class GlassRain {
   private readonly refresh = (): void => {
     if (document.visibilityState === 'hidden') return;
     this.water.invalidate();
+    this.film.invalidate();
     this.copy.dispose();
   };
   private canvas: HTMLCanvasElement | null = null;
@@ -182,14 +194,17 @@ export class GlassRain {
       document.addEventListener('visibilitychange', this.refresh);
     }
     this.water.upload(renderer);
-    this.uniforms.wet.value = this.water.empty ? 0 : 1;
-    if (this.water.empty) return;
+    this.film.upload(renderer);
+    const dry = this.water.empty && this.film.empty;
+    this.uniforms.wet.value = dry ? 0 : 1;
+    if (dry) return;
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
     this.copy.copy(renderer, 0, 0, size.x, size.y, this.uniforms);
     // Масштаб «пікселя кадру 640×480» на екрані — як у 2D-кабіни.
     const dev = size.y / 480;
     this.uniforms.k.value = WATER_LOOK.refract * dev;
     this.uniforms.kMax.value = WATER_LOOK.refractMax * dev;
+    this.uniforms.blur.value = FILM_LOOK.blur * dev;
   }
 
   update(dt: number, speedKmh = 0): void {
@@ -201,13 +216,20 @@ export class GlassRain {
     for (const w of this.wipers) w.obj.matrix.copy(w.base).multiply(turn);
     if (this.raining) {
       this.water.wet();
+      this.film.wet();
+      this.film.grow((dt / FILM_TIME) * (1 + this.speed / FILM_SPEED));
       this.spawn(dt);
     } else {
       this.water.dry(dt);
+      this.film.dry(dt);
       if (this.water.empty) this.runners.length = 0;
     }
     this.run(dt);
-    if (this.glass && prev !== this.angle) for (const w of this.wipers) this.wipe(w, prev, this.angle);
+    if (this.glass && prev !== this.angle)
+      for (const w of this.wipers) {
+        this.wipe(w, prev, this.angle);
+        this.wipeFilm(w, prev, this.angle);
+      }
   }
 
   /** Помах (як 0x462f38 + 0x4d0180): у спокої — старт зі звуком; дійшов до спокою — новий помах або зупинка. */
@@ -302,6 +324,30 @@ export class GlassRain {
     this.water.mark(Math.min(x0, pivot.x) - 2, Math.min(y0, pivot.y) - 2, Math.max(x1, pivot.x) + 3, Math.max(y1, pivot.y) + 3);
   }
 
+  /** Стерти плівку в секторі двірника (буфер плівки грубіший — крок по колу в його пікселях). */
+  private wipeFilm(w: Wiper, a0: number, a1: number): void {
+    if (this.film.empty) return;
+    const S = FILM_SIZE;
+    const pivot = this.uv(w.pivot).multiplyScalar(S);
+    const tipAt = (a: number) => this.uv(new THREE.Vector3(Math.cos(a) * w.length, 0, -Math.sin(a) * w.length).applyMatrix4(w.toCab)).multiplyScalar(S);
+    const len = Math.max(1, tipAt(a0).distanceTo(pivot));
+    const n = Math.max(1, Math.ceil((Math.abs(a1 - a0) * len) / 0.5));
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (let i = 0; i <= n; i++) {
+      const tip = tipAt(a0 + ((a1 - a0) * i) / n);
+      const steps = Math.ceil(tip.distanceTo(pivot) * 2);
+      for (let k = 0; k <= steps; k++) this.film.erase(Math.round(pivot.x + ((tip.x - pivot.x) * k) / steps), Math.round(pivot.y + ((tip.y - pivot.y) * k) / steps));
+      x0 = Math.min(x0, tip.x);
+      y0 = Math.min(y0, tip.y);
+      x1 = Math.max(x1, tip.x);
+      y1 = Math.max(y1, tip.y);
+    }
+    this.film.mark(Math.min(x0, pivot.x) - 2, Math.min(y0, pivot.y) - 2, Math.max(x1, pivot.x) + 3, Math.max(y1, pivot.y) + 3);
+  }
+
   /** Точка кабіни → UV скла (проєкція на площину скла). */
   private uv(p: THREE.Vector3): THREE.Vector2 {
     const g = this.glass!;
@@ -321,6 +367,7 @@ export class GlassRain {
     this.canvas?.removeEventListener('webglcontextrestored', this.refresh);
     document.removeEventListener('visibilitychange', this.refresh);
     this.water.dispose();
+    this.film.dispose();
     this.copy.dispose();
   }
 }
