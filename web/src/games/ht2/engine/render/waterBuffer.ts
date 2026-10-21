@@ -47,7 +47,6 @@ export class WaterBuffer {
   private full = true;
   private fadeStep = 0;
   private fadeAcc = 0;
-  private growAcc = 0;
 
   /** wrap — координати по колу (текстура скла повторюється), інакше поза межами — відкидаються. */
   constructor(
@@ -147,35 +146,6 @@ export class WaterBuffer {
     this.full = true;
   }
 
-  /**
-   * Рівномірно підняти рівні всього буфера (водяна плівка): amount — частка повного рівня (дробові залишки
-   * накопичуються, щоб повільний ріст не губився на округленні).
-   */
-  grow(amount: number): void {
-    this.growAcc += amount * 255;
-    const inc = Math.floor(this.growAcc);
-    if (inc < 1) return;
-    this.growAcc -= inc;
-    const a = this.levels;
-    for (let i = 0; i < a.length; i++) a[i] = Math.min(255, a[i] + inc);
-    this.empty = false;
-    this.full = true;
-  }
-
-  /**
-   * Не більше level у пікселі (x, y) — мʼяке стирання плівки; межі змін — виклик markAll (плівка мала, вивантажується
-   * цілком).
-   */
-  clampAt(x: number, y: number, level: number): void {
-    const { w, h } = this;
-    if (this.wrap) {
-      x = ((x % w) + w) % w;
-      y = ((y % h) + h) % h;
-    } else if (x < 0 || x >= w || y < 0 || y >= h) return;
-    const i = y * w + x;
-    if (this.levels[i] > level) this.levels[i] = level;
-  }
-
   /** Знову дощ — висихання з початку. */
   wet(): void {
     this.fadeStep = 0;
@@ -229,76 +199,68 @@ export class WaterBuffer {
 }
 
 /**
- * Шейдер води (власний ефект порту, за згодою користувача): картинка під водою зсувається за нахилом поверхні
+ * Шейдер води (власний ефект порту, за згодою користувача; лінза — за виглядом оригіналу): картинка під водою
+ * збільшена й зібрана з текселів буфера (lens, zoom), на краях крапель — зсувається за нахилом поверхні
  * (заломлення) й світлішає / темнішає (світло згори — нижній край краплі світліший); WATER — частка заломленої
  * картинки, решта — вид без води. Нахил рахується в UV буфера (span — крок вибірки), зсув — на екрані через похідні
  * UV (скло 3D-кабіни стоїть під кутом); uvDown — знак «униз» по v на екрані.
- * Під краплями — водяна плівка (film, FILM_LOOK; на прохання користувача): розмиття й безбарвний серпанок за її
- * товщиною; краплі малюються поверх.
  */
 export const WATER_FRAGMENT = `
-  uniform sampler2D levels, scene, film;
-  uniform vec2 res, origin, span;
-  uniform float k, kMax, shade, water, wet, blur, mist;
-  varying vec2 vUv, vFilm;
+  uniform sampler2D levels, scene;
+  uniform vec2 res, origin, span, cells;
+  uniform float k, kMax, shade, water, wet, lens, zoom, lensCell;
+  varying vec2 vUv;
+  // UV-вектор буфера → вектор на екрані (px): J — похідні UV за екраном, J⁻¹ переводить назад.
+  vec2 toScreen(vec2 d, vec2 ux, vec2 uy, float det) {
+    return vec2(uy.y * d.x - uy.x * d.y, -ux.y * d.x + ux.x * d.y) / det;
+  }
   void main() {
     float a = texture2D(levels, vUv).r;
-    // Плівка (власний ефект порту): f — товщина 0…1, видимість гіршає з її квадратом (тонка — ледь помітна).
-    float f = texture2D(film, vFilm).r;
-    if (wet < 0.5 || (a <= 0.0 && f < 0.02)) discard;
-    vec3 col = texture2D(scene, (gl_FragCoord.xy - origin) / res).rgb;
-    if (f >= 0.02) {
-      float t = f * f;
-      // Розмиття: 8 вибірок по колу радіуса blur·t px і ще 8 — на половині радіуса.
-      float r = blur * t;
-      vec3 sum = vec3(0.0);
-      for (int i = 0; i < 8; i++) {
-        float ang = float(i) * 0.785398 + 0.3927;
-        vec2 d = vec2(cos(ang), sin(ang)) * r;
-        sum += texture2D(scene, (gl_FragCoord.xy + d - origin) / res).rgb;
-        sum += texture2D(scene, (gl_FragCoord.xy + d * 0.5 - origin) / res).rgb;
+    if (a <= 0.0 || wet < 0.5) discard;
+    float du = texture2D(levels, vUv + vec2(span.x, 0.0)).r - texture2D(levels, vUv - vec2(span.x, 0.0)).r;
+    float dv = texture2D(levels, vUv + vec2(0.0, span.y)).r - texture2D(levels, vUv - vec2(0.0, span.y)).r;
+    vec2 ux = dFdx(vUv), uy = dFdy(vUv);
+    float det = ux.x * uy.y - uy.x * ux.y;
+    vec2 g = vec2(0.0);
+    vec3 clear = texture2D(scene, (gl_FragCoord.xy - origin) / res).rgb;
+    vec3 under = clear;
+    if (abs(det) > 1e-12) {
+      vec2 s = toScreen(vec2(du, dv), ux, uy, det);
+      float l = length(s);
+      if (l > 0.0) g = s / l * length(vec2(du, dv));
+      // Лінза (як в оригіналі — «збільшення, пікселі, згладжування», на прохання користувача): скло поділене на
+      // клітинки по lensCell текселів буфера; у кожній картинка збільшена навколо центру клітинки (вибірка в zoom
+      // разів ближча до центру), між чотирма сусідніми клітинками — лінійне згладжування.
+      vec2 grid = cells / lensCell;
+      vec2 t = vUv * grid - 0.5;
+      vec2 c0 = floor(t);
+      vec2 f = t - c0;
+      vec3 q[4];
+      for (int i = 0; i < 4; i++) {
+        vec2 c = c0 + vec2(float(i - (i / 2) * 2), float(i / 2)) + 0.5;
+        vec2 d = toScreen(c / grid - vUv, ux, uy, det) * (1.0 - zoom);
+        q[i] = texture2D(scene, (gl_FragCoord.xy + d - origin) / res).rgb;
       }
-      vec3 soft = sum / 16.0;
-      // Серпанок: розмита картинка без кольору, трохи світліша (розсіяне світло у воді).
-      vec3 haze = vec3(dot(soft, vec3(0.299, 0.587, 0.114))) * 1.08 + 0.03;
-      col = mix(col, soft, min(1.0, t * 1.6));
-      col = mix(col, haze, t * mist);
+      vec3 lensed = mix(mix(q[0], q[1], f.x), mix(q[2], q[3], f.x), f.y);
+      under = mix(clear, lensed, lens * smoothstep(0.0, 0.25, a));
     }
-    // Краплі — поверх плівки: заломлена картинка зі світлотінню.
-    if (a > 0.0) {
-      float du = texture2D(levels, vUv + vec2(span.x, 0.0)).r - texture2D(levels, vUv - vec2(span.x, 0.0)).r;
-      float dv = texture2D(levels, vUv + vec2(0.0, span.y)).r - texture2D(levels, vUv - vec2(0.0, span.y)).r;
-      // Напрямок нахилу з UV у пікселі екрана: J — похідні UV за екраном, J⁻¹ переводить UV-вектор в екранний.
-      vec2 ux = dFdx(vUv), uy = dFdy(vUv);
-      float det = ux.x * uy.y - uy.x * ux.y;
-      vec2 g = vec2(0.0);
-      if (abs(det) > 1e-12) {
-        vec2 s = vec2(uy.y * du - uy.x * dv, -ux.y * du + ux.x * dv) / det;
-        float l = length(s);
-        if (l > 0.0) g = s / l * length(vec2(du, dv));
-      }
-      vec2 off = g * k;
-      float lo = length(off);
-      if (lo > kMax) off *= kMax / lo;
-      vec3 bg = texture2D(scene, (gl_FragCoord.xy + off - origin) / res).rgb;
-      // g.y < 0 — поверхня піднімається донизу екрана (нижній край краплі): світліше; верхній край — темніше.
-      float light = clamp(1.0 + shade * (-g.y - 0.3 * g.x), 0.6, 1.5);
-      col = mix(col, bg * light, water);
-    }
-    gl_FragColor = vec4(col, 1.0);
+    vec2 off = g * k;
+    float lo = length(off);
+    if (lo > kMax) off *= kMax / lo;
+    vec3 bg = texture2D(scene, (gl_FragCoord.xy + off - origin) / res).rgb;
+    // g.y < 0 — поверхня піднімається донизу екрана (нижній край краплі): світліше; верхній край — темніше.
+    float light = clamp(1.0 + shade * (-g.y - 0.3 * g.x), 0.6, 1.5);
+    gl_FragColor = vec4(mix(under, bg * light, water * min(1.0, length(g) * 4.0)), 1.0);
   }`;
 
-/** filmUv — координати плівки (без повторення, від краю до краю скла; glassRain.ts). */
-export const WATER_VERTEX =
-  'attribute vec2 filmUv; varying vec2 vUv, vFilm; void main() { vUv = uv; vFilm = filmUv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
+export const WATER_VERTEX = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
 
-/** Заломлення й світлотінь (на око): зсув у px екрана на одиницю нахилу та межа, яскравість, частка води. */
-export const WATER_LOOK = { refract: 20, refractMax: 3, shade: 2.5, water: 0.75 };
 /**
- * Водяна плівка (власний ефект порту, на прохання користувача): радіус розмиття при повній плівці — px кадру 640×480
- * (на екрані множиться на висоту/480), частка серпанку.
+ * Заломлення й світлотінь (на око): зсув у px екрана на одиницю нахилу та межа, яскравість, частка води на краях
+ * крапель; lens — частка «лінзи» під водою, lensCell — клітинка лінзи в текселях буфера, zoom — множник відстані
+ * вибірки від центру клітинки (менше — більше збільшення; 0 — суцільний колір центру, «пікселі»).
  */
-export const FILM_LOOK = { blur: 7, mist: 0.6 };
+export const WATER_LOOK = { refract: 20, refractMax: 3, shade: 2.5, water: 0.75, lens: 1, zoom: 0.4, lensCell: 3 };
 
 /**
  * Копія кадру під водою для заломлення: прямокутник буфера малювання (у пікселях, y — знизу), текстура того ж
@@ -330,16 +292,17 @@ export class SceneCopy {
 }
 
 /** Uniforms шейдера води. */
-export function waterUniforms(levels: THREE.Texture, spanU: number, spanV: number, film: THREE.Texture | null = null): Record<string, THREE.IUniform> {
+export function waterUniforms(levels: THREE.Texture, spanU: number, spanV: number): Record<string, THREE.IUniform> {
   return {
     levels: { value: levels },
-    film: { value: film },
-    blur: { value: 0 },
-    mist: { value: FILM_LOOK.mist },
     scene: { value: null },
     res: { value: new THREE.Vector2(1, 1) },
     origin: { value: new THREE.Vector2() },
     span: { value: new THREE.Vector2(spanU, spanV) },
+    cells: { value: new THREE.Vector2((levels.image as { width: number }).width, (levels.image as { height: number }).height) },
+    lens: { value: WATER_LOOK.lens },
+    zoom: { value: WATER_LOOK.zoom },
+    lensCell: { value: WATER_LOOK.lensCell },
     k: { value: 0 },
     kMax: { value: 0 },
     shade: { value: WATER_LOOK.shade },
