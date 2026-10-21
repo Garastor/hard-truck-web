@@ -54,6 +54,11 @@ export interface TabMapScene {
   /** Напрям руху гравця (Three.js). */
   heading: THREE.Vector3;
   rivals: readonly THREE.Vector3[];
+  /**
+   * Мережева гра: машини інших гравців — значок суперника з кільцем кольору гравця (як список праворуч і маркер над
+   * машиною; власний елемент порту, у king.exe гравці мережі — звичайні значки суперників).
+   */
+  players?: readonly { pos: THREE.Vector3; color: string }[];
   /** Свої наймані водії (career/hired.ts) — `I_tr_myc`, без імені. */
   mine?: readonly THREE.Vector3[];
   /** Причепи з вантажем (дорожні місії, vehicles/presents.ts) — `I_trailer`, без блимання. */
@@ -207,7 +212,7 @@ export class TabMap {
     const pos = (p: THREE.Vector3) => sig.push(Math.round(p.x * k * dpr), Math.round(p.z * k * dpr));
     if (s.target) pos(s.target);
     if (s.finish) pos(s.finish);
-    for (const list of [s.trailers, s.mine, s.rivals, s.debris]) {
+    for (const list of [s.trailers, s.mine, s.rivals, s.debris, s.players?.map((p) => p.pos)]) {
       sig.push(list?.length ?? 0);
       list?.forEach(pos);
     }
@@ -282,6 +287,19 @@ export class TabMap {
     for (const t of s.trailers ?? []) icon('I_trailer', t);
     for (const m of s.mine ?? []) icon('I_tr_myc', m);
     for (const r of s.rivals) icon('I_tr_opp', r);
+    for (const pl of s.players ?? []) {
+      const [x, y] = at(pl.pos);
+      if (!inside(x, y)) continue;
+      ctx.beginPath();
+      ctx.arc(x, y, 7 * u, 0, Math.PI * 2);
+      ctx.lineWidth = 2.5 * u;
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+      ctx.stroke();
+      ctx.lineWidth = 1.5 * u;
+      ctx.strokeStyle = pl.color;
+      ctx.stroke();
+      icon('I_tr_opp', pl.pos);
+    }
     for (const d of s.debris ?? []) icon('I_debris', d);
     icon(`I_tr_my${String(sector % 24).padStart(2, '0')}_${phase}`, s.me);
   }

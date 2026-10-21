@@ -1,9 +1,8 @@
 import * as THREE from 'three';
 import type { Ht2Drive } from './drive';
 import type { NetStart } from './ui/netScreens';
-import { carName } from './ui/netScreens';
+import { netTime, showNetResult } from './ui/netResults';
 import { FIRST_RIVAL, PLAYER_COLORS } from './net/state';
-import { modal } from './engine/ui/modal';
 
 /** Скільки господар чекає, поки всі завантажать трасу, мс (далі — старт без запізнілих). */
 const NET_READY_TIMEOUT = 30000;
@@ -16,13 +15,6 @@ export interface NetDriveEvents {
   onRestart(start: NetStart): void;
   /** Назад до сесії (кнопка таблиці фінішу). */
   onLobby(): void;
-}
-
-/** Час заїзду: хв:сс,д. */
-export function raceTime(s: number): string {
-  const m = Math.floor(s / 60);
-  const sec = s - m * 60;
-  return `${m}:${sec < 10 ? '0' : ''}${sec.toFixed(1).replace('.', ',')}`;
 }
 
 /**
@@ -79,38 +71,31 @@ export function joinNetDrive(d: Ht2Drive, net: NetStart, driver: string, ev: Net
   };
   const readyTimer = session.host ? window.setTimeout(go, NET_READY_TIMEOUT) : 0;
 
-  // Результати: час кожного від зеленого (старт одночасний) і місце, яке порахував його телефон.
-  const results = new Map<number, { time: number; place: number }>();
-  let table: HTMLElement | null = null;
-  const renderTable = () => {
-    if (!table) return;
-    const rows = net.players
-      .map((p) => ({ who: nameOf(p.id), car: carName(p.truck), r: results.get(p.id) ?? null, gone: gone.has(p.id) }))
-      .sort((a, b) => (a.r?.time ?? Infinity) - (b.r?.time ?? Infinity));
-    table.textContent = rows.map((x, i) => (x.r ? `${i + 1}. ${x.who} (${x.car}) — ${raceTime(x.r.time)}` : `—. ${x.who} — ${x.gone ? 'вийшов' : 'ще їде'}`)).join('\n');
+  // Результати (king.exe 0x574530): Кільце й Тріал — ті, хто фінішував, за часом; Автобол — за очками. Перший — свій
+  // гравець: youwinSound і BackWin1/2, інакше youlostSound і BackLoose3/4 (ui/netResults.ts). Фініш інших — дописується.
+  d.netNames = new Map(names);
+  let result: ReturnType<typeof showNetResult> | null = null;
+  const rows = () => {
+    const all = race.netRows(d.netNames);
+    return race.kind === 'ball' ? all : all.filter((r) => r.value !== '—');
+  };
+  const showResult = () => {
+    if (result) return;
+    const list = rows();
+    const won = list[0]?.id === me;
+    d.playSound(won ? 'youwin' : 'youlost');
+    result = showNetResult(d.escArt, d.overlay, { ball: race.kind === 'ball', won, rows: list }, () => ev.onLobby());
   };
   race.onNetFinish = (time, place) => {
-    if (table) return;
-    results.set(me, { time, place });
+    if (result) return;
     session.send({ t: 'finish', time, place, id: me });
-    table = document.createElement('div');
-    table.className = 'ht2-net-results';
-    renderTable();
-    void modal(d.overlay, 'Фініш', table, ['До сесії']).then(() => ev.onLobby());
+    showResult();
   };
-  // Автобол: голи рахує сервер і розсилає (0x3B9); 1000 очок — кінець гри для всіх (0x3B8) — таблиця за очками.
+  // Автобол: голи рахує сервер і розсилає (0x3B9); 1000 очок — кінець гри для всіх (0x3B8).
   race.onBallGoal = (id, gate, total) => {
     if (session.host) session.send({ t: 'goal', id, gate, total });
   };
-  race.onBallOver = (scores) => {
-    if (table) return;
-    table = document.createElement('div');
-    table.className = 'ht2-net-results';
-    table.textContent = scores.map((s, i) => `${i + 1}. ${nameOf(s.id)} — $${s.points}`).join('\n');
-    // Перший — свій гравець: youwinSound, інакше youlostSound (0x574530).
-    d.playSound(scores[0]?.id === me ? 'youwin' : 'youlost');
-    void modal(d.overlay, 'Автобол', table, ['До сесії']).then(() => ev.onLobby());
-  };
+  race.onBallOver = () => showResult();
   session.events = {
     onFast: (data) => race.pushFleet(data),
     // Гравець зник зі списку господаря (відключився) — його машину прибрати (у господаря — onLeave).
@@ -136,10 +121,9 @@ export function joinNetDrive(d: Ht2Drive, net: NetStart, driver: string, ev: Net
           tryGo();
           return;
         case 'finish':
-          results.set(m.id, { time: m.time, place: m.place });
           race.netFinished(m.id, m.time);
-          if (table) renderTable();
-          else d.say(`${nameOf(m.id)} фінішував: ${raceTime(m.time)}`, 5);
+          if (result) result.update({ ball: false, won: rows()[0]?.id === me, rows: rows() });
+          else d.say(`${nameOf(m.id)} фінішував: ${netTime(m.time)}`, 5);
           return;
       }
     },
@@ -154,6 +138,7 @@ export function joinNetDrive(d: Ht2Drive, net: NetStart, driver: string, ev: Net
     clearTimeout(readyTimer);
     session.events = {};
     roster.remove();
+    result?.close();
     d.onNetState = null;
   };
 }

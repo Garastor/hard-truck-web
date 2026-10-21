@@ -58,7 +58,7 @@ import { decodeCp1251 } from './engine/formats/binary';
 import { RaceMode, compassSector, type CourseKind, type NetRace } from './race';
 import { modal } from './engine/ui/modal';
 import type { Arena } from './world/world';
-import { FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, STATE_RATE } from './net/state';
+import { FIRST_RIVAL, FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, PLAYER_COLORS, STATE_RATE } from './net/state';
 import { Trailer } from './vehicles/trailer';
 import { headlightMask } from './vehicles/headlights';
 import { setPoolLight } from './traffic/headPools';
@@ -505,6 +505,8 @@ export class Ht2Drive {
   cards: Cards | null = null;
   private disposed = false;
   race: RaceMode | null = null;
+  /** Мережева гра: імена гравців за номером (netPlay) — таблиця F2, мінікарта. */
+  netNames = new Map<number, string>();
   /** Мережева гонка: пакет стану своєї машини (і суперників господаря) — STATE_RATE разів на секунду. */
   onNetState: ((data: ArrayBuffer) => void) | null = null;
   private netTimer = 0;
@@ -3060,6 +3062,7 @@ export class Ht2Drive {
       return c ? keyName(c) : def;
     };
     return {
+      net: this.race?.net ? this.race.netRows(this.netNames) : null,
       info: this.careerMode?.info() ?? null,
       company: this.careerMode?.career.company ?? [],
       licences: this.careerMode?.career.licences?.length ?? 0,
@@ -3787,7 +3790,8 @@ export class Ht2Drive {
       // Лише суперники в змаганні (king.exe 0x529890: прапорець 0x80 — гонка, конкуренти за вантаж); звичайні
       // далекобійники й трафік на карті не показуються (career-misc.md §4). Конкуренти за вантаж — на їхній частці
       // маршруту гравця (careerMode.rivalMarks, порт: їдуть без моделей).
-      rivals: this.race ? this.race.racers.slice(1).map((r) => r.truck.visual.position) : (this.careerMode?.rivalMarks ?? []),
+      rivals: this.race ? this.race.racers.slice(1).filter((r) => !this.netPlayer(r)).map((r) => r.truck.visual.position) : (this.careerMode?.rivalMarks ?? []),
+      players: this.race?.net ? this.race.racers.slice(1).filter((r) => this.netPlayer(r)).map((r) => ({ pos: r.truck.visual.position, color: PLAYER_COLORS[r.id!] ?? '#fff' })) : undefined,
       target: this.careerMode?.target() ?? null,
       // Фініш гонки — значок I_race з написом mess.txt 88 «Кольцо».
       finish: this.race?.finishPos ?? null,
@@ -3831,6 +3835,11 @@ export class Ht2Drive {
   say(text: string, time = 5): void {
     if (this.tablo) this.tablo.message(text);
     else this.notice = { text, time };
+  }
+
+  /** Машина іншого гравця мережевої гри на трасі (не суперник на автопілоті, не вийшов). */
+  private netPlayer(r: RaceMode['racers'][number]): boolean {
+    return !!r.remote && !r.remote.gone && !r.remote.waiting && r.id !== undefined && r.id < FIRST_RIVAL;
   }
 
   /** Компас Тріалу на табло: сектор напрямку на наступну точку (race.compassTarget) чи null. */

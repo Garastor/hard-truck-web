@@ -3,6 +3,7 @@ import type { EscArt } from './escArt';
 import type { CareerInfo } from '../career/careerMode';
 import { formatLeft } from '../career/careerMode';
 import type { HiredDriver } from '../career/company';
+import { netTable, type NetRow } from './netResults';
 
 /**
  * Ліві панелі F1–F4 king.exe (0x5756f0, 0x526470; re/notes/ht2/ui.md §3): F1 «Клавіатура», F2 «Рейтинг», F3 «Інфо»,
@@ -26,6 +27,8 @@ export interface FPanelData {
   licences: number;
   swap(i: number): void;
   fire(i: number): void;
+  /** Мережева гра: F2 — `BackF2Tball` (місце, імʼя, час чи сума; 0x5756f0 → 0x574810) замість рейтингу кар'єри. */
+  net?: NetRow[] | null;
 }
 
 const VALUE = 'rgb(240, 232, 150)';
@@ -47,6 +50,9 @@ const VIEW: Record<FPanel, [number, number]> = {
   3: [415, 845],
   4: [410, 815],
 };
+/** F2 мережевої гри: вузький фон 215 px — заголовок «РЕЙТИНГ» і 8 рядків (сітка 544…704). */
+const NET_F2 = 'm_16\\BackF2Tball.txr';
+const NET_F2_VIEW: [number, number] = [470, 740];
 
 /**
  * Значки встановлених покращень на схемі F3 (king.exe 0x574950): `up_<система>_1` у точці фону; шини — на трьох
@@ -96,9 +102,11 @@ export class FPanels {
     this.close();
     this.kind = kind;
     // Під рядком кнопок порту («Меню», ♪, «Карта», «Інфо»), щоб вони не накривали заголовок.
-    const p = new SidePanel(this.art, this.parent, BACK[kind], 'left', VIEW[kind], HUD_ROW);
+    const net = kind === 2 && !!this.data().net;
+    const view = net ? NET_F2_VIEW : VIEW[kind];
+    const p = new SidePanel(this.art, this.parent, net ? NET_F2 : BACK[kind], 'left', view, HUD_ROW);
     // Дотик до заголовка — наступна панель (на телефоні немає F1–F4).
-    const next = p.action(10, VIEW[kind][0], p.width - 20, '', () => this.toggle(((kind % 4) + 1) as FPanel));
+    const next = p.action(10, view[0], p.width - 20, '', () => this.toggle(((kind % 4) + 1) as FPanel));
     next.classList.add('ht2-panel-track');
     next.setAttribute('aria-label', 'Наступна панель');
     this.panel = p;
@@ -128,6 +136,7 @@ export class FPanels {
     p.clear();
     for (const img of p.el.querySelectorAll('img.ht2-panel-img')) img.remove();
     if (this.kind === 1) this.keys(p, d.keys);
+    else if (this.kind === 2 && d.net) netTable(p, 17, 545, d.net, 8);
     else if (this.kind === 2) this.rating(p, d);
     else if (this.kind === 3) this.infoPanel(p, d.info);
     else this.company(p, d);

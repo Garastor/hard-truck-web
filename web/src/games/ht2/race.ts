@@ -13,6 +13,7 @@ import { FIRST_RIVAL, FLAG_REVERSE, RemoteTrack, emptyState, packFleet, readFlee
 import type { NetCar } from './net/peer';
 import type { Block } from './engine/formats/b3d';
 import { BALL_WIN, BallGame, ballSlot, readGates } from './ball';
+import { netTime, type NetRow } from './ui/netResults';
 
 /**
  * Вид траси: `ring` — Кільце (3 кола маршрутом через check_point1…3), `trial` — Тріал (арена MTR, tracks.md §3):
@@ -517,6 +518,21 @@ export class RaceMode {
       this.done = true;
       this.onBallOver?.(this.ballScores());
     }
+  }
+
+  /**
+   * Таблиця мережевої гри (F2, вікно результатів): гравці без суперників за місцем; значення — час фінішу `%d:%02d`
+   * (ще їде — «—») чи сума `$N` (Автобол).
+   */
+  netRows(names: ReadonlyMap<number, string>): NetRow[] {
+    return this.racers
+      .filter((r) => !r.pilot && r.id !== undefined && r.id < FIRST_RIVAL)
+      .sort((a, b) => this.progress(b) - this.progress(a))
+      .map((r) => ({
+        id: r.id,
+        name: names.get(r.id!) ?? r.name,
+        value: this.kind === 'ball' ? `$${r.points ?? 0}` : r.finished !== null ? netTime(r.finished) : '—',
+      }));
   }
 
   /** Очки гравців (без суперників), за спаданням. */
