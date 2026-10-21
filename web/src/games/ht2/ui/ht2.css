@@ -563,14 +563,15 @@ body.ht2-orig-ui .touch-top {
   gap: 6px;
 }
 
-/* Телефон у ландшафті: обидві групи — на 60% бокового відступу (52 px → ≈31 px), запас під виріз лишається. */
+/* Телефон у ландшафті: обидві групи — на 60% бокового відступу (52 px → ≈31 px), але не ближче за безпечну зону
+   − 4 px: на iPhone виріз («острівець», ≈49 px) інакше накривав край кнопки ☰ (безпечна зона 59 px, 60% — 43 px). */
 @media (pointer: coarse) and (orientation: landscape) {
   body.ht2-orig-ui .ht2-hud {
-    left: calc(var(--sl) * 0.6);
+    left: max(calc(var(--sl) * 0.6), calc(env(safe-area-inset-left, 0px) - 4px));
   }
 
   body.ht2-orig-ui .touch-top {
-    right: calc(var(--sr) * 0.6);
+    right: max(calc(var(--sr) * 0.6), calc(env(safe-area-inset-right, 0px) - 4px));
   }
 
   /* Бічні панелі — на 40% ближче до краю: 60% безпечної зони (виріз), а не вся вона. */
