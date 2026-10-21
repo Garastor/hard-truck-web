@@ -57,9 +57,11 @@ export class WaterBuffer {
     this.levels = new Uint8Array(w * h);
     this.texture = new THREE.DataTexture(this.levels, w, h, THREE.RedFormat, THREE.UnsignedByteType);
     this.texture.flipY = false;
-    // Плавні рівні — плавний нахил поверхні для заломлення.
+    // Плавні рівні — плавний нахил поверхні для заломлення. Міпмапи — середній рівень околу (густота крапель, де
+    // вони зливаються в суцільну воду, WATER_FRAGMENT).
     this.texture.magFilter = THREE.LinearFilter;
-    this.texture.minFilter = THREE.LinearFilter;
+    this.texture.minFilter = THREE.LinearMipmapLinearFilter;
+    this.texture.generateMipmaps = true;
     if (wrap) this.texture.wrapS = this.texture.wrapT = THREE.RepeatWrapping;
     this.texture.needsUpdate = true;
   }
@@ -184,6 +186,7 @@ export class WaterBuffer {
       state.pixelStorei(gl.UNPACK_SKIP_ROWS, r.y0);
       gl.texSubImage2D(gl.TEXTURE_2D, 0, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0, gl.RED, gl.UNSIGNED_BYTE, this.levels);
     }
+    gl.generateMipmap(gl.TEXTURE_2D);
     state.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
     state.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
     state.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
@@ -212,7 +215,7 @@ export class WaterBuffer {
 export const WATER_FRAGMENT = `
   uniform sampler2D levels, scene;
   uniform vec2 res, origin, span, cells;
-  uniform float k, kMax, shade, water, wet, lens, zoom, lensCell;
+  uniform float k, kMax, shade, water, wet, lens, zoom, lensCell, mergeLo, mergeHi, mergeBias, mergeWave;
   varying vec2 vUv;
   // UV-вектор буфера → вектор на екрані (px): J — похідні UV за екраном, J⁻¹ переводить назад.
   vec2 toScreen(vec2 d, vec2 ux, vec2 uy, float det) {
@@ -225,6 +228,17 @@ export const WATER_FRAGMENT = `
     float dv = texture2D(levels, vUv + vec2(0.0, span.y)).r - texture2D(levels, vUv - vec2(0.0, span.y)).r;
     vec2 ux = dFdx(vUv), uy = dFdy(vUv);
     float det = ux.x * uy.y - uy.x * ux.y;
+    // Злиття: середній рівень околу (міпмап, mergeBias — на стільки рівнів грубіше) — густота води. Де крапель
+    // багато, поверхня — згладжене поле (той самий міпмап): суцільна вода з пологими хвилями замість окремих цяток.
+    float m = texture2D(levels, vUv, mergeBias).r;
+    float merge = smoothstep(mergeLo, mergeHi, m);
+    if (merge > 0.0) {
+      vec2 sp = span * exp2(mergeBias);
+      float su = texture2D(levels, vUv + vec2(sp.x, 0.0), mergeBias).r - texture2D(levels, vUv - vec2(sp.x, 0.0), mergeBias).r;
+      float sv = texture2D(levels, vUv + vec2(0.0, sp.y), mergeBias).r - texture2D(levels, vUv - vec2(0.0, sp.y), mergeBias).r;
+      du = mix(du, su * mergeWave, merge);
+      dv = mix(dv, sv * mergeWave, merge);
+    }
     vec2 g = vec2(0.0);
     vec3 clear = texture2D(scene, (gl_FragCoord.xy - origin) / res).rgb;
     vec3 under = clear;
@@ -261,11 +275,18 @@ export const WATER_FRAGMENT = `
 export const WATER_VERTEX = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
 
 /**
+ * Злиття густих крапель у суцільну воду (на прохання користувача, на око): середній рівень околу 2^bias текселів
+ * (bias 3 — 8 × 8 ≈ 2 см скла); від lo до hi — перехід від окремих крапель до суцільної води; wave — підсилення
+ * нахилу згладженої поверхні (пологі хвилі).
+ */
+const WATER_MERGE = { mergeLo: 0.05, mergeHi: 0.15, mergeBias: 3, mergeWave: 0.6 };
+
+/**
  * Заломлення й світлотінь (на око): зсув у px екрана на одиницю нахилу та межа, яскравість, частка води на краях
  * крапель; lens — частка «лінзи» під водою, lensCell — клітинка лінзи в текселях буфера (6 з 512 ≈ 1,4 см скла), zoom — множник відстані
  * вибірки від центру клітинки (менше — більше збільшення; 0 — суцільний колір центру, «пікселі»).
  */
-export const WATER_LOOK = { refract: 20, refractMax: 3, shade: 2.5, water: 0.75, lens: 1, zoom: 0.4, lensCell: 6 };
+export const WATER_LOOK = { refract: 20, refractMax: 3, shade: 2.5, water: 0.75, lens: 1, zoom: 0.4, lensCell: 6, ...WATER_MERGE };
 
 /**
  * Копія кадру під водою для заломлення: прямокутник буфера малювання (у пікселях, y — знизу), текстура того ж
@@ -308,6 +329,10 @@ export function waterUniforms(levels: THREE.Texture, spanU: number, spanV: numbe
     lens: { value: WATER_LOOK.lens },
     zoom: { value: WATER_LOOK.zoom },
     lensCell: { value: WATER_LOOK.lensCell },
+    mergeLo: { value: WATER_LOOK.mergeLo },
+    mergeHi: { value: WATER_LOOK.mergeHi },
+    mergeBias: { value: WATER_LOOK.mergeBias },
+    mergeWave: { value: WATER_LOOK.mergeWave },
     k: { value: 0 },
     kMax: { value: 0 },
     shade: { value: WATER_LOOK.shade },
