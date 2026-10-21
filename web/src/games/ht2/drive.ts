@@ -4054,7 +4054,7 @@ export class Ht2Drive {
     document.removeEventListener('pointerdown', this.onOutsideTap, true);
     document.removeEventListener('visibilitychange', this.onHide);
     window.removeEventListener('pagehide', this.onHide);
-    document.body.classList.remove('ht2-side-open', 'ht2-left-open');
+    document.body.classList.remove('ht2-side-open', 'ht2-left-open', 'ht2-right-open');
     this.tabMap?.dispose();
     this.mirror?.rt.dispose();
     this.mirror?.frame.remove();

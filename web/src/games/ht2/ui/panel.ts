@@ -18,6 +18,19 @@ export const PANEL_CENTER = 650;
 const TEXT_PX = 12;
 const TEXT_SQUEEZE = 0.88;
 
+/**
+ * Відкриті панелі праворуч (вікна станцій: закупівля, сервіс, заправка…). Поки є хоч одна, на body — клас
+ * `ht2-right-open` і `--ht2-right-panel-w` (ширина панелі на екрані): праві кнопки керування відсуваються з-під неї
+ * (ht2.css) і повертаються після закриття.
+ */
+const rightPanels = new Map<SidePanel, number>();
+
+function syncRightPanels(): void {
+  const w = Math.max(0, ...rightPanels.values());
+  document.body.classList.toggle('ht2-right-open', rightPanels.size > 0);
+  document.body.style.setProperty('--ht2-right-panel-w', `${w}px`);
+}
+
 export type ButtonState = 'p' | 'a' | 'ap' | 'pp' | 'n' | 'ok' | 'f';
 
 export interface PanelButton {
@@ -91,6 +104,10 @@ export class SidePanel {
       y = top + (H - top - (b - a) * s) / 2 - a * s;
     }
     this.el.style.width = `${this.width * s}px`;
+    if (this.side === 'right' && this.el.isConnected) {
+      rightPanels.set(this, this.width * s);
+      syncRightPanels();
+    }
     this.stage.style.width = `${this.width}px`;
     this.stage.style.transform = `translateY(${y}px) scale(${s})`;
     const textChanged = s !== this.s && (s < 1 || this.s < 1);
@@ -229,5 +246,6 @@ export class SidePanel {
   close(): void {
     window.removeEventListener('resize', this.onResize);
     this.el.remove();
+    if (rightPanels.delete(this)) syncRightPanels();
   }
 }

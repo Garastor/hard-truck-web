@@ -762,6 +762,23 @@ body.ht2-left-open.swap-controls .touch-ui > .touch-btn.gas {
   pointer-events: none;
 }
 
+/* Відкрита панель праворуч (вікна станцій: закупівля, сервіс, заправка — ui/panel.ts): праві кнопки керування
+   відсуваються ліворуч на ширину панелі, щоб її не перекривати, і повертаються після закриття (на прохання користувача).
+   Праворуч — газ і гальмо, а з «педалі ліворуч» (swap-controls) — кермо. */
+.touch-ui > .touch-btn.left,
+.touch-ui > .touch-btn.right,
+.touch-ui > .touch-btn.brake,
+.touch-ui > .touch-btn.gas {
+  transition: translate 0.2s ease-out;
+}
+
+body.ht2-right-open:not(.swap-controls) .touch-ui > .touch-btn.brake,
+body.ht2-right-open:not(.swap-controls) .touch-ui > .touch-btn.gas,
+body.ht2-right-open.swap-controls .touch-ui > .touch-btn.left,
+body.ht2-right-open.swap-controls .touch-ui > .touch-btn.right {
+  translate: calc(-1 * var(--ht2-right-panel-w, 0px)) 0;
+}
+
 /* Меню Esc («Проблеми в дорозі»): усі кнопки керування — під ним і його затемненням (на прохання користувача). */
 body.ht2-esc-open .touch-ui > .touch-btn.left,
 body.ht2-esc-open .touch-ui > .touch-btn.right,
