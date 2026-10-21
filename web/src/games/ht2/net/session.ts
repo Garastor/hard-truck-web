@@ -27,6 +27,11 @@ export interface SessionEvents {
   onFast?: (data: ArrayBuffer) => void;
   /** Гравець відключився; у гостя id 0 — господар, сесію закрито. */
   onLeave?: (id: number, reason: CloseReason) => void;
+  /**
+   * Зв'язок із гравцем id завис (true) чи відновився (false), без нових кодів (М5). У гостя — лише з сервером (id 0);
+   * про інших гостей — поле `stalled` у списку гравців від сервера (onChange).
+   */
+  onStall?: (id: number, stalled: boolean) => void;
 }
 
 export class NetSession {
@@ -199,6 +204,17 @@ export class NetSession {
       onMessage: (m) => {
         if (first?.(m)) return;
         this.receive(id, m);
+      },
+      onStall: (stalled) => {
+        if (this.host) {
+          const p = this.players.get(id);
+          if (p) p.stalled = stalled;
+          // Відновився — і список, і вибір ще раз (раптом щось загубилось).
+          if (!stalled) this.sendSetup();
+          this.sendRoster();
+          this.events.onChange?.();
+        }
+        this.events.onStall?.(this.host ? id : 0, stalled);
       },
       onClose: (reason) => {
         this.links.delete(id);

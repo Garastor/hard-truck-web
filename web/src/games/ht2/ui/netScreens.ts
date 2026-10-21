@@ -512,7 +512,10 @@ function sessionPanel(art: Ht2MenuArt, driver: string, session: NetSession): Pro
             const ms = p.id === session.myId || (!host && p.id !== 0) ? null : session.rtt(p.id);
             const who = p.id === session.myId ? driver : p.name;
             const span = el('span', '');
-            span.textContent = `${p.id + 1}. ${who}${p.id === 0 ? ' (сервер)' : ''} — ${carName(p.truck)}${p.driving && p.id !== session.myId ? ' (на трасі)' : ''}${ms !== null ? ` · ${Math.round(ms)} мс` : ''}`;
+            // Зв'язок завис (М5): господар знає про кожного гостя, гість — про сервер (і про інших — від сервера).
+            const stalled = p.stalled || (!host && p.id === 0 && !!session.link(0)?.stalled);
+            span.textContent = `${p.id + 1}. ${who}${p.id === 0 ? ' (сервер)' : ''} — ${carName(p.truck)}${p.driving && p.id !== session.myId ? ' (на трасі)' : ''}${stalled ? ' · немає зв’язку…' : ms !== null ? ` · ${Math.round(ms)} мс` : ''}`;
+            if (stalled) line.classList.add('stalled');
             line.append(sq, span);
             return line;
           }),
@@ -542,6 +545,7 @@ function sessionPanel(art: Ht2MenuArt, driver: string, session: NetSession): Pro
         if (m.t === 'start') done({ session, setup: m.setup, players: m.players, rivals: m.rivals });
         else render();
       },
+      onStall: render,
       onLeave: (id, reason) => {
         if (id === 0) return done(reason === 'bye' ? 'Сервер вийшов з гри.' : CLOSE_TEXT[reason] || null);
         render();

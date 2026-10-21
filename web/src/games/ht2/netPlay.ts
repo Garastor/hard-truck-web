@@ -49,6 +49,8 @@ export function joinNetDrive(d: Ht2Drive, net: NetStart, driver: string, ev: Net
   for (const r of race.racers) if (r.remote && r.id !== undefined && r.id < FIRST_RIVAL) r.truck.visual.add(playerMarker(PLAYER_COLORS[r.id] ?? '#fff', r.truck.visual));
 
   const gone = new Set<number>();
+  /** Рядок гравця в списку праворуч: зв'язок завис — блідий, з «…». */
+  const markStalled = (id: number, stalled: boolean) => roster.querySelector(`[data-id="${id}"]`)?.classList.toggle('stalled', stalled);
   const leave = (id: number, text: string) => {
     if (gone.has(id)) return;
     gone.add(id);
@@ -101,6 +103,14 @@ export function joinNetDrive(d: Ht2Drive, net: NetStart, driver: string, ev: Net
     // Гравець зник зі списку господаря (відключився) — його машину прибрати (у господаря — onLeave).
     onChange: () => {
       for (const p of net.players) if (p.id !== me && !session.players.has(p.id)) leave(p.id, 'з’єднання закрито');
+      // Чий зв'язок із сервером завис — бачать усі (поле stalled у списку від сервера).
+      for (const p of session.players.values()) if (p.id !== me) markStalled(p.id, !!p.stalled);
+    },
+    // Зв'язок завис — не кінець (М5): WebRTC відновлюється сам; чекаємо до LOST_AFTER, тоді — onLeave.
+    onStall: (id, stalled) => {
+      markStalled(id, stalled);
+      const who = id === 0 && !session.host ? 'ЗВʼЯЗОК ІЗ СЕРВЕРОМ' : `${nameOf(id)}: ЗВʼЯЗОК`;
+      d.say(stalled ? `${who} ПЕРЕРВАНО, ЧЕКАЄМО…` : `${who} ВІДНОВЛЕНО`, 4);
     },
     onMessage: (m) => {
       switch (m.t) {

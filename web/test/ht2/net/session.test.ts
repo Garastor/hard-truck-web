@@ -124,6 +124,22 @@ describe('сесія мережевої гри HT2', () => {
     expect(taras.closed).toBe(true);
   });
 
+  it('звʼязок гостя завис і відновився (М5): сервер позначає його в списку для всіх, сесія живе', async () => {
+    const { host, taras, h1 } = await threeWay();
+    const seen: [number, boolean][] = [];
+    host.events = { onStall: (id, s) => seen.push([id, s]) };
+    const fake = h1 as unknown as FakePeer;
+    fake.events.onStall?.(true);
+    expect(seen).toEqual([[1, true]]);
+    expect(host.players.get(1)?.stalled).toBe(true);
+    expect(taras.players.get(1)?.stalled).toBe(true);
+    expect(host.players.has(1)).toBe(true);
+    fake.events.onStall?.(false);
+    expect(seen.at(-1)).toEqual([1, false]);
+    expect(taras.players.get(1)?.stalled).toBe(false);
+    host.close();
+  });
+
   it('господар і не більше 7 гостей (8 місць решітки king.exe)', async () => {
     const { host } = await threeWay();
     expect(MAX_PLAYERS).toBe(8);

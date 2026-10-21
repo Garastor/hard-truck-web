@@ -11,12 +11,20 @@ import { decodeSignal, encodeSignal, sdpFromSignal, sdpMid, signalFromSdp, Signa
  * Версія протоколу: різні версії порту не з'єднуються (повідомлення гравцям). Своя в другої гри — коди `HT2:` і так
  * не підходять першій (signal.ts).
  */
-export const NET_VERSION = 2;
+export const NET_VERSION = 3;
 /** Скільки чекати збору адрес (у локальній мережі — частки секунди), мс. */
 const GATHER_TIMEOUT = 4000;
-/** Пінг і обрив: без жодного повідомлення довше за LOST_AFTER — зв'язок втрачено, мс. */
+/**
+ * Пінг і обрив (М5, повторне з'єднання без нових кодів): без жодного повідомлення довше за STALL_AFTER — зв'язок
+ * «завис» (onStall: гравцям показують «чекаємо», нічого не закривається), довше за LOST_AFTER — втрачено. WebRTC сам
+ * відновлює зв'язок після короткого провалу Wi-Fi чи згорнутого застосунку, якщо зʼєднання не закрити: ICE стає
+ * `disconnected` і повертається в `connected`; остаточно — лише `failed` (Chrome — ≈ 30 с без відповіді на перевірки
+ * згоди ICE), і тоді без нового обміну кодами не обійтися (сервера сигналізації немає). Перша гра рвала зв'язок уже
+ * за 6 с тиші.
+ */
 const PING_EVERY = 1000;
-const LOST_AFTER = 6000;
+export const STALL_AFTER = 3000;
+export const LOST_AFTER = 40000;
 
 export type NetMessage =
   | { t: 'hello'; v: number; name: string }
@@ -73,6 +81,8 @@ export interface NetPlayer extends NetCar {
   id: number;
   name: string;
   driving: boolean;
+  /** Зв'язок сервера з цим гравцем завис (чекаємо відновлення, STALL_AFTER…LOST_AFTER). */
+  stalled?: boolean;
 }
 
 export type CloseReason = 'bye' | 'lost' | 'failed' | 'version' | 'local';
@@ -84,6 +94,8 @@ export interface NetPeerEvents {
   /** Пакет каналу `fast` (стан машини). */
   onFast?: (data: ArrayBuffer) => void;
   onClose?: (reason: CloseReason) => void;
+  /** Зв'язок завис (true: друг мовчить понад STALL_AFTER) чи відновився (false). */
+  onStall?: (stalled: boolean) => void;
 }
 
 export class NetPeer {
@@ -111,6 +123,17 @@ export class NetPeer {
   }
   private lastHeard = performance.now();
   private timer = 0;
+  /** Друг мовчить понад STALL_AFTER (зв'язок завис, але ще не втрачений). */
+  stalled = false;
+  /** Перевірка: до цього часу (performance.now) нічого не надсилати й не приймати — імітація обриву. */
+  private muteUntil = 0;
+  /**
+   * Свій застосунок повертається з фону (iPhone призупиняє сторінку): тиша — через нас, а не друга; годинник тиші — з
+   * нуля, щоб не закрити живе з'єднання першим же пінгом.
+   */
+  private readonly onVisible = () => {
+    if (document.visibilityState === 'visible') this.lastHeard = performance.now();
+  };
 
   private constructor(
     readonly host: boolean,
@@ -124,10 +147,11 @@ export class NetPeer {
     this.ctrl.onmessage = (e) => this.receive(e.data);
     this.fast.binaryType = 'arraybuffer';
     this.fast.onmessage = (e) => {
-      if (!(e.data instanceof ArrayBuffer)) return;
-      this.lastHeard = performance.now();
+      if (!(e.data instanceof ArrayBuffer) || this.muted) return;
+      this.heard();
       this.ev.onFast?.(e.data);
     };
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.onVisible);
     this.ctrl.onclose = () => this.finish('lost');
     this.pc.onconnectionstatechange = () => {
       if (this.pc.connectionState === 'failed') this.finish('failed');
@@ -166,12 +190,29 @@ export class NetPeer {
   }
 
   send(m: NetMessage): void {
-    if (this.ctrl.readyState === 'open') this.ctrl.send(JSON.stringify(m));
+    if (this.ctrl.readyState === 'open' && !this.muted) this.ctrl.send(JSON.stringify(m));
+  }
+
+  /** Перевірка повторного зʼєднання: ms мілісекунд тиші в обидва боки (як провал Wi-Fi). */
+  simulateOutage(ms: number): void {
+    this.muteUntil = performance.now() + ms;
+  }
+
+  private get muted(): boolean {
+    return performance.now() < this.muteUntil;
+  }
+
+  /** Від друга щось прийшло: годинник тиші — з нуля, зависання минуло. */
+  private heard(): void {
+    this.lastHeard = performance.now();
+    if (!this.stalled) return;
+    this.stalled = false;
+    this.ev.onStall?.(false);
   }
 
   /** Стан машини (канал без повторів); якщо канал ще не відкрито чи переповнений — пакет пропускаємо. */
   sendFast(data: ArrayBuffer): void {
-    if (this.fast.readyState === 'open' && this.fast.bufferedAmount < 16384) this.fast.send(data);
+    if (this.fast.readyState === 'open' && this.fast.bufferedAmount < 16384 && !this.muted) this.fast.send(data);
   }
 
   /** Тип з'єднання: адреса в мережі (host) чи через зовнішню адресу (srflx). */
@@ -212,14 +253,14 @@ export class NetPeer {
   }
 
   private receive(data: unknown): void {
-    if (typeof data !== 'string') return;
+    if (typeof data !== 'string' || this.muted) return;
     let m: NetMessage;
     try {
       m = JSON.parse(data) as NetMessage;
     } catch {
       return;
     }
-    this.lastHeard = performance.now();
+    this.heard();
     switch (m.t) {
       case 'hello':
         if (m.v !== NET_VERSION) {
@@ -246,9 +287,14 @@ export class NetPeer {
   }
 
   private tick(): void {
-    if (performance.now() - this.lastHeard > LOST_AFTER) {
+    const silent = performance.now() - this.lastHeard;
+    if (silent > LOST_AFTER) {
       this.finish('lost');
       return;
+    }
+    if (silent > STALL_AFTER && !this.stalled) {
+      this.stalled = true;
+      this.ev.onStall?.(true);
     }
     this.send({ t: 'ping', at: performance.now() });
   }
@@ -257,6 +303,7 @@ export class NetPeer {
     if (this.closed) return;
     this.closed = true;
     clearInterval(this.timer);
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.onVisible);
     // Дати «bye» піти перед закриттям каналу.
     setTimeout(() => this.pc.close(), reason === 'local' ? 200 : 0);
     this.ev.onClose?.(reason);

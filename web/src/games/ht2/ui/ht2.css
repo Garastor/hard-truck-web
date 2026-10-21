@@ -1133,6 +1133,16 @@ body.ht2-orig-ui .touch-more {
   opacity: 0.4;
 }
 
+/* Зв'язок завис (М5): чекаємо відновлення — блідіше й «…» після імені. */
+.ht2-net-roster > div.stalled,
+.ht2-net-players > div.stalled {
+  opacity: 0.6;
+}
+
+.ht2-net-roster > div.stalled span::after {
+  content: ' …';
+}
+
 /* Таблиця фінішу мережевої гонки. */
 .ht2-net-results {
   white-space: pre-line;
