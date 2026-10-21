@@ -717,6 +717,7 @@ export class Ht2Drive {
         for (const n of room.nodes) {
           if (/^sto_/i.test(n.name)) points.push({ pos: toThree(...n.pos), kind: 'sto' });
           if (/^node_car_fuel/i.test(n.name)) points.push({ pos: toThree(...n.pos), kind: 'fuel' });
+          if (/^mapPark/.test(n.name)) points.push({ pos: toThree(...n.pos), kind: 'park' });
         }
     for (const m of parseMarkets(regionMods, this.world.regions.values())) if (!m.hidden) points.push({ pos: m.spots[0].pos, kind: 'market', label: m.name });
     this.mapPoints = points;

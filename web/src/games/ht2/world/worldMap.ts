@@ -10,11 +10,12 @@ import { roadPath, type MapReveal } from './mapReveal';
  */
 export interface MapPoint {
   pos: THREE.Vector3;
-  kind: 'town' | 'sto' | 'fuel' | 'market';
+  /** park — вузол `mapPark*` WAY: значок стоянки на карті king.exe (ui/tabMap.ts); тут не малюється. */
+  kind: 'town' | 'sto' | 'fuel' | 'market' | 'park';
   label?: string;
 }
 
-const COLORS: Record<MapPoint['kind'], string> = { town: '#ffd84a', sto: '#4ab8ff', fuel: '#ff8a3a', market: '#d070ff' };
+const COLORS: Record<MapPoint['kind'], string> = { town: '#ffd84a', sto: '#4ab8ff', fuel: '#ff8a3a', market: '#d070ff', park: '#d070ff' };
 const LEGEND: [MapPoint['kind'], string][] = [
   ['town', 'склад'],
   ['sto', 'СТО'],
@@ -152,6 +153,7 @@ export class WorldMap {
     ctx.font = '600 12px Arial, sans-serif';
     ctx.textBaseline = 'middle';
     for (const p of this.points) {
+      if (p.kind === 'park') continue;
       const [x, y] = toScreen(p.pos);
       if (x < -50 || y < -20 || x > w + 50 || y > h + 20) continue;
       ctx.fillStyle = COLORS[p.kind];

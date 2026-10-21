@@ -14,7 +14,7 @@ import { hudScale } from '../engine/ui/pixelFont';
  *   x ∈ [W/20, W/3 − W/20], y ∈ [H/4, 3H/4] із синьою рамкою (0, 120, 255).
  * Дороги — лінії кольору (0, 255, 120). Значки `m_16\I_*.msk` — лівим верхнім кутом у (x − 5, y − 5), як в
  * оригіналі: склад-місто `I_city0` з назвою (MENU.FON, базова лінія y − 5 від x − 20), заправка `I_fuel0`, стоянки
- * `I_park`, СТО `I_repair` — лише на мінікарті; ціль блимає `I_city0…3…1` (`I_fuel…`) — кадр змінюється кожні
+ * `I_park` (вузли WAY `mapPark*`, king.exe 0x52a27d; не ринки — стоянок 17, ринків 15), СТО `I_repair` — лише на мінікарті; ціль блимає `I_city0…3…1` (`I_fuel…`) — кадр змінюється кожні
  * 0,125 с; гравець — `I_tr_myNN_K`: NN — напрям (24 сектори по 15° за годинниковою стрілкою від півночі карти),
  * K — кадр анімації 0…5 (той самий лічильник); далекобійники й суперники гонки — `I_tr_opp`; фініш гонки —
  * `I_race` з написом; причепи з вантажем — `I_trailer` (і на мінікарті, і на карті, 0x529890); діючі завали —
@@ -259,7 +259,8 @@ export class TabMap {
     for (const pt of this.points) {
       if (pt.kind === 'town') icon(`I_city${isTarget(pt.pos) ? blink : 0}`, pt.pos);
       else if (pt.kind === 'fuel') icon(`I_fuel${isTarget(pt.pos) ? blink : 0}`, pt.pos);
-      else if (pt.kind === 'market') icon('I_park', pt.pos);
+      else if (pt.kind === 'park') icon('I_park', pt.pos);
+      else if (pt.kind === 'market') continue;
       else if (zoom) icon('I_repair', pt.pos);
     }
     for (const pt of this.points) if (pt.kind === 'town' && pt.label) label(pt.label.toUpperCase(), pt.pos);
