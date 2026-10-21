@@ -91,6 +91,17 @@
 - **Вибух машини** (`carBlow(p)`, `_Blow`): 10 струменів mnFire + іскри crPart, ще 0,3 с щотакту.
 - **Вибух колонки заправки** (`blow3(matrix, column)`): дві фази клубів, уламки, два полумʼя.
 
+### Дощ і сніг частинками, краплі на склі
+- **Частинки** — `world/precipitation.ts` (CRain/CSnow king.exe, правила — у шапці файлу й
+  `re/notes/ht2/weather.md`). Текстура `rain.txr` дуже прозора (альфа ≤ 85 з 255), тож на малому екрані риски
+  губляться. **Відступ порту (на прохання користувача):** множник `widen = SCREEN_REF / innerHeight` (720 px,
+  межі 1…`SCREEN_MAX` 2,5) — на ширину крапель і розмір сніжинок та на `opacity` матеріалу (opacity > 1 підсилює
+  альфу текстури). На ПК (вікно від 720 px) — як в оригіналі. Де крутити: `SCREEN_REF`, `SCREEN_MAX`.
+- **Краплі на склі й двірники** — `engine/render/glassRain.ts` + буфер `waterBuffer.ts`; умова в `drive.ts`
+  (дощ, не під дахом, повзунки `glassDrops()`, прапорець `rain` набору погоди кімнати). Буфер вивантажується на
+  відеокарту лише зміненими прямокутниками — тому після згортання застосунку (`visibilitychange`) і
+  `webglcontextrestored` `GlassRain` вивантажує його цілком (`WaterBuffer.invalidate`) і робить нову копію кадру.
+
 ## 5. Дані з vehicle.tech
 
 `formats/tech.ts` (`TechRecord`): `smokePosition`, `smokeDirection`, `smokePosition2`, `smokeDirection2` (+0x740…),
@@ -109,6 +120,11 @@
 5. Перевірити в грі (нижче), записати в `Docs/ht2/progress.md` і сюди.
 
 ## 7. Перевірка
+
+- Дощ: `/ht2/?tab=drive&truck=ZilR&weather=bad&mute`, мобільний вʼюпорт 740×360. Помітність — різниця кадрів із
+  `drive.precip.group.visible` true/false (пікселі й середня різниця); краплі на склі — те саме з
+  `glassRain.uniforms.wet` = 0. Згортання — `document.dispatchEvent(new Event('visibilitychange'))` або
+  `WEBGL_lose_context` (`loseContext()` → `restoreContext()`), далі кадри вручну (`drive.frame(t)`, панель прихована).
 
 Панель браузера Claude часто прихована — `requestAnimationFrame` майже стоїть, клуби не народжуються. Кадри
 проганяти синхронно повним `frame()` (фізика, ефекти, камера, рендер):
