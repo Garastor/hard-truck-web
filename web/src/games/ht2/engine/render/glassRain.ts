@@ -48,11 +48,13 @@ const SLOPE_SPAN = 2;
  * скло поступово затягує суцільною водою, що розмиває й туманить вид (шейдер — waterBuffer.ts, FILM_LOOK). Повна
  * плівка — за FILM_TIME с на місці; на ходу швидше: × (1 + v / FILM_SPEED), v — м/с (90 км/год — у 3,5 раза,
  * ≈ 37 с). Двірники стирають плівку лише у своєму секторі; без дощу вона висихає, як краплі. FILM_SIZE —
- * роздільність буфера плівки (лінійна фільтрація згладжує межу сектора двірника).
+ * роздільність буфера плівки. Стирання — за геометрією лопаті (wipeFilm): точки сектора в системі двірника з мʼяким
+ * краєм FILM_EDGE м біля кінця лопаті й на межах помаху (64 клітинки й стирання лініями давали «драбинку»).
  */
 const FILM_TIME = 129;
 const FILM_SPEED = 10;
-const FILM_SIZE = 64;
+const FILM_SIZE = 128;
+const FILM_EDGE = 0.04;
 /** Найбільший крок часу, с (після паузи двірник проскочив би межу помаху). */
 const MAX_DT = 0.1;
 
@@ -64,6 +66,8 @@ interface Wiper {
   length: number;
   /** Матриця «двірник → кабіна» у спокої. */
   toCab: THREE.Matrix4;
+  /** UV скла: точка двірника (x, 0, z) → uv0 + x·ux + z·uz (площина скла — афінна, рахується після glassPlane). */
+  map?: { u0: number; v0: number; uxU: number; uxV: number; uzU: number; uzV: number };
 }
 
 export class GlassRain {
@@ -324,28 +328,48 @@ export class GlassRain {
     this.water.mark(Math.min(x0, pivot.x) - 2, Math.min(y0, pivot.y) - 2, Math.max(x1, pivot.x) + 3, Math.max(y1, pivot.y) + 3);
   }
 
-  /** Стерти плівку в секторі двірника (буфер плівки грубіший — крок по колу в його пікселях). */
+  /**
+   * Стерти плівку в секторі двірника між кутами a0 і a1: точки сектора (кільця з кроком у пів клітинки) — у системі
+   * двірника, у кожній — частка стирання f з мʼяким краєм FILM_EDGE біля кінця лопаті й за межами кутів кадру
+   * (усередині помаху краї сусідніх кадрів перекриваються, на межах помаху лишається плавний перехід); пікселю —
+   * не більше 255·(1 − f).
+   */
   private wipeFilm(w: Wiper, a0: number, a1: number): void {
     if (this.film.empty) return;
+    const m = (w.map ??= this.wiperMap(w));
     const S = FILM_SIZE;
-    const pivot = this.uv(w.pivot).multiplyScalar(S);
-    const tipAt = (a: number) => this.uv(new THREE.Vector3(Math.cos(a) * w.length, 0, -Math.sin(a) * w.length).applyMatrix4(w.toCab)).multiplyScalar(S);
-    const len = Math.max(1, tipAt(a0).distanceTo(pivot));
-    const n = Math.max(1, Math.ceil((Math.abs(a1 - a0) * len) / 0.5));
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -Infinity;
-    let y1 = -Infinity;
-    for (let i = 0; i <= n; i++) {
-      const tip = tipAt(a0 + ((a1 - a0) * i) / n);
-      const steps = Math.ceil(tip.distanceTo(pivot) * 2);
-      for (let k = 0; k <= steps; k++) this.film.erase(Math.round(pivot.x + ((tip.x - pivot.x) * k) / steps), Math.round(pivot.y + ((tip.y - pivot.y) * k) / steps));
-      x0 = Math.min(x0, tip.x);
-      y0 = Math.min(y0, tip.y);
-      x1 = Math.max(x1, tip.x);
-      y1 = Math.max(y1, tip.y);
+    // Крок — пів клітинки в метрах (довжина UV-ребра двірника на клітинку).
+    const cell = 1 / (S * Math.max(Math.hypot(m.uxU, m.uxV), Math.hypot(m.uzU, m.uzV), 1e-6));
+    const h = cell * 0.5;
+    const e = FILM_EDGE;
+    const lo = Math.min(a0, a1);
+    const hi = Math.max(a0, a1);
+    const rMax = w.length + e;
+    for (let r = h; r <= rMax; r += h) {
+      const fr = smooth((w.length + e / 2 - r) / e);
+      if (fr <= 0) continue;
+      const pad = e / r;
+      const da = h / r;
+      for (let a = lo - pad; a <= hi + pad; a += da) {
+        const out = a < lo ? lo - a : a > hi ? a - hi : 0;
+        const f = fr * smooth(1 - (out * r) / e);
+        if (f <= 0) continue;
+        const x = Math.cos(a) * r;
+        const z = -Math.sin(a) * r;
+        const u = (m.u0 + x * m.uxU + z * m.uzU) * S;
+        const v = (m.v0 + x * m.uxV + z * m.uzV) * S;
+        this.film.clampAt(Math.round(u), Math.round(v), Math.round(255 * (1 - f)));
+      }
     }
-    this.film.mark(Math.min(x0, pivot.x) - 2, Math.min(y0, pivot.y) - 2, Math.max(x1, pivot.x) + 3, Math.max(y1, pivot.y) + 3);
+    this.film.markAll();
+  }
+
+  /** Афінне відображення «система двірника → UV скла» (точки (x, 0, z) двірника через toCab на площину скла). */
+  private wiperMap(w: Wiper): NonNullable<Wiper['map']> {
+    const o = this.uv(new THREE.Vector3().applyMatrix4(w.toCab));
+    const ux = this.uv(new THREE.Vector3(1, 0, 0).applyMatrix4(w.toCab)).sub(o);
+    const uz = this.uv(new THREE.Vector3(0, 0, 1).applyMatrix4(w.toCab)).sub(o);
+    return { u0: o.x, v0: o.y, uxU: ux.x, uxV: ux.y, uzU: uz.x, uzV: uz.y };
   }
 
   /** Точка кабіни → UV скла (проєкція на площину скла). */
@@ -385,6 +409,12 @@ function glassPlane(mesh: THREE.Mesh, inv: THREE.Matrix4) {
 function isAncestor(a: THREE.Object3D, o: THREE.Object3D): boolean {
   for (let p = o.parent; p; p = p.parent) if (p === a) return true;
   return false;
+}
+
+/** Плавний крок 0…1 (smoothstep від x, обрізаного до 0…1). */
+function smooth(x: number): number {
+  const t = x <= 0 ? 0 : x >= 1 ? 1 : x;
+  return t * t * (3 - 2 * t);
 }
 
 function rand(n: number): number {

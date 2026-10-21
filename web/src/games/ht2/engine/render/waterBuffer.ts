@@ -162,6 +162,20 @@ export class WaterBuffer {
     this.full = true;
   }
 
+  /**
+   * Не більше level у пікселі (x, y) — мʼяке стирання плівки; межі змін — виклик markAll (плівка мала, вивантажується
+   * цілком).
+   */
+  clampAt(x: number, y: number, level: number): void {
+    const { w, h } = this;
+    if (this.wrap) {
+      x = ((x % w) + w) % w;
+      y = ((y % h) + h) % h;
+    } else if (x < 0 || x >= w || y < 0 || y >= h) return;
+    const i = y * w + x;
+    if (this.levels[i] > level) this.levels[i] = level;
+  }
+
   /** Знову дощ — висихання з початку. */
   wet(): void {
     this.fadeStep = 0;
