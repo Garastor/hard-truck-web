@@ -387,6 +387,9 @@ body.ht2-orig-ui .touch-btn.more {
   z-index: 2;
   pointer-events: none;
   image-rendering: pixelated;
+  /* Безпечна зона (виріз, «бровка») для огляду: tabMap.ts читає її з обчисленого стилю — env() із JS не прочитати. */
+  scroll-margin-left: env(safe-area-inset-left, 0px);
+  scroll-margin-right: env(safe-area-inset-right, 0px);
 }
 
 .ht2-tabmap[hidden] {

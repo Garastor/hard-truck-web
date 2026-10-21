@@ -34,6 +34,8 @@ const LABEL = 'rgb(240, 232, 150)';
 const MARGIN_X = 80;
 const MARGIN_Y = 130;
 const OFFSET = 40;
+/** Запас огляду від безпечної зони (вирізу телефона), CSS px: підписи міст починаються на 20 px лівіше значка. */
+const SAFE_GAP = 24;
 /** Кадр анімації значків, с (king.exe: 0,125 с; 6 кадрів). */
 const FRAME_TIME = 0.125;
 /** Екран, масштаб якого — найдрібніший для мінікарти порту (CSS px). */
@@ -80,6 +82,9 @@ export class TabMap {
   /** Висота табло (CSS px) і коли її перечитано. */
   private top = 0;
   private topAt = -1;
+  /** Безпечна зона екрана зліва й справа (виріз телефона), CSS px. */
+  private safeL = 0;
+  private safeR = 0;
   /** Підпис останнього намальованого кадру й розміщення canvas (CSS). */
   private sig = '';
   private css = '';
@@ -158,12 +163,18 @@ export class TabMap {
     if (this.time - this.topAt > 0.5 || this.topAt > this.time) {
       this.topAt = this.time;
       this.top = parseFloat(getComputedStyle(document.body).getPropertyValue('--ht2-tablo-h')) || 0;
+      const cs = getComputedStyle(this.canvas);
+      this.safeL = parseFloat(cs.scrollMarginLeft) || 0;
+      this.safeR = parseFloat(cs.scrollMarginRight) || 0;
     }
-    // Огляд — під табло порту (у king.exe табло 50 px перекриває відступ 40).
+    // Огляд — під табло порту (у king.exe табло 50 px перекриває відступ 40) і, як мінікарта, поза вирізом екрана
+    // телефона: бічні відступи — не менше безпечної зони + SAFE_GAP (відхилення порту).
     const top = this.top;
+    const left = Math.max(OFFSET, this.safeL + SAFE_GAP);
+    const right = Math.max(MARGIN_X - OFFSET, this.safeR + SAFE_GAP);
     const size = this.bounds.getSize(this.v2);
-    let k = Math.min((W - MARGIN_X) / size.x, (H - top - MARGIN_Y) / size.y);
-    let ox = OFFSET - this.bounds.min.x * k;
+    let k = Math.min((W - left - right) / size.x, (H - top - MARGIN_Y) / size.y);
+    let ox = left - this.bounds.min.x * k;
     let oy = top + OFFSET - this.bounds.min.y * k;
     // Прямокутник мінікарти; порт зсуває його краї з-під кнопок (сенсорних і верхнього ряду).
     const box = { x0: Math.floor(W / 20), x1: Math.floor(W / 3 - W / 20), y0: Math.floor(H / 4), y1: Math.floor(H - H / 4) };
