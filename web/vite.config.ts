@@ -58,12 +58,12 @@ function gameFiles(): Plugin {
 interface Entry {
   title: string;
   description: string;
-  /** Префікс іконок у public/ (icon-192.png / icon2-192.png — tools/ui/make_ht2_icon.py). */
+  /** Префікс іконок у public/ (icon-192.png…); значок спільний для обох ігор — Kenworth на фіолетовому тлі. */
   icon: string;
 }
 const ENTRIES: Record<string, Entry> = {
   ht1: { title: 'Дальнобойщики', description: 'Порт «Дальнобійників» (1998) у браузер. Потрібні файли оригінальної гри.', icon: 'icon' },
-  ht2: { title: 'Дальнобойщики 2', description: 'Порт «Дальнобійників 2» (2001) у браузер. Потрібні файли оригінальної гри.', icon: 'icon2' },
+  ht2: { title: 'Дальнобойщики 2', description: 'Порт «Дальнобійників 2» (2001) у браузер. Потрібні файли оригінальної гри.', icon: 'icon' },
 };
 
 function entryHtml(html: string, e: Entry): string {
