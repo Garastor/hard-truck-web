@@ -41,6 +41,13 @@ const RUNNERS_PER_SEC = (20 / 10) * 2;
 const RUN_SPEED = 7.5 / 250;
 const RUN_TICK = 1;
 /**
+ * Довжина сліду — частка висоти скла (випадково між межами), далі вода «закінчується» і слід зупиняється. Відступ
+ * порту (на прохання користувача): сліди на всю висоту скла (перезапис рівнем 17) за 2–3 хв змивали всі краплі —
+ * скло лишалося під тонкою водою без жодної круглої краплі. Як закінчує слід king.exe — не розібрано.
+ */
+const RUN_LENGTH_MIN = 0.05;
+const RUN_LENGTH_MAX = 0.25;
+/**
  * Розмір буфера (текстура скла повторюється). В оригіналі — glass.txr 256 × 256; тут 512: маски 5 × 5 у своєму
  * розмірі — краплі вдвічі менші (з 256 були завеликі, на прохання користувача), частота — DROPS_PER_SEC.
  */
@@ -76,7 +83,7 @@ export class GlassRain {
   private readonly uniforms = waterUniforms(this.water.texture, SLOPE_SPAN / SIZE, SLOPE_SPAN / SIZE);
   private readonly drop: Levels | null;
   private readonly runner: Levels | null;
-  private readonly runners: { a: number; b: number; acc: number }[] = [];
+  private readonly runners: { a: number; b: number; acc: number; end: number }[] = [];
   /** Напрям «униз» по склу в пікселях буфера (одиничний), поперечний, і межі скла вздовж них. */
   private down = new THREE.Vector2(0, 1);
   private side = new THREE.Vector2(1, 0);
@@ -270,7 +277,9 @@ export class GlassRain {
       // Початок сліду ближче до верху скла (a = a0 + довжина·r²) — як у 2D-кабіні.
       for (; this.runAcc >= 1; this.runAcc--) {
         const r = Math.random();
-        this.runners.push({ a: a0 + (a1 - a0) * r * r, b: b0 + Math.random() * (b1 - b0), acc: 0 });
+        const a = a0 + (a1 - a0) * r * r;
+        const len = (a1 - a0) * (RUN_LENGTH_MIN + Math.random() * (RUN_LENGTH_MAX - RUN_LENGTH_MIN));
+        this.runners.push({ a, b: b0 + Math.random() * (b1 - b0), acc: 0, end: Math.min(a1, a + len) });
       }
     }
   }
@@ -291,7 +300,7 @@ export class GlassRain {
         const y = this.down.y * r.a + this.side.y * r.b;
         this.water.stamp(m, Math.round(x - m.w / 2), Math.round(y - m.h / 2));
       }
-      if (r.a > a1) this.runners.splice(i, 1);
+      if (r.a > r.end) this.runners.splice(i, 1);
     }
   }
 
