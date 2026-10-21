@@ -64,7 +64,11 @@ export class WaterBuffer {
     this.texture.needsUpdate = true;
   }
 
-  /** Відбиток маски (перезапис непрозорих пікселів, як копіювання маски в оригіналі). */
+  /**
+   * Відбиток маски: рівень — більший із наявного й маски. Оригінал копіює маску поверх (перезапис), але тоді сліди
+   * стікання glass_2 (рівень 17 з 255) затирали густі краплі тонкою водою, і скло не вкривалось повністю (на прохання
+   * користувача — накопичення).
+   */
   stamp(m: Levels, x0: number, y0: number): void {
     const { w, h } = this;
     for (let y = 0; y < m.h; y++) {
@@ -77,7 +81,8 @@ export class WaterBuffer {
         let bx = x0 + x;
         if (this.wrap) bx = ((bx % w) + w) % w;
         else if (bx < 0 || bx >= w) continue;
-        this.levels[by * w + bx] = v;
+        const i = by * w + bx;
+        if (this.levels[i] < v) this.levels[i] = v;
       }
     }
     this.mark(x0, y0, x0 + m.w, y0 + m.h);
@@ -242,7 +247,8 @@ export const WATER_FRAGMENT = `
         q[i] = texture2D(scene, (gl_FragCoord.xy + d - origin) / res).rgb;
       }
       vec3 lensed = mix(mix(q[0], q[1], f.x), mix(q[2], q[3], f.x), f.y);
-      under = mix(clear, lensed, lens * smoothstep(0.0, 0.25, a));
+      // Лінза — на будь-якій воді, і на тонкій (сліди стікання — рівень 17 з 255): скло під водою спотворене повністю.
+      under = mix(clear, lensed, lens * smoothstep(0.0, 0.05, a));
     }
     vec2 off = g * k;
     float lo = length(off);
