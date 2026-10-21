@@ -47,14 +47,19 @@ const SLOPE_SPAN = 2;
  * Водяна плівка (власний ефект порту, на прохання користувача — щоб невичищене скло заважало їхати): під дощем
  * скло поступово затягує суцільною водою, що розмиває й туманить вид (шейдер — waterBuffer.ts, FILM_LOOK). Повна
  * плівка — за FILM_TIME с на місці; на ходу швидше: × (1 + v / FILM_SPEED), v — м/с (90 км/год — у 3,5 раза,
- * ≈ 37 с). Двірники стирають плівку лише у своєму секторі; без дощу вона висихає, як краплі. FILM_SIZE —
- * роздільність буфера плівки. Стирання — за геометрією лопаті (wipeFilm): точки сектора в системі двірника з мʼяким
- * краєм FILM_EDGE м біля кінця лопаті й на межах помаху (64 клітинки й стирання лініями давали «драбинку»).
+ * ≈ 37 с). Двірники стирають плівку лише у своєму секторі; без дощу вона висихає, як краплі.
+ * Координати плівки — власні, не UV текстури скла: точка площини скла від краю до краю (атрибут filmUv), бо текстура
+ * скла повторюється (ZilR — утричі), і одна клітинка лягала б на кілька місць скла: двірник «чистив» і там, куди не
+ * дістає. Клітинка — ≈ FILM_CELL м (не більше FILM_MAX на бік). Стирання — за геометрією лопаті (wipeFilm): точки
+ * сектора в системі двірника з мʼяким краєм FILM_EDGE м біля кінця лопаті й на межах помаху.
  */
 const FILM_TIME = 129;
 const FILM_SPEED = 10;
-const FILM_SIZE = 128;
+const FILM_CELL = 0.03;
+const FILM_MAX = 256;
 const FILM_EDGE = 0.04;
+/** Порядок малювання лопатей двірників — після скла (0), до керма (10, drive.ts). */
+const WIPER_ORDER = 5;
 /** Найбільший крок часу, с (після паузи двірник проскочив би межу помаху). */
 const MAX_DT = 0.1;
 
@@ -66,16 +71,23 @@ interface Wiper {
   length: number;
   /** Матриця «двірник → кабіна» у спокої. */
   toCab: THREE.Matrix4;
-  /** UV скла: точка двірника (x, 0, z) → uv0 + x·ux + z·uz (площина скла — афінна, рахується після glassPlane). */
-  map?: { u0: number; v0: number; uxU: number; uxV: number; uzU: number; uzV: number };
+  /** Координати площини скла (s, t) точки двірника (x, 0, z): s0 + x·sx + z·sz (афінно; рахується після glassPlane). */
+  map?: { s0: number; t0: number; sx: number; tx: number; sz: number; tz: number };
 }
 
 export class GlassRain {
   private readonly wipers: Wiper[] = [];
   /** Площина скла в системі кабіни: точка, два ребра і їхні UV — для переведення точки в UV. */
-  private glass: { o: THREE.Vector3; e1: THREE.Vector3; e2: THREE.Vector3; uv0: THREE.Vector2; du1: THREE.Vector2; du2: THREE.Vector2 } | null = null;
+  /**
+   * Площина скла в системі кабіни: точка й два ребра першого трикутника (координати s, t) і трикутники скла в цих
+   * координатах. UV — за трикутником, у який потрапляє точка: скло — чотирикутник-трапеція з двох трикутників, і UV
+   * на них різні (ZilR — до 0,32 по v); одна площина першого трикутника зсувала стирання на другому.
+   */
+  private glass: { o: THREE.Vector3; e1: THREE.Vector3; e2: THREE.Vector3; tris: GlassTri[] } | null = null;
   private readonly water = new WaterBuffer(SIZE, SIZE, true);
-  private readonly film = new WaterBuffer(FILM_SIZE, FILM_SIZE, true);
+  /** Плівка: x — уздовж t площини скла, y — уздовж s (filmBox); до появи скла — порожня 1×1. */
+  private film = new WaterBuffer(1, 1);
+  private filmBox = { s0: 0, ds: 1, t0: 0, dt: 1 };
   private readonly copy = new SceneCopy();
   private readonly uniforms = waterUniforms(this.water.texture, SLOPE_SPAN / SIZE, SLOPE_SPAN / SIZE, this.film.texture);
   private readonly drop: Levels | null;
@@ -112,6 +124,7 @@ export class GlassRain {
       if (mesh.isMesh && (mesh.material as THREE.MeshBasicMaterial).map?.name === 'txr/glass.txr' && !this.glass) {
         this.glass = glassPlane(mesh, inv);
         this.measureGlass(mesh, inv);
+        this.setupFilm(mesh, inv);
         mesh.material = new THREE.ShaderMaterial({
           uniforms: this.uniforms,
           vertexShader: WATER_VERTEX,
@@ -121,8 +134,19 @@ export class GlassRain {
           side: THREE.DoubleSide,
         });
       }
-      // Екземпляр двірника й обʼєкт усередині мають те саме імʼя — обертаємо лише зовнішній.
-      if (/^wiper\d?$/i.test(o.name) && !this.wipers.some((w) => isAncestor(w.obj, o))) {
+      // Екземпляр двірника й обʼєкт усередині мають те саме імʼя — обертаємо лише зовнішній. «WWiper» — так названо
+      // частину двірників у кабінах Kenworth, International і Mack (гіпотеза: описка в даних; чи рухає їх king.exe —
+      // не перевірено).
+      if (/^w?wiper\d?$/i.test(o.name) &&!this.wipers.some((w) => isAncestor(w.obj, o))) {
+        // Лопать — пласка смуга майже в площині скла: малюється після скла (прозорий прохід, renderOrder), інакше
+        // вода на склі (шейдер малює копію кадру без кабіни) ховала її під плівкою й краплями.
+        o.traverse((x) => {
+          const m = x as THREE.Mesh;
+          if (!m.isMesh) return;
+          const mats = (Array.isArray(m.material) ? m.material : [m.material]).map((mt: THREE.Material) => Object.assign(mt.clone(), { transparent: true }));
+          m.material = Array.isArray(m.material) ? mats : mats[0];
+          m.renderOrder = WIPER_ORDER;
+        });
         const toCab = o.matrixWorld.clone().premultiply(inv);
         const box = new THREE.Box3();
         const own = o.matrixWorld.clone().invert();
@@ -141,6 +165,28 @@ export class GlassRain {
         });
       }
     });
+  }
+
+  /** Буфер плівки за розміром скла й атрибут filmUv вершин (координати площини, нормовані до 0…1). */
+  private setupFilm(mesh: THREE.Mesh, inv: THREE.Matrix4): void {
+    const g = this.glass!;
+    mesh.geometry = mesh.geometry.clone();
+    const P = mesh.geometry.attributes.position;
+    const m = mesh.matrixWorld.clone().premultiply(inv);
+    const st: { s: number; t: number }[] = [];
+    for (let i = 0; i < P.count; i++) st.push(planeCoords(g.o, g.e1, g.e2, new THREE.Vector3().fromBufferAttribute(P, i).applyMatrix4(m)));
+    const s0 = Math.min(...st.map((q) => q.s));
+    const t0 = Math.min(...st.map((q) => q.t));
+    const ds = Math.max(...st.map((q) => q.s)) - s0 || 1;
+    const dt = Math.max(...st.map((q) => q.t)) - t0 || 1;
+    this.filmBox = { s0, ds, t0, dt };
+    const fuv = new Float32Array(P.count * 2);
+    st.forEach((q, i) => fuv.set([(q.t - t0) / dt, (q.s - s0) / ds], i * 2));
+    mesh.geometry.setAttribute('filmUv', new THREE.BufferAttribute(fuv, 2));
+    const size = (len: number) => Math.max(8, Math.min(FILM_MAX, Math.ceil(len / FILM_CELL)));
+    this.film.dispose();
+    this.film = new WaterBuffer(size(dt * g.e2.length()), size(ds * g.e1.length()));
+    this.uniforms.film.value = this.film.texture;
   }
 
   get hasWipers(): boolean {
@@ -336,11 +382,13 @@ export class GlassRain {
    */
   private wipeFilm(w: Wiper, a0: number, a1: number): void {
     if (this.film.empty) return;
+    const g = this.glass!;
     const m = (w.map ??= this.wiperMap(w));
-    const S = FILM_SIZE;
-    // Крок — пів клітинки в метрах (довжина UV-ребра двірника на клітинку).
-    const cell = 1 / (S * Math.max(Math.hypot(m.uxU, m.uxV), Math.hypot(m.uzU, m.uzV), 1e-6));
-    const h = cell * 0.5;
+    const { s0, ds, t0, dt } = this.filmBox;
+    const W = this.film.w;
+    const H = this.film.h;
+    // Крок — пів клітинки в метрах (менша зі сторін клітинки).
+    const h = 0.5 * Math.min((dt * g.e2.length()) / W, (ds * g.e1.length()) / H);
     const e = FILM_EDGE;
     const lo = Math.min(a0, a1);
     const hi = Math.max(a0, a1);
@@ -356,35 +404,33 @@ export class GlassRain {
         if (f <= 0) continue;
         const x = Math.cos(a) * r;
         const z = -Math.sin(a) * r;
-        const u = (m.u0 + x * m.uxU + z * m.uzU) * S;
-        const v = (m.v0 + x * m.uxV + z * m.uzV) * S;
-        this.film.clampAt(Math.round(u), Math.round(v), Math.round(255 * (1 - f)));
+        const ps = m.s0 + x * m.sx + z * m.sz;
+        const pt = m.t0 + x * m.tx + z * m.tz;
+        // Поза склом — нічого (буфер без повторення).
+        this.film.clampAt(Math.floor(((pt - t0) / dt) * W), Math.floor(((ps - s0) / ds) * H), Math.round(255 * (1 - f)));
       }
     }
     this.film.markAll();
   }
 
-  /** Афінне відображення «система двірника → UV скла» (точки (x, 0, z) двірника через toCab на площину скла). */
+  /** Афінне відображення «система двірника → координати площини скла (s, t)». */
   private wiperMap(w: Wiper): NonNullable<Wiper['map']> {
-    const o = this.uv(new THREE.Vector3().applyMatrix4(w.toCab));
-    const ux = this.uv(new THREE.Vector3(1, 0, 0).applyMatrix4(w.toCab)).sub(o);
-    const uz = this.uv(new THREE.Vector3(0, 0, 1).applyMatrix4(w.toCab)).sub(o);
-    return { u0: o.x, v0: o.y, uxU: ux.x, uxV: ux.y, uzU: uz.x, uzV: uz.y };
+    const o = this.planeST(new THREE.Vector3().applyMatrix4(w.toCab));
+    const x = this.planeST(new THREE.Vector3(1, 0, 0).applyMatrix4(w.toCab));
+    const z = this.planeST(new THREE.Vector3(0, 0, 1).applyMatrix4(w.toCab));
+    return { s0: o.s, t0: o.t, sx: x.s - o.s, tx: x.t - o.t, sz: z.s - o.s, tz: z.t - o.t };
   }
 
-  /** Точка кабіни → UV скла (проєкція на площину скла). */
-  private uv(p: THREE.Vector3): THREE.Vector2 {
+  /** Точка кабіни → координати площини скла (s, t) у ребрах першого трикутника. */
+  private planeST(p: THREE.Vector3): { s: number; t: number } {
     const g = this.glass!;
-    const d = p.clone().sub(g.o);
-    const a11 = g.e1.dot(g.e1);
-    const a12 = g.e1.dot(g.e2);
-    const a22 = g.e2.dot(g.e2);
-    const b1 = d.dot(g.e1);
-    const b2 = d.dot(g.e2);
-    const det = a11 * a22 - a12 * a12 || 1;
-    const s = (b1 * a22 - b2 * a12) / det;
-    const t = (a11 * b2 - a12 * b1) / det;
-    return g.uv0.clone().addScaledVector(g.du1, s).addScaledVector(g.du2, t);
+    return planeCoords(g.o, g.e1, g.e2, p);
+  }
+
+  /** Точка кабіни → UV скла (проєкція на площину, UV — за трикутником, у який вона потрапляє). */
+  private uv(p: THREE.Vector3): THREE.Vector2 {
+    const { s, t } = this.planeST(p);
+    return uvAt(this.glass!.tris, s, t, new THREE.Vector2());
   }
 
   dispose(): void {
@@ -396,14 +442,107 @@ export class GlassRain {
   }
 }
 
+/**
+ * Трикутник скла в координатах площини (s, t): барицентричні l1, l2 — афінні від (s, t) (l = a·s + b·t + c), UV —
+ * u = u0 + us·s + ut·t (так само v); l0 = 1 − l1 − l2.
+ */
+interface GlassTri {
+  a1: number;
+  b1: number;
+  c1: number;
+  a2: number;
+  b2: number;
+  c2: number;
+  u0: number;
+  us: number;
+  ut: number;
+  v0: number;
+  vs: number;
+  vt: number;
+}
+
+function planeCoords(o: THREE.Vector3, e1: THREE.Vector3, e2: THREE.Vector3, p: THREE.Vector3): { s: number; t: number } {
+  const dx = p.x - o.x;
+  const dy = p.y - o.y;
+  const dz = p.z - o.z;
+  const a11 = e1.dot(e1);
+  const a12 = e1.dot(e2);
+  const a22 = e2.dot(e2);
+  const b1 = dx * e1.x + dy * e1.y + dz * e1.z;
+  const b2 = dx * e2.x + dy * e2.y + dz * e2.z;
+  const det = a11 * a22 - a12 * a12 || 1;
+  return { s: (b1 * a22 - b2 * a12) / det, t: (a11 * b2 - a12 * b1) / det };
+}
+
+/** UV у точці (s, t): трикутник, що її містить, а поза склом — найближчий (найбільша з найменших барицентричних). */
+function uvAt(tris: readonly GlassTri[], s: number, t: number, out: THREE.Vector2): THREE.Vector2 {
+  let best = tris[0];
+  let bestMin = -Infinity;
+  for (const q of tris) {
+    const l1 = q.a1 * s + q.b1 * t + q.c1;
+    const l2 = q.a2 * s + q.b2 * t + q.c2;
+    const min = Math.min(l1, l2, 1 - l1 - l2);
+    if (min > bestMin) {
+      bestMin = min;
+      best = q;
+      if (min >= 0) break;
+    }
+  }
+  return out.set(best.u0 + best.us * s + best.ut * t, best.v0 + best.vs * s + best.vt * t);
+}
+
+/** Площина скла (перший трикутник) і всі трикутники сітки в її координатах (система кабіни). */
 function glassPlane(mesh: THREE.Mesh, inv: THREE.Matrix4) {
-  const P = mesh.geometry.attributes.position;
-  const U = mesh.geometry.attributes.uv;
+  const geo = mesh.geometry;
+  const P = geo.attributes.position;
+  const U = geo.attributes.uv;
   const m = mesh.matrixWorld.clone().premultiply(inv);
   const v = (i: number) => new THREE.Vector3().fromBufferAttribute(P, i).applyMatrix4(m);
-  const t = (i: number) => new THREE.Vector2(U.getX(i), U.getY(i));
-  const o = v(0);
-  return { o, e1: v(1).sub(o), e2: v(2).sub(o), uv0: t(0), du1: t(1).sub(t(0)), du2: t(2).sub(t(0)) };
+  const idx = (k: number) => (geo.index ? geo.index.getX(k) : k);
+  const count = geo.index ? geo.index.count : P.count;
+  const o = v(idx(0));
+  const e1 = v(idx(1)).sub(o);
+  const e2 = v(idx(2)).sub(o);
+  const tris: GlassTri[] = [];
+  for (let k = 0; k + 2 < count; k += 3) {
+    const ids = [idx(k), idx(k + 1), idx(k + 2)];
+    const st = ids.map((i) => planeCoords(o, e1, e2, v(i)));
+    const ds1 = st[1].s - st[0].s;
+    const dt1 = st[1].t - st[0].t;
+    const ds2 = st[2].s - st[0].s;
+    const dt2 = st[2].t - st[0].t;
+    const det = ds1 * dt2 - ds2 * dt1;
+    if (Math.abs(det) < 1e-12) continue;
+    // (l1, l2) = M⁻¹ · (s − s₀, t − t₀), M = [ds1 ds2; dt1 dt2].
+    const a1 = dt2 / det;
+    const b1 = -ds2 / det;
+    const a2 = -dt1 / det;
+    const b2 = ds1 / det;
+    const c1 = -(a1 * st[0].s + b1 * st[0].t);
+    const c2 = -(a2 * st[0].s + b2 * st[0].t);
+    const [u0, u1, u2] = ids.map((i) => U.getX(i));
+    const [w0, w1, w2] = ids.map((i) => U.getY(i));
+    // u = u0·l0 + u1·l1 + u2·l2 = u0 + (u1 − u0)·l1 + (u2 − u0)·l2 — афінно від (s, t).
+    const du1 = u1 - u0;
+    const du2 = u2 - u0;
+    const dv1 = w1 - w0;
+    const dv2 = w2 - w0;
+    tris.push({
+      a1,
+      b1,
+      c1,
+      a2,
+      b2,
+      c2,
+      u0: u0 + du1 * c1 + du2 * c2,
+      us: du1 * a1 + du2 * a2,
+      ut: du1 * b1 + du2 * b2,
+      v0: w0 + dv1 * c1 + dv2 * c2,
+      vs: dv1 * a1 + dv2 * a2,
+      vt: dv1 * b1 + dv2 * b2,
+    });
+  }
+  return { o, e1, e2, tris };
 }
 
 function isAncestor(a: THREE.Object3D, o: THREE.Object3D): boolean {

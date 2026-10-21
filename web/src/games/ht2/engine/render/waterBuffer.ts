@@ -240,11 +240,11 @@ export const WATER_FRAGMENT = `
   uniform sampler2D levels, scene, film;
   uniform vec2 res, origin, span;
   uniform float k, kMax, shade, water, wet, blur, mist;
-  varying vec2 vUv;
+  varying vec2 vUv, vFilm;
   void main() {
     float a = texture2D(levels, vUv).r;
     // Плівка (власний ефект порту): f — товщина 0…1, видимість гіршає з її квадратом (тонка — ледь помітна).
-    float f = texture2D(film, vUv).r;
+    float f = texture2D(film, vFilm).r;
     if (wet < 0.5 || (a <= 0.0 && f < 0.02)) discard;
     vec3 col = texture2D(scene, (gl_FragCoord.xy - origin) / res).rgb;
     if (f >= 0.02) {
@@ -288,7 +288,9 @@ export const WATER_FRAGMENT = `
     gl_FragColor = vec4(col, 1.0);
   }`;
 
-export const WATER_VERTEX = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
+/** filmUv — координати плівки (без повторення, від краю до краю скла; glassRain.ts). */
+export const WATER_VERTEX =
+  'attribute vec2 filmUv; varying vec2 vUv, vFilm; void main() { vUv = uv; vFilm = filmUv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
 
 /** Заломлення й світлотінь (на око): зсув у px екрана на одиницю нахилу та межа, яскравість, частка води. */
 export const WATER_LOOK = { refract: 20, refractMax: 3, shade: 2.5, water: 0.75 };
