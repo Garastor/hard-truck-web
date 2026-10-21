@@ -9,6 +9,11 @@ import type { EscArt } from './escArt';
  */
 export const PANEL_CENTER = 650;
 
+/** Компактна панель (compactBottom): висота екрана, нижче якої вмикається, масштаб і відступ від низу (CSS px). */
+const COMPACT_H = 500;
+const COMPACT_SCALE = 0.9;
+const COMPACT_MARGIN = 4;
+
 /**
  * Жовті тексти панелей (значення, назви) — не піксельним MENU.FON (8 рядків, на телефоні дрібний і нечіткий), а
  * векторним шрифтом кнопок порту (.ht2-panel-act), трохи стиснутим по ширині, як написи фону. Розмір — однаковий на
@@ -90,6 +95,12 @@ export class SidePanel {
     private readonly view?: [number, number],
     /** Додатковий відступ згори під табло, CSS px (рядок кнопок порту). */
     private readonly below = 0,
+    /**
+     * Нижній рядок фону з вмістом (кнопки OK/скасування). Якщо задано, на низькому екрані (телефон у ландшафті,
+     * < COMPACT_H) панель зменшується на 10% і зсувається донизу, щоб цей рядок був біля низу екрана: верх
+     * вмісту (СТО) інакше ховається під табло (на прохання користувача).
+     */
+    private readonly compactBottom?: number,
   ) {
     this.el = document.createElement('div');
     this.el.className = `ht2-panel ${side}`;
@@ -129,6 +140,9 @@ export class SidePanel {
       const [a, b] = this.view;
       s = Math.min(s, (H - top) / (b - a));
       y = top + (H - top - (b - a) * s) / 2 - a * s;
+    } else if (this.compactBottom !== undefined && H < COMPACT_H) {
+      s *= COMPACT_SCALE;
+      y = Math.max(H / 2 - PANEL_CENTER * s, H - COMPACT_MARGIN - this.compactBottom * s);
     }
     this.el.style.width = `${this.width * s}px`;
     if (this.side === 'right' && this.el.isConnected) {

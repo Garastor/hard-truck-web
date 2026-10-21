@@ -157,7 +157,8 @@ export function servicePanel(
   v: ServiceView,
   act: { pay(repair: number, buy: Upgrade[]): boolean; close(): void },
 ): SidePanel {
-  const p = new SidePanel(art, parent, 'm_16\\BackService.txr');
+  // На телефоні — компактніше й нижче: верх (вантажівка, ремонт) інакше під табло. 825 — низ кнопок OK/скасування.
+  const p = new SidePanel(art, parent, 'm_16\\BackService.txr', 'right', undefined, 0, 825);
   const repairs = new Set<string>();
   const buy = new Set<string>();
   const byKey = new Map(v.upgrades.map((u) => [u.key, u]));
