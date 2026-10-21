@@ -32,11 +32,11 @@ const SPEED_K = 0.05;
 const SPEED_MAX = 20;
 /**
  * Нових крапель і слідів за секунду. Оригінал — 20 і 20 / 10 на текстуру 256 × 256; буфер тут удвічі більший
- * (краплі вдвічі менші, SIZE), тож щоб скло заростало так само швидко, крапель — ×4 (площа), слідів — ×2 (кожен
- * удвічі довший у пікселях).
+ * (краплі вдвічі менші, SIZE), тож щоб скло заростало так само швидко, крапель — ×4 (площа). Сліди — як в
+ * оригіналі: їхня маска збільшена вдвічі (RUNNER_SCALE), тож кожен слід займає ту саму частку скла.
  */
 const DROPS_PER_SEC = 20 * 4;
-const RUNNERS_PER_SEC = (20 / 10) * 2;
+const RUNNERS_PER_SEC = 20 / 10;
 /** Сліди: частка висоти скла за секунду (як 7,5 px/с на 250 px у 2D-кабіні), крок — 1 px буфера. */
 const RUN_SPEED = 7.5 / 250;
 const RUN_TICK = 1;
@@ -45,6 +45,11 @@ const RUN_TICK = 1;
  * порту (на прохання користувача): сліди на всю висоту скла (перезапис рівнем 17) за 2–3 хв змивали всі краплі —
  * скло лишалося під тонкою водою без жодної круглої краплі. Як закінчує слід king.exe — не розібрано.
  */
+/**
+ * Збільшення маски сліду glass_2 (найближчий піксель): на буфері 512 вона вдвічі менша, ніж на glass.txr 256
+ * оригіналу; на прохання користувача краплі потоку більші — ×2 (як в оригіналі відносно скла).
+ */
+const RUNNER_SCALE = 2;
 const RUN_LENGTH_MIN = 0.05;
 const RUN_LENGTH_MAX = 0.25;
 /**
@@ -107,7 +112,7 @@ export class GlassRain {
    */
   constructor(cabRoot: THREE.Object3D, drop: RgbaImage | null, runner: RgbaImage | null) {
     this.drop = drop && toLevels(drop, 3);
-    this.runner = runner && toLevels(runner, 3);
+    this.runner = runner && scaleLevels(toLevels(runner, 3), RUNNER_SCALE);
     cabRoot.updateMatrixWorld(true);
     const inv = cabRoot.matrixWorld.clone().invert();
     cabRoot.traverse((o) => {
@@ -459,6 +464,15 @@ function glassPlane(mesh: THREE.Mesh, inv: THREE.Matrix4) {
 function isAncestor(a: THREE.Object3D, o: THREE.Object3D): boolean {
   for (let p = o.parent; p; p = p.parent) if (p === a) return true;
   return false;
+}
+
+/** Маска, збільшена в k разів (кожен піксель — квадрат k × k). */
+function scaleLevels(m: Levels, k: number): Levels {
+  const w = m.w * k;
+  const h = m.h * k;
+  const a = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) a[y * w + x] = m.a[Math.floor(y / k) * m.w + Math.floor(x / k)];
+  return { w, h, a };
 }
 
 function rand(n: number): number {
