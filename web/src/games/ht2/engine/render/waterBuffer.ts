@@ -215,11 +215,26 @@ export class WaterBuffer {
 export const WATER_FRAGMENT = `
   uniform sampler2D levels, scene;
   uniform vec2 res, origin, span, cells;
-  uniform float k, kMax, shade, water, wet, lens, zoom, lensCell, mergeLo, mergeHi, mergeBias, mergeWave;
+  uniform float k, kMax, shade, water, wet, lens, zoom, lensCell, mergeLo, mergeHi, mergeBias, mergeWave, mergeCell, mergeZoom;
   varying vec2 vUv;
   // UV-вектор буфера → вектор на екрані (px): J — похідні UV за екраном, J⁻¹ переводить назад.
   vec2 toScreen(vec2 d, vec2 ux, vec2 uy, float det) {
     return vec2(uy.y * d.x - uy.x * d.y, -ux.y * d.x + ux.x * d.y) / det;
+  }
+  // Лінза: скло поділене на клітинки по cell текселів буфера; у кожній картинка збільшена навколо центру клітинки
+  // (вибірка в zm разів ближча до центру), між чотирма сусідніми клітинками — лінійне згладжування.
+  vec3 lensAt(float cell, float zm, vec2 ux, vec2 uy, float det) {
+    vec2 grid = cells / cell;
+    vec2 t = vUv * grid - 0.5;
+    vec2 c0 = floor(t);
+    vec2 f = t - c0;
+    vec3 q[4];
+    for (int i = 0; i < 4; i++) {
+      vec2 c = c0 + vec2(float(i - (i / 2) * 2), float(i / 2)) + 0.5;
+      vec2 d = toScreen(c / grid - vUv, ux, uy, det) * (1.0 - zm);
+      q[i] = texture2D(scene, (gl_FragCoord.xy + d - origin) / res).rgb;
+    }
+    return mix(mix(q[0], q[1], f.x), mix(q[2], q[3], f.x), f.y);
   }
   void main() {
     float a = texture2D(levels, vUv).r;
@@ -246,20 +261,11 @@ export const WATER_FRAGMENT = `
       vec2 s = toScreen(vec2(du, dv), ux, uy, det);
       float l = length(s);
       if (l > 0.0) g = s / l * length(vec2(du, dv));
-      // Лінза (як в оригіналі — «збільшення, пікселі, згладжування», на прохання користувача): скло поділене на
-      // клітинки по lensCell текселів буфера; у кожній картинка збільшена навколо центру клітинки (вибірка в zoom
-      // разів ближча до центру), між чотирма сусідніми клітинками — лінійне згладжування.
-      vec2 grid = cells / lensCell;
-      vec2 t = vUv * grid - 0.5;
-      vec2 c0 = floor(t);
-      vec2 f = t - c0;
-      vec3 q[4];
-      for (int i = 0; i < 4; i++) {
-        vec2 c = c0 + vec2(float(i - (i / 2) * 2), float(i / 2)) + 0.5;
-        vec2 d = toScreen(c / grid - vUv, ux, uy, det) * (1.0 - zoom);
-        q[i] = texture2D(scene, (gl_FragCoord.xy + d - origin) / res).rgb;
-      }
-      vec3 lensed = mix(mix(q[0], q[1], f.x), mix(q[2], q[3], f.x), f.y);
+      // Лінза (як в оригіналі — «збільшення, пікселі, згладжування», на прохання користувача).
+      vec3 lensed = lensAt(lensCell, zoom, ux, uy, det);
+      // На суцільній воді — більші клітинки й сильніше збільшення: картинка збільшена й розмита (згладжування між
+      // далекими центрами клітинок), на прохання користувача.
+      if (merge > 0.0) lensed = mix(lensed, lensAt(mergeCell, mergeZoom, ux, uy, det), merge);
       // Лінза — на будь-якій воді, і на тонкій (сліди стікання — рівень 17 з 255): скло під водою спотворене повністю.
       under = mix(clear, lensed, lens * smoothstep(0.0, 0.05, a));
     }
@@ -277,9 +283,10 @@ export const WATER_VERTEX = 'varying vec2 vUv; void main() { vUv = uv; gl_Positi
 /**
  * Злиття густих крапель у суцільну воду (на прохання користувача, на око): середній рівень околу 2^bias текселів
  * (bias 3 — 8 × 8 ≈ 2 см скла); від lo до hi — перехід від окремих крапель до суцільної води; wave — підсилення
- * нахилу згладженої поверхні (пологі хвилі).
+ * нахилу згладженої поверхні (пологі хвилі); cell, zoom — лінза суцільної води (клітинка в текселях, множник
+ * відстані вибірки: менше — більше збільшення; згладжування між центрами клітинок розмиває).
  */
-const WATER_MERGE = { mergeLo: 0.05, mergeHi: 0.15, mergeBias: 3, mergeWave: 0.6 };
+const WATER_MERGE = { mergeLo: 0.05, mergeHi: 0.15, mergeBias: 3, mergeWave: 0.6, mergeCell: 14, mergeZoom: 0.15 };
 
 /**
  * Заломлення й світлотінь (на око): зсув у px екрана на одиницю нахилу та межа, яскравість, частка води на краях
@@ -333,6 +340,8 @@ export function waterUniforms(levels: THREE.Texture, spanU: number, spanV: numbe
     mergeHi: { value: WATER_LOOK.mergeHi },
     mergeBias: { value: WATER_LOOK.mergeBias },
     mergeWave: { value: WATER_LOOK.mergeWave },
+    mergeCell: { value: WATER_LOOK.mergeCell },
+    mergeZoom: { value: WATER_LOOK.mergeZoom },
     k: { value: 0 },
     kMax: { value: 0 },
     shade: { value: WATER_LOOK.shade },
