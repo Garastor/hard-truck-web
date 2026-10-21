@@ -58,7 +58,7 @@ function gameFiles(): Plugin {
 interface Entry {
   title: string;
   description: string;
-  /** Префікс іконок у public/ (icon-192.png…); значок спільний для обох ігор — Kenworth на фіолетовому тлі. */
+  /** Префікс іконок у public/ (icon-192.png…); значок спільний для обох ігор — Kenworth на жовтому тлі. */
   icon: string;
 }
 const ENTRIES: Record<string, Entry> = {
