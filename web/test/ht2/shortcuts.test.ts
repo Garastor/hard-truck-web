@@ -33,7 +33,7 @@ describe.skipIf(!has)('HT2: зрізалки й приховані дороги 
   const roads = new Ht2Roads(regions);
   /** Лінії, з яких можна звернути і на зрізалку, і на звичайну дорогу. */
   const forks = roads.lines.filter((l) => !l.shortcut && l.next.some((n) => (n as RoadLine).shortcut) && l.next.some((n) => !(n as RoadLine).shortcut));
-  /** Лінії, що далі продовжуються лише зрізалками (ag_010, ah_010): для ботів — тупик. */
+  /** Лінії, що далі продовжуються лише зрізалками: для ботів — тупик (з однобічними осями таких немає). */
   const onlyTo = roads.lines.filter((l) => !l.shortcut && l.next.length > 0 && l.next.every((n) => (n as RoadLine).shortcut));
 
   beforeEach(() => {
@@ -58,7 +58,8 @@ describe.skipIf(!has)('HT2: зрізалки й приховані дороги 
 
   it('автопілот (pick) і навігатор не звертають на зрізалку', () => {
     for (const l of forks) expect(roads.pick(l)?.shortcut).toBeFalsy();
-    expect(onlyTo.length).toBeGreaterThan(0);
+    // Дороги, що вели лише на зрізалки (ag_010, ah_010), були зустрічними смугами однобічних осей (біт 4) — їх більше немає.
+    expect(onlyTo.length).toBe(0);
     for (const l of onlyTo) {
       expect(roads.pick(l)).toBeNull();
       expect(roads.deadEnd(l)).toBe(true);

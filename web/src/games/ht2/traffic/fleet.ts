@@ -90,9 +90,13 @@ export class Fleet {
     for (const l of roads.lines) this.byName.set(l.name, l);
   }
 
-  /** Лінії, де можна поставити водія на старті: не під'їзди станцій, не зрізалки, не закриті, не нульові. */
+  /**
+   * Лінії, де можна поставити водія на старті: не під'їзди станцій, не зрізалки, не закриті, не нульові, без біта 0x20
+   * (king.exe 0x422d60: випадкова точка появи перебирається, доки сегмент має 0x20 чи 0x40 — ґрунтові «приховані»
+   * дороги ax, двори, бази; там водій з'являвся на траві чи впритул до стін).
+   */
   startLines(): RoadLine[] {
-    return this.roads.lines.filter((l) => !l.station && !l.shortcut && !l.closed && this.len(l) > 1 && !this.roads.deadEnd(l));
+    return this.roads.lines.filter((l) => !(l.flags & 0x60) && !l.station && !l.shortcut && !l.closed && this.len(l) > 1 && !this.roads.deadEnd(l));
   }
 
   /**

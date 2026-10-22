@@ -17,7 +17,8 @@ import { rubber, TOP_UP_AWAY } from '../career/competition';
 import { toThree } from '../world/world';
 import type { Order } from '../career/economy';
 import { HIRED_MIN_SPEED } from '../career/hired';
-import { layered } from './layers';
+import { groundNear, layered } from './layers';
+import { placeFree } from './clearance';
 import type { Ht2Roads } from '../world/roads';
 import type { Ht2Drive } from '../drive';
 import { alongPoints, botCruise, newBot, POINT_HALF, setRoute, steer, think, type BotDriver } from './botDriver';
@@ -75,6 +76,17 @@ const STUCK_FOR = 30;
 const PLAYER_SMOOTH = 10;
 /** Після перекидання чи застрягання — абстрактний щонайменше стільки, с, і машиною лише поза видимістю. */
 const HOLD = 20;
+/**
+ * Місце появи зайняте (traffic/clearance.ts: стіна, стовп, край полотна, машина поруч) — шукати далі вздовж маршруту
+ * водія кроками SPAWN_STEP м, не більше SPAWN_TRIES разів за перевірку (водія не видно — він і так їде туди).
+ */
+const SPAWN_STEP = 8;
+const SPAWN_TRIES = 6;
+/** Габарит для перевірки місця: від точки лінії до переду, до заду (тягач з причепом / вантажівка), півширина, м. */
+const SPAWN_FRONT = 4;
+const SPAWN_BACK_SEMI = 16;
+const SPAWN_BACK = 5;
+const SPAWN_HALF = 1.3;
 
 export interface Rival {
   name: string;
@@ -242,7 +254,10 @@ export class Truckers {
     if (variant > 0) recolor(model.root, this.drive.trucksData, variant + 1);
     // Рух king.exe, як у гравця (kingModel), автопілот — переслідування по дузі з базою машини.
     if (!this.roads.nearest(at, forward)) return null;
-    const truck = new TruckVehicle(this.drive.rapierWorld, def, model, { position: this.drive.groundAtPublic(at), forward }, kingCar(rec.suspension));
+    // Висота — з нерухомої поверхні, найближчої до лінії (не дах машини трафіку, не стовп і не настил мосту над дорогою).
+    const floor = groundNear(this.drive.rapierWorld, at, 4, 6);
+    const position = floor ? new THREE.Vector3(at.x, floor.y + 2.5, at.z) : this.drive.groundAtPublic(at);
+    const truck = new TruckVehicle(this.drive.rapierWorld, def, model, { position, forward }, kingCar(rec.suspension));
     markMover(truck.visual);
     this.drive.world.scene.add(truck.visual);
     const kind = semi === undefined ? this.pickSemi(rec) : semi;
@@ -506,9 +521,35 @@ export class Truckers {
       if (c.m.hidden && (this.drive.traffic?.view?.sees(c.pos) ?? false)) continue;
       // Порт: не на мосту й не під ним (traffic/layers.ts) — тягач з причепом опинявся на настилі над дорогою.
       if (layered(this.drive.rapierWorld, c.pos)) continue;
-      this.materialize(c.m, c.pos, c.forward);
+      // Порт: місце вільне на весь габарит (з причепом позаду), інакше — далі вздовж маршруту (clearance.ts).
+      const spot = this.freeSpot(c.m, player);
+      if (!spot) continue;
+      this.materialize(c.m, spot.pos, spot.forward);
       made++;
     }
+  }
+
+  /**
+   * Вільне місце появи водія (traffic/clearance.ts): його точка на лінії, а зайнята — далі вздовж маршруту (Fleet.move,
+   * до SPAWN_TRIES кроків по SPAWN_STEP м; біля місця складу — лише там, де стоїть). null — вільного немає, водій
+   * лишається абстрактним до наступної перевірки.
+   */
+  private freeSpot(m: FleetMember, player: THREE.Vector3): { pos: THREE.Vector3; forward: THREE.Vector3 } | null {
+    const f = this.fleet!;
+    const rec = this.records().find((r) => r.carNode === m.model);
+    const back = rec?.group === 'tractors' && m.semi ? SPAWN_BACK_SEMI : SPAWN_BACK;
+    const others = (this.drive.traffic?.cars ?? []).filter((c) => c.root || c.vehicle).map((c) => c.vehicle?.visual.position ?? c.pos);
+    for (let k = 0; k <= SPAWN_TRIES; k++) {
+      if (k > 0) {
+        if (m.stopped) return null;
+        f.move(m, SPAWN_STEP);
+      }
+      const at = f.at(m);
+      if (!this.loaded(m.line.region) || at.pos.distanceTo(player) < FREE_R || this.rigs.some((r) => r.truck.visual.position.distanceTo(at.pos) < FREE_R)) continue;
+      if (layered(this.drive.rapierWorld, at.pos)) continue;
+      if (placeFree(this.drive.rapierWorld, this.roads, at.pos, at.forward, SPAWN_FRONT, back, SPAWN_HALF, others)) return at;
+    }
+    return null;
   }
 
   /** Далекобійник світу стає машиною: та сама модель, напівпричіп, вантаж і рейс. */

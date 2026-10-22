@@ -20,11 +20,12 @@ import { control, newPhysState, type PhysState } from './physical';
  *   смуги враховує його, покажчик праворуч);
  * - тягач з напівпричепом (Mover.tail — довжина позаду, bend — повільніше на кривих): у крутому повороті заходить
  *   ширше — точка керма зсувається назовні на OFFTRACK_K × зрізання кута причепом R − √(R² − L²) (R — радіус шляху
- *   біля точки керма, L — від шворня до осі причепа), не далі OUT_LANE смуги, а праворуч — не ближче PASS_EDGE до стіни
+ *   біля точки керма, L — від шворня до осі причепа), не далі OUT_LANE смуги, а праворуч — не за край полотна
+ *   (EDGE_OVER) і не ближче PASS_EDGE до стіни
  *   (гіпотеза порту; у king.exe причепів у ботів немає);
  * - боковий запас: тіло збоку (від заду причепа до SIDE_LOOK с уперед) ближче за півширину бота + SIDE_OTHER від шляху,
  *   яким бот там буде (запланований маневр offAt), але не на ньому (ближче ON_PATH — це лідер, decide) → точка керма
- *   відходить від нього на нестачу (не більше SIDE_MAX, праворуч — не ближче PASS_EDGE до стіни): у смугах по 3 м
+ *   відходить від нього на нестачу (не більше SIDE_MAX, праворуч — не за край полотна й не ближче PASS_EDGE до стіни): у смугах по 3 м
  *   тягач (3,3 м з дзеркалами), обʼїжджаючи сусідньою смугою, чіпляв того, хто стоїть не по центру своєї.
  * Лінії баз і вузьких смуг уже відсунуто від стін (roads.clearWalls) — водій їде по них, як і автопілот.
  */
@@ -69,6 +70,8 @@ const OFFTRACK_K = 1.0;
 const OFFTRACK_WIN = 6;
 const OUT_LANE = 0.8;
 const OFFTRACK_RATE = 1.5;
+/** Борт може виступати за край полотна на стільки, м (відхід праворуч — edgeRoom). */
+const EDGE_OVER = 0.3;
 /** Поворот, менший за стільки радіан на вікні, — не поворот. */
 const OFFTRACK_MIN = 0.15;
 /**
@@ -227,7 +230,17 @@ function sideClear(b: BotDriver, p: THREE.Vector3, flat: THREE.Vector3, right: T
     if (Math.abs(need) > Math.abs(out)) out = need;
   }
   const lw = m.line.laneWidth;
-  return THREE.MathUtils.clamp(out, -Math.min(SIDE_MAX, OUT_LANE * lw), Math.min(SIDE_MAX, Math.max(0, (m.line.wallRight ?? lw) - PASS_EDGE)));
+  return THREE.MathUtils.clamp(out, -Math.min(SIDE_MAX, OUT_LANE * lw), Math.min(SIDE_MAX, Math.max(0, (m.line.wallRight ?? lw) - PASS_EDGE), edgeRoom(b)));
+}
+
+/**
+ * Скільки точці керма можна відійти праворуч, не вивівши борт за край полотна, м: від центру смуги до краю
+ * (n − k − 0,5)·lw, борт може виступати на EDGE_OVER (на крайній смузі відступ від сусіда й захід у лівий поворот
+ * виводили тягач на узбіччя). На базах — без межі (майданчик ширший за смугу петлі; там — стіна, wallRight).
+ */
+function edgeRoom(b: BotDriver): number {
+  const l = b.m.line;
+  return l.base ? Infinity : Math.max(0, (l.lanes - l.lane - 0.5) * l.laneWidth + EDGE_OVER - b.halfWidth);
 }
 
 /** Педалі й кермо на крок фізики. */
@@ -266,5 +279,6 @@ function offtrack(b: BotDriver, speed: number): number {
   const cut = R <= L ? L : R - Math.sqrt(R * R - L * L);
   const lw = m.line.laneWidth;
   if (yaw > 0) return -Math.min(OFFTRACK_K * cut, OUT_LANE * lw);
-  return Math.min(OFFTRACK_K * cut, OUT_LANE * lw, Math.max(0, (m.line.wallRight ?? lw) - PASS_EDGE));
+  // Праворуч — не за край полотна (edgeRoom) і не ближче PASS_EDGE до стіни.
+  return Math.min(OFFTRACK_K * cut, OUT_LANE * lw, edgeRoom(b), Math.max(0, (m.line.wallRight ?? lw) - PASS_EDGE));
 }

@@ -13,6 +13,7 @@ import { disposePool, makePool, setPoolFade } from './headPools';
 import { markMover } from '../world/roomVisibility';
 import { Blinkers } from './blinkers';
 import { groundNear, layered } from './layers';
+import { placeFree } from './clearance';
 
 /**
  * Трафік Дальнобойщиків 2: машини з `evehicles.sch` класу `dumb` («тупі» легковики, автобус, пікапи) — запис
@@ -56,6 +57,9 @@ const PHYS_ON = 80;
 const PHYS_BACK = 100;
 const PHYS_OFF = 300;
 const PHYS_SPEED = 18;
+/** Габарит для перевірки місця фізичної (traffic/clearance.ts): від центру до переду й заду, півширина, м. */
+const PHYS_FREE = 2.5;
+const PHYS_HALF = 1.1;
 /**
  * Кінематична модель — на поверхні дороги, з нахилом за нею (порт: у king.exe — висота лінії WAY, без нахилу; лінії
  * лежать до ±1,3 м від настилу, тож модель «пливла» й підскакувала при переході у фізику). Замір раз на GROUND_EVERY с,
@@ -468,6 +472,8 @@ export class Traffic {
     if (c.speed > roadLimit(c, pathAhead(c, 150)) + 1) return;
     // Порт: не на мосту й не під ним — фізична зʼявлялася на настилі над дорогою чи падала з нього.
     if (layered(this.rapier, c.pos)) return;
+    // Порт: не впритул до стіни, стовпа чи за краєм полотна (traffic/clearance.ts) — фізична там застрягала.
+    if (!placeFree(this.rapier, this.roads, c.pos, c.heading, PHYS_FREE, PHYS_FREE, PHYS_HALF)) return;
     // Спершу прибрати кінематичне тіло: інакше промінь до землі при створенні влучає в дах самої машини.
     this.deactivate(c);
     const v = this.physics.make(c.kind, c.pos, c.heading, Math.min(PHYS_SPEED, c.speed), c.lit);
@@ -513,8 +519,9 @@ export class Traffic {
         if ((r -= l.length) <= 0) break;
       }
       // На території баз, під'їздах заправок і СТО й зрізалках трафік не ставимо (порт; привидам там не дають зʼявитися
-      // біти 0x10/0x40), як і на смузі, з якої шлях лише на заправку чи зрізалку.
-      if (line.base || line.station || line.shortcut || (line.next.length && line.next.every((n) => (n as RoadLine).station || (n as RoadLine).shortcut))) continue;
+      // біти 0x10/0x40), як і на смузі, з якої шлях лише на заправку чи зрізалку; на сегментах з 0x20/0x40 — теж
+      // (king.exe 0x422d60: ґрунтові дороги ax, двори).
+      if (line.flags & 0x60 || line.base || line.station || line.shortcut || (line.next.length && line.next.every((n) => (n as RoadLine).station || (n as RoadLine).shortcut))) continue;
       const seg = Math.floor(Math.random() * (line.pts.length - 1));
       if (line.pts[seg].distanceTo(player) < minDist) continue;
       this.all.push(this.newCar(line, seg, false));

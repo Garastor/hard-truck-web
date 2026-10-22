@@ -28,7 +28,8 @@ describe.skipIf(!has)('HT2: мережа доріг', () => {
     // Смуги, з яких шлях лише на станцію, без позначки (водій їх оминає, driver offBase): трикутник розвилки перед СТО db
     // і з'їзди розв'язки ba05 на західний вихід, що веде лише до заправки ba14.
     const trap = roads.lines.filter((l) => !l.station && l.next.length > 0 && l.next.every((n) => (n as RoadLine).station));
-    expect(trap.length).toBe(14);
+    // Однобічні з'їзди (біти 4/8, roads.directions) — без зустрічних смуг: було 14.
+    expect(trap.length).toBe(10);
     expect(trap.every((l) => /^room_(db_028#202[45]|ba05#13(27|31|35|36|38|39)):/.test(l.name))).toBe(true);
   });
 
@@ -111,7 +112,8 @@ describe.skipIf(!has)('HT2: мережа доріг', () => {
       forks++;
       if (roads.deadEnd(roads.pick(l)!)) wrong++;
     }
-    expect(forks).toBeGreaterThan(100);
+    // Однобічні дороги (біти 4/8) — без «зустрічних» смуг газоном, що вели в тупик: таких розвилок було понад 100.
+    expect(forks).toBeGreaterThan(40);
     expect(wrong).toBe(0);
     // Розвилка в регіоні ac: друга гілка — тупик (за 400 м кінець без продовження).
     const fork = roads.lines.find((l) => l.name === 'room_ac_034#193:0')!;
