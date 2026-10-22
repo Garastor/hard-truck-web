@@ -190,6 +190,11 @@ export class RoomVisibility {
    * лише з кімнатою, у якій стоять.
    */
   movers: THREE.Object3D | null = null;
+  /**
+   * Кімната найвищої колізійної підлоги під точкою гри (x, y, z) — без префікса регіону (drive: RoomBounds.roomAt);
+   * null — підлоги немає. Для рухомих обʼєктів точніша за сліди: на краю урвища плато й верх схилу — одна висота.
+   */
+  moverFloor: ((x: number, y: number, z: number) => string | null) | null = null;
   private readonly frustum = new THREE.Frustum();
   private readonly vp = new THREE.Matrix4();
   private readonly reached = new Map<string, Planes[]>();
@@ -225,6 +230,20 @@ export class RoomVisibility {
     const out: string[] = [];
     for (const f of this.footprints.values()) for (const e of f.get(k) ?? []) if (!out.includes(e.room)) out.push(e.room);
     return out;
+  }
+
+  /**
+   * Кімнати рухомого обʼєкта: кімната підлоги під ним (moverFloor) і з кімнат сліду — лише її сусіди через портал
+   * (обʼєкт на порталі — у обох, як копія в кімнаті-цілі в king.exe). Підлоги немає — за слідами з висотою.
+   * Машина на дорозі плато aj_005 біля самого краю урвища ak була на висоті верху схилу ak_096 — і слід із висотою
+   * лишав її в ak_096, видимій з дороги біля річки.
+   */
+  moverRooms(x: number, y: number, z: number): string[] {
+    const cands = this.moverRoomsAt(x, y, z);
+    const floor = this.moverFloor?.(x, y, z) ?? null;
+    if (!floor || !this.rooms.has(floor)) return cands;
+    const own = this.rooms.get(floor)!.portals;
+    return [floor, ...cands.filter((n) => n !== floor && (own.some((p) => p.to === n) || (this.rooms.get(n)?.portals.some((p) => p.to === floor) ?? false)))];
   }
 
   /**
@@ -327,7 +346,7 @@ export class RoomVisibility {
       let v = true;
       if (reached) {
         const p = o.position;
-        const rooms = this.moverRoomsAt(p.x, -p.z, p.y);
+        const rooms = this.moverRooms(p.x, -p.z, p.y);
         if (rooms.length) {
           S.center.copy(p);
           S.radius = radius;

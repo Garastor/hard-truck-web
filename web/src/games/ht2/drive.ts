@@ -689,6 +689,11 @@ export class Ht2Drive {
     const o = this.opts;
     this.rapier = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     this.roomBounds = new RoomBounds(this.rapier);
+    // Кімната машин трафіку для видимості — за колізійною підлогою під ними (world/roomVisibility.ts moverFloor).
+    this.world.visibility.moverFloor = (x, y, z) => {
+      const k = this.roomBounds.roomAt(x, y, z);
+      return k ? k.slice(k.indexOf('/') + 1) : null;
+    };
     this.objects = new WorldObjects(this.rapier);
     this.rapier.timestep = 1 / 60;
     // CCD-розвʼязувач Rapier вимкнено: CCD тут ніде не вмикається, а він однаково обрізав крок машини гравця біля
