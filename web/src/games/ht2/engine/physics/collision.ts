@@ -121,7 +121,8 @@ export function levelCollision(b3d: B3d): LevelCollision {
  * (обрізає нащадків). emit — полігон (координати блоку), чи огорожа, тип блоку, покриття (`i2` колайдера).
  */
 function shapes(top: Block, clip0: Plane[], box: Box | null, emit: (p: Poly, fence: boolean, t: number, surface: number, tag: string) => void): void {
-  const visit = (b: Block, clip: Plane[], tag = ''): void => {
+  // sph — сфери-предки (вузол 10), у групі 0 яких лежить вузол: площину 12 обрізаємо ними (див. case 10).
+  const visit = (b: Block, clip: Plane[], tag = '', sph: Sphere[] = []): void => {
     const d = b.data;
     let emitted: Poly[] = [];
     switch (d.t) {
@@ -134,7 +135,11 @@ function shapes(top: Block, clip0: Plane[], box: Box | null, emit: (p: Poly, fen
       case 12:
         // Площина з нормаллю вниз — стеля (вільний простір під нею). Колізії Rapier двосторонні,
         // тож стелю пропускаємо, щоб вантажівка не опинилася на ній (база MENU3D).
-        if (d.shape.kind === 5 && box && d.shape.v[2] > -FLOOR_MIN_NZ) emitted = planePatch(d.shape.v as Plane, box);
+        if (d.shape.kind === 5 && box && d.shape.v[2] > -FLOOR_MIN_NZ) {
+          const plane = d.shape.v as Plane;
+          emitted = planePatch(plane, box);
+          for (const s of sph) emitted = emitted.map((p) => clipAll(p, spherePlanes(plane, s))).filter((p): p is Poly => p !== null);
+        }
         break;
       case 16:
       case 17:
@@ -149,15 +154,28 @@ function shapes(top: Block, clip0: Plane[], box: Box | null, emit: (p: Poly, fen
       case 9:
         if (d.shape.kind === 5 && b.groups) {
           const [nx, ny, nz, w] = d.shape.v;
-          b.groups[0]?.forEach((c) => visit(c, [...clip, [nx, ny, nz, w]], tag));
-          b.groups[1]?.forEach((c) => visit(c, [...clip, [-nx, -ny, -nz, -w]], tag));
+          b.groups[0]?.forEach((c) => visit(c, [...clip, [nx, ny, nz, w]], tag, sph));
+          b.groups[1]?.forEach((c) => visit(c, [...clip, [-nx, -ny, -nz, -w]], tag, sph));
+          return;
+        }
+        break;
+      case 10:
+        // Сфера — поділ простору: група 0 — усередині, 1 — зовні (на всіх ENV/*.b3d: точки полігонів групи 1 — усі
+        // поза сферою, групи 0 — усередині, з виступом ≤ 5 м). Полігони 23 лежать на своїх місцях — їх не ріжемо;
+        // а нескінченна площина 12 у групі 0 діє лише в сфері (ak_096: майданчик z = 30 радіусом 45 м біля дороги —
+        // без обрізання накривав річку, і машина «висіла» над водою).
+        if (d.shape.kind === 1 && b.groups) {
+          const [x, y, z, r] = d.shape.v;
+          b.groups[0]?.forEach((c) => visit(c, clip, tag, [...sph, { c: [x, y, z], r }]));
+          b.groups[1]?.forEach((c) => visit(c, clip, tag, sph));
+          for (const g of b.groups.slice(2)) for (const c of g) visit(c, clip, tag, sph);
           return;
         }
         break;
       case 21:
         if (b.name && b.groups) {
           const key = b.name.replace(/^refer_/i, '');
-          b.groups.forEach((g, gi) => g.forEach((c) => visit(c, clip, `${key}#${gi}`)));
+          b.groups.forEach((g, gi) => g.forEach((c) => visit(c, clip, `${key}#${gi}`, sph)));
           return;
         }
         break;
@@ -167,7 +185,7 @@ function shapes(top: Block, clip0: Plane[], box: Box | null, emit: (p: Poly, fen
       const c = clipAll(p, clip);
       if (c) emit(c, d.t === 20, d.t, surface, tag);
     }
-    for (const g of b.groups ?? []) for (const c of g) visit(c, clip, tag);
+    for (const g of b.groups ?? []) for (const c of g) visit(c, clip, tag, sph);
   };
   visit(top, clip0);
 }
@@ -516,6 +534,38 @@ function planePatch([nx, ny, nz, d]: Plane, box: Box): Poly[] {
   ].map(([s, t]) => [0, 1, 2].map((k) => o[k] + (u[k] * s + v[k] * t) * r));
   const poly = clipAll(quad, boxPlanes(box));
   return poly ? [poly] : [];
+}
+
+interface Sphere {
+  c: number[];
+  r: number;
+}
+
+/** Кількість сторін многокутника, описаного навколо кола перетину площини зі сферою. */
+const SPHERE_SIDES = 24;
+
+/**
+ * Межі кола, по якому площина `n·p + d = 0` перетинає сферу: SPHERE_SIDES площин, перпендикулярних до неї (описаний
+ * многокутник — не менший за коло). Площина сфери не перетинає — площина, що відкидає все.
+ */
+function spherePlanes([nx, ny, nz, d]: Plane, s: Sphere): Plane[] {
+  const len = Math.hypot(nx, ny, nz);
+  if (!len) return [];
+  const n = [nx / len, ny / len, nz / len];
+  const dist = n[0] * s.c[0] + n[1] * s.c[1] + n[2] * s.c[2] + d / len;
+  if (Math.abs(dist) >= s.r) return [[0, 0, 0, -1]];
+  const o = [0, 1, 2].map((k) => s.c[k] - n[k] * dist);
+  const rho = Math.sqrt(s.r * s.r - dist * dist) / Math.cos(Math.PI / SPHERE_SIDES);
+  const u = Math.abs(n[2]) < 0.9 ? normalize(cross(n, [0, 0, 1])) : normalize(cross(n, [1, 0, 0]));
+  const v = cross(n, u);
+  const out: Plane[] = [];
+  for (let i = 0; i < SPHERE_SIDES; i++) {
+    const a = (2 * Math.PI * i) / SPHERE_SIDES;
+    const e = [0, 1, 2].map((k) => u[k] * Math.cos(a) + v[k] * Math.sin(a));
+    // Лишаємо e·p ≤ e·o + rho, тобто −e·p + (e·o + rho) ≥ 0.
+    out.push([-e[0], -e[1], -e[2], e[0] * o[0] + e[1] * o[1] + e[2] * o[2] + rho]);
+  }
+  return out;
 }
 
 function boxPlanes(box: Box): Plane[] {
