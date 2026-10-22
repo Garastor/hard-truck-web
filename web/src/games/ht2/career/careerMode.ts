@@ -481,6 +481,8 @@ export class CareerMode {
         if (c.money < cost) return this.drive.say(this.msg('NOT_ENOUGH_MONEY', 'НЕ ВИСТАЧАЄ ГРОШЕЙ'));
         c.money -= cost;
         c.truck = near.rec.carNode;
+        // Та сама машина продавця — з її фарбуванням (king.exe 0x4738c0 міняє записи машин місцями).
+        c.paint = near.cluster ?? 0;
         this.bought(near);
         c.damage = near.used ? USED_DAMAGE : 0;
         c.dents = near.used ? { FC: 0.25, BC: 0.25 } : {};
@@ -489,7 +491,7 @@ export class CareerMode {
         c.trailerDents = {};
         c.fuel = null;
         markets.sell(m, day, near);
-        this.drive.changeTruck(near.rec.carNode);
+        this.drive.changeTruck(near.rec.carNode, c.paint);
         this.drive.say(`${this.msg('MONEY_PAID', 'СПЛАЧЕНО: ')}$${cost}`);
         this.persist();
         this.closePanel();
@@ -797,6 +799,7 @@ export class CareerMode {
       }
       c.money -= cost;
       c.truck = s.rec.carNode;
+      c.paint = s.cluster ?? 0;
       this.bought(s);
       c.damage = s.used ? USED_DAMAGE : 0;
       // Нова машина — без вмʼятин; вживана — трохи побита спереду й ззаду (гіпотеза).
@@ -805,7 +808,7 @@ export class CareerMode {
       c.trailerDents = {};
       c.fuel = null;
       markets.sell(m, day, s);
-      this.drive.changeTruck(s.rec.carNode);
+      this.drive.changeTruck(s.rec.carNode, c.paint);
       this.persist();
     } finally {
       this.drive.paused = false;
@@ -872,7 +875,7 @@ export class CareerMode {
     if (!(c.money > 10 * tariff + near.price)) return this.drive.say(this.msg('NO_MONEY_TO_HIRE', 'У ВАС НЕ ВИСТАЧАЄ ГРОШЕЙ НА НАЙМ'));
     c.money -= 10 * tariff + near.price;
     c.licences = [...c.licences].sort((a, b) => a - b).slice(1);
-    c.company = [...(c.company ?? []), newDriver(offer, near.rec.carNode, tariff, near.price)];
+    c.company = [...(c.company ?? []), newDriver(offer, near.rec.carNode, tariff, near.price, near.cluster ?? 0)];
     this.drive.markets!.sell(m, day, near);
     this.drive.say(`${offer.name.toUpperCase()} ПРАЦЮЄ НА ВАС`);
     this.persist();

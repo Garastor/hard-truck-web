@@ -36,7 +36,7 @@ import { WeatherRooms } from './world/weatherRooms';
 import { markMover } from './world/roomVisibility';
 import { WIN_SHARE } from './career/share';
 import { Signs } from './world/signs';
-import { Markets, parseMarkets } from './career/market';
+import { DEALER_CARS_SHARE, dealerKinds, Markets, parseMarkets } from './career/market';
 import { WorldMap, type MapPoint } from './world/worldMap';
 import { MapReveal } from './world/mapReveal';
 import { GlassRain } from './engine/render/glassRain';
@@ -377,6 +377,10 @@ export class Ht2Drive {
   /** Напівпричіп (лише в тягачів). */
   trailer: Trailer | null = null;
   private def!: TruckDef;
+  /** Фарбування машини гравця — кластер TRUCKS.OVL з нуля (кар'єра: `career.paint`, мережа: колір з лобі). */
+  private paint = 0;
+  /** Перевірка частки капіталу для легковиків на ринках (раз на секунду; −1 — ще не перевіряли). */
+  private dealerShareTimer = -1;
   /** Керування й двигун — криві Дальнобойщиків 2 (телеметрія king.exe, controls.ts). */
   private readonly input = new Input(HT2_INPUT);
   private audio: EngineAudio | null = null;
@@ -715,12 +719,17 @@ export class Ht2Drive {
     }
     const live = cnf ? assoc(assoc(cnf, 'playertypes')?.slice(1) ?? [], 'live') : undefined;
     const want = o.career?.truck || o.truck || (live ? str(live[2]) : 'ZilR');
-    const list = o.career ? drivable(this.trucks) : selectable(this.trucks);
-    const rec = list.find((r) => r.carNode.toLowerCase() === want.toLowerCase()) ?? list[0];
+    // Кар'єра — і легковики: їх продають на ринках (king.exe, re/notes/ht2/company.md §5).
+    const rec = selectable(this.trucks).find((r) => r.carNode.toLowerCase() === want.toLowerCase()) ?? drivable(this.trucks)[0];
     const def = rec && truckDef(this.trucks, rec);
     if (!def) throw new Error('Немає моделі вантажівки');
     this.def = def;
-    if (o.career && !o.career.truck) o.career.truck = def.carNode;
+    // Нова кар'єра — машина й фарбування з GAME.CNF `(live 1 "ZilR" 1)` (king.exe 0x4147e0: модель + кластер).
+    if (o.career && !o.career.truck) {
+      o.career.truck = def.carNode;
+      o.career.paint = live && str(live[2]).toLowerCase() === def.carNode.toLowerCase() ? num(live[3], 0) : 0;
+    }
+    this.paint = o.career ? (o.career.paint ?? 0) : (o.color ?? 0);
     this.tank = rec.tank * this.tuning.tank;
     this.cabPrefix = rec.prefixCab;
     this.fuelConsumption = rec.fuelConsumption;
@@ -765,7 +774,7 @@ export class Ht2Drive {
     // Динамічна модель: перемикачі пошкоджень і вогнів (вмʼятини, габарити).
     const model = buildTruckModel(this.trucks.asm, def, true);
     if (!model) throw new Error(`Модель ${def.carNode} відсутня`);
-    if (o.color) recolor(model.root, this.trucks, o.color + 1);
+    if (this.paint > 0) recolor(model.root, this.trucks, this.paint + 1);
     this.cargoMass = o.career?.order ? o.career.order.goods.mass * o.career.order.units : 0;
     this.truck = new TruckVehicle(this.rapier, def, model, spawn, this.setup(this.cargoMass));
     this.truck.visual.userData.model = model;
@@ -888,6 +897,11 @@ export class Ht2Drive {
     this.semiTypes = semiKinds(vehicles);
     this.vehiclePowers = vehiclePowers(vehicles);
     this.vehiclePriceMap = vehiclePrices(vehicles);
+    if (this.markets) {
+      // Продавці — типи evehicles.sch з фарбуванням; частка легковиків — від густоти трафіку.
+      this.markets.kinds = dealerKinds(vehicles, this.trucks);
+      this.markets.density = o.settings?.traffic ?? 1;
+    }
     // Причепи на базах — і у вільній їзді (на прохання користувача; без дорожніх місій і збереження), не в гонці.
     if (!o.race && this.semiTypes.length) {
       const limit = cnf ? num(assoc(cnf, 'semitrailers')?.[1], 28) : 28;
@@ -1511,6 +1525,7 @@ export class Ht2Drive {
     const forward = this.truck.forward();
     const model = buildTruckModel(this.trucks.asm, this.def, true);
     if (!model) return;
+    if (this.paint > 0) recolor(model.root, this.trucks, this.paint + 1);
     this.world.scene.remove(this.truck.visual);
     this.truck.dispose();
     this.truck = new TruckVehicle(this.rapier, this.def, model, { position, forward }, this.setup(mass));
@@ -1771,7 +1786,7 @@ export class Ht2Drive {
     const drivers = c?.company ?? [];
     if (!cm || !c || (!drivers.length && !this.truckers?.hired.size && !this.hiredMarks.length)) return;
     const hr = (this.hiredRoads ??= new HiredOnRoads(this.roads));
-    const want: { name: string; carNode: string; pos: THREE.Vector3; forward: THREE.Vector3 }[] = [];
+    const want: { name: string; carNode: string; paint: number; pos: THREE.Vector3; forward: THREE.Vector3 }[] = [];
     // Абстрактна швидкість (0x41a9d0): не менше 13,89 м/с або згладжена швидкість гравця.
     const speed = Math.max(HIRED_MIN_SPEED, Math.abs(this.truck.speedKmh) / 3.6);
     const dock = (id: number) => {
@@ -1808,7 +1823,7 @@ export class Ht2Drive {
         continue;
       }
       const at = hr.at(d);
-      if (at) want.push({ name: d.name, carNode: d.truck, ...at });
+      if (at) want.push({ name: d.name, carNode: d.truck, paint: d.paint ?? 0, ...at });
       if (!at) continue;
       // Рейс як у далекобійника ІІ (0x4185d0): порожнім — до найближчого складу, там вантаж до іншого складу.
       if (!d.trip) {
@@ -2232,11 +2247,12 @@ export class Ht2Drive {
   }
 
   /** Інша вантажівка (купівля): нова модель і фізика на тому ж місці, свій бак, кабіна, фари. */
-  changeTruck(carNode: string): void {
-    // Кар'єра купує лише вантажівки; вільна їзда (шестерня) — будь-яку машину, і легкову.
+  changeTruck(carNode: string, paint = 0): void {
+    // Будь-яка машина з моделлю, і легкова (кар'єра: ринки продають і легковики); paint — фарбування (кластер з нуля).
     const rec = selectable(this.trucks).find((r) => r.carNode === carNode);
     const def = rec && truckDef(this.trucks, rec);
     if (!rec || !def) return;
+    this.paint = paint;
     this.def = def;
     this.tank = rec.tank * this.tuning.tank;
     this.fuelConsumption = rec.fuelConsumption;
@@ -3130,7 +3146,8 @@ export class Ht2Drive {
     const here = this.truck.visual.position.clone();
     this.truckers?.dropHired(d.name);
     [c.truck, d.truck] = [d.truck, c.truck];
-    this.changeTruck(c.truck);
+    [c.paint, d.paint] = [d.paint ?? 0, c.paint ?? 0];
+    this.changeTruck(c.truck, c.paint);
     hr.place(d, here);
     if (there && thereFwd) this.truck.reset({ position: this.groundAtPublic(there), forward: thereFwd });
     this.say(`ВИ ЗА КЕРМОМ ${c.truck}`);
@@ -3837,7 +3854,17 @@ export class Ht2Drive {
     this.updateFire(dt);
     this.updateFreeDamage(dt);
     this.updateMafia(dt);
-    if (this.markets && this.careerMode) this.markets.update(this.truck.visual.position, Math.floor(this.careerMode.career.time / 86400));
+    if (this.markets && this.careerMode) {
+      const day = Math.floor(this.careerMode.career.time / 86400);
+      // Частка капіталу ≥ 52 % (king.exe 0x41fcf0, при завантаженні — 0x434780): продавці мають і «тупі» легковики.
+      // Під час гри — з наступного дня (розставлені сьогодні машини не міняються), при завантаженні — одразу.
+      const first = this.dealerShareTimer < 0;
+      if (this.markets.carsFrom === Infinity && (first || (this.dealerShareTimer -= dt) <= 0)) {
+        if (this.careerMode.marketShare() >= DEALER_CARS_SHARE) this.markets.carsFrom = first ? 0 : day + 1;
+        this.dealerShareTimer = 1;
+      }
+      this.markets.update(this.truck.visual.position, day);
+    }
     this.obstacles?.update(dt);
     const sign = this.signs?.update(this.truck.visual.position, this.truck.forward());
     if (sign) this.say(sign, 6);

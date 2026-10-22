@@ -5,7 +5,7 @@ import { GROUP_WORLD, groups } from '../engine/physics/world';
 import { isList, num, str, type SExpr } from '../formats/sexpr';
 import type { Way } from '../formats/way';
 import type { TechRecord } from '../formats/tech';
-import { drivable, truckDef, type Ht2Trucks } from '../vehicles/trucks';
+import { drivable, selectable, truckDef, type Ht2Trucks } from '../vehicles/trucks';
 import { toThree } from '../world/world';
 import { ukName } from '../ui/uk';
 import { recolor } from '../traffic/traffic';
@@ -23,8 +23,11 @@ import { hireOffer } from './company';
  * зайнято найменше (перша з рівних), місце на ній — випадкове вільне. Отже на звичайних ринках — лише нові, вживані
  * й крадені — на стоянках-схованках.
  *
+ * Машина продавця — тип evehicles.sch (модель + фарбування; re/notes/ht2/company.md §5, `pickDealerKind`).
+ *
  * Гіпотези порту: набір перераховується щодня гри (у king.exe продавців дозаповнює задача updateDealers, далі
- * мінімальної відстані від гравця), модель — випадкова з придатних до їзди; вживана дешевша на 35 % і побита.
+ * мінімальної відстані від гравця), тип — випадковий з тими самими частками (king.exe — перемішаний список по колу);
+ * вживана дешевша на 35 % і побита.
  */
 const SHOW_R = 450;
 /** Замовлену машину приганяють на ринок далі цієї відстані від абонента, м (0x64b860). */
@@ -80,7 +83,7 @@ export interface ForSale {
   stolen?: boolean;
   price: number;
   spot: number;
-  /** Фарбування замовленої машини (кластер з нуля). */
+  /** Фарбування машини — кластер TRUCKS.OVL з нуля (тип evehicles.sch продавця; переходить до покупця). */
   cluster?: number;
   /** Замовлена рацією. */
   ordered?: boolean;
@@ -139,6 +142,57 @@ export function parseMarkets(mods: Iterable<{ sch: SExpr[] }>, ways: Iterable<{ 
   return out;
 }
 
+/** Тип машини продавця з evehicles.sch: модель, фарбування (кластер з нуля), легковик, чи має користувача trucker. */
+export interface DealerKind {
+  carNode: string;
+  cluster: number;
+  car: boolean;
+  trucker: boolean;
+}
+
+/**
+ * Типи для продавців (king.exe 0x42fa90 список 7 → копія для типу 9): записи з користувачем `dumb` чи `trucker`, крім
+ * напівпричепів; лише моделі, які порт може водити (є запис vehicle.tech і модель).
+ */
+export function dealerKinds(sch: SExpr[], trucks: Ht2Trucks): DealerKind[] {
+  const ok = new Set(selectable(trucks).map((r) => r.carNode));
+  const out: DealerKind[] = [];
+  for (const e of sch) {
+    if (!isList(e) || e[0] !== 'vehicle' || e[4] === 'semitrailer') continue;
+    const users = isList(e[5]) ? e[5] : [e[5]];
+    const trucker = users.includes('trucker');
+    const model = str(e[2]);
+    if ((!trucker && !users.includes('dumb')) || !ok.has(model)) continue;
+    out.push({ carNode: model, cluster: num(e[3]), car: e[4] === 'car', trucker });
+  }
+  return out;
+}
+
+/** Частка капіталу гравця, з якої продавці мають і «тупі» легковики (king.exe 0x64b928, прапорець 0x68d1a0). */
+export const DEALER_CARS_SHARE = 0.52;
+
+/** Частка легковиків у списку типів 7/9 (0x42fa90): A береться, поки взято_A < взято_B · 0,952·x. */
+const CAR_SHARE_K = 20 / 21;
+
+/**
+ * Тип машини нового продавця (king.exe 0x415940, гілка 9): з групи легковиків з імовірністю kx/(1 + kx), інакше з
+ * решти; у групі кожен тип (тобто кожне фарбування) рівноймовірний. Приймається тип з `trucker`, а з `dumb` — лише
+ * коли allCars (частка капіталу ≥ 52 %); відкинутий — наступна спроба (у king.exe — наступний у списку).
+ */
+export function pickDealerKind(kinds: readonly DealerKind[], allCars: boolean, density: number, rnd: () => number): DealerKind | null {
+  const cars = kinds.filter((k) => k.car);
+  const rest = kinds.filter((k) => !k.car);
+  const x = CAR_SHARE_K * Math.max(0, Math.min(1, density));
+  const pCar = !rest.length ? 1 : !cars.length ? 0 : x / (1 + x);
+  for (let i = 0; i < 100; i++) {
+    const group = rnd() < pCar ? cars : rest;
+    if (!group.length) continue;
+    const k = group[Math.floor(rnd() * group.length)];
+    if (k.trucker || allCars) return k;
+  }
+  return kinds.find((k) => k.trucker || allCars) ?? null;
+}
+
 /** Псевдовипадкові числа з зерна (mulberry32). */
 function seeded(seed: number): () => number {
   let a = seed >>> 0;
@@ -163,6 +217,12 @@ export class Markets {
   private readonly sold = new Set<string>();
   /** Замовлені рацією машини (зберігаються в кар'єрі). */
   ordered: OrderedCar[] = [];
+  /** Типи машин продавців з evehicles.sch (dealerKinds). */
+  kinds: DealerKind[] = [];
+  /** Густота трафіку 0…1 (частка легковиків серед продавців). */
+  density = 1;
+  /** З цього дня гри продають і «тупі» легковики (king.exe 0x68d1a0: частка капіталу гравця ≥ 52 %). */
+  carsFrom = Infinity;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -206,11 +266,29 @@ export class Markets {
   /** Що продається на ринку (чи стоянці-схованці) в цей день гри. */
   stock(m: Market, day: number): ForSale[] {
     const pool = drivable(this.trucks).filter((r) => !/^Storm/i.test(r.carNode));
+    const allCars = day >= this.carsFrom;
     const rnd = seeded(m.id * 7919 + day * 104729);
+    // Продавець — тип evehicles (модель + фарбування), без даних — модель з vehicle.tech у першому фарбуванні.
+    const dealer = (): { rec: TechRecord; cluster: number } | null => {
+      const k = pickDealerKind(this.kinds, allCars, this.density, rnd);
+      const rec = k && this.trucks.records.find((r) => r.carNode === k.carNode);
+      if (rec) return { rec, cluster: k.cluster };
+      const r = pool[Math.floor(rnd() * pool.length)];
+      return r ? { rec: r, cluster: 0 } : null;
+    };
+    // Шукач роботи — далекобійник (king.exe тип 2) на своїй вантажівці у своєму фарбуванні.
+    const seeker = (): { rec: TechRecord; cluster: number } | null => {
+      const ks = this.kinds.filter((k) => k.trucker && !k.car && pool.some((r) => r.carNode === k.carNode));
+      const k = ks.length ? ks[Math.floor(rnd() * ks.length)] : null;
+      const rec = k && pool.find((r) => r.carNode === k.carNode);
+      if (rec) return { rec, cluster: k.cluster };
+      const r = pool[Math.floor(rnd() * pool.length)];
+      return r ? { rec: r, cluster: 0 } : null;
+    };
     const plan = this.plan(day).get(m.id);
     const out: ForSale[] = [];
     m.spots.forEach((_, spot) => {
-      const rec = pool[Math.floor(rnd() * pool.length)];
+      const pick = dealer();
       // Замовлена машина стоїть на своєму місці, доки її не куплять (king.exe 0x433b60: звичайна машина на продаж).
       const own = this.ordered.find((o) => o.market === m.id && o.spot === spot);
       const oRec = own && this.trucks.records.find((r) => r.carNode === own.carNode);
@@ -219,17 +297,18 @@ export class Markets {
         return;
       }
       const kind = plan?.get(spot);
-      if (kind === undefined || !rec || this.sold.has(`${m.id}:${day}:${spot}`)) return;
+      if (kind === undefined || !pick || this.sold.has(`${m.id}:${day}:${spot}`)) return;
+      const { rec, cluster } = pick;
       const used = kind === 1;
       const stolen = kind === 2;
-      out.push({ rec, used, stolen, price: Math.round(rec.price * (used ? USED_DISCOUNT : stolen ? STOLEN_DISCOUNT : 1)), spot });
+      out.push({ rec, used, stolen, price: Math.round(rec.price * (used ? USED_DISCOUNT : stolen ? STOLEN_DISCOUNT : 1)), spot, cluster });
     });
     // Водій, що шукає роботу, — на вільному звичайному місці ринку (не схованки й не місце-місто для замовлених).
     if (!m.hidden) {
       const free = m.flags.map((fl, i) => (fl & 4 || out.some((o) => o.spot === i) ? -1 : i)).filter((i) => i >= 0);
       const offer = hireOffer(m.id, day, free, ['?']);
-      const rec = pool[Math.floor(rnd() * pool.length)];
-      if (offer && rec && !this.sold.has(`${m.id}:${day}:${offer.spot}`)) out.push({ rec, used: false, price: rec.price, spot: offer.spot, hire: true });
+      const pick = seeker();
+      if (offer && pick && !this.sold.has(`${m.id}:${day}:${offer.spot}`)) out.push({ rec: pick.rec, used: false, price: pick.rec.price, spot: offer.spot, hire: true, cluster: pick.cluster });
     }
     return out;
   }

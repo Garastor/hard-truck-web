@@ -20,6 +20,8 @@ export interface HiredDriver {
   name: string;
   /** car_node машини водія. */
   truck: string;
+  /** Фарбування машини — кластер TRUCKS.OVL з нуля (без поля — перше). */
+  paint?: number;
   /** Тариф, $/км (до версії 2 збереження — $ за 10 км). */
   tariff: number;
   /** Номер фото escphotoNN. */
@@ -70,8 +72,8 @@ export function hireOffer(market: number, day: number, free: readonly number[], 
 }
 
 /** Новий найманий: аванс 10·тариф (уже виплачений при наймі). */
-export function newDriver(o: { name: string; photo: number }, truck: string, tariff: number, value: number): HiredDriver {
-  return { name: o.name, truck, tariff, photo: o.photo, km: 0, advance: ADVANCE_KM * tariff, profit: 0, value, v: 2 };
+export function newDriver(o: { name: string; photo: number }, truck: string, tariff: number, value: number, paint = 0): HiredDriver {
+  return { name: o.name, truck, paint, tariff, photo: o.photo, km: 0, advance: ADVANCE_KM * tariff, profit: 0, value, v: 2 };
 }
 
 /** Старий запис (тариф за 10 км, без вартості машини) — на формули king.exe. */

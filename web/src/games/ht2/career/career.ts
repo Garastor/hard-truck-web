@@ -47,6 +47,11 @@ export interface Ht2Career {
   photo?: number;
   money: number;
   truck: string;
+  /**
+   * Фарбування машини — кластер TRUCKS.OVL з нуля (тип evehicles.sch; старт — GAME.CNF `live 1 "ZilR" 1`, купівля —
+   * фарбування машини продавця). Без поля (старі збереження) — перше.
+   */
+  paint?: number;
   /** Пошкодження машини 0…1. */
   damage: number;
   /** Пальне в баку, л (null — повний бак, ще не їздили). */

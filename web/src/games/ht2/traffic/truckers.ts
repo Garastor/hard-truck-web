@@ -197,7 +197,7 @@ export class Truckers {
    * абстрактною позицією на дорозі; ближче HIRED_ON у завантаженому регіоні — машина з автопілотом, далі HIRED_OFF —
    * знову абстрактний (позицію веде career/hired.ts). Звільнені — прибираються.
    */
-  syncHired(want: readonly { name: string; carNode: string; pos: THREE.Vector3; forward: THREE.Vector3 }[], player: THREE.Vector3): void {
+  syncHired(want: readonly { name: string; carNode: string; paint?: number; pos: THREE.Vector3; forward: THREE.Vector3 }[], player: THREE.Vector3): void {
     const names = new Set(want.map((w) => w.name));
     // Найнятий — уже не вільний далекобійник світу: його веде career/hired.ts (king.exe — той самий запис, порт — окремо).
     for (let i = this.list.length - 1; i >= 0; i--) if (this.list[i].member && names.has(this.list[i].name)) this.demote(i, false);
@@ -212,7 +212,8 @@ export class Truckers {
       const line = this.roads.nearest(w.pos);
       if (!line || !this.loaded(line.line.region)) continue;
       const rec = this.records().find((r) => r.carNode === w.carNode);
-      const r = rec && this.make(rec, 0, w.pos, w.forward, w.name);
+      // Найманий лишається на своїй машині з її фарбуванням (king.exe 0x476bc0 не чіпає запис машини).
+      const r = rec && this.make(rec, w.paint ?? 0, w.pos, w.forward, w.name);
       if (r) this.hired.set(w.name, r);
     }
   }
