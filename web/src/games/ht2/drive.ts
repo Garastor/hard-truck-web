@@ -938,7 +938,7 @@ export class Ht2Drive {
       const freight = goods.length ? new Freight(this.roads, findStores(this.world.regions.values(), parseTowns(regionMods)), goods) : null;
       // Далекобійників у світі — `aitruck N` з playertypes GAME.CNF (усі існують весь час, traffic/fleet.ts).
       const ai = assoc(cnf ? (assoc(cnf, 'playertypes')?.slice(1) ?? []) : [], 'aitruck');
-      this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r), truckerKinds(vehicles, this.trucks), Math.round(4 * (o.settings?.traffic ?? 1)), this.semiTypes, freight, ai ? num(ai[1]) : AITRUCK);
+      this.truckers = new Truckers(this, this.roads, truckerNames(names), (r) => this.world.loaded.has(r), truckerKinds(vehicles, this.trucks), this.semiTypes, freight, ai ? num(ai[1]) : AITRUCK);
       // Збережені далекобійники кар'єри — на своїх дорогах, з рейсами й вантажем.
       if (o.career?.fleet) this.truckers.restore(o.career.fleet);
     }

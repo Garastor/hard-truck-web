@@ -30,14 +30,19 @@ import { Blinkers } from './blinkers';
  * абстрактний рух уздовж ліній). Ближче PHYS_ON у завантаженому регіоні водій стає машиною (вантажівки з кузовом і
  * тягачі класу trucker типів lorry і tractor з evehicles.sch: `(vehicle MERCEDES_LORRY2 "MercedesR" 1 lorry trucker …)`,
  * `(vehicle VOLVO_TRACTOR1 "Volvo" 0 tractor trucker …)`, число — варіант фарбування) на тому ж автопілоті, що й гравець
- * (клавіша P), з тим самим рейсом і вантажем; далі PHYS_OFF — знову абстрактний з позицією, де була машина. Машин
- * одночасно — не більше max (4 × повзунок трафіку), ближчі — першими. Це повноцінні тіла фізики: зіткнення з ними — як з
+ * (клавіша P), з тим самим рейсом і вантажем; далі PHYS_OFF — знову абстрактний з позицією, де була машина. Межі
+ * кількості машин немає (на прохання користувача: з межею 4 «зайві» водії поруч їхали невидимими); ближчі — першими,
+ * не більше PROMOTE_PER_TICK за раз (створення машини з причепом — 22–40 мс на ПК). Це повноцінні тіла фізики: зіткнення з ними — як з
  * гравцем. Тягач — з напівпричепом (тип — як presents: SEMITRAILER1–6, SEMITANK1–4, у «Шторма» — URAGAN_SEMITRAILER;
  * гіпотеза порту: у king.exe ШІ бере причіп сам, як гравець). Возять вантажі, як далекобійники ІІ king.exe
  * (traffic/freight.ts): порожній — до найближчого складу на місце з замовленням, там вантажиться, везе за маршрутом
  * мережі до складу призначення, розвантажується й бере наступне.
  */
-const MAX = 4;
+/**
+ * Скільки водіїв стає машинами за одну перевірку (PROMOTE_EVERY): поява тягача з причепом — 22–40 мс на ПК, дві
+ * разом давали ривок 70 мс.
+ */
+const PROMOTE_PER_TICK = 1;
 /** Скільки далекобійників у світі (GAME.CNF aitruck). */
 export const AITRUCK = 50;
 /**
@@ -56,8 +61,6 @@ const PROMOTE_EVERY = 0.5;
 const FLEET_EVERY = 1;
 /** Стоїть довше — застряг, с. */
 const STUCK_FOR = 30;
-/** Додаткові місця машин для суперників на замовленні гравця (порт; повзунок трафіку їх не міняє). */
-const RIVAL_EXTRA = 3;
 /** Згладжування швидкості гравця для «гумової нитки», с (гіпотеза порту). */
 const PLAYER_SMOOTH = 10;
 /** Після перекидання чи застрягання — абстрактний щонайменше стільки, с, і машиною лише поза видимістю. */
@@ -145,7 +148,6 @@ export class Truckers {
     private readonly names: string[],
     private readonly loaded: (region: string) => boolean,
     private readonly kinds: { model: string; variant: number }[] = [],
-    private readonly max = MAX,
     /** Типи напівпричепів (evehicles.sch, presents.semiKinds) — для тягачів. */
     private readonly semis: SemiKind[] = [],
     /** Склади й товари для рейсів (null — без рейсів, вантаж — випадкова частка місткості). */
@@ -445,7 +447,7 @@ export class Truckers {
 
   /**
    * Далекобійники світу: абстрактний рух і рейси; ближчі PHYS_ON у завантаженому регіоні стають машинами (ближчі —
-   * першими, не більше max).
+   * першими, по PROMOTE_PER_TICK за раз).
    */
   private fleetStep(dt: number, player: THREE.Vector3, playerSpeed: number): void {
     const f = (this.fleet ??= this.makeFleet(player));
@@ -472,34 +474,18 @@ export class Truckers {
       .map((m) => ({ m, ...f.at(m) }))
       .map((c) => ({ ...c, d: c.pos.distanceTo(player) }))
       .filter((c) => c.d < PHYS_ON)
-      // Суперники на замовленні гравця — першими (порт: інакше місця займали звичайні водії, а суперник лишався невидимим).
+      // Суперники на замовленні гравця — першими, далі ближчі.
       .sort((a, b) => (a.m.rival ? 0 : 1) - (b.m.rival ? 0 : 1) || a.d - b.d);
+    let made = 0;
     for (const c of near) {
-      // Суперникам — ще RIVAL_EXTRA місць понад max (їх до 7, і всі поруч з гравцем); і цього мало — місце звільняє
-      // найдальша звичайна машина, якої не видно.
-      const cap = c.m.rival ? this.max + RIVAL_EXTRA : this.max;
-      if (this.list.length >= cap && c.m.rival) this.yieldSlot(player);
-      if (this.list.length >= cap) continue;
+      if (made >= PROMOTE_PER_TICK) break;
       if (c.d < FREE_R || this.rigs.some((r) => r.truck.visual.position.distanceTo(c.pos) < FREE_R)) continue;
       if (c.m.hidden && (this.drive.traffic?.view?.sees(c.pos) ?? false)) continue;
       // Порт: не на мосту й не під ним (traffic/layers.ts) — тягач з причепом опинявся на настилі над дорогою.
       if (layered(this.drive.rapierWorld, c.pos)) continue;
       this.materialize(c.m, c.pos, c.forward);
+      made++;
     }
-  }
-
-  /** Звичайну машину водія світу (не суперника), найдальшу з невидимих, — знову абстрактною (місце для суперника). */
-  private yieldSlot(player: THREE.Vector3): void {
-    let best = -1;
-    let bd = -1;
-    this.list.forEach((r, i) => {
-      if (!r.member || r.member.rival) return;
-      const p = r.truck.visual.position;
-      if (this.drive.traffic?.view?.sees(p)) return;
-      const d = p.distanceTo(player);
-      if (d > bd) (bd = d), (best = i);
-    });
-    if (best >= 0) this.demote(best, false);
   }
 
   /** Далекобійник світу стає машиною: та сама модель, напівпричіп, вантаж і рейс. */
