@@ -1,5 +1,5 @@
 // Площина 12 у групі 0 вузла-сфери (10) діє лише всередині сфери — на даних регіону ak (кімната ak_096 над річкою).
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseB3d } from '@ht2/engine/formats/b3d';
@@ -9,8 +9,13 @@ import { HT2_DIR } from '../../gameDirs';
 const file = join(HT2_DIR, 'ENV', 'ak.b3d');
 
 describe.skipIf(!existsSync(file))('HT2: площини 12 у сферах (ak_096)', () => {
-  const col = levelCollision(parseB3d(new Uint8Array(readFileSync(file))));
-  const flat = col.floors.filter((p, i) => col.floorRoom[i].toLowerCase() === 'room_ak_096' && p.every((q) => Math.abs(q[2] - 30) < 1e-3) && p.length > 8);
+  // Читати лише перед тестами: тіло describe виконується й тоді, коли його пропущено (CI без файлів гри).
+  let col: ReturnType<typeof levelCollision>;
+  let flat: number[][][];
+  beforeAll(() => {
+    col = levelCollision(parseB3d(new Uint8Array(readFileSync(file))));
+    flat = col.floors.filter((p, i) => col.floorRoom[i].toLowerCase() === 'room_ak_096' && p.every((q) => Math.abs(q[2] - 30) < 1e-3) && p.length > 8);
+  });
 
   it('майданчик z = 30 — коло радіусом ≈ 45 м довкола (−2300, −650), а не вся кімната', () => {
     expect(flat.length).toBe(1);
