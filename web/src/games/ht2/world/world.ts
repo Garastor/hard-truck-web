@@ -15,7 +15,7 @@ import { TREE_LIGHT, buildGlows, buildTrees, type TreeUpdate } from './trees';
 import { illumOn, sunDirection, sunHeight } from './climate';
 import { LensFlare } from './lensFlare';
 import { mergeStatic } from './mergeStatic';
-import { RoomVisibility, readPortals, roomFootprints, type RoomPortal } from './roomVisibility';
+import { RoomVisibility, readPortals, roomFootprints, type Footprint, type RoomPortal } from './roomVisibility';
 import { walk } from '../engine/formats/b3d';
 import { parseHeightmap } from '../formats/heightmap';
 import { buildTerrainMesh, terrainHeights } from './terrain';
@@ -56,7 +56,7 @@ export interface LoadedRegion {
   terrain?: Float32Array;
   /** Портали кімнат (блок 30) і сліди кімнат на плані — видимість кімнат (roomVisibility.ts). */
   portals: Map<string, RoomPortal[]>;
-  footprint: Map<number, string[]>;
+  footprint: Footprint;
 }
 
 /** Точка гри → Three.js. */

@@ -72,12 +72,30 @@ export function readPortals(b3d: B3d): Map<string, RoomPortal[]> {
 const CELL = 8;
 const cellKey = (ix: number, iy: number): number => (ix + 32768) * 65536 + (iy + 32768);
 
+/** Кімната в клітинці сліду й висоти її трикутників над цією клітинкою (z гри, за обмежувальними коробками). */
+export interface FootCell {
+  room: string;
+  z0: number;
+  z1: number;
+}
+
+/** Сліди кімнат: клітинка плану → кімнати з висотами. */
+export type Footprint = Map<number, FootCell[]>;
+
+/**
+ * Запас висоти, з яким рухомий обʼєкт належить кімнаті клітинки: нижче її трикутників — до BELOW, вище — до ABOVE м
+ * (позиція обʼєкта — низ моделі; гелікоптер, що летить вище, — у найближчій за висотою кімнаті).
+ */
+const MOVER_BELOW = 3;
+const MOVER_ABOVE = 8;
+
 /**
  * Сліди кімнат на плані: клітинка CELL × CELL → кімнати, чиї трикутники (за обмежувальним прямокутником) її
- * зачіпають. Будується частинами (pause — віддати кадр, як і решта завантаження регіону).
+ * зачіпають, з діапазоном висот цих трикутників. Будується частинами (pause — віддати кадр, як і решта завантаження
+ * регіону).
  */
-export async function roomFootprints(rooms: THREE.Object3D[], root: THREE.Object3D, pause: () => Promise<void>): Promise<Map<number, string[]>> {
-  const cells = new Map<number, string[]>();
+export async function roomFootprints(rooms: THREE.Object3D[], root: THREE.Object3D, pause: () => Promise<void>): Promise<Footprint> {
+  const cells: Footprint = new Map();
   root.updateMatrixWorld(true);
   const toRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
   const m = new THREE.Matrix4();
@@ -105,12 +123,21 @@ export async function roomFootprints(rooms: THREE.Object3D[], root: THREE.Object
         const x1 = Math.floor(Math.max(a.x, b.x, c.x) / CELL);
         const y0 = Math.floor(Math.min(a.y, b.y, c.y) / CELL);
         const y1 = Math.floor(Math.max(a.y, b.y, c.y) / CELL);
+        const z0 = Math.min(a.z, b.z, c.z);
+        const z1 = Math.max(a.z, b.z, c.z);
         for (let ix = x0; ix <= x1; ix++)
           for (let iy = y0; iy <= y1; iy++) {
             const k = cellKey(ix, iy);
             const list = cells.get(k);
-            if (!list) cells.set(k, [name]);
-            else if (list[list.length - 1] !== name && !list.includes(name)) list.push(name);
+            if (!list) cells.set(k, [{ room: name, z0, z1 }]);
+            else {
+              const e = list[list.length - 1].room === name ? list[list.length - 1] : list.find((f) => f.room === name);
+              if (!e) list.push({ room: name, z0, z1 });
+              else {
+                if (z0 < e.z0) e.z0 = z0;
+                if (z1 > e.z1) e.z1 = z1;
+              }
+            }
           }
         work += (x1 - x0 + 1) * (y1 - y0 + 1) + 4;
         if (work > 60000) {
@@ -148,7 +175,7 @@ const MAX_STEPS = 3000;
 
 export class RoomVisibility {
   private readonly rooms = new Map<string, RoomEntry>();
-  private readonly footprints = new Map<string, Map<number, string[]>>();
+  private readonly footprints = new Map<string, Footprint>();
   /** Кімнати регіону (для вивантаження). */
   private readonly byRegion = new Map<string, string[]>();
   /** Кімнати кожної камери з минулого кадру й де вона була. */
@@ -167,7 +194,7 @@ export class RoomVisibility {
   private readonly vp = new THREE.Matrix4();
   private readonly reached = new Map<string, Planes[]>();
 
-  addRegion(id: string, rooms: THREE.Object3D[], portals: Map<string, RoomPortal[]>, footprint: Map<number, string[]>, root: THREE.Object3D): void {
+  addRegion(id: string, rooms: THREE.Object3D[], portals: Map<string, RoomPortal[]>, footprint: Footprint, root: THREE.Object3D): void {
     root.updateMatrixWorld(true);
     const names: string[] = [];
     for (const g of rooms) {
@@ -196,8 +223,32 @@ export class RoomVisibility {
   roomsAt(x: number, y: number): string[] {
     const k = cellKey(Math.floor(x / CELL), Math.floor(y / CELL));
     const out: string[] = [];
-    for (const f of this.footprints.values()) for (const n of f.get(k) ?? []) if (!out.includes(n)) out.push(n);
+    for (const f of this.footprints.values()) for (const e of f.get(k) ?? []) if (!out.includes(e.room)) out.push(e.room);
     return out;
+  }
+
+  /**
+   * Кімнати рухомого обʼєкта в точці гри (x, y, z): зі сліду — лише ті, чиї трикутники над клітинкою сягають його
+   * висоти (MOVER_BELOW/ABOVE). Кімнати на плані перекриваються по висоті (плато над урвищем ak над схилом і річкою):
+   * без висоти машину на плато малювала видима нижня кімната — крізь незамальоване плато («рентген»). Жодна не
+   * сягає — найближча за висотою.
+   */
+  moverRoomsAt(x: number, y: number, z: number): string[] {
+    const k = cellKey(Math.floor(x / CELL), Math.floor(y / CELL));
+    const out: string[] = [];
+    let near: string | null = null;
+    let nearD = Infinity;
+    for (const f of this.footprints.values())
+      for (const e of f.get(k) ?? []) {
+        const d = z < e.z0 ? e.z0 - z : z > e.z1 ? z - e.z1 : 0;
+        if ((z >= e.z0 - MOVER_BELOW && z <= e.z1 + MOVER_ABOVE) || d === 0) {
+          if (!out.includes(e.room)) out.push(e.room);
+        } else if (d < nearD) {
+          nearD = d;
+          near = e.room;
+        }
+      }
+    return out.length || !near ? out : [near];
   }
 
   /** Кімнати камери: перехід через портал своєї кімнати; поза слідом своєї кімнати чи вперше — за слідами. */
@@ -276,7 +327,7 @@ export class RoomVisibility {
       let v = true;
       if (reached) {
         const p = o.position;
-        const rooms = this.roomsAt(p.x, -p.z);
+        const rooms = this.moverRoomsAt(p.x, -p.z, p.y);
         if (rooms.length) {
           S.center.copy(p);
           S.radius = radius;
