@@ -1,6 +1,6 @@
 /**
  * Конкуренція за вантаж (G9 Б8; посібник: «ПОЗИЦИЯ N из M», премія першому, Ms.sch COMPETITOR_ARRIVED). Разом із
- * гравцем те саме замовлення беруть кілька далекобійників.
+ * гравцем те саме замовлення беруть кілька далекобійників (3–7 на повному трафіку).
  *
  * Як у king.exe (`provideCompetitionRegular` 0x4262a0 / `provideCompetitionSpecial` 0x425dd0, re/notes/ht2/company.md
  * §4): суперники — **справжні далекобійники світу** (traffic/fleet.ts), їм дають те саме замовлення (везуть до того
@@ -55,12 +55,13 @@ const RUBBER_RANGE = 300;
 export const RUBBER_MIN = 9.722222222222221;
 
 /**
- * Скільки суперників і скільки з них попереду (king.exe 0x425610): N = 3 + rand % (ftol(3,1·x + 4) − 2), x = 1 (поле
- * налаштувань гри 0x66c6f0, гіпотеза — 1) → 3…7; попереду — rand & 3 (0…3). Порожньо — замовлення без конкуренції.
+ * Скільки суперників і скільки з них попереду (king.exe 0x425610): N = 3 + rand % (ftol(3,1·x + 4) − 2), x — густота
+ * трафіку 0…1 (0x66c6f0 = повзунок trafs × частка за памʼяттю / 100 · 0,01, 0x515710 → 0x571f20) → повний трафік
+ * 3…7, найменший 3…4; попереду — rand & 3 (0…3). Порожньо — замовлення без конкуренції.
  */
-export function rivalPlan(rnd = Math.random): { count: number; ahead: number } {
+export function rivalPlan(density = 1, rnd = Math.random): { count: number; ahead: number } {
   if (rnd() > CHANCE) return { count: 0, ahead: 0 };
-  const span = Math.floor(3.1 * 1 + 4) - 2;
+  const span = Math.floor(3.1 * Math.max(0, Math.min(1, density)) + 4) - 2;
   return { count: 3 + Math.floor(rnd() * span), ahead: Math.floor(rnd() * 4) };
 }
 

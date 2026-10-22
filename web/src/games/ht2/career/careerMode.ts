@@ -909,7 +909,7 @@ export class CareerMode {
     o.start = [p.x, p.y, p.z, f.x, f.z];
     const T = this.drive.truckers;
     if (T?.fleet && T.freight) {
-      const plan = rivalPlan();
+      const plan = rivalPlan(this.drive.trafficDensity);
       const offsets = route > SPECIAL_ROUTE ? specialOffsets(plan.count, plan.ahead) : null;
       const heading = f.clone().setY(0).normalize();
       const ids = T.recruitRivals(o, plan.count, offsets, p.clone(), heading);

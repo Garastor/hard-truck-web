@@ -2395,6 +2395,11 @@ export class Ht2Drive {
     this.fPanels.toggle(kind);
   }
 
+  /** Повзунок трафіку 0…1 (TRUCK.INI trafs; king.exe — і кількість суперників на замовленні, 0x425610). */
+  get trafficDensity(): number {
+    return this.opts.settings?.traffic ?? 1;
+  }
+
   /** Скільки лишилось дорогами до точки, м (навігатор; null — не на дорозі). */
   routeLeft(target: THREE.Vector3): number | null {
     this.navigator ??= new Navigator(this.roads);
