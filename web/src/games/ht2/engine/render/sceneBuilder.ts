@@ -454,6 +454,36 @@ export class SceneAssembler {
   }
 
   /**
+   * Шаблон обʼєкта для екземплярів у кімнатах світу — з його перемикачами (тип 21), щоб кожна копія на вулиці
+   * керувалася грою (світлофори TL_operative в aj, ar, au… — екземпляри; раніше перемикачі реєструвалися лише сам
+   * шаблон у початку координат, а світлофори на вулицях стояли в стані 0).
+   */
+  private roomTemplate(name: string): { root: THREE.Group; switches: Map<string, THREE.Group[][]> } | null {
+    const key = name.toLowerCase();
+    const hit = this.roomTemplates.get(key);
+    if (hit) return hit;
+    const blk = this.topByName.get(key);
+    if (!blk) return this.fallback?.roomTemplate(name) ?? null;
+    const switches = new Map<string, THREE.Group[][]>();
+    const prev = this.switchTarget;
+    const prevRooms = this.buildingRooms;
+    this.switchTarget = switches;
+    this.buildingRooms = true;
+    const root = new THREE.Group();
+    root.name = blk.name;
+    const batches: Batches = new Map();
+    this.visit(blk, null, batches, root, 0);
+    this.flush(batches, root);
+    this.switchTarget = prev;
+    this.buildingRooms = prevRooms;
+    const t = { root, switches };
+    this.roomTemplates.set(key, t);
+    return t;
+  }
+
+  private readonly roomTemplates = new Map<string, { root: THREE.Group; switches: Map<string, THREE.Group[][]> }>();
+
+  /**
    * Окремий (не кешований) екземпляр обʼєкта з динамічними перемикачами (21) — напр. кабіна з табло.
    * Повертає групу і функцію встановлення стану перемикача за імʼям.
    */
@@ -938,9 +968,23 @@ export class SceneAssembler {
     // Заправка AnmObj0004 — окремий екземпляр з живими перемикачами (Benzo<k>Key, BenzoKey: вибух колонок,
     // world/objects.ts); решта — клон спільного шаблону.
     const live = /^anmobj0004$/i.test(objectName) ? (this.topByName.has(objectName.toLowerCase()) ? this : this.fallback)?.dynamicObject(objectName)?.root : null;
-    const tpl = live ?? this.template(objectName);
+    // У кімнатах — шаблон з перемикачами: копія дістає свої (світлофори, нічні вікна).
+    const room = !live && this.buildingRooms && this.switchTarget ? this.roomTemplate(objectName) : null;
+    const tpl = live ?? room?.root ?? this.template(objectName);
     if (!m || !tpl) return;
     const inst = live ?? tpl.clone();
+    if (room && room.switches.size && this.switchTarget) {
+      const src: THREE.Object3D[] = [];
+      room.root.traverse((o) => src.push(o));
+      const map = new Map<THREE.Object3D, THREE.Object3D>();
+      let i = 0;
+      inst.traverse((o) => map.set(src[i++], o));
+      for (const [n, sets] of room.switches) {
+        const list = this.switchTarget.get(n) ?? [];
+        for (const objs of sets) list.push(objs.map((o) => map.get(o) as THREE.Group));
+        this.switchTarget.set(n, list);
+      }
+    }
     inst.matrixAutoUpdate = false;
     inst.matrix.copy(m);
     if (name) inst.userData.instance = name;

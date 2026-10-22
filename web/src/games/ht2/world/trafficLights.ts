@@ -18,6 +18,14 @@ import type { LoadedRegion } from './world';
  *   (асиметрія king.exe). Стоп-лінія при «не можна» — порушення (штраф — у гри, з міліцією поруч).
  */
 const RADIUS = 70;
+/**
+ * Трафік бачить світлофор раніше (порт): до LOOK_FAR м від центру, якщо їде на перехрестя (курс на центр ближче
+ * arccos LOOK_COS). З 70 м машина на 80–90 км/год уже не встигала стати перед стоп-лінією (25–35 м від центру) і
+ * проїжджала на червоне.
+ */
+const LOOK_FAR = 130;
+const LOOK_COS = 0.9;
+const NEAR = 55;
 const BLINK = 2;
 const KEY0 = [0, 0, 0, 0, -1, 2, 3, 3, 3, 3, -2, 5];
 const KEY1 = [3, 3, 3, 3, -2, 5, 0, 0, 0, 0, -1, 2];
@@ -183,12 +191,23 @@ export class TrafficLights {
    */
   stopAhead(p: THREE.Vector3, heading: THREE.Vector3): number {
     for (const j of this.junctions) {
-      if (Math.hypot(j.center.x - p.x, j.center.z - p.z) > RADIUS) continue;
+      const dx = j.center.x - p.x;
+      const dz = j.center.z - p.z;
+      const r = Math.hypot(dx, dz);
+      if (r > LOOK_FAR || (r > RADIUS && dx * heading.x + dz * heading.z < LOOK_COS * r)) continue;
       const [x, y, z] = toGame(p);
-      const blk = leafBlock([j.root], x, y, z);
+      // Дерево зон надійне лише поблизу (далі ~70 м — чужі площини): зону дальньої машини беремо в точці на її курсі
+      // за NEAR м від центру; відстань до стоп-лінії — від самої машини.
+      const ahead = Math.max(0, r - NEAR);
+      const [qx, qy, qz] = ahead ? toGame(new THREE.Vector3(p.x + heading.x * ahead, p.y, p.z + heading.z * ahead)) : [x, y, z];
+      const blk = leafBlock([j.root], qx, qy, qz);
       if (!blk || blk.data.t !== 13) continue;
       const pz = blk.data.trigger.i2;
-      if (pz >= 40 || allowedAt(pz, this.tick) || blk.data.trigger.values.length < 4) return Infinity;
+      // Трафік — лише на зелений (порт): такти 5 і 11 — жовтий чи червоний із жовтим для всіх; king.exe дозволяє
+      // зонам 10/30 і їх (гравцеві штрафу немає), але машина, що рушає на червоний із жовтим, виглядає порушником.
+      // Хто вже не встигає стати, проїде й так (driver.decide).
+      const go = allowedAt(pz, this.tick) && this.tick % 6 !== 5;
+      if (pz >= 40 || go || blk.data.trigger.values.length < 4) return Infinity;
       const f = new Float32Array(blk.data.trigger.values.buffer, blk.data.trigger.values.byteOffset, 4);
       // Площина в системі гри → Three.js: n = (nx, nz, −ny).
       const n = new THREE.Vector3(f[0], f[2], -f[1]);

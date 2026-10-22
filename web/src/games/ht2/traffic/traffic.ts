@@ -81,9 +81,26 @@ const GROUND_DOWN = 10;
 const RETRACE = 8;
 /** Перекинута (вгору < 0,5) довше за це — прибрати, щойно не видно, с. */
 const FLIP_TIME = 3;
-/** Крейсерська швидкість обережних водіїв dumb (king.exe 0x4d4700: межа 20 м/с; розкид — порту), м/с. */
-const CRUISE_MIN = 17;
-const CRUISE_MAX = 20;
+/**
+ * Крейсерська швидкість трафіку, м/с: 72–94 км/год (порт, на прохання користувача — «трафік дуже повільний»; king.exe
+ * 0x4d4700: обережним dumb/ghost — до 20 м/с, звичайним водіям — 30).
+ */
+const CRUISE_MIN = 20;
+const CRUISE_MAX = 26;
+/**
+ * Криві: v ≤ √(CURVE/k) (king.exe — 5: бічне ≈ 1,25 м/с², машини повзли кожним вигином; порт — ≈ 2,5 м/с²); боти з
+ * причепом — як в оригіналі. Педалі фізичної: газ 0,4·Δv до 97 % цілі (king.exe 0,2 і 0,9 — трималась на 85–90 %).
+ */
+const CURVE = 10;
+const GAS = 0.4;
+const HOLD = 0.97;
+
+function trafficPhys(): PhysState {
+  const ps = newPhysState();
+  ps.gas = GAS;
+  ps.hold = HOLD;
+  return ps;
+}
 /** Півдовжина гравця й інших точок-перешкод, м. */
 const AVOID_HALF = 2.5;
 
@@ -460,7 +477,7 @@ export class Traffic {
     }
     v.syncVisual(1);
     c.vehicle = v;
-    c.phys = newPhysState();
+    c.phys = trafficPhys();
     c.want = c.speed;
     c.flipped = 0;
   }
@@ -511,7 +528,7 @@ export class Traffic {
     if (line.lanes > 1 && right && right !== line && right.pts.length === line.pts.length && Math.random() < KEEP_RIGHT) line = right;
     const kind = this.kinds[Math.floor(Math.random() * this.kinds.length)];
     const cruise = CRUISE_MIN + Math.random() * (CRUISE_MAX - CRUISE_MIN);
-    return Object.assign(newMover(line, seg, Math.random(), cruise, 2.2), { kind, ghost, age: 0, root: null, body: null, vehicle: null, phys: newPhysState(), want: 0, flipped: 0, ground: null, blink: null, lit: false, pool: null });
+    return Object.assign(newMover(line, seg, Math.random(), cruise, 2.2), { curve: CURVE, squeezes: true, kind, ghost, age: 0, root: null, body: null, vehicle: null, phys: trafficPhys(), want: 0, flipped: 0, ground: null, blink: null, lit: false, pool: null });
   }
 
   /**

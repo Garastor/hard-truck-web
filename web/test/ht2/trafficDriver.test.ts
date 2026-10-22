@@ -234,11 +234,86 @@ describe('HT2: водій трафіку', () => {
       // Зустрічний стоїть на зустрічній смузі попереду (видно на весь маневр).
       const extra: Obstacle[] = oncoming ? [{ pos: new THREE.Vector3(-1.5, 0, -180), vel: new THREE.Vector3(), half: 2 }] : [];
       let minGap = Infinity;
-      runAll([slow, m], 12, null, extra, () => (minGap = Math.min(minGap, m.pos.distanceTo(slow.pos))));
+      // Обгін — після OVERTAKE_WAIT с за лідером.
+      runAll([slow, m], 16, null, extra, () => (minGap = Math.min(minGap, m.pos.distanceTo(slow.pos))));
       expect(along(m) > along(slow), `flags ${flags}, зустрічний ${oncoming}`).toBe(expectPass);
       expect(minGap).toBeGreaterThan(2.5);
       if (expectPass) expect(Math.abs(m.lat)).toBeLessThan(0.5);
     }
+  });
+
+  it('зустрічного гравця біля розділової не пропускає, а відходить праворуч (повідомлення користувача)', () => {
+    // Дорога з однією смугою в бік (3 м), гравець назустріч 15 м/с на 1,9 м лівіше нашої осі (виступає за розділову).
+    const [l] = road(straight(2000), 1, 0);
+    const m = newMover(l, 0, 0, 20, 2);
+    Object.assign(m, { squeezes: true });
+    const player: Obstacle = { pos: new THREE.Vector3(1.5 - 1.9, 0, -400), vel: new THREE.Vector3(0, 0, 15), half: 2.5 };
+    let minSpeed = Infinity;
+    let maxLat = 0;
+    let minSide = Infinity;
+    run(m, 15, [player], () => {
+      player.pos.addScaledVector(player.vel, 1 / 30);
+      minSpeed = Math.min(minSpeed, m.speed);
+      maxLat = Math.max(maxLat, m.lat);
+      if (Math.abs(player.pos.z - m.pos.z) < 5) minSide = Math.min(minSide, Math.abs(player.pos.x - m.pos.x));
+    });
+    expect(minSpeed).toBeGreaterThan(18);
+    expect(maxLat).toBeGreaterThan(0.3);
+    expect(minSide).toBeGreaterThan(2.2);
+    expect(Math.abs(m.lat)).toBeLessThan(0.1);
+  });
+
+  it('зустрічного на кривій не «передбачає» у своїй смузі — не гальмує', () => {
+    // Дуга радіусом 120 м ліворуч; гравець на зустрічній смузі (3 м лівіше), його пряма на 3 с перетинає нашу смугу.
+    const axis: THREE.Vector3[] = [];
+    for (let i = 0; i <= 60; i++) {
+      const a = (i / 60) * (Math.PI / 2);
+      axis.push(new THREE.Vector3(-120 + 120 * Math.cos(a), 0, -120 * Math.sin(a)));
+    }
+    // Гравець за ≈ 56 м (18-та точка осі), на 1,5 м лівіше осі, їде назад по дотичній: його пряма перетинає нашу смугу
+    // тоді ж, коли ми там будемо.
+    const i = 18;
+    const p = axis[i];
+    const d = axis[i + 1].clone().sub(axis[i - 1]).normalize();
+    const left = new THREE.Vector3(d.z, 0, -d.x);
+    // Найменша швидкість за 1,5 с — з гравцем і без (крива й сама сповільнює).
+    const minSpeed = (withPlayer: boolean) => {
+      const [l] = road(axis, 1, 0);
+      const m = newMover(l, 0, 0, 20, 2);
+      const player: Obstacle = { pos: p.clone().addScaledVector(left, 1.5), vel: d.clone().multiplyScalar(-20), half: 2.5 };
+      let min = Infinity;
+      run(m, 1.5, withPlayer ? [player] : [], () => (min = Math.min(min, m.speed)));
+      return min;
+    };
+    expect(minSpeed(true)).toBeGreaterThan(minSpeed(false) - 0.3);
+  });
+
+  it('машину в черзі на червоне не обганяє сусідньою смугою', () => {
+    const lanes = road(straight(1000), 2, 0);
+    const m = newMover(lanes[1], 0, 0, 20, 2);
+    m.wantLane = 1;
+    const queued = newMover(lanes[1], 15, 0, 0, 2);
+    Object.assign(queued, { speed: 0, redStop: true, queued: true, still: 10 });
+    const o: Obstacle = { pos: queued.pos.clone(), vel: new THREE.Vector3(), half: 2, mover: queued };
+    let changed = false;
+    run(m, 20, [o], () => (changed ||= m.line.lane !== 1));
+    expect(changed).toBe(false);
+    expect(m.speed).toBeLessThan(0.1);
+  });
+
+  it('машину, що пригальмувала (не повільна сама), не обганяє', () => {
+    const lanes = road(straight(3000), 2, 0);
+    // Крейсерська лідера 18, але зараз 12 (поворот попереду) — не привід обганяти.
+    const lead = newMover(lanes[1], 6, 0, 18, 2);
+    const o: Obstacle = { pos: lead.pos, vel: new THREE.Vector3(0, 0, -12), half: 2, mover: lead };
+    const m = newMover(lanes[1], 0, 0, 22, 2);
+    m.wantLane = 1;
+    let changed = false;
+    run(m, 15, [o], () => {
+      lead.pos.z -= 12 / 30;
+      changed ||= m.line.lane !== 1;
+    });
+    expect(changed).toBe(false);
   });
 
   it('на перехресті пропускає того, хто праворуч', () => {

@@ -84,8 +84,23 @@ const PREDICT_STEP = 0.25;
 const CROSS_MARGIN = 1.5;
 /** Точка обʼїзду (перед тіла, яке обʼїжджаємо) далі за стільки — обʼїзд скасовано, м. */
 const BYPASS_LOST = 80;
-/** Перешкода, що рухається під кутом, меншим за arccos(SAME_WAY), до нашого курсу, — попутна: її рух не передбачаємо. */
+/**
+ * Перешкода, що рухається під кутом, меншим за arccos(SAME_WAY), до нашого курсу чи до зворотного, — попутна чи
+ * зустрічна: її рух не передбачаємо (лише поперечний — виїзд з бази). Зустрічного гравця пряма на 3 с на кривій
+ * виводила в нашу смугу — машина гальмувала до нуля й «пропускала» його, як міліцію (повідомлення користувача).
+ */
 const SAME_WAY = 0.7;
+/**
+ * Зустрічна перешкода (рух проти шляху швидше ONCOMING_V м/с) — на шляху, лише якщо ближче ONCOMING_HALF до осі
+ * (порт): гравець, що їде ближче до розділової, з PATH_HALF «перекривав» смугу — трафік ставав. Між ONCOMING_HALF і
+ * SQUEEZE_HALF — машина трафіку відходить праворуч до SQUEEZE_MAX м (у межах смуги), за SQUEEZE_LOOK с зближення.
+ */
+const ONCOMING_V = 2;
+const ONCOMING_HALF = 1.6;
+const SQUEEZE_HALF = 2.6;
+const SQUEEZE_MAX = 0.7;
+const SQUEEZE_LOOK = 4;
+const SQUEEZE_HOLD = 1;
 /** Зустрічна має бути вільна на стільки вперед, м. */
 const BYPASS_CLEAR = 120;
 /**
@@ -96,6 +111,16 @@ const BYPASS_CLEAR = 120;
 const OVERTAKE_DV = 3;
 const OVERTAKE_BOOST = 4;
 const OVERTAKE_ABORT = 70;
+/**
+ * Обгін (порт, на прохання користувача — «перелаштовується без видимих причин»): лише того, хто їде повільно сам
+ * (машина трафіку — не нижче OVERTAKE_OWN своєї крейсерської, не в черзі, не на червоне, не пропускає), і лише
+ * провівши за ним OVERTAKE_WAIT с; не ближче JUNCTION_LOOK до перехрестя. Раніше обганяли кожного, хто сповільнився
+ * перед поворотом чи стояв у черзі на світлофорі, — і одразу.
+ */
+const OVERTAKE_WAIT = 2.5;
+const OVERTAKE_OWN = 0.85;
+/** Криві (king.exe 0x4d4700): v ≤ √(CURVE_K/k), k = 4·кут/L. */
+const CURVE_K = 5;
 /**
  * Пропуск на перехрестях (порт, на прохання користувача): перехрестя — вузол трьох і більше доріг ближче
  * JUNCTION_LOOK; «на перехресті» — перші INSIDE м лінії за вузлом; шляхи перетинаються, якщо точки ближче
@@ -188,6 +213,15 @@ export interface Mover {
    * виступає в смугу, для неї зайняте (зустрічні в сусідній смузі — ні, інакше гальмувала б перед кожною).
    */
   wide?: number;
+  /** Стала кривих √(curve/k) (трафік — швидше в поворотах), без неї — CURVE_K оригіналу. */
+  curve?: number;
+  /** Відходить праворуч від зустрічної, що їде близько до розділової (трафік; боти мають своє розминання). */
+  squeezes?: boolean;
+  /** Поточний відхід праворуч від зустрічної, м, і скільки ще тримати, с. */
+  squeeze?: number;
+  squeezeHold?: number;
+  /** Скільки їде за повільним лідером, якого можна обігнати, с. */
+  slowFor?: number;
 }
 
 /** Продовження після кінця поточної лінії: за маршрутом, інакше — запланована дорога в смугу, найближчу за номером. */
@@ -618,7 +652,7 @@ export function roadLimit(m: Mover, path: { pts: THREE.Vector3[]; s: number[]; d
   const there = tangentAt(path, L);
   const yaw = Math.atan2(here.dir.x * there.dir.z - here.dir.z * there.dir.x, here.dir.dot(there.dir));
   const k = (4 * Math.abs(yaw)) / L;
-  if (k > K_LIMIT) v = Math.min(v, Math.max(V_CURVE_MIN, Math.sqrt(5 / k)) * (m.bend ?? 1));
+  if (k > K_LIMIT) v = Math.min(v, Math.max(V_CURVE_MIN, Math.sqrt((m.curve ?? CURVE_K) / k)) * (m.bend ?? 1));
   const kv = (4 * (there.pitch - here.pitch)) / L;
   if (kv < -K_LIMIT) v /= Math.abs(kv) * (200 / Math.PI);
   if (path.deadEnd < 50) v = Math.min(v, v * path.deadEnd * 0.02 + 1);
@@ -645,7 +679,8 @@ export function leaderOn(
     // майже тоді ж.
     // Того, хто їде в наш бік (наздоганяє ззаду чи обганяє), не передбачаємо: прогноз ставив гравця, що наздоганяє,
     // просто перед капотом — машина гальмувала до нуля й чекала, доки її штовхнуть (повідомлення користувача).
-    const moving = !o.mover && o.vel.lengthSq() >= 1 && o.vel.x * m.heading.x + o.vel.z * m.heading.z < SAME_WAY * o.vel.length();
+    // Зустрічного (курс майже протилежний) — теж: див. SAME_WAY.
+    const moving = !o.mover && o.vel.lengthSq() >= 1 && Math.abs(o.vel.x * m.heading.x + o.vel.z * m.heading.z) < SAME_WAY * o.vel.length();
     for (let tau = 0; tau <= (moving ? PREDICT : 0) + 1e-6; tau += PREDICT_STEP) {
       const q = tau ? ahead.copy(o.pos).addScaledVector(o.vel, tau).setY(o.pos.y) : o.pos;
       let hit = false;
@@ -661,7 +696,8 @@ export function leaderOn(
         // Бічна відстань праворуч від шляху (вектор праворуч — (−z, x)) мінус наш зсув — запланований на мить, коли
         // доїдемо до перешкоди (S-крива маневру), якщо не задано інший.
         const side = Math.abs((q.z - a.z) * ab.x - (q.x - a.x) * ab.z - (lat ?? offAt(m, s / Math.max(2, m.speed))));
-        if (side > PATH_HALF + (m.wide && o.vel.x * ab.x + o.vel.z * ab.z > -1 ? m.wide : 0)) continue;
+        const along2 = o.vel.x * ab.x + o.vel.z * ab.z;
+        if (side > (along2 < -ONCOMING_V ? ONCOMING_HALF : PATH_HALF + (m.wide && along2 > -1 ? m.wide : 0))) continue;
         if (s <= 0.5) continue; // поруч чи позаду — не лідер
         if (tau && Math.abs(s / Math.max(2, m.speed) - tau) > CROSS_MARGIN) continue;
         const gap = s - m.halfLen - o.half;
@@ -810,7 +846,9 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
   const settled = m.latGoal === 0 && Math.abs(m.lat) < 0.3 * m.line.laneWidth;
   const canShift = settled && !(m.seg === 0 && m.from);
   // Лідер повільніший за нас (порт: обгін рухомих; king.exe обʼїжджає лише тих, хто стоїть).
-  const slow = !!leader && leader.gap < LEADER_GAP + FOLLOW_ZONE + (m.early ?? 0) * m.speed && (leader.speed <= SLOW_OBSTACLE || (!!leader.obstacle.mover && leader.speed < m.cruise - OVERTAKE_DV));
+  const near = !!leader && leader.gap < LEADER_GAP + FOLLOW_ZONE + (m.early ?? 0) * m.speed;
+  const slow = near && passable(m, leader!) && !junction;
+  m.slowFor = slow ? (m.slowFor ?? 0) + dt : 0;
   if (settled && leader && (!leader.obstacle.mover || stalled(leader.obstacle.mover)) && m.waited > BYPASS_WAIT) {
     // Своя смуга заблокована гравцем, суперником чи машиною після ДТП: сусідня смуга, інакше зустрічна, інакше узбіччя.
     const w = m.line.laneWidth;
@@ -826,7 +864,7 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
       m.waited = 0;
       break;
     }
-  } else if (canShift && slow && leader) {
+  } else if (canShift && slow && leader && m.slowFor! > OVERTAKE_WAIT) {
     // Обгін сусідньою смугою свого напрямку: рухомого — лише ліворуч (ближче до осі), того, хто стоїть, — будь-якою.
     const sides = leader.speed <= SLOW_OBSTACLE ? [lane - 1, lane + 1] : [lane - 1];
     let done = false;
@@ -854,6 +892,8 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
       if (laneFree(m, m.line.siblings[to], obstacles)) changeLane(m, to);
     }
   }
+
+  if (m.squeezes) squeezeRight(m, path, obstacles, dt);
 
   // Не встиг у ліву смугу до лівого повороту — не повертати через смуги, а їхати прямо чи праворуч (порт).
   if (m.wantLane < lane && toEnd < LATE_LEFT && lane > 0) giveUpLeft(m);
@@ -884,6 +924,72 @@ export function decide(m: Mover, dt: number, obstacles: readonly Obstacle[], net
   m.still = m.speed < 0.5 ? m.still + dt : 0;
   m.queued = want < 1 && ((!!leader?.obstacle.mover && leader.gap < LEADER_GAP + FOLLOW_ZONE) || m.redStop || m.waitJ > 0);
   return want;
+}
+
+/**
+ * Чи варто обганяти лідера: той, хто стоїть, — лише гравець чи інше тіло без водія трафіку, або машина, що стоїть без
+ * причини (stalled); рухомий — повільніший за нас на OVERTAKE_DV і (машина трафіку) їде своєю швидкістю, а не
+ * гальмує перед поворотом, у черзі чи на червоне.
+ */
+function passable(m: Mover, leader: { speed: number; obstacle: Obstacle }): boolean {
+  const o = leader.obstacle.mover;
+  if (leader.speed <= SLOW_OBSTACLE) return !o || stalled(o);
+  if (!o) return leader.speed < m.cruise - OVERTAKE_DV;
+  if (o.queued || o.redStop || o.waitJ > 0 || o.bypass) return false;
+  return o.cruise < m.cruise - OVERTAKE_DV && leader.speed >= OVERTAKE_OWN * o.cruise - 1;
+}
+
+/**
+ * Відхід праворуч у межах смуги від зустрічної, що їде близько до розділової (порт): найближча така перешкода попереду
+ * (за SQUEEZE_LOOK с зближення) на відстані ONCOMING_HALF…SQUEEZE_HALF від нашої осі — latGoal праворуч на нестачу
+ * до SQUEEZE_HALF (≤ SQUEEZE_MAX і не ближче до краю смуги, ніж до нього є; у правій смузі — не за стіну).
+ */
+function squeezeRight(m: Mover, path: { pts: THREE.Vector3[]; s: number[] }, obstacles: readonly Obstacle[], dt: number): void {
+  const busy = !!m.bypass || m.overtaking || m.uturn;
+  const cur = m.squeeze ?? 0;
+  if (busy || (m.latGoal !== 0 && m.latGoal !== cur)) {
+    m.squeeze = 0;
+    m.squeezeHold = 0;
+    return;
+  }
+  let need = 0;
+  const ab = new THREE.Vector3();
+  for (const o of obstacles) {
+    if (o.mover === m) continue;
+    const vx = o.vel.x * m.heading.x + o.vel.z * m.heading.z;
+    if (vx > -ONCOMING_V) continue;
+    const rel = o.pos.clone().sub(m.pos);
+    const ahead = rel.x * m.heading.x + rel.z * m.heading.z;
+    if (ahead < -o.half || ahead > (m.speed - vx) * SQUEEZE_LOOK + m.halfLen + o.half) continue;
+    // Бічна відстань від шляху там, де перешкода (праворуч — (−z, x)), мінус наш зсув без відходу.
+    for (let i = 0; i + 1 < path.pts.length; i++) {
+      const a = path.pts[i];
+      ab.subVectors(path.pts[i + 1], a).setY(0);
+      const len = ab.length();
+      if (!len) continue;
+      ab.divideScalar(len);
+      const along = (o.pos.x - a.x) * ab.x + (o.pos.z - a.z) * ab.z;
+      if (along < 0 || along > len) continue;
+      const side = (o.pos.z - a.z) * ab.x - (o.pos.x - a.x) * ab.z - (m.lat - cur);
+      // Ліворуч від нас (side < 0) і близько: відійти праворуч.
+      if (side < 0 && -side > ONCOMING_HALF - 0.5 && -side < SQUEEZE_HALF) need = Math.max(need, SQUEEZE_HALF + side);
+      break;
+    }
+  }
+  const lw = m.line.laneWidth;
+  // Права смуга — до узбіччя (не ближче 1,7 м до стіни бази), інша — у межах своєї смуги.
+  const room = Math.max(0, Math.min(SQUEEZE_MAX, m.line.lane === m.line.lanes - 1 ? (m.line.wallRight ?? lw) - 1.7 : 0.5 * lw - 1));
+  need = Math.min(need, room);
+  if (need > 0.15) {
+    m.squeezeHold = SQUEEZE_HOLD;
+    if (need > cur) m.latGoal = m.squeeze = need;
+  } else if (cur) {
+    m.squeezeHold = (m.squeezeHold ?? 0) - dt;
+    if (m.squeezeHold <= 0) {
+      m.latGoal = 0;
+      m.squeeze = 0;
+    }
+  }
 }
 
 /** Та сама перешкода перекриває й шлях зі зсувом lat (сусідню смугу): перестроюватися туди марно — гойдалися б між смугами. */
