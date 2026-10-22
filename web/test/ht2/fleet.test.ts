@@ -141,4 +141,32 @@ describe.skipIf(!has)('HT2: далекобійники світу (абстра�
     expect(events).toBeGreaterThan(0);
     expect(moved.filter((d) => d > 300).length).toBeGreaterThan(40);
   });
+
+  it('суперник: зсув уздовж дороги вперед і назад міняє «лишилось» на зсув; затриманий стоїть; швидкість — своя', () => {
+    const f = fleet();
+    const order = { goods: bread, units: 10, from: two[0].id, to: two[1].id, distance: 3000, pay: 100, value: 100, deadline: 1e5, urgent: false };
+    const m = at(f, f.freight!.dock(two[0], 0)!);
+    const job = f.freight!.sendLoaded(order)!;
+    f.setJob(m, job);
+    // Вийти з бази на дорогу, щоб зсув назад не впирався в початок мережі.
+    f.move(m, 400);
+    const base = f.left(m)!;
+    expect(base).toBeGreaterThan(1000);
+    const line = m.line;
+    const s0 = m.s;
+    f.shift(m, 300);
+    expect(base - f.left(m)!).toBeCloseTo(300, -1);
+    m.line = line;
+    m.s = s0;
+    f.shift(m, -300);
+    expect(f.left(m)! - base).toBeGreaterThan(250);
+    expect(f.left(m)! - base).toBeLessThan(350);
+    m.line = line;
+    m.s = s0;
+    m.rival = { job, slow: 1, delay: 4 };
+    f.tick(4, 20);
+    expect(f.left(m)).toBeCloseTo(base, 3);
+    f.tick(2, (x) => (x === m ? 10 : 20));
+    expect(base - f.left(m)!).toBeCloseTo(20, 0);
+  });
 });

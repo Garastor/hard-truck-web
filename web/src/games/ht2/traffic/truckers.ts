@@ -13,6 +13,8 @@ import { markMover } from '../world/roomVisibility';
 import { g2t } from '../engine/physics/world';
 import { Freight, type FreightCapacity, type FreightJob } from './freight';
 import { Fleet, type FleetMember, type SavedTrucker } from './fleet';
+import { rubber } from '../career/competition';
+import type { Order } from '../career/economy';
 import { HIRED_MIN_SPEED } from '../career/hired';
 import { layered } from './layers';
 import type { Ht2Roads } from '../world/roads';
@@ -53,6 +55,10 @@ const PROMOTE_EVERY = 0.5;
 const FLEET_EVERY = 1;
 /** Стоїть довше — застряг, с. */
 const STUCK_FOR = 30;
+/** Додаткові місця машин для суперників на замовленні гравця (порт; повзунок трафіку їх не міняє). */
+const RIVAL_EXTRA = 3;
+/** Згладжування швидкості гравця для «гумової нитки», с (гіпотеза порту). */
+const PLAYER_SMOOTH = 10;
 /** Після перекидання чи застрягання — абстрактний щонайменше стільки, с, і машиною лише поза видимістю. */
 const HOLD = 20;
 
@@ -111,6 +117,13 @@ export class Truckers {
   timer = 0;
   /** Час, накопичений для кроку абстрактних водіїв, с. */
   private fleetAcc = 0;
+  /** Згладжена швидкість гравця, м/с (king.exe v_люд `+0x150`; згладження — гіпотеза порту, ≈ 10 с). */
+  private playerV = 20;
+  /**
+   * Скільки гравцеві лишилось до складу суперників, м (careerMode; null — змагання немає): за ним «гумова нитка»
+   * абстрактних суперників.
+   */
+  playerLeft: number | null = null;
   /** Усі далекобійники світу (створюються в першому after — біля гравця не ставимо). */
   fleet: Fleet | null = null;
   private saved: readonly SavedTrucker[] | null = null;
@@ -440,27 +453,52 @@ export class Truckers {
     // 50 водіїв щокадру — 0,3 мс на ПК); рейси без рейсу — щокадру, по два.
     f.assignJobs();
     this.fleetAcc += dt;
+    this.playerV += (playerSpeed - this.playerV) * Math.min(1, dt / PLAYER_SMOOTH);
     if (this.fleetAcc >= FLEET_EVERY) {
-      f.tick(this.fleetAcc, Math.max(HIRED_MIN_SPEED, playerSpeed));
+      const common = Math.max(HIRED_MIN_SPEED, this.playerV);
+      // Суперники на замовленні гравця — «гумовою ниткою» за відставанням від гравця (king.exe 0x41a9d0).
+      f.tick(this.fleetAcc, (m) => {
+        if (!m.rival || this.playerLeft === null) return common;
+        const left = f.left(m);
+        return left === null ? common : rubber(this.playerV, left - this.playerLeft) * m.rival.slow;
+      });
       this.fleetAcc = 0;
     }
     if ((this.timer -= dt) > 0) return;
     this.timer = PROMOTE_EVERY;
-    if (this.list.length >= this.max) return;
     const near = f.members
       .filter((m) => !m.physical && !m.off && m.hold <= 0 && this.loaded(m.line.region))
       .map((m) => ({ m, ...f.at(m) }))
       .map((c) => ({ ...c, d: c.pos.distanceTo(player) }))
       .filter((c) => c.d < PHYS_ON)
-      .sort((a, b) => a.d - b.d);
+      // Суперники на замовленні гравця — першими (порт: інакше місця займали звичайні водії, а суперник лишався невидимим).
+      .sort((a, b) => (a.m.rival ? 0 : 1) - (b.m.rival ? 0 : 1) || a.d - b.d);
     for (const c of near) {
-      if (this.list.length >= this.max) break;
+      // Суперникам — ще RIVAL_EXTRA місць понад max (їх до 7, і всі поруч з гравцем); і цього мало — місце звільняє
+      // найдальша звичайна машина, якої не видно.
+      const cap = c.m.rival ? this.max + RIVAL_EXTRA : this.max;
+      if (this.list.length >= cap && c.m.rival) this.yieldSlot(player);
+      if (this.list.length >= cap) continue;
       if (c.d < FREE_R || this.rigs.some((r) => r.truck.visual.position.distanceTo(c.pos) < FREE_R)) continue;
       if (c.m.hidden && (this.drive.traffic?.view?.sees(c.pos) ?? false)) continue;
       // Порт: не на мосту й не під ним (traffic/layers.ts) — тягач з причепом опинявся на настилі над дорогою.
       if (layered(this.drive.rapierWorld, c.pos)) continue;
       this.materialize(c.m, c.pos, c.forward);
     }
+  }
+
+  /** Звичайну машину водія світу (не суперника), найдальшу з невидимих, — знову абстрактною (місце для суперника). */
+  private yieldSlot(player: THREE.Vector3): void {
+    let best = -1;
+    let bd = -1;
+    this.list.forEach((r, i) => {
+      if (!r.member || r.member.rival) return;
+      const p = r.truck.visual.position;
+      if (this.drive.traffic?.view?.sees(p)) return;
+      const d = p.distanceTo(player);
+      if (d > bd) (bd = d), (best = i);
+    });
+    if (best >= 0) this.demote(best, false);
   }
 
   /** Далекобійник світу стає машиною: та сама модель, напівпричіп, вантаж і рейс. */
@@ -548,6 +586,110 @@ export class Truckers {
     this.drive.world.scene.remove(r.truck.visual);
     r.truck.dispose();
     this.list.splice(i, 1);
+  }
+
+  /**
+   * Суперники на замовленні гравця (king.exe provideCompetitionRegular 0x4262a0 / Special 0x425dd0): count вільних
+   * водіїв світу (не найнятих, не машиною, не суперників) — найближчі до гравця (гіпотеза порту) — беруть те саме
+   * замовлення (рейс «везе» до місця 00 складу призначення, вантаж — у причепі). offsets — зсуви вздовж дороги від
+   * гравця (довгий маршрут): водія ставлять туди й, якщо близько, одразу машиною (гравець ще у вікні складу).
+   * Повертає номери водіїв у fleet.members.
+   */
+  recruitRivals(order: Order, count: number, offsets: readonly number[] | null, at: THREE.Vector3, heading: THREE.Vector3): number[] {
+    const f = this.fleet;
+    if (!f || !this.freight || count <= 0) return [];
+    const clean: Order = { goods: order.goods, units: order.units, from: order.from, to: order.to, distance: order.distance, pay: order.pay, value: order.value, deadline: order.deadline, urgent: order.urgent, hidden: order.hidden };
+    const free = f.members
+      .map((m, i) => ({ m, i, d: f.at(m).pos.distanceTo(at) }))
+      .filter((c) => !c.m.off && !c.m.physical && !c.m.rival)
+      .sort((a, b) => a.d - b.d);
+    const out: number[] = [];
+    for (const c of free) {
+      if (out.length >= count) break;
+      const job = this.freight.sendLoaded(clean);
+      if (!job) break;
+      const m = c.m;
+      f.setJob(m, job);
+      m.cargo = order.goods.mass * order.units;
+      m.rival = { job, slow: 1, delay: 0 };
+      m.hold = 0;
+      m.hidden = false;
+      const off = offsets?.[out.length];
+      if (off !== undefined) {
+        f.place(m, at, heading);
+        f.shift(m, off);
+        m.stopped = false;
+      }
+      out.push(c.i);
+    }
+    // Ті, хто біля гравця, — одразу машинами (поява — поки відкрите вікно складу).
+    if (offsets) this.timer = 0;
+    return out;
+  }
+
+  /**
+   * Стан суперника index (імʼя name): де він, скільки лишилось дорогами, доїхав (рейс змагання скінчився
+   * розвантаженням). null — світ ще не створено (перший кадр); gone — такого водія немає чи він уже не везе цей вантаж
+   * (збереження з іншим світом). Водієві без позначки (відновлено зі збереження) вона ставиться, якщо він везе до to.
+   */
+  rivalInfo(index: number, name: string, to: number): { pos: THREE.Vector3; left: number | null; done: boolean; gone: boolean } | null {
+    const f = this.fleet;
+    if (!f) return null;
+    const m = f.members[index]?.name === name ? f.members[index] : f.members.find((x) => x.name === name && x.rival);
+    const none = { pos: new THREE.Vector3(), left: null, done: false, gone: true };
+    if (!m) return none;
+    if (!m.rival) {
+      if (m.job?.phase !== 'deliver' || m.job.store?.id !== to) return none;
+      m.rival = { job: m.job, slow: 1, delay: 0 };
+    }
+    const j = m.rival.job;
+    // Доїхав: розвантажився (пауза на місці з порожнім причепом) чи вже взяв наступний рейс.
+    const done = m.job !== j || (j.pause > 0 && m.cargo === 0);
+    const rig = m.physical ? this.list.find((r) => r.member === m) : undefined;
+    if (rig) {
+      const pos = rig.truck.visual.position;
+      const n = this.roads.nearest(pos, rig.truck.forward().setY(0).normalize());
+      let left: number | null = null;
+      if (n && this.freight) {
+        let s = 0;
+        for (let i = 0; i < n.seg; i++) s += n.line.pts[i].distanceTo(n.line.pts[i + 1]);
+        s += n.line.pts[n.seg].distanceTo(n.line.pts[n.seg + 1]) * n.t;
+        left = this.freight.left(j, n.line, s);
+      }
+      return { pos: pos.clone(), left, done, gone: false };
+    }
+    return { pos: f.at(m).pos, left: f.left(m), done, gone: false };
+  }
+
+  /** Передати суперникові затримку (с) і множник швидкості з рації. */
+  steerRival(index: number, name: string, delay: number, slow: number): void {
+    const m = this.fleet?.members[index];
+    if (!m || m.name !== name || !m.rival) return;
+    m.rival.delay += delay;
+    m.rival.slow = slow;
+  }
+
+  /**
+   * Суперник більше не змагається: доїхав — просто знімається позначка; зійшов (out: відкупились, мафія, «скинь
+   * вантаж») — ще й скидає вантаж і бере звичайний рейс порожнім.
+   */
+  releaseRival(index: number, name: string, out: boolean): void {
+    const f = this.fleet;
+    const m = f?.members[index];
+    if (!f || !m || m.name !== name || !m.rival) return;
+    const j = m.rival.job;
+    m.rival = undefined;
+    if (!out || m.job !== j || !this.freight) return;
+    const rig = m.physical ? this.list.find((r) => r.member === m) : undefined;
+    const pos = rig ? rig.truck.visual.position : f.at(m).pos;
+    const job = this.freight.sendEmpty(pos, this.memberCapacity(m));
+    if (rig) {
+      this.loadCargo(rig, 0);
+      this.setJob(rig, job);
+    } else {
+      m.cargo = 0;
+      f.setJob(m, job);
+    }
   }
 
   /** Найближчий суперник-машина в межах dist, м. */

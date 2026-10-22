@@ -163,6 +163,19 @@ export class Freight {
     return { job: j, event: { cargo } };
   }
 
+  /**
+   * Скільки лишилось дорогами до місця рейсу від точки s лінії line, м (справжня довжина найкоротшого шляху; null —
+   * без цілі чи шляху немає).
+   */
+  left(j: FreightJob, line: RoadLine, s: number): number | null {
+    if (!j.goal) return null;
+    const d = this.navigator.realDistances(j.goal, DOCK_LINE).get(line);
+    if (d === undefined) return null;
+    let len = 0;
+    for (let i = 1; i < line.pts.length; i++) len += line.pts[i].distanceTo(line.pts[i - 1]);
+    return d + Math.max(0, len - s);
+  }
+
   /** Чи є з мережі шлях до місця (є кінцеві не тупикові лінії). */
   private reachable(goal: THREE.Vector3): boolean {
     return this.navigator.distances(goal, DOCK_LINE).size > 0;

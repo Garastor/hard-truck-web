@@ -9,7 +9,7 @@ import { USED_DAMAGE, type ForSale, type Market } from './market';
 import type { Ht2Drive } from '../drive';
 import { gasPanel, jobPanel, orderPanel, salePanel, servicePanel } from './stations';
 import type { SidePanel } from '../ui/panel';
-import { active, advance, makeRivals, place, PREMIUM_SHARE } from './competition';
+import { active, advance, makeRivals, place, PREMIUM_SHARE, progress, rivalPlan, SPECIAL_ROUTE, specialOffsets, type RivalRun } from './competition';
 import { hireOffer, hireTariff, LICENCE_TIME, newDriver } from './company';
 import { CareerRaces } from './races';
 import { ukMessage } from '../ui/uk';
@@ -29,6 +29,8 @@ const STO_RADIUS = 18;
 const FUEL_RADIUS = 14;
 /** Удар: зміна швидкості за крок, м/с — від неї пошкодження (гіпотеза, як у першій грі). */
 const HIT_MIN = 1.5;
+/** Суперник поруч для рації, м (king.exe 0x64b6a0 — абоненти ближче 100 м). */
+const NEAR_RIVAL = 100;
 
 export class CareerMode {
   readonly stores: Store[];
@@ -357,6 +359,7 @@ export class CareerMode {
     const o = c.order;
     const forfeit = Math.round((1 - o.integrity) * 10 * Math.sqrt(o.goods.price * o.units));
     c.money = Math.max(0, c.money - forfeit);
+    this.releaseRivals(c.order);
     c.order = null;
     this.drive.setCargo(0);
     this.drive.cards?.show(7, { amount: forfeit });
@@ -685,6 +688,7 @@ export class CareerMode {
   private confiscate(): void {
     const c = this.career;
     if (!c.order?.hidden && !c.order?.goods.illegal) return;
+    this.releaseRivals(c.order);
     c.order = null;
     this.drive.setCargo(0);
     this.drive.say(this.msg('LOAD_SEIZED', 'ВАНТАЖ КОНФІСКОВАНО'));
@@ -745,6 +749,7 @@ export class CareerMode {
       if (this.drive.cards) this.drive.cards.show(20, { amount: Math.round(debt) });
       else this.drive.say(`МАФІЯ ЗАБРАЛА $${Math.round(debt)}`);
     } else {
+      this.releaseRivals(c.order);
       c.order = null;
       this.drive.setCargo(0);
       f.illegal = 0;
@@ -890,7 +895,11 @@ export class CareerMode {
   race: { place: number; of: number } | null = null;
   private raceTimer = 0;
 
-  /** Нове замовлення: можливо, його беруть і суперники (маршрут — мережею доріг). */
+  /**
+   * Нове замовлення: можливо, його беруть і суперники (маршрут — мережею доріг). Як у king.exe — справжні далекобійники
+   * світу (truckers.recruitRivals): маршрут довший за SPECIAL_ROUTE — на дорозі гравця попереду й позаду. Світу ще
+   * немає (перший кадр) — суперники без водіїв (розрахунок часу).
+   */
   private attachRivals(o: NonNullable<Ht2Career['order']>): void {
     const to = this.stores.find((s) => s.id === o.to);
     const route = (to && this.drive.routeLeft(toThree(...to.center))) || o.distance;
@@ -898,39 +907,87 @@ export class CareerMode {
     const p = this.drive.truck.visual.position;
     const f = this.drive.truck.forward();
     o.start = [p.x, p.y, p.z, f.x, f.z];
-    o.rivals = makeRivals(route, this.drive.truckers?.allNames ?? []);
+    const T = this.drive.truckers;
+    if (T?.fleet && T.freight) {
+      const plan = rivalPlan();
+      const offsets = route > SPECIAL_ROUTE ? specialOffsets(plan.count, plan.ahead) : null;
+      const heading = f.clone().setY(0).normalize();
+      const ids = T.recruitRivals(o, plan.count, offsets, p.clone(), heading);
+      o.rivals = ids.map((i) => ({ name: T.fleet!.members[i].name, member: i, eta: 0, t: 0, stubborn: Math.random() < 0.35 }));
+    } else o.rivals = makeRivals(route, T?.allNames ?? []);
     o.premium = o.rivals.length ? Math.round(o.pay * PREMIUM_SHARE) : 0;
     if (o.rivals.length) this.drive.say(`ЦЕЙ ВАНТАЖ ВЕЗУТЬ ЩЕ ${o.rivals.length}. ПРЕМІЯ ПЕРШОМУ $${o.premium}`);
+  }
+
+  /** Суперники замовлення більше не змагаються (доставлено, скасовано, втрачено): водіїв відпустити. */
+  releaseRivals(o: NonNullable<Ht2Career['order']> | null): void {
+    for (const r of o?.rivals ?? []) if (r.member !== undefined && !r.done) this.drive.truckers?.releaseRival(r.member, r.name, false);
+    if (this.drive.truckers) this.drive.truckers.playerLeft = null;
   }
 
   /** Крок конкуренції: суперники їдуть; хто доїхав раніше гравця — повідомлення; позиція гравця. */
   private updateRace(dt: number): void {
     const o = this.career.order;
+    const T = this.drive.truckers;
     if (!o?.rivals?.length) {
       this.race = null;
       this.rivalMarks = [];
+      if (T) T.playerLeft = null;
       return;
     }
-    for (const r of advance(o.rivals, dt)) {
-      if (o.beaten) continue;
-      o.beaten = true;
-      this.drive.say(this.msg('COMPETITOR_ARRIVED', 'ВАШ КОНКУРЕНТ ЩОЙНО ПРИБУВ. ПОКВАПТЕСЯ'));
-      void r;
-    }
+    for (const r of advance(o.rivals, dt)) this.rivalArrived(o, r);
     this.raceTimer -= dt;
     if (this.raceTimer > 0) return;
     this.raceTimer = 0.5;
     const to = this.stores.find((s) => s.id === o.to);
     const left = to ? this.drive.routeLeft(toThree(...to.center)) : null;
+    if (T) T.playerLeft = left;
+    // Справжні водії: що лишилось, хто доїхав, хто зійшов; рація — затримка й «не поспішатиме».
+    const marks: THREE.Vector3[] = [];
+    for (const r of o.rivals) {
+      if (r.member === undefined || r.done || !T) continue;
+      if (r.out) {
+        T.releaseRival(r.member, r.name, true);
+        r.done = true;
+        continue;
+      }
+      if (r.delay || r.slow) {
+        T.steerRival(r.member, r.name, r.delay ?? 0, r.slow ?? 1);
+        r.delay = 0;
+      }
+      const info = T.rivalInfo(r.member, r.name, o.to);
+      if (!info) continue;
+      if (info.gone) {
+        r.out = true;
+        continue;
+      }
+      if (info.left !== null) r.left = info.left;
+      if (info.done) {
+        r.done = true;
+        T.releaseRival(r.member, r.name, false);
+        this.rivalArrived(o, r);
+        continue;
+      }
+      marks.push(info.pos);
+    }
     const mine = left === null || !o.route ? 0 : Math.max(0, 1 - left / o.route);
-    this.race = active(o.rivals).length ? place(o.rivals, mine) : null;
-    this.rivalMarks = this.rivalPositions(o);
+    this.race = active(o.rivals).length ? place(o.rivals, mine, o.route) : null;
+    this.rivalMarks = [...marks, ...this.rivalPositions(o)];
+  }
+
+  /** Суперник доїхав: перший, хто випередив гравця, — без премії (COMPETITOR_ARRIVED). */
+  private rivalArrived(o: NonNullable<Ht2Career['order']>, r: RivalRun): void {
+    void r;
+    if (o.beaten) return;
+    o.beaten = true;
+    this.drive.say(this.msg('COMPETITOR_ARRIVED', 'ВАШ КОНКУРЕНТ ЩОЙНО ПРИБУВ. ПОКВАПТЕСЯ'));
   }
 
   /**
    * Суперники з тим самим вантажем на карті (на прохання користувача; у king.exe — лише з прапорцем 0x80, ui/tabMap.ts):
-   * точка на найкоротшому шляху від місця, де гравець узяв вантаж, на частці шляху суперника. Ще не виїхали, доїхали
-   * чи зійшли — не показуються. Старі збереження без `start` — від складу відправлення.
+   * справжні водії — де вони є (updateRace); без водія — точка на найкоротшому шляху від місця, де гравець узяв вантаж,
+   * на частці шляху суперника. Ще не виїхали, доїхали чи зійшли — не показуються. Старі збереження без `start` — від
+   * складу відправлення.
    */
   rivalMarks: THREE.Vector3[] = [];
 
@@ -944,20 +1001,31 @@ export class CareerMode {
     const heading = st ? new THREE.Vector3(st[3], 0, st[4]) : undefined;
     const target = toThree(...to.center);
     return o.rivals.flatMap((r) => {
-      if (r.out || r.done || r.t <= 0) return [];
+      if (r.member !== undefined || r.out || r.done || r.t <= 0) return [];
       const q = this.drive.routePoint(pos, heading, target, (r.t / r.eta) * o.route!);
       return q ? [q] : [];
     });
   }
 
-  /** Конкуренти поруч на дорозі (рація): у грі й з близькою часткою шляху (гіпотеза: «поруч» = ±10 % маршруту). */
+  /**
+   * Конкуренти поруч на дорозі (рація): справжній водій — ближче NEAR_RIVAL м (king.exe: абоненти рації ближче 100 м,
+   * 0x64b6a0); без водія — з близькою часткою шляху (гіпотеза: «поруч» = ±10 % маршруту).
+   */
   nearRivals(): { index: number; name: string }[] {
     const o = this.career.order;
     if (!o?.rivals || !o.route) return [];
     const to = this.stores.find((s) => s.id === o.to);
     const left = to ? this.drive.routeLeft(toThree(...to.center)) : null;
     const mine = left === null ? 0 : 1 - left / o.route;
-    return o.rivals.flatMap((r, index) => (!r.out && !r.done && Math.abs(r.t / r.eta - mine) < 0.1 ? [{ index, name: r.name }] : []));
+    const me = this.drive.truck.visual.position;
+    return o.rivals.flatMap((r, index) => {
+      if (r.out || r.done) return [];
+      if (r.member !== undefined) {
+        const info = this.drive.truckers?.rivalInfo(r.member, r.name, o.to);
+        return info && !info.gone && info.pos.distanceTo(me) < NEAR_RIVAL ? [{ index, name: r.name }] : [];
+      }
+      return Math.abs(progress(r) - mine) < 0.1 ? [{ index, name: r.name }] : [];
+    });
   }
 
   /**
@@ -1018,6 +1086,7 @@ export class CareerMode {
         c.delivered++;
         c.tons = (c.tons ?? 0) + (c.order.goods.mass * c.order.units) / 1000;
         this.firstBonus(c.order);
+        this.releaseRivals(c.order);
         c.order = null;
         this.drive.setCargo(0);
       } else if (c.order && c.order.to === store.id) {
@@ -1035,6 +1104,7 @@ export class CareerMode {
         c.delivered++;
         c.tons = (c.tons ?? 0) + (c.order.goods.mass * c.order.units) / 1000;
         this.firstBonus(c.order);
+        this.releaseRivals(c.order);
         c.order = null;
         this.drive.setCargo(0);
       } else if (c.order) {

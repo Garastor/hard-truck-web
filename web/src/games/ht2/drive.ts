@@ -84,7 +84,7 @@ import { FPanels, type FPanel } from './ui/fPanels';
 import { updateVisibleMatrices } from './engine/render/visibleMatrices';
 import { TabMap } from './ui/tabMap';
 import { Radio, type RadioAsk, type RadioContact } from './ui/radio';
-import type { RivalRun } from './career/competition';
+import { delayRival, progress, slowRival, type RivalRun } from './career/competition';
 import { Navigator, type NavTurn } from './world/navigator';
 import { WindDebris } from './world/windDebris';
 import { Precipitation } from './world/precipitation';
@@ -2965,7 +2965,8 @@ export class Ht2Drive {
       return {
         price,
         act: () => {
-          const lead = list.reduce((a, b) => (a.t / a.eta >= b.t / b.eta ? a : b));
+          const route = cm?.career.order?.route ?? 0;
+          const lead = list.reduce((a, b) => (progress(a, route) >= progress(b, route) ? a : b));
           fn(lead);
           this.say(text);
         },
@@ -3008,7 +3009,7 @@ export class Ht2Drive {
             this.say('ЗАМОВЛЕННЯ ПІД ОХОРОНОЮ МІЛІЦІЇ');
           },
         },
-        { key: 'ask3', ...rivalAct(1000, (r) => (r.eta += 120), 'КОНКУРЕНТА ЗАТРИМАНО') },
+        { key: 'ask3', ...rivalAct(1000, (r) => delayRival(r, 120), 'КОНКУРЕНТА ЗАТРИМАНО') },
         { key: 'ask4', bye: true },
       ];
     }
@@ -3032,7 +3033,7 @@ export class Ht2Drive {
       const r = cm?.career.order?.rivals?.[c.id];
       const prem = cm?.career.order?.premium ?? 500;
       return [
-        { key: 'ask1', price: !r || r.stubborn ? null : Math.round(prem * 0.6), act: () => r && ((r.eta *= 1.3), this.say('КОНКУРЕНТ НЕ ПОСПІШАТИМЕ')) },
+        { key: 'ask1', price: !r || r.stubborn ? null : Math.round(prem * 0.6), act: () => r && (slowRival(r), this.say('КОНКУРЕНТ НЕ ПОСПІШАТИМЕ')) },
         { key: 'ask2', price: !r || r.stubborn ? null : Math.round(prem * 1.2), act: () => r && ((r.out = true), this.say('КОНКУРЕНТ СКИНУВ ВАНТАЖ')) },
         { key: 'ask3', bye: true },
       ];

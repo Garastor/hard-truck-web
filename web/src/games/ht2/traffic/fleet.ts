@@ -39,6 +39,15 @@ export interface FleetMember {
   /** Не ставати машиною ще стільки, с (після перекидання чи застрягання), і лише поза видимістю. */
   hold: number;
   hidden: boolean;
+  /** Суперник на замовленні гравця (career/competition.ts): рейс змагання, множник швидкості, скільки ще стоїть, с. */
+  rival?: RivalLink;
+}
+
+/** Суперник на замовленні гравця: рейс змагання (інший рейс — доїхав чи зійшов), «не поспішатиме», затримка міліцією. */
+export interface RivalLink {
+  job: FreightJob;
+  slow: number;
+  delay: number;
 }
 
 /** Збережений водій (кар'єра `fleet`): лінія — за іменем, замовлення — з ID товару. */
@@ -181,17 +190,23 @@ export class Fleet {
    * (prescribeAdvance). Водії-машини й наймані стоять; на паузі (вантаження) і біля місця — стоять, Freight.step
    * вантажить/розвантажує й видає наступний рейс. Повертає водіїв, у кого змінився вантаж.
    */
-  tick(dt: number, speed: number): FleetMember[] {
+  tick(dt: number, speed: number | ((m: FleetMember) => number)): FleetMember[] {
     const changed: FleetMember[] = [];
     this.assignJobs();
     for (const m of this.members) {
       if (m.off || m.physical) continue;
       m.hold = Math.max(0, m.hold - dt);
       const job = m.job;
-      if (!job || job.pause <= 0) this.move(m, speed * dt);
+      const v = typeof speed === 'number' ? speed : speed(m);
+      // Суперника затримала міліція — стоїть.
+      if (m.rival && m.rival.delay > 0) {
+        m.rival.delay = Math.max(0, m.rival.delay - dt);
+        continue;
+      }
+      if (!job || job.pause <= 0) this.move(m, v * dt);
       if (!job || !this.freight) continue;
       const still = m.stopped || job.pause > 0;
-      const { job: next, event } = this.freight.step(job, this.at(m).pos, still ? 0 : speed * 3.6, dt, this.capacity(m));
+      const { job: next, event } = this.freight.step(job, this.at(m).pos, still ? 0 : v * 3.6, dt, this.capacity(m));
       if (event) {
         m.cargo = event.cargo;
         changed.push(m);
@@ -245,6 +260,49 @@ export class Fleet {
     const end = line.pts[line.pts.length - 1];
     const back = this.roads.lines.filter((l) => l !== line && !l.station && !l.shortcut && this.len(l) > 0 && l.pts[0].distanceTo(end) < UTURN_R);
     return back.length ? back[Math.floor(this.rnd() * back.length)] : null;
+  }
+
+  /**
+   * Зсунути водія вздовж дороги на offset м (суперники біля гравця, provideCompetitionSpecial 0x425dd0): уперед —
+   * маршрутом рейсу (move, біля місця складу стає), назад — попередніми лініями (не станції й не зрізалки).
+   */
+  shift(m: FleetMember, offset: number): void {
+    if (offset >= 0) {
+      this.move(m, offset);
+      return;
+    }
+    let left = -offset;
+    for (let guard = 0; guard < 50 && left > 0; guard++) {
+      if (m.s >= left) {
+        m.s -= left;
+        return;
+      }
+      left -= m.s;
+      const prev = this.prevOf(m.line).filter((l) => !l.closed && !l.station && !l.shortcut && this.len(l) > 0);
+      if (!prev.length) {
+        m.s = 0;
+        return;
+      }
+      // Стала гілка (не тупикова, якщо є): найдовша — найімовірніше дорога, а не з'їзд.
+      const open = prev.filter((l) => !this.roads.deadEnd(l));
+      m.line = (open.length ? open : prev).reduce((a, b) => (this.len(a) >= this.len(b) ? a : b));
+      m.s = this.len(m.line);
+    }
+  }
+
+  private prevMap: Map<RoadLine, RoadLine[]> | null = null;
+
+  private prevOf(l: RoadLine): RoadLine[] {
+    if (!this.prevMap) {
+      this.prevMap = new Map();
+      for (const a of this.roads.lines) for (const n of a.next as RoadLine[]) (this.prevMap.get(n) ?? this.prevMap.set(n, []).get(n)!).push(a);
+    }
+    return this.prevMap.get(l) ?? [];
+  }
+
+  /** Скільки водієві лишилось дорогами до місця рейсу, м (null — без цілі чи шляху). */
+  left(m: FleetMember): number | null {
+    return m.job && this.freight ? this.freight.left(m.job, m.line, m.s) : null;
   }
 
   /** s місця складу рейсу на поточній лінії (null — місце не на ній). */
