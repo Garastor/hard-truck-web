@@ -1,6 +1,6 @@
 /** Конкуренція за вантаж: суперники, позиція гравця, хто доїхав. */
 import { describe, expect, it } from 'vitest';
-import { advance, delayRival, makeRivals, place, progress, rivalPlan, rubber, RUBBER_MIN, slowRival, specialOffsets, type RivalRun } from '@ht2/career/competition';
+import { advance, delayRival, makeRivals, place, progress, rivalPlan, rubber, RUBBER_MIN, slowRival, specialOffsets, topUpPlan, topUpSpacing, type RivalRun } from '@ht2/career/competition';
 
 /** Передбачуваний генератор 0…1. */
 function seq(...v: number[]): () => number {
@@ -63,5 +63,18 @@ describe('HT2: конкуренція', () => {
     const old: RivalRun = { name: 'Б', eta: 100, t: 0 };
     delayRival(old, 120);
     expect(old.eta).toBe(220);
+  });
+
+  it('доповнення до N: зійшли — не рахуються, доїхали — рахуються; нікого й далеко — знову довкола гравця', () => {
+    const r = (o: Partial<RivalRun>): RivalRun => ({ name: 'А', member: 0, eta: 0, t: 0, ...o });
+    expect(topUpPlan([r({}), r({ done: true }), r({ out: true })], 4, 5000)).toEqual({ missing: 2, live: 2, special: false });
+    expect(topUpPlan([r({}), r({}), r({})], 3, 5000).missing).toBe(0);
+    expect(topUpPlan([r({ out: true }), r({ out: true })], 3, 5000)).toEqual({ missing: 3, live: 0, special: true });
+    expect(topUpPlan([r({ out: true })], 3, 800).special).toBe(false);
+    // Крок: попереду < 2 — 20 м; інакше 400 (до 3000) / (ahead − 1).
+    expect(topUpSpacing(1, 10000)).toBe(20);
+    expect(topUpSpacing(2, 10000)).toBe(400);
+    expect(topUpSpacing(3, 10000)).toBe(400);
+    expect(topUpSpacing(3, 900)).toBe(200);
   });
 });

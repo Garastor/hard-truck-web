@@ -9,7 +9,7 @@ import { USED_DAMAGE, type ForSale, type Market } from './market';
 import type { Ht2Drive } from '../drive';
 import { gasPanel, jobPanel, orderPanel, salePanel, servicePanel } from './stations';
 import type { SidePanel } from '../ui/panel';
-import { active, advance, makeRivals, place, PREMIUM_SHARE, progress, rivalPlan, SPECIAL_ROUTE, specialOffsets, type RivalRun } from './competition';
+import { active, advance, makeRivals, place, PREMIUM_SHARE, progress, rivalPlan, SPECIAL_ROUTE, specialOffsets, TOP_UP_EVERY, topUpPlan, topUpSpacing, type RivalRun } from './competition';
 import { hireOffer, hireTariff, LICENCE_TIME, newDriver } from './company';
 import { CareerRaces } from './races';
 import { ukMessage } from '../ui/uk';
@@ -913,10 +913,39 @@ export class CareerMode {
       const offsets = route > SPECIAL_ROUTE ? specialOffsets(plan.count, plan.ahead) : null;
       const heading = f.clone().setY(0).normalize();
       const ids = T.recruitRivals(o, plan.count, offsets, p.clone(), heading);
-      o.rivals = ids.map((i) => ({ name: T.fleet!.members[i].name, member: i, eta: 0, t: 0, stubborn: Math.random() < 0.35 }));
+      o.rivals = ids.map((i) => this.rivalRun(i));
+      // Змагання є — далі доповнюється до N (topUpRivals), навіть якщо зараз набрано менше.
+      if (plan.count > 0) (o.rivalTarget = plan.count), (o.rivalAhead = plan.ahead);
     } else o.rivals = makeRivals(route, T?.allNames ?? []);
-    o.premium = o.rivals.length ? Math.round(o.pay * PREMIUM_SHARE) : 0;
-    if (o.rivals.length) this.drive.say(`ЦЕЙ ВАНТАЖ ВЕЗУТЬ ЩЕ ${o.rivals.length}. ПРЕМІЯ ПЕРШОМУ $${o.premium}`);
+    const n = o.rivalTarget ?? o.rivals.length;
+    o.premium = n ? Math.round(o.pay * PREMIUM_SHARE) : 0;
+    if (n) this.drive.say(`ЦЕЙ ВАНТАЖ ВЕЗУТЬ ЩЕ ${n}. ПРЕМІЯ ПЕРШОМУ $${o.premium}`);
+  }
+
+  private rivalRun(i: number): RivalRun {
+    return { name: this.drive.truckers!.fleet!.members[i].name, member: i, eta: 0, t: 0, stubborn: Math.random() < 0.35 };
+  }
+
+  private topUpTimer = TOP_UP_EVERY;
+
+  /**
+   * Доповнення суперників до N (king.exe: задача provideCompetitionRegular кожні 30 с): замість тих, хто зійшов
+   * (відкуп, мафія, «скинь вантаж»), — нові водії світу. Нікого не лишилось і до складу далі SPECIAL_ROUTE — знову
+   * довкола гравця; інакше — від складу відправлення далі TOP_UP_AWAY від гравця вздовж маршруту.
+   */
+  private topUpRivals(o: NonNullable<Ht2Career['order']>, left: number | null): void {
+    const T = this.drive.truckers;
+    if (!o.rivalTarget || !o.rivals || !T?.fleet) return;
+    const plan = topUpPlan(o.rivals, o.rivalTarget, left);
+    if (!plan.missing) return;
+    const p = this.drive.truck.visual.position.clone();
+    const heading = this.drive.truck.forward().setY(0).normalize();
+    // Хто вже був у цьому змаганні (зійшов чи доїхав), удруге не береться (порт).
+    const was = new Set(o.rivals.flatMap((r) => (r.member === undefined ? [] : [r.member])));
+    const ids = plan.special
+      ? T.recruitRivals(o, plan.missing, specialOffsets(plan.missing, o.rivalAhead ?? 0), p, heading, undefined, was)
+      : T.recruitRivals(o, plan.missing, null, p, heading, { spacing: topUpSpacing(o.rivalAhead ?? 0, o.route ?? 0), already: o.rivals.filter((r) => !r.out && !r.done).length }, was);
+    o.rivals.push(...ids.map((i) => this.rivalRun(i)));
   }
 
   /** Суперники замовлення більше не змагаються (доставлено, скасовано, втрачено): водіїв відпустити. */
@@ -929,7 +958,7 @@ export class CareerMode {
   private updateRace(dt: number): void {
     const o = this.career.order;
     const T = this.drive.truckers;
-    if (!o?.rivals?.length) {
+    if (!o?.rivals || (!o.rivals.length && !o.rivalTarget)) {
       this.race = null;
       this.rivalMarks = [];
       if (T) T.playerLeft = null;
@@ -942,6 +971,11 @@ export class CareerMode {
     const to = this.stores.find((s) => s.id === o.to);
     const left = to ? this.drive.routeLeft(toThree(...to.center)) : null;
     if (T) T.playerLeft = left;
+    this.topUpTimer -= 0.5;
+    if (this.topUpTimer <= 0) {
+      this.topUpTimer = TOP_UP_EVERY;
+      this.topUpRivals(o, left);
+    }
     // Справжні водії: що лишилось, хто доїхав, хто зійшов; рація — затримка й «не поспішатиме».
     const marks: THREE.Vector3[] = [];
     for (const r of o.rivals) {

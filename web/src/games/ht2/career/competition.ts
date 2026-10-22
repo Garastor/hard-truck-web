@@ -91,6 +91,34 @@ export function rubber(playerSpeed: number, behind: number): number {
   return Math.max(RUBBER_MIN, playerSpeed * (behind > 0 ? 1 + RUBBER_K * x : 1 - RUBBER_K * x));
 }
 
+/** Доповнення суперників до N — задача king.exe кожні 30 с (0x434780 → provideCompetitionRegular), с. */
+export const TOP_UP_EVERY = 30;
+/** Новий суперник при доповненні — не ближче за стільки до гравця вздовж маршруту (0x66c6b0), м. */
+export const TOP_UP_AWAY = 400;
+
+/**
+ * Крок між суперниками, яких доповнено (0x4262a0): ahead < 2 — 20 м; інакше clamp(min(400·(ahead − 1),
+ * 0,33·route), 400, 3000) / (ahead − 1) (0x64b7e8 = 0,33, 0x64b768 = 400, 0x64b7e0 = 3000; route — поле замовлення
+ * `+0x70`, гіпотеза: довжина маршруту). Новий стає за TOP_UP_AWAY + rand % крок + (скільки вже є) · крок.
+ */
+export function topUpSpacing(ahead: number, route: number): number {
+  if (ahead < 2) return 20;
+  const d = Math.min(400 * (ahead - 1), 0.33 * route);
+  return Math.max(400, Math.min(3000, d)) / (ahead - 1);
+}
+
+/**
+ * Скільки суперників доповнити й як (0x4262a0): рахуються ті, хто змагається, і ті, хто вже доїхав (`0x68d164`);
+ * зійшли — ні. Нікого в грі й маршрут гравця довший за SPECIAL_ROUTE — увесь набір знову довкола гравця
+ * (`special`, provideCompetitionSpecial); інакше — від складу відправлення далі TOP_UP_AWAY від гравця.
+ */
+export function topUpPlan(rivals: readonly RivalRun[], target: number, playerLeft: number | null): { missing: number; special: boolean; live: number } {
+  const live = rivals.filter((r) => !r.out).length;
+  const racing = rivals.filter((r) => !r.out && !r.done).length;
+  const missing = Math.max(0, target - live);
+  return { missing, live, special: missing > 0 && racing === 0 && live === 0 && (playerLeft ?? 0) > SPECIAL_ROUTE };
+}
+
 /** Суперники без водіїв для нового замовлення (може бути порожньо): route — довжина маршруту, м. */
 export function makeRivals(route: number, names: readonly string[], rnd = Math.random): RivalRun[] {
   if (!names.length || route <= 0 || rnd() > CHANCE) return [];

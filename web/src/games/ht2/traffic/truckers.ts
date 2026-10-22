@@ -13,7 +13,8 @@ import { markMover } from '../world/roomVisibility';
 import { g2t } from '../engine/physics/world';
 import { Freight, type FreightCapacity, type FreightJob } from './freight';
 import { Fleet, type FleetMember, type SavedTrucker } from './fleet';
-import { rubber } from '../career/competition';
+import { rubber, TOP_UP_AWAY } from '../career/competition';
+import { toThree } from '../world/world';
 import type { Order } from '../career/economy';
 import { HIRED_MIN_SPEED } from '../career/hired';
 import { layered } from './layers';
@@ -595,13 +596,18 @@ export class Truckers {
    * гравця (довгий маршрут): водія ставлять туди й, якщо близько, одразу машиною (гравець ще у вікні складу).
    * Повертає номери водіїв у fleet.members.
    */
-  recruitRivals(order: Order, count: number, offsets: readonly number[] | null, at: THREE.Vector3, heading: THREE.Vector3): number[] {
+  recruitRivals(order: Order, count: number, offsets: readonly number[] | null, at: THREE.Vector3, heading: THREE.Vector3, source?: { spacing: number; already: number }, exclude?: ReadonlySet<number>): number[] {
     const f = this.fleet;
     if (!f || !this.freight || count <= 0) return [];
     const clean: Order = { goods: order.goods, units: order.units, from: order.from, to: order.to, distance: order.distance, pay: order.pay, value: order.value, deadline: order.deadline, urgent: order.urgent, hidden: order.hidden };
+    // Доповнення (king.exe 0x4262a0): новий суперник — від складу відправлення (місце вантаження).
+    const st = source ? this.freight.stores.find((s) => s.id === order.from) : undefined;
+    const src = st && st.docks.length ? toThree(...st.docks[Math.min(1, st.docks.length - 1)]) : null;
+    if (source && !src) return [];
+    const from = src ?? at;
     const free = f.members
-      .map((m, i) => ({ m, i, d: f.at(m).pos.distanceTo(at) }))
-      .filter((c) => !c.m.off && !c.m.physical && !c.m.rival)
+      .map((m, i) => ({ m, i, d: f.at(m).pos.distanceTo(from) }))
+      .filter((c) => !c.m.off && !c.m.physical && !c.m.rival && !exclude?.has(c.i))
       .sort((a, b) => a.d - b.d);
     const out: number[] = [];
     for (const c of free) {
@@ -615,7 +621,15 @@ export class Truckers {
       m.hold = 0;
       m.hidden = false;
       const off = offsets?.[out.length];
-      if (off !== undefined) {
+      if (src && source) {
+        // Від складу маршрутом, доки не далі TOP_UP_AWAY від гравця (кроками 4 м, як 0x435a90), і ще rand % крок +
+        // (скільки вже є) · крок.
+        f.place(m, src);
+        m.stopped = false;
+        for (let g = 0; g < 2000 && !m.stopped && f.at(m).pos.distanceTo(at) <= TOP_UP_AWAY; g++) f.shift(m, 4);
+        f.shift(m, Math.floor(Math.random() * source.spacing) + (source.already + out.length) * source.spacing);
+        m.stopped = false;
+      } else if (off !== undefined) {
         f.place(m, at, heading);
         f.shift(m, off);
         m.stopped = false;

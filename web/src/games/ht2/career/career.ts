@@ -24,6 +24,9 @@ export interface ActiveOrder extends Order {
   integrity: number;
   /** Конкуренти з тим самим замовленням (competition.ts), довжина маршруту мережею, м, і премія першому. */
   rivals?: RivalRun[];
+  /** Скільки суперників тримати (N) і скільки з них попереду (king.exe 0x68d15c / 0x68d160) — для доповнення. */
+  rivalTarget?: number;
+  rivalAhead?: number;
   route?: number;
   /** Звідки рахується маршрут суперників (місце й курс гравця, коли взяв вантаж; Three.js: x, y, z, курс x, z). */
   start?: number[];
