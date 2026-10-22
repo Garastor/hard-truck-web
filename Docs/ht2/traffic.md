@@ -139,7 +139,9 @@ aa, bc, cb). Сам біт 0x10 базу не позначає: він є й н�
 ## 5. Боти-далекобійники (`truckers.ts`) і автопілот
 
 - **Постійні водії** (`traffic/fleet.ts`, `Fleet`): у світі `aitruck` (50, `playertypes` GAME.CNF) далекобійників з
-  іменами names.sch; кожен існує весь час — `FleetMember`: модель і фарбування (`truckerKinds`, evehicles.sch: `lorry`
+  іменами names.sch і ще `EXTRA_TRUCKERS` 25 безіменних (порт, 2026-10-22, на прохання користувача — вантажівок на
+  дорогах мало; імен trucker у names.sch лише 51): імʼя `#N` (`nameless`), їздять і возять вантажі, як усі, але не
+  стають суперниками (`recruitRivals`) і не наймаються; збереження без них доповнюється в `makeFleet`; кожен існує весь час — `FleetMember`: модель і фарбування (`truckerKinds`, evehicles.sch: `lorry`
   і `tractor` класу trucker), напівпричіп тягача (`SemiKind`, як presents), рейс `job`, вантаж `cargo`, позиція `line`
   + `s` на мережі. Створюються в першому `Truckers.after` на випадкових дорогах (`startLines`: без станцій, закритих і
   тупикових, не ближче `START_AWAY` 150 м від гравця); рейси — по `JOBS_PER_TICK` 2 за кадр (Дейкстра до нового
