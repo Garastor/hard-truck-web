@@ -51,7 +51,6 @@ export class WayNet {
     return best;
   }
 
-
   /** Точка на відстані `ahead` уздовж мережі від позиції (line, seg, t); choose — продовження на розвилці. */
   advance(line: WayLine, seg: number, t: number, ahead: number, choose?: (l: WayLine) => WayLine | null): THREE.Vector3 {
     let cur = line.pts[seg].clone().lerp(line.pts[seg + 1], t);
