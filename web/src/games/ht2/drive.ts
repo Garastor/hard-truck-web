@@ -4170,6 +4170,9 @@ export class Ht2Drive {
 
   /** Частка відстані від машини до камери, вільна від стін (згладжена при віддаленні; keepOffWalls). */
   private camReach = 1;
+  /** Фільтр колайдерів для камери за правилом кімнат тіла гравця (keepOffWalls); скидається зі зміною вантажівки. */
+  private camRooms: ((c: RAPIER.Collider) => boolean) | null | undefined;
+  private camRoomsBody: RAPIER.RigidBody | null = null;
 
   /**
    * Камера за машиною — поза колізіями світу, як у king.exe (0x599210 → 0x599120: куля 0,3 м навколо камери
@@ -4183,7 +4186,15 @@ export class Ht2Drive {
     const dist = dir.length();
     if (dist < 0.5) return;
     dir.divideScalar(dist);
-    const hit = this.rapier.castShape(from, IDENTITY_Q, dir, CAM_BALL, 0, dist, false, undefined, undefined, undefined, undefined, (c) => !c.parent());
+    // Лише колайдери, що діють на машину гравця (правило кімнат, engine/physics/roomBounds.ts): стіни сусідньої кімнати
+    // машину не тримають — і камеру теж. Межа ak_096 іде краєм урвища, і на дорозі плато aj_005 поруч камера
+    // впиралася в неї одразу й сідала в машину.
+    if (this.camRoomsBody !== this.truck.body) {
+      this.camRoomsBody = this.truck.body;
+      this.camRooms = RoomBounds.groundFilter(this.rapier, this.truck.body) ?? null;
+    }
+    const rooms = this.camRooms;
+    const hit = this.rapier.castShape(from, IDENTITY_Q, dir, CAM_BALL, 0, dist, false, undefined, undefined, undefined, undefined, (c) => !c.parent() && (!rooms || rooms(c)));
     const free = hit ? hit.time_of_impact / dist : 1;
     this.camReach = free < this.camReach || this.chaseJump ? free : this.camReach + (free - this.camReach) * (1 - Math.exp(-dt / CAM_WALL_BACK));
     if (this.camReach < 1) cam.copy(from).addScaledVector(dir, dist * this.camReach);
