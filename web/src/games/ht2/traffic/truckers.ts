@@ -46,16 +46,15 @@ const PROMOTE_PER_TICK = 1;
 /** Скільки далекобійників у світі (GAME.CNF aitruck). */
 export const AITRUCK = 50;
 /**
- * Ще стільки безіменних водіїв світу (порт, на прохання користувача — вантажівок на дорогах мало): разом 75. Імен
- * далекобійників у names.sch лише 51, тож ці — з іменем «#N» (nameless): їздять і возять вантажі, як усі, але не стають
- * суперниками на замовленні й не наймаються (наймання й суперники шукають водія за іменем).
+ * Ще 25 водіїв світу понад aitruck (порт, на прохання користувача — вантажівок на дорогах мало): разом 75. Імен
+ * далекобійників у names.sch лише 51, тож ці — на честь героїв «Володаря перснів» (теж на прохання користувача); вони
+ * повноцінні: суперники на замовленні, шукачі роботи на ринку (truckerNames додає їх до імен names.sch).
  */
-export const EXTRA_TRUCKERS = 25;
-
-/** Безіменний водій світу (EXTRA_TRUCKERS). */
-export function nameless(name: string): boolean {
-  return name.startsWith('#');
-}
+export const EXTRA_NAMES = [
+  'ФРОДО', 'СЕМ', 'МЕРІ', 'ПІПІН', 'БІЛЬБО', 'ҐЕНДАЛЬФ', 'АРАҐОРН', 'ЛЕҐОЛАС', 'ҐІМЛІ', 'БОРОМИР', 'ФАРАМИР', 'ЕОВІН',
+  'ЕОМЕР', 'ТЕОДЕН', 'ЕЛРОНД', 'АРВЕН', 'ҐАЛАДРІЕЛЬ', 'ҐЛОРФІНДЕЛЬ', 'ГАЛДІР', 'ТОРІН', 'БАЛІН', 'БАРД', 'БЕОРН',
+  'ДРЕВОБОРОД', 'ТОМ БОМБАДИЛ',
+];
 /**
  * Водій (і найманий гравця, career/hired.ts) стає машиною ближче PHYS_ON і знову абстрактним далі PHYS_OFF, м (king.exe:
  * фізична — ближче 80 м, кінематична — до туману; порт кінематичних вантажівок не має).
@@ -121,7 +120,8 @@ export function truckerKinds(sch: SExpr[], trucks: Ht2Trucks): { model: string; 
 
 /** Імена далекобійників з names.sch. */
 export function truckerNames(sch: SExpr[]): string[] {
-  return sch.filter((e): e is SExpr[] => isList(e) && e[2] === 'trucker').map((e) => str(e[0]));
+  const out = sch.filter((e): e is SExpr[] => isList(e) && e[2] === 'trucker').map((e) => str(e[0]));
+  return [...out, ...EXTRA_NAMES.filter((n) => !out.includes(n))];
 }
 
 export class Truckers {
@@ -452,12 +452,16 @@ export class Truckers {
         f.add(name, k.model, k.variant, this.pickSemi(rec), player, START_AWAY, lines);
       }
     }
-    // Безіменні — і в старих збереженнях (без них) доповнюються до EXTRA_TRUCKERS.
+    // Герої «Володаря перснів» (EXTRA_NAMES) — і в старих збереженнях (без них) доповнюються; безіменні «#N» зі
+    // збереження версії 2026-10-22 дістають їхні імена.
+    const used = new Set(f.members.map((m) => m.name));
+    const free = EXTRA_NAMES.filter((n) => !used.has(n));
+    for (const m of f.members) if (/^#\d+$/.test(m.name) && free.length) m.name = free.shift()!;
     const lines = f.startLines();
-    for (let i = f.members.filter((m) => nameless(m.name)).length; i < EXTRA_TRUCKERS; i++) {
+    for (const name of free) {
       const k = pool[Math.floor(Math.random() * pool.length)];
       const rec = all.find((r) => r.carNode === k.model)!;
-      f.add(`#${i + 1}`, k.model, k.variant, this.pickSemi(rec), player, START_AWAY, lines);
+      f.add(name, k.model, k.variant, this.pickSemi(rec), player, START_AWAY, lines);
     }
     this.saved = null;
     return f;
@@ -611,7 +615,7 @@ export class Truckers {
     const from = src ?? at;
     const free = f.members
       .map((m, i) => ({ m, i, d: f.at(m).pos.distanceTo(from) }))
-      .filter((c) => !c.m.off && !c.m.physical && !c.m.rival && !nameless(c.m.name) && !exclude?.has(c.i))
+      .filter((c) => !c.m.off && !c.m.physical && !c.m.rival && !exclude?.has(c.i))
       .sort((a, b) => a.d - b.d);
     const out: number[] = [];
     for (const c of free) {
