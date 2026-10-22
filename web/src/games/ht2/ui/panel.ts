@@ -34,9 +34,21 @@ const rightPanels = new Map<SidePanel, number>();
 /** Проміжок між лівою й правою групами кнопок, менше якого праву групу ставимо у два ряди (px). */
 const STACK_GAP = 8;
 
+/** Тривалість зсуву правих кнопок, мс (ht2.css `--ht2-slide-s`): на час переїзду вони мигають синім. */
+const SLIDE_MS = 800;
+let slideTimer = 0;
+let lastShift = 0;
+
 function syncRightPanels(): void {
   const w = Math.max(0, ...rightPanels.values());
   const body = document.body;
+  const shift = rightPanels.size > 0 ? w : 0;
+  if (shift !== lastShift) {
+    lastShift = shift;
+    body.classList.add('ht2-right-moving');
+    clearTimeout(slideTimer);
+    slideTimer = window.setTimeout(() => body.classList.remove('ht2-right-moving'), SLIDE_MS);
+  }
   body.classList.toggle('ht2-right-open', rightPanels.size > 0);
   body.style.setProperty('--ht2-right-panel-w', `${w}px`);
   // Міряємо базове положення кнопок — без розкладки у два ряди.

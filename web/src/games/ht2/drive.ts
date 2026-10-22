@@ -95,6 +95,7 @@ import { CarFires, enginePoint } from './traffic/carFires';
 import { Tablo } from './ui/tablo';
 import { applyTabloSkin, lcdLabel } from './ui/tabloSkin';
 import { Cards } from './ui/cards';
+import { installMultiTouchTap } from './engine/ui/multiTouchTap';
 import { GEAR_SVG, openFreeSettings, vehicleName, type FreeField } from './ui/freeSettings';
 
 /** «☰» — ліва група кнопок; нота — музика (значки кольору тексту). */
@@ -590,8 +591,19 @@ export class Ht2Drive {
   private sheltered = false;
   private cabLoading = false;
   private cabLight: THREE.AmbientLight | null = null;
-  /** Пауза (вікно складу чи СТО): фізика й час стоять. */
-  paused = false;
+  /** Пауза (вікно складу чи СТО, штраф, меню): фізика й час стоять. */
+  get paused(): boolean {
+    return this.pausedFlag;
+  }
+  set paused(on: boolean) {
+    // Вікно зʼявилось — сенсорні кнопки керування відпустити (під вікном pointerup губився, газ і кермо залипали).
+    if (on && !this.pausedFlag) this.input?.releaseTouch();
+    this.pausedFlag = on;
+  }
+  private pausedFlag = false;
+  /** Стежить за появою вікон (вікна порту, бічні панелі праворуч, меню Esc) — відпустити кнопки керування. */
+  private windowWatch: MutationObserver | null = null;
+  private stopMultiTouchTap: (() => void) | null = null;
   /** Меню Esc «Проблемы в пути» (з графікою esc16.RES). */
   private escMenu: EscMenu | null = null;
   /** Ліві панелі F1–F4 (клавіші, рейтинг, інфо, компанія). */
@@ -1012,6 +1024,21 @@ export class Ht2Drive {
     };
     document.body.classList.add('driving');
     this.touch = this.input.mountTouch(o.overlay);
+    // Кнопки з click (☰, меню, Інфо, вікна) — і другим пальцем, поки перший тримає кермо чи газ (iOS).
+    this.stopMultiTouchTap = installMultiTouchTap();
+    {
+      const sides = ['ht2-right-open', 'ht2-esc-open'];
+      let was = sides.filter((c) => document.body.classList.contains(c));
+      this.windowWatch = new MutationObserver((list) => {
+        const now = sides.filter((c) => document.body.classList.contains(c));
+        const opened = now.some((c) => !was.includes(c));
+        was = now;
+        const modal = list.some((m) => [...m.addedNodes].some((n) => n instanceof HTMLElement && n.classList.contains('career-modal')));
+        if (opened || modal) this.input.releaseTouch();
+      });
+      this.windowWatch.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+      this.windowWatch.observe(o.overlay, { childList: true });
+    }
     this.input.setOrbitAvailable(this.camMode !== 'cockpit');
     // Межа керма за зчепленням для клавіатури (king.exe 0x500850) — від поточної вантажівки.
     this.input.steerLimit = () => this.truck.steerLimitNow();
@@ -4175,6 +4202,8 @@ export class Ht2Drive {
     window.removeEventListener('resize', this.onResize);
     document.body.classList.remove('driving');
     this.input.dispose();
+    this.windowWatch?.disconnect();
+    this.stopMultiTouchTap?.();
     this.touch?.remove();
     this.hud.remove();
     this.bar.remove();

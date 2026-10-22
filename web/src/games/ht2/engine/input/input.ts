@@ -407,17 +407,21 @@ export class Input {
         e.preventDefault();
         b.setPointerCapture(e.pointerId);
         b.classList.add('pressed');
-        if (action) this.press(action, true);
+        if (action) {
+          this.press(action, true);
+          this.touchHeld.set(e.pointerId, { b, action });
+        }
         if (cmd) this.onCommand?.(cmd);
       };
       const up = (e: PointerEvent) => {
         e.preventDefault();
-        b.classList.remove('pressed');
-        if (action) this.press(action, false);
+        this.releasePointer(e.pointerId, b);
       };
       b.addEventListener('pointerdown', down);
       b.addEventListener('pointerup', up);
       b.addEventListener('pointercancel', up);
+      // Захоплення дотику загублено (кнопку сховано, вікно перекрило) — pointerup сюди вже не прийде.
+      b.addEventListener('lostpointercapture', (e) => this.releasePointer(e.pointerId, b));
       b.addEventListener('contextmenu', (e) => e.preventDefault());
       parent.append(b);
       return b;
@@ -465,10 +469,44 @@ export class Input {
     ui.append(top);
     parent.append(ui);
     this.touchUi = ui;
+    window.addEventListener('pointerup', this.onPointerEnd, true);
+    window.addEventListener('pointercancel', this.onPointerEnd, true);
     return ui;
   }
 
   private touchUi: HTMLElement | null = null;
+
+  /** Утримані сенсорні кнопки дій: pointerId → кнопка й дія (щоб відпустити, куди б не прийшов pointerup). */
+  private readonly touchHeld = new Map<number, { b: HTMLElement; action: Action }>();
+
+  /** Відпускання дотику будь-де (вікно поверх кнопки могло перехопити pointerup) — відпустити його кнопку. */
+  private readonly onPointerEnd = (e: PointerEvent) => this.releasePointer(e.pointerId);
+
+  private releasePointer(id: number, b?: HTMLElement): void {
+    const h = this.touchHeld.get(id);
+    if (h) {
+      this.touchHeld.delete(id);
+      const rest = [...this.touchHeld.values()];
+      // Ця сама дія чи кнопка ще утримана іншим пальцем — лишається натиснутою.
+      if (!rest.some((o) => o.action === h.action)) this.press(h.action, false);
+      if (!rest.some((o) => o.b === h.b)) {
+        h.b.classList.remove('pressed');
+        this.touchSharp.delete(h.b);
+        h.b.classList.remove('sharp-on');
+      }
+    } else b?.classList.remove('pressed');
+  }
+
+  /**
+   * Відпустити всі сенсорні кнопки керування (зʼявилось вікно: пауза, покупка, штраф, бічна панель). Під вікном
+   * iOS часто не доносить pointerup до кнопки — газ чи кермо «залипали». Щоб натиснути знову — новий дотик.
+   */
+  releaseTouch(): void {
+    for (const id of [...this.touchHeld.keys()]) this.releasePointer(id);
+    for (const b of this.touchUi?.querySelectorAll<HTMLElement>('.touch-btn.pressed') ?? []) b.classList.remove('pressed');
+    for (const b of this.touchSharp) b.classList.remove('sharp-on');
+    this.touchSharp.clear();
+  }
 
   /**
    * «Різко» на кнопці: зсув пальця вздовж axis у бік dir (кермо — x: −1 ліворуч, 1 праворуч; газ — y: −1 угору) чи
@@ -557,6 +595,8 @@ export class Input {
     window.removeEventListener('deviceorientation', this.onOrient);
     window.removeEventListener('keydown', this.onKey);
     window.removeEventListener('keyup', this.onKey);
+    window.removeEventListener('pointerup', this.onPointerEnd, true);
+    window.removeEventListener('pointercancel', this.onPointerEnd, true);
   }
 }
 
