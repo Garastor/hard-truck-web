@@ -98,7 +98,10 @@
   межі 1…`SCREEN_MAX` 2,5) — на ширину крапель і розмір сніжинок та на `opacity` матеріалу (opacity > 1 підсилює
   альфу текстури). На ПК (вікно від 720 px) — як в оригіналі. Де крутити: `SCREEN_REF`, `SCREEN_MAX`.
 - **Краплі на склі й двірники** — `engine/render/glassRain.ts` + буфер `waterBuffer.ts`; умова в `drive.ts`
-  (дощ, не під дахом, повзунки `glassDrops()`, прапорець `rain` набору погоди кімнати). Буфер вивантажується на
+  (дощ, не під дахом, повзунки `glassDrops()`, прапорець `rain` набору погоди кімнати). «Під дахом» — промінь угору
+  з +3 м над центром машини раз на 0,5 с, **лише по нерухомих колайдерах** (`isFixed`): у високих кабін (RenaultR,
+  KamazR, VolvoR, MercedesR, DafR, StormR, Peterbilt, International) початок променя буває в їхньому ж кузові, і
+  машина вічно «стояла під дахом» — на склі не було крапель. Буфер вивантажується на
   відеокарту лише зміненими прямокутниками — тому після згортання застосунку (`visibilitychange`) і
   `webglcontextrestored` `GlassRain` вивантажує його цілком (`WaterBuffer.invalidate`) і робить нову копію кадру.
 - **Вигляд води** (за скріншотом оригіналу, на прохання користувача: «збільшення, пікселі, згладжування»). Буфер
@@ -164,7 +167,9 @@
 
 ```js
 const d = window.ht2.drive, t = d.truck;
-const step = (n) => { for (let k = 0; k < n; k++) { d.last = performance.now() - 1000 / 60; d.frame(); } };
+// nextFrame = 0 — інакше frame() пропускає кадри через ліміт FPS (MAX_FPS / меню «Графіка») і з 300 викликів
+// оновлюється один.
+const step = (n) => { for (let k = 0; k < n; k++) { d.nextFrame = 0; d.last = performance.now() - 1000 / 60; d.frame(); } };
 const f = t.forward(); t.body.setLinvel({ x: f.x * 25, y: 0, z: f.z * 25 }, true); // 90 км/год, тест
 d.input.press('brake', true); step(130); d.paused = true;                       // далі — знімок
 d.blastFx().puffs.filter((p) => p.ease).length;                                  // клуби пари
