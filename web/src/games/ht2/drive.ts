@@ -3232,7 +3232,7 @@ export class Ht2Drive {
 
   /** Точка на дорозі біля p, вільна від інших машин: спершу найближча, далі — уперед і назад уздовж дороги. */
   private roadside(p: THREE.Vector3): { position: THREE.Vector3; forward: THREE.Vector3 } | null {
-    const first = this.roadPoint(p, this.truck.forward());
+    const first = this.roadPoint(p, this.truck.forward(), true, true);
     if (!first) return null;
     const others = this.otherVehicles();
     // Машина гравця з напівпричепом — точки від переду назад (причіп ≈ 14 м за тягачем).
@@ -3248,7 +3248,7 @@ export class Ht2Drive {
     for (let i = 1; i <= RESCUE_TRIES; i++)
       for (const sign of [1, -1]) {
         const at = first.position.clone().addScaledVector(first.forward, sign * i * RESCUE_STEP);
-        const s = this.roadPoint(at, first.forward);
+        const s = this.roadPoint(at, first.forward, true, true);
         if (s && free(s)) return s;
       }
     return first;
@@ -3264,10 +3264,14 @@ export class Ht2Drive {
     ];
   }
 
-  /** Точка на дорозі біля p: вісь WAY, дотична в бік курсу heading, зсув праворуч на 0,5·W − 1,5 м. */
-  private roadPoint(p: THREE.Vector3, heading: THREE.Vector3, lane = true): { position: THREE.Vector3; forward: THREE.Vector3 } | null {
+  /**
+   * Точка на дорозі біля p: вісь WAY, дотична в бік курсу heading, зсув праворуч на 0,5·W − 1,5 м. offStation — не на
+   * під'їзді заправки чи СТО, якщо поруч є інша дорога (911, на прохання користувача: у дворі СТО найближча вісь — під
+   * навісом біля колон і стіни, машина відновлювалась там само, де застрягла).
+   */
+  private roadPoint(p: THREE.Vector3, heading: THREE.Vector3, lane = true, offStation = false): { position: THREE.Vector3; forward: THREE.Vector3 } | null {
     // Закриту завалом дорогу оминаємо: найближча точка могла б опинитися в камінні (world/obstacles.ts).
-    const n = this.roads.nearestAxis(p, true) ?? this.roads.nearestAxis(p);
+    const n = (offStation ? this.roads.nearestAxis(p, true, (a) => !!a.station) : null) ?? this.roads.nearestAxis(p, true) ?? this.roads.nearestAxis(p);
     if (!n) return null;
     const pts = n.axis.pts;
     let best = 0;

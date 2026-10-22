@@ -483,14 +483,14 @@ export class Ht2Roads {
   }
 
   /** Відстань по горизонталі до найближчої осі дороги й сама вісь (null — доріг поблизу немає); open — без закритих. */
-  nearestAxis(p: THREE.Vector3, open = false): { axis: RoadLine; dist: number; point: THREE.Vector3 } | null {
+  nearestAxis(p: THREE.Vector3, open = false, skip?: (a: RoadLine) => boolean): { axis: RoadLine; dist: number; point: THREE.Vector3 } | null {
     // Точка — лише для найближчої осі (щокадру десятки осей: без нових векторів на кожну).
     let axis: RoadLine | null = null;
     let dist = Infinity;
     let seg = 0;
     let t = 0;
     for (const a of new Set(nearCells(this.axisGrid, p))) {
-      if (open && a.closed) continue;
+      if ((open && a.closed) || skip?.(a)) continue;
       if (!closestSeg(a.pts, p)) continue;
       if (!axis || SEG.d < dist) {
         axis = a;
