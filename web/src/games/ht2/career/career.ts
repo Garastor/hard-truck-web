@@ -100,7 +100,21 @@ export interface Ht2Career {
   fleet?: SavedTrucker[];
   /** Остання позиція (координати гри) і склад, де стоїмо. */
   pos?: [number, number, number];
+  /** Курс машини в площині гри (x, y) на момент запису; старі записи — без нього (savedHeading). */
   heading?: [number, number];
+}
+
+/**
+ * Курс зі збереження — одиничний вектор (x, y) гри або null, якщо поля немає чи воно зіпсоване (старі записи: тоді
+ * машина стає вздовж найближчої дороги, як раніше).
+ */
+export function savedHeading(c: Pick<Ht2Career, 'heading'>): [number, number] | null {
+  const h = c.heading;
+  if (!Array.isArray(h) || h.length < 2) return null;
+  const [x, y] = h;
+  if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const l = Math.hypot(x, y);
+  return l > 1e-3 ? [x / l, y / l] : null;
 }
 
 const SAVE_PREFIX = 'ht2.save.';

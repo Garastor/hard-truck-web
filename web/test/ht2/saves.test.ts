@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  currentDriver, deleteDriver, listDrivers, listSaves, loadCareer, newCareer, putDriver, restoreCareer, saveCareer, savedCareerRaw, selectDriver,
+  currentDriver, deleteDriver, listDrivers, listSaves, loadCareer, newCareer, putDriver, restoreCareer, saveCareer, savedCareerRaw, savedHeading, selectDriver,
 } from '@ht2/career/career';
+import * as THREE from 'three';
+import { toThree } from '@ht2/world/world';
 
 /** localStorage у пам'яті (тести — у Node). */
 class MemoryStorage {
@@ -79,5 +81,34 @@ describe('збереження й водії HT2', () => {
     saveCareer(fresh);
     restoreCareer(fresh.id!, none);
     expect(loadCareer(fresh.id)).toBeNull();
+  });
+
+  it('курс машини: запис з курсом відновлює той самий напрям, старий запис — без курсу', () => {
+    // Як careerMode.persist: «уперед» Three.js (зі схилом) → (x, −z) гри.
+    const f = new THREE.Vector3(Math.cos(2.3), 0.1, Math.sin(2.3));
+    const c = newCareer('Водій', 'ZilR');
+    c.pos = [100, 200, 5];
+    c.heading = [f.x, -f.z];
+    saveCareer(c);
+    const h = savedHeading(loadCareer(c.id)!);
+    expect(h).not.toBeNull();
+    const back = toThree(h![0], h![1], 0);
+    const want = f.clone().setY(0).normalize();
+    expect(back.length()).toBeCloseTo(1, 6);
+    expect(back.angleTo(want)).toBeLessThan(1e-6);
+
+    // Старе збереження без поля — завантажується як було, курсу немає (машина — уздовж дороги).
+    const old = { ...newCareer('Водій', 'ZilR'), money: 1234, pos: [1, 2, 3] } as Record<string, unknown>;
+    delete old.heading;
+    delete old.id;
+    localStorage.setItem('ht2.save.old1', JSON.stringify(old));
+    const o = loadCareer('old1')!;
+    expect(o.money).toBe(1234);
+    expect(o.pos).toEqual([1, 2, 3]);
+    expect(savedHeading(o)).toBeNull();
+    expect(listSaves().some((x) => x.id === 'old1')).toBe(true);
+    // Зіпсоване поле — теж як без курсу.
+    expect(savedHeading({ heading: [0, 0] })).toBeNull();
+    expect(savedHeading({ heading: [Number.NaN, 1] })).toBeNull();
   });
 });

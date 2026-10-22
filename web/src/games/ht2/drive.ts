@@ -72,7 +72,7 @@ import { Music } from './ui/music';
 import { SceneAssembler, setStaticSwitch } from './engine/render/sceneBuilder';
 import { parseB3d } from './engine/formats/b3d';
 import { parseRmp } from './engine/formats/rmp';
-import { REPAIR_PER_PERCENT, currentDriver, restoreCareer, savedCareerRaw, type Ht2Career } from './career/career';
+import { REPAIR_PER_PERCENT, currentDriver, restoreCareer, savedCareerRaw, savedHeading, type Ht2Career } from './career/career';
 import { HT2_MOD_REGIONS, readTextures } from './files';
 import { SFX_REF, saveSettings, steerGain, timeScale, type Ht2Settings } from './ui/settings';
 import { EscArt } from './ui/escArt';
@@ -739,6 +739,10 @@ export class Ht2Drive {
     // Старт гри (GAME.CNF): king.exe ставить машину курсом +x гри (на схід) — у чотирьох записах телеметрії з
     // початку гри вектор «уперед» рівно (1, 0); уздовж дороги порт ставив її навпаки, носом на захід.
     if (!saved && !o.race) spawn.forward.copy(toThree(1, 0, 0)).normalize();
+    // Збереження з курсом (careerMode.persist) — машина стає носом туди ж, куди їхала; причіп (hitch) — позаду по
+    // тому ж курсу. Старі записи без курсу — уздовж найближчої дороги, як раніше.
+    const savedDir = saved && o.career ? savedHeading(o.career) : null;
+    if (savedDir) spawn.forward.copy(toThree(savedDir[0], savedDir[1], 0));
     if (!o.race) {
       // Не на осьовій лінії WAY, а на правій смузі: у записі king.exe машина на (−3020,7; −4616,75) при лінії дороги
       // y = −4615 — на 1,75 м праворуч від курсу (як смуги гонки, race.ts LANE). Вузька дорога — посередині правого краю.
