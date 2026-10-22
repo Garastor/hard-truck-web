@@ -3597,11 +3597,13 @@ export class Ht2Drive {
     if (!this.cab) return;
     this.cab.visible = inside;
     if (this.glassRain) {
-      // Під дахом (тунель, міст — промінь угору влучає в геометрію) нових крапель немає.
+      // Під дахом (тунель, міст — промінь угору влучає в геометрію) нових крапель немає. Лише нерухомий світ: у
+      // високих кабін (RenaultR, KamazR, VolvoR, MercedesR…) початок променя (+3 м над центром) буває всередині
+      // власного кузова — машина «стояла під дахом», і на склі не було крапель; причіп і трафік теж не дах.
       if ((this.shelterTimer -= dt) <= 0) {
         this.shelterTimer = 0.5;
         const t = this.truck.body.translation();
-        this.sheltered = this.raining && !!this.rapier.castRay(new RAPIER.Ray({ x: t.x, y: t.y + 3, z: t.z }, { x: 0, y: 1, z: 0 }), 60, true);
+        this.sheltered = this.raining && !!this.rapier.castRay(new RAPIER.Ray({ x: t.x, y: t.y + 3, z: t.z }, { x: 0, y: 1, z: 0 }), 60, true, undefined, undefined, undefined, undefined, (c) => c.parent()?.isFixed() ?? true);
       }
       // Краплі на склі — ще й за повзунками графіки (g > 0,5 і d > 0,2, ui/effects.ts).
       // Набір кімнати з rain=off (тунелі WEATHER5/8, king.exe — щокадру гасить біти крапель і двірників): ні крапель,
