@@ -51,6 +51,7 @@ export class WayNet {
     return best;
   }
 
+
   /** Точка на відстані `ahead` уздовж мережі від позиції (line, seg, t); choose — продовження на розвилці. */
   advance(line: WayLine, seg: number, t: number, ahead: number, choose?: (l: WayLine) => WayLine | null): THREE.Vector3 {
     let cur = line.pts[seg].clone().lerp(line.pts[seg + 1], t);
@@ -111,8 +112,10 @@ const HALT_SIDE = 4;
 const HALT_DECEL = 1.2;
 const HALT_AT = 0.5;
 /**
- * Їдучи за маршрутом (choose), «де я» — лінія маршруту (поточна чи її продовження), якщо інша ближча не більше ніж на
- * стільки, м: на стику лінії петлі й виїзду починаються в одній точці, і найближчою бувала петля — бот кружляв базою.
+ * «Де я» — своя лінія (поточна чи її продовження: за маршрутом choose, інакше pick), якщо інша ближча не більше ніж на
+ * стільки, м: на стику лінії петлі й виїзду починаються в одній точці, і найближчою бувала петля — бот кружляв базою;
+ * автопілот гравця так само перескакував з дороги al_088#816 на паралельний під'їзд СТО біля Південного (#819, той
+ * самий початковий вузол) і впирався в стіну під навісом.
  */
 const OFF_ROUTE = 3;
 /** Від борту до стіни при розминанні — щонайменше: зсув праворуч ≤ wallRight − PASS_EDGE (півширини 1,25 + запас), м. */
@@ -122,6 +125,11 @@ const PASS_EDGE = 1.7;
 export interface Oncoming {
   pos: THREE.Vector3;
   forward: THREE.Vector3;
+}
+
+/** Мережа з вибором гілки без маршруту (Ht2Roads.pick — стала гілка без кишень, станцій і зрізалок). */
+interface PickNet {
+  pick?(line: WayLine): WayLine | null;
 }
 
 export class AutoPilot {
@@ -200,8 +208,8 @@ export class AutoPilot {
       s.brake = 1;
       return s;
     }
-    const cur = this.choose ? this.cur : null;
-    const onward = cur && this.choose!(cur);
+    const cur = this.cur;
+    const onward = cur && (this.choose ? this.choose(cur) : ((this.net as PickNet).pick?.(cur) ?? (cur.next.length === 1 ? cur.next[0] : null)));
     const n = this.net.nearest(pos, forward, cur ? (l) => (l === cur || l === onward ? 0 : OFF_ROUTE) : undefined);
     this.cur = n?.line ?? null;
     if (!n) {
