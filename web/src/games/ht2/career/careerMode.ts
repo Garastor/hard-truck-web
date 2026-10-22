@@ -925,6 +925,28 @@ export class CareerMode {
     if (n) this.drive.say(`ЦЕЙ ВАНТАЖ ВЕЗУТЬ ЩЕ ${n}. ПРЕМІЯ ПЕРШОМУ $${o.premium}`);
   }
 
+  /**
+   * Суперники старого збереження (до справжніх водіїв: лише розрахунок часу, `member` немає) — справжніми
+   * далекобійниками на маршруті з тим самим поступом (порт, на прохання користувача): лишилось їм route·(1 − t/eta).
+   * Один раз, щойно є світ і відома відстань гравця. Не вийшло (світу без водіїв) — лишаються розрахунковими.
+   */
+  private adoptLegacyRivals(o: NonNullable<Ht2Career['order']>, playerLeft: number): void {
+    const T = this.drive.truckers;
+    if (!T?.fleet || !o.rivals?.some((r) => r.member === undefined && !r.done && !r.out)) return;
+    const route = Math.max(o.route ?? o.distance, playerLeft);
+    const p = this.drive.truck.visual.position.clone();
+    const heading = this.drive.truck.forward().setY(0).normalize();
+    for (const r of o.rivals) {
+      if (r.member !== undefined || r.done || r.out) continue;
+      const rivalLeft = route * (1 - progress(r));
+      const i = T.adoptRival(o, r.name, rivalLeft, playerLeft, route, p, heading);
+      if (i === null) continue;
+      r.member = i;
+      r.name = T.fleet.members[i].name;
+      r.left = rivalLeft;
+    }
+  }
+
   private rivalRun(i: number): RivalRun {
     return { name: this.drive.truckers!.fleet!.members[i].name, member: i, eta: 0, t: 0, stubborn: Math.random() < 0.35 };
   }
@@ -974,6 +996,7 @@ export class CareerMode {
     const to = this.stores.find((s) => s.id === o.to);
     const left = to ? this.drive.routeLeft(toThree(...to.center)) : null;
     if (T) T.playerLeft = left;
+    if (T && left !== null) this.adoptLegacyRivals(o, left);
     this.topUpTimer -= 0.5;
     if (this.topUpTimer <= 0) {
       this.topUpTimer = TOP_UP_EVERY;

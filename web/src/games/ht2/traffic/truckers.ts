@@ -692,6 +692,49 @@ export class Truckers {
   }
 
   /**
+   * Суперник старого збереження (без водія, лише розрахунок часу) стає справжнім далекобійником (порт, на прохання
+   * користувача): водій name, якщо вільний, інакше найближчий вільний, бере те саме замовлення й стає на маршруті так, щоб
+   * йому лишалось rivalLeft м: не далі за гравця (rivalLeft ≤ playerLeft) — від гравця вперед маршрутом рейсу на різницю;
+   * позаду — від складу відправлення вперед, доки не лишиться rivalLeft. Повертає номер водія чи null.
+   */
+  adoptRival(order: Order, name: string, rivalLeft: number, playerLeft: number, route: number, at: THREE.Vector3, heading: THREE.Vector3): number | null {
+    const f = this.fleet;
+    if (!f || !this.freight) return null;
+    const free = (m: FleetMember) => !m.off && !m.physical && !m.rival;
+    let i = f.members.findIndex((m) => m.name === name && free(m));
+    if (i < 0) {
+      let bd = Infinity;
+      f.members.forEach((m, k) => {
+        const d = f.at(m).pos.distanceTo(at);
+        if (free(m) && d < bd) (bd = d), (i = k);
+      });
+    }
+    if (i < 0) return null;
+    const clean: Order = { goods: order.goods, units: order.units, from: order.from, to: order.to, distance: order.distance, pay: order.pay, value: order.value, deadline: order.deadline, urgent: order.urgent, hidden: order.hidden };
+    const job = this.freight.sendLoaded(clean);
+    if (!job) return null;
+    const m = f.members[i];
+    f.setJob(m, job);
+    m.cargo = order.goods.mass * order.units;
+    m.rival = { job, slow: 1, delay: 0 };
+    m.hold = 0;
+    m.hidden = false;
+    const st = this.freight.stores.find((s) => s.id === order.from);
+    const src = st && st.docks.length ? toThree(...st.docks[Math.min(1, st.docks.length - 1)]) : null;
+    if (rivalLeft <= playerLeft || !src) {
+      f.place(m, at, heading);
+      f.shift(m, playerLeft - rivalLeft);
+    } else {
+      f.place(m, src);
+      m.stopped = false;
+      // Від складу шлях буває довшим за маршрут гравця (той — від місця, де взято замовлення): зсув — від свого «лишилось».
+      f.shift(m, Math.max(0, (f.left(m) ?? route) - rivalLeft));
+    }
+    m.stopped = false;
+    return i;
+  }
+
+  /**
    * Стан суперника index (імʼя name): де він, скільки лишилось дорогами, доїхав (рейс змагання скінчився
    * розвантаженням). null — світ ще не створено (перший кадр); gone — такого водія немає чи він уже не везе цей вантаж
    * (збереження з іншим світом). Водієві без позначки (відновлено зі збереження) вона ставиться, якщо він везе до to.
