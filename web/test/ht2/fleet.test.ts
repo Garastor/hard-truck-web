@@ -175,7 +175,7 @@ describe.skipIf(!has)('HT2: далекобійники світу (абстра�
     const all = new Freight(roads, stores, [bread], rnd);
     const from = stores.find((s) => s.region === 'bc')!;
     const to = stores.find((s) => s.region === 'ar')!;
-    const order = { goods: bread, units: 1, from: from.id, to: to.id, distance: 11000, pay: 0, value: 0, deadline: 1e6, urgent: false };
+    const order = { goods: bread, units: 1, from: from?.id, to: to?.id, distance: 11000, pay: 0, value: 0, deadline: 1e6, urgent: false };
     const line = (name: string) => roads.lines.find((l) => l.name === name)!;
 
     it('від складу Ключів — на південь (11 км), а не однобічною смугою складу на північ через ba (15 км)', () => {
