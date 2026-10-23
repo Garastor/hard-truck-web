@@ -374,6 +374,7 @@ export class Ht2Roads {
         return p.clone().add(new THREE.Vector3(d.z, 0, -d.x).multiplyScalar(need[i]));
       });
       for (let i = 0; i < n; i++) l.pts[i] = moved[i];
+      this.boxes.delete(l);
     }
   }
 
@@ -443,9 +444,30 @@ export class Ht2Roads {
     return a.flags & 4 ? [1] : [-1];
   }
 
-  /** Лінії в клітинці точки й сусідніх. */
+  /** Лінії в клітинці точки й сусідніх (сітка будується раз — список околу клітинки кешується). */
   private near(p: THREE.Vector3): RoadLine[] {
-    return [...new Set(nearCells(this.grid, p))];
+    const key = cellKey(p);
+    let out = this.nearCache.get(key);
+    if (!out) this.nearCache.set(key, (out = [...new Set(nearCells(this.grid, p))]));
+    return out;
+  }
+  private readonly nearCache = new Map<string, RoadLine[]>();
+
+  /** Рамки ліній у площині XZ: [minX, minZ, maxX, maxZ]. */
+  private readonly boxes = new WeakMap<RoadLine, [number, number, number, number]>();
+  private boxOf(l: RoadLine): [number, number, number, number] {
+    let b = this.boxes.get(l);
+    if (!b) {
+      b = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const v of l.pts) {
+        b[0] = Math.min(b[0], v.x);
+        b[1] = Math.min(b[1], v.z);
+        b[2] = Math.max(b[2], v.x);
+        b[3] = Math.max(b[3], v.z);
+      }
+      this.boxes.set(l, b);
+    }
+    return b;
   }
 
   /** bias — надбавка до відстані лінії, м (автопілот за маршрутом: лінії поза маршрутом — далі). */
@@ -454,7 +476,16 @@ export class Ht2Roads {
     const ab = new THREE.Vector3();
     const ap = new THREE.Vector3();
     const q = new THREE.Vector3();
-    for (const line of this.near(p)) {
+    // Щокадру — десятки викликів (боти, трафік), а в околі 600×600 м міста ≈ 180 ліній. Спершу лінія з найближчою
+    // рамкою, далі решта — лише ті, чия рамка не далі за знайдене (відстань із надбавками не менша за відстань до
+    // рамки). Рівні відстані — як без відсікання: перемагає лінія, раніша в околі (order).
+    const lines = this.near(p);
+    const boxes = lines.map((l) => boxDist(this.boxOf(l), p));
+    let first = 0;
+    for (let k = 1; k < boxes.length; k++) if (boxes[k] < boxes[first]) first = k;
+    let bestOrder = Infinity;
+    const scan = (order: number) => {
+      const line = lines[order];
       for (let i = 0; i + 1 < line.pts.length; i++) {
         const a = line.pts[i];
         ab.subVectors(line.pts[i + 1], a);
@@ -465,9 +496,14 @@ export class Ht2Roads {
         // Лінії проти руху штрафуємо — їдемо своєю смугою, не розвертаємось.
         if (heading && ab.setY(0).normalize().dot(heading) < 0.2) dist += 30;
         if (bias) dist += bias(line);
-        if (!best || dist < best.dist) best = { line, seg: i, t, dist };
+        if (!best || dist < best.dist || (dist === best.dist && order < bestOrder)) {
+          best = { line, seg: i, t, dist };
+          bestOrder = order;
+        }
       }
-    }
+    };
+    if (lines.length) scan(first);
+    for (let k = 0; k < lines.length; k++) if (k !== first && !(best && boxes[k] > (best as { dist: number }).dist)) scan(k);
     return best;
   }
 
@@ -735,6 +771,11 @@ function closestSeg(pts: THREE.Vector3[], p: THREE.Vector3): boolean {
   SEG.t = bt;
   SEG.d = bd;
   return true;
+}
+
+/** Відстань від точки до рамки [minX, minZ, maxX, maxZ] у площині XZ (0 — усередині). */
+function boxDist(b: readonly number[], p: THREE.Vector3): number {
+  return Math.hypot(Math.max(b[0] - p.x, 0, p.x - b[2]), Math.max(b[1] - p.z, 0, p.z - b[3]));
 }
 
 function cellKey(p: THREE.Vector3): string {

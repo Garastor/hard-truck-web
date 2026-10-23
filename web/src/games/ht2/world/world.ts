@@ -359,15 +359,27 @@ export class Ht2World {
 
   /** Погойдування дерев усіх завантажених регіонів: вітер 0…6 (Climate.wind); шар гілок — за положенням камери. */
   updateTrees(dt: number, wind: number, camera?: THREE.Vector3): void {
-    for (const r of this.loaded.values()) (r.built.root.getObjectByName('trees')?.userData.sway as TreeUpdate | undefined)?.update(dt, wind, camera);
+    for (const r of this.loaded.values()) (this.nodesOf(r).trees?.userData.sway as TreeUpdate | undefined)?.update(dt, wind, camera);
   }
 
-  /** Ніч і сутінки: ореоли ліхтарів ($$DynamicGlow) у всіх завантажених регіонах. */
+  /**
+   * Вузли `trees` і `glows` регіону — знайдені раз: getObjectByName обходить усе дерево регіону (тисячі вузлів), а
+   * дерева й ореоли потрібні щокадру (на ПК ≈ 0,45 мс на кадр на 5 регіонах — для телефона це помітний нагрів).
+   */
+  private readonly nodes = new WeakMap<LoadedRegion, { trees?: THREE.Object3D; glows?: THREE.Object3D }>();
+  private nodesOf(r: LoadedRegion): { trees?: THREE.Object3D; glows?: THREE.Object3D } {
+    let n = this.nodes.get(r);
+    if (!n) this.nodes.set(r, (n = { trees: r.built.root.getObjectByName('trees'), glows: r.built.root.getObjectByName('glows') }));
+    return n;
+  }
+
+  /** Ніч і сутінки: ореоли ліхтарів ($$DynamicGlow) у всіх завантажених регіонах (новий регіон бере стан при появі). */
   private night = false;
   setNight(on: boolean): void {
+    if (on === this.night) return;
     this.night = on;
     for (const r of this.loaded.values()) {
-      const g = r.built.root.getObjectByName('glows');
+      const g = this.nodesOf(r).glows;
       if (g) g.visible = on;
     }
   }
@@ -468,7 +480,7 @@ export class Ht2World {
         });
         if (moving.size) this.worldMoving.set(next, [...moving]);
         for (const [name, list] of reg.props) for (const o of list) o.visible = this.propsOn.has(name);
-        const glows = reg.built.root.getObjectByName('glows');
+        const glows = this.nodesOf(reg).glows;
         if (glows) glows.visible = this.night;
         for (let i = 0; i < 16; i++) this.setIllum(reg, i, illumOn(i, this.hour));
         this.visibility.addRegion(next, reg.built.rooms, reg.portals, reg.footprint, reg.built.root);
