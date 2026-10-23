@@ -72,6 +72,11 @@ const JOBS_PER_TICK = 2;
 const GOAL_SIDE = 4;
 /** Тупик без продовження — розворот на лінію, що починається ближче, м. */
 const UTURN_R = 25;
+/** Розворот на старті рейсу (placeBest): зустрічна смуга ближче TURN_R і маршрут з неї коротший на TURN_GAIN, м. */
+const TURN_R = 40;
+const TURN_GAIN = 200;
+/** Абстрактно перейти на сусідню смугу на стику, якщо з неї до місця коротше на стільки, м (driver.ROUTE_SLACK). */
+const LANE_GAIN = 100;
 
 export class Fleet {
   readonly members: FleetMember[] = [];
@@ -157,6 +162,32 @@ export class Fleet {
     m.stopped = !!g && Math.hypot(g.x - pos.x, g.z - pos.z) < 5;
   }
 
+  /**
+   * Поставити біля pos на смугу, з якої до місця рейсу коротше: за курсом heading (без нього — за напрямком
+   * найближчої лінії) чи назустріч (king.exe 0x487500 рахує маршрут гравця як коротший з двох напрямків). Зустрічна —
+   * лише ближче TURN_R і коротша щонайменше на TURN_GAIN: у базі Ключів смуга вздовж складу однобічна на північ, і
+   * звідти до Залісська 15 км через ba, а з паралельної смуги двору (28 м) — 11 км на південь, куди їде гравець.
+   */
+  placeBest(m: FleetMember, pos: THREE.Vector3, heading?: THREE.Vector3): void {
+    const h = heading?.clone() ?? this.dirAt(pos);
+    this.place(m, pos, h ?? undefined);
+    if (!m.job?.goal || !h) return;
+    const a = { line: m.line, s: m.s, stopped: m.stopped };
+    const la = this.left(m) ?? Infinity;
+    this.place(m, pos, h.clone().negate());
+    const lb = m.line === a.line ? Infinity : (this.left(m) ?? Infinity);
+    if (lb + TURN_GAIN < la && this.at(m).pos.distanceTo(pos) < TURN_R) return;
+    m.line = a.line;
+    m.s = a.s;
+    m.stopped = a.stopped;
+  }
+
+  /** Напрям найближчої лінії в точці (null — доріг поруч немає). */
+  private dirAt(pos: THREE.Vector3): THREE.Vector3 | null {
+    const n = this.roads.nearest(pos);
+    return n ? n.line.pts[n.seg + 1].clone().sub(n.line.pts[n.seg]).setY(0).normalize() : null;
+  }
+
   /** Перший рейс: з імовірністю START_LOADED — уже з вантажем випадкового складу до іншого, інакше порожній. */
   startJob(m: FleetMember): void {
     const f = this.freight;
@@ -215,7 +246,15 @@ export class Fleet {
         m.cargo = event.cargo;
         changed.push(m);
       }
-      if (next !== job) this.setJob(m, next);
+      if (next !== job) {
+        const wasAt = m.stopped;
+        this.setJob(m, next);
+        // З місця складу — на ту смугу двору, звідки до нового місця коротше (абстрактно розвернувся в дворі).
+        if (wasAt) {
+          const { pos, forward } = this.at(m);
+          this.placeBest(m, pos, forward);
+        }
+      }
     }
     return changed;
   }
@@ -249,7 +288,10 @@ export class Fleet {
 
   /** Продовження лінії: найкоротшим шляхом до місця рейсу, без маршруту — випадкова гілка; тупик — розворот. */
   private next(m: FleetMember): RoadLine | null {
-    const line = m.line;
+    let line = m.line;
+    // Абстрактно смуга міняється на стику: з тієї, звідки до місця найкоротше (з сусідньої буває лише петлею).
+    const cost = m.job && this.freight?.routeCost(m.job);
+    if (cost) for (const sib of m.line.siblings) if (sib.pts.length === line.pts.length && cost(sib) + LANE_GAIN < cost(line)) line = sib;
     const routed = m.job && this.freight?.next(m.job, line);
     if (routed) return routed;
     // Зрізалки (world/roads markShortcuts) — лише для гравця.

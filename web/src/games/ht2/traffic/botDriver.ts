@@ -138,9 +138,10 @@ export function newBot(roads: Ht2Roads, pos: THREE.Vector3, fwd: THREE.Vector3, 
   return { m, ps, want: 0, halt: null, passing: 0, squeeze: 0, reach, shift: 0, halfWidth };
 }
 
-/** Новий рейс: маршрут до місця й точка зупинки (null — без маршруту, як трафік). */
-export function setRoute(b: BotDriver, route: ((l: RoadLine) => RoadLine | null) | null, halt: THREE.Vector3 | null): void {
+/** Новий рейс: маршрут до місця, точка зупинки (null — без маршруту, як трафік) і довжина маршруту від лінії (вибір смуги). */
+export function setRoute(b: BotDriver, route: ((l: RoadLine) => RoadLine | null) | null, halt: THREE.Vector3 | null, cost: ((l: RoadLine) => number) | null = null): void {
   b.m.route = route;
+  b.m.routeCost = cost;
   b.halt = halt;
   replan(b.m);
 }

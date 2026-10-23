@@ -320,7 +320,7 @@ export class Truckers {
   setJob(r: Rival, job: FreightJob): void {
     r.job = job;
     if (r.member) r.member.job = job;
-    setRoute(r.bot, this.freight?.route(job) ?? null, job.goal);
+    setRoute(r.bot, this.freight?.route(job) ?? null, job.goal, this.freight?.routeCost(job) ?? null);
   }
 
   /** Вантаж у машині бота, кг: у причепі — маса й вага на сідлі тягача (кузов вантажівки — без зміни маси, порт). */
@@ -674,13 +674,13 @@ export class Truckers {
       if (src && source) {
         // Від складу маршрутом, доки не далі TOP_UP_AWAY від гравця (кроками 4 м, як 0x435a90), і ще rand % крок +
         // (скільки вже є) · крок.
-        f.place(m, src);
+        f.placeBest(m, src);
         m.stopped = false;
         for (let g = 0; g < 2000 && !m.stopped && f.at(m).pos.distanceTo(at) <= TOP_UP_AWAY; g++) f.shift(m, 4);
         f.shift(m, Math.floor(Math.random() * source.spacing) + (source.already + out.length) * source.spacing);
         m.stopped = false;
       } else if (off !== undefined) {
-        f.place(m, at, heading);
+        f.placeBest(m, at, heading);
         f.shift(m, off);
         m.stopped = false;
       }
@@ -722,10 +722,10 @@ export class Truckers {
     const st = this.freight.stores.find((s) => s.id === order.from);
     const src = st && st.docks.length ? toThree(...st.docks[Math.min(1, st.docks.length - 1)]) : null;
     if (rivalLeft <= playerLeft || !src) {
-      f.place(m, at, heading);
+      f.placeBest(m, at, heading);
       f.shift(m, playerLeft - rivalLeft);
     } else {
-      f.place(m, src);
+      f.placeBest(m, src);
       m.stopped = false;
       // Від складу шлях буває довшим за маршрут гравця (той — від місця, де взято замовлення): зсув — від свого «лишилось».
       f.shift(m, Math.max(0, (f.left(m) ?? route) - rivalLeft));

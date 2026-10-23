@@ -130,6 +130,16 @@ export class Freight {
     return (l) => this.next(j, l);
   }
 
+  /**
+   * Вартість маршруту від кінця лінії до місця рейсу, м (Infinity — шляху немає; null — без цілі): водій бота порівнює
+   * смуги однієї дороги (driver.planRoute) — з деяких до місця лише петлею.
+   */
+  routeCost(j: FreightJob): ((l: RoadLine) => number) | null {
+    const g = j.goal;
+    if (!g) return null;
+    return (l) => this.navigator.distances(g, DOCK_LINE).get(l) ?? Infinity;
+  }
+
   /** Продовження лінії найкоротшим шляхом до місця рейсу (null — без цілі чи шляху немає). */
   next(j: FreightJob, l: RoadLine): RoadLine | null {
     return j.goal ? this.navigator.next(l, j.goal, DOCK_LINE) : null;

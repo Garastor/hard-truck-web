@@ -13,6 +13,7 @@ import { Ht2Roads } from '@ht2/world/roads';
 import { findStores, type Goods } from '@ht2/career/economy';
 import { Freight, type FreightCapacity } from '@ht2/traffic/freight';
 import { Fleet, type FleetMember } from '@ht2/traffic/fleet';
+import { newMover, replan } from '@ht2/traffic/driver';
 import { HT2_DIR } from '../gameDirs';
 
 const bread: Goods = { id: 'BREAD', name: 'Хліб', mass: 10, volume: 0.02, price: 10, ratio: 0.8, durability: 0.5, illegal: false, forMafia: false, trucks: true, fuel: false, cars: false, guilt: 0 };
@@ -168,5 +169,66 @@ describe.skipIf(!has)('HT2: далекобійники світу (абстра�
     expect(f.left(m)).toBeCloseTo(base, 3);
     f.tick(2, (x) => (x === m ? 10 : 20));
     expect(base - f.left(m)!).toBeCloseTo(20, 0);
+  });
+  // Замовлення Ключі (bc) → Залісськ (ar), скарга 2026-10-23: суперники їхали не в той бік і кружляли біля бази.
+  describe('суперники Ключі → Залісськ', () => {
+    const all = new Freight(roads, stores, [bread], rnd);
+    const from = stores.find((s) => s.region === 'bc')!;
+    const to = stores.find((s) => s.region === 'ar')!;
+    const order = { goods: bread, units: 1, from: from.id, to: to.id, distance: 11000, pay: 0, value: 0, deadline: 1e6, urgent: false };
+    const line = (name: string) => roads.lines.find((l) => l.name === name)!;
+
+    it('від складу Ключів — на південь (11 км), а не однобічною смугою складу на північ через ba (15 км)', () => {
+      const f = new Fleet(roads, all, () => cap, rnd);
+      const at = all.dock(from, 1)!;
+      const north = new THREE.Vector3(0, 0, 1);
+      const m = f.add('Х', 'Volvo', 0, null)!;
+      f.setJob(m, all.sendLoaded(order)!);
+      f.place(m, at, north);
+      expect(f.left(m)!).toBeGreaterThan(14000);
+      f.placeBest(m, at, north);
+      const left = f.left(m)!;
+      expect(left).toBeLessThan(11500);
+      // Їде цим маршрутом: за 1 км лишилось на 1 км менше, і він на дорозі bc (до bb), а не на ba.
+      f.move(m, 1000);
+      expect(left - f.left(m)!).toBeCloseTo(1000, -1);
+      expect(m.line.region).toBe('bc');
+      // Зсуви довкола гравця біля складу — усі на тому самому маршруті: попереду менше, позаду більше.
+      for (const off of [300, 150, -150, -300]) {
+        const r = f.add('Р', 'Volvo', 0, null)!;
+        f.setJob(r, all.sendLoaded(order)!);
+        f.placeBest(r, at, north);
+        f.shift(r, off);
+        expect(f.left(r)!).toBeLessThan(12000);
+        expect(Math.abs(f.left(r)! - (left - off))).toBeLessThan(60);
+      }
+    });
+
+    it("абстрактно з правої смуги під'їзду бази Залісська — на місце 00 без петлі", () => {
+      const f = new Fleet(roads, all, () => cap, rnd);
+      const m = f.add('Х', 'Volvo', 0, null)!;
+      f.setJob(m, all.sendLoaded(order)!);
+      m.line = line('room_ar_036#1045:1r');
+      m.s = 0;
+      let moved = 0;
+      for (; moved < 2000 && !m.stopped; moved += 5) f.move(m, 5);
+      expect(m.stopped).toBe(true);
+      expect(moved).toBeLessThan(300);
+    });
+
+    it("водій бота вибирає смугу, з якої до місця коротше (не праву, з якої в'їзду немає)", () => {
+      const job = all.sendLoaded(order)!;
+      const m = newMover(line('room_ar_036#1045:1r'), 0, 0, 15, 2);
+      m.route = all.route(job);
+      m.routeCost = all.routeCost(job);
+      replan(m);
+      expect(m.wantLane).toBe(0);
+      // Без довжини маршруту — «тримайся правої»: з цієї смуги до місця лише петлею 1,7 км.
+      m.routeCost = null;
+      replan(m);
+      expect(m.wantLane).toBe(1);
+      const cost = all.routeCost(job)!;
+      expect(cost(line('room_ar_037#1046:1r')) - cost(line('room_ar_037#1046:0r'))).toBeGreaterThan(1000);
+    });
   });
 });

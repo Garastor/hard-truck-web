@@ -198,6 +198,11 @@ export interface Mover {
    * до місця складу); null чи немає — як трафік (цілі-міста й випадкова дорога).
    */
   route?: ((l: RoadLine) => RoadLine | null) | null;
+  /**
+   * Скільки за маршрутом від кінця лінії до цілі, м (Infinity — шляху немає): смуга — лише та, з якої не довше за
+   * найкоротшу сусідню на ROUTE_SLACK (у Залісську з правої смуги до місця 00 — 1,7 км петлею, з лівої — 27 м).
+   */
+  routeCost?: ((l: RoadLine) => number) | null;
   /** Лінія після стику за маршрутом (route); null — без маршруту чи шляху немає. */
   via?: RoadLine | null;
   /** Довжина позаду понад halfLen (напівпричіп тягача), м: обʼїзд закінчується й перестроювання дивиться ззаду з нею. */
@@ -514,14 +519,28 @@ function planRoute(m: Mover): boolean {
   m.via = m.route ? m.route(m.line) : null;
   if (!m.via) return false;
   m.plan = m.via.road;
-  const left = turnAngle(m.line, m.via) < -0.35;
-  let want = m.line.lane;
-  for (const sib of m.line.siblings) {
-    if (sib === m.line || sib.pts.length !== m.line.pts.length || !m.route!(sib)) continue;
-    if (left ? sib.lane < want : sib.lane > want) want = sib.lane;
-  }
+  // Смуги, з яких маршрут не довший за найкоротший; поворот — з найкращої (своя може вести в обхід).
+  const lanes = m.line.siblings.filter((sib) => sib.pts.length === m.line.pts.length && laneOnRoute(m, sib));
+  const best = m.routeCost ? lanes.reduce<RoadLine | null>((a, b) => (a && m.routeCost!(a) <= m.routeCost!(b) ? a : b), null) : null;
+  const to = best && best !== m.line ? (m.route!(best) ?? m.via) : m.via;
+  const left = turnAngle(best ?? m.line, to) < -0.35;
+  let want = lanes.includes(m.line) || !lanes.length ? m.line.lane : best!.lane;
+  for (const sib of lanes) if (left ? sib.lane < want : sib.lane > want) want = sib.lane;
   m.wantLane = want;
   return true;
+}
+
+/** Найбільша перевага довжини маршруту з іншої смуги, за якої своя ще годиться, м. */
+const ROUTE_SLACK = 100;
+
+/** Чи веде смуга sib до цілі маршруту (і не довше за найкоротшу з сусідніх на ROUTE_SLACK). */
+function laneOnRoute(m: Mover, sib: RoadLine): boolean {
+  if (!m.route?.(sib)) return false;
+  const cost = m.routeCost;
+  if (!cost) return true;
+  let best = Infinity;
+  for (const l of sib.siblings) if (l.pts.length === sib.pts.length) best = Math.min(best, cost(l));
+  return cost(sib) <= best + ROUTE_SLACK;
 }
 
 function planNext(m: Mover): void {
@@ -750,7 +769,7 @@ function changeLane(m: Mover, to: number): void {
   if (!sib || sib === m.line || sib.pts.length !== m.line.pts.length) return;
   // За маршрутом — лише в смугу, з якої шлях до цілі теж є.
   const via = m.route ? m.route(sib) : null;
-  if (m.route && !via) return;
+  if (m.route && (!via || !laneOnRoute(m, sib))) return;
   const d = (m.line.lane - to) * m.line.laneWidth;
   m.lat += d;
   m.off += d;
