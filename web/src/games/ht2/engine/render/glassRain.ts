@@ -85,6 +85,8 @@ export class GlassRain {
   private glass: { o: THREE.Vector3; e1: THREE.Vector3; e2: THREE.Vector3; tris: GlassTri[] } | null = null;
   private readonly water = new WaterBuffer(SIZE, SIZE, true);
   private readonly copy = new SceneCopy();
+  /** Масштаб копії кадру під водою (SceneCopy): телефон — 0,5 (drive.ts), ПК — повна. */
+  copyScale = 1;
   private readonly uniforms = waterUniforms(this.water.texture, SLOPE_SPAN / SIZE, SLOPE_SPAN / SIZE);
   private readonly drop: Levels | null;
   private readonly runner: Levels | null;
@@ -219,7 +221,7 @@ export class GlassRain {
     this.uniforms.wet.value = this.water.empty ? 0 : 1;
     if (this.water.empty) return;
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
-    this.copy.copy(renderer, 0, 0, size.x, size.y, this.uniforms);
+    this.copy.copy(renderer, 0, 0, size.x, size.y, this.uniforms, this.copyScale);
     // Масштаб «пікселя кадру 640×480» на екрані — як у 2D-кабіни.
     const dev = size.y / 480;
     this.uniforms.k.value = WATER_LOOK.refract * dev;

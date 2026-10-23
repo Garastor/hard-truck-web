@@ -297,30 +297,63 @@ export const WATER_LOOK = { refract: 20, refractMax: 3, shade: 2.5, water: 0.75,
 
 /**
  * Копія кадру під водою для заломлення: прямокутник буфера малювання (у пікселях, y — знизу), текстура того ж
- * розміру; uniforms шейдера (scene, res, origin).
+ * розміру; uniforms шейдера (scene, res, origin). scale < 1 — копія зменшена (blitFramebuffer з лінійним
+ * згладжуванням; телефон — удвічі, на прохання користувача: копія щокадру — помітна частка роботи відеочипа). Шейдер
+ * бере копію в нормованих координатах, тож розмір копії на нього не впливає. Зменшення неможливе для полотна зі
+ * згладжуванням (MSAA) чи WebGL1 — тоді повна копія.
  */
 export class SceneCopy {
   private tex: THREE.FramebufferTexture | null = null;
+  private small: THREE.WebGLRenderTarget | null = null;
 
-  copy(renderer: THREE.WebGLRenderer, x: number, y: number, w: number, h: number, uniforms: Record<string, THREE.IUniform>): void {
+  copy(renderer: THREE.WebGLRenderer, x: number, y: number, w: number, h: number, uniforms: Record<string, THREE.IUniform>, scale = 1): void {
     w = Math.max(1, Math.round(w));
     h = Math.max(1, Math.round(h));
+    const pos = new THREE.Vector2(Math.round(x), Math.round(y));
+    (uniforms.res.value as THREE.Vector2).set(w, h);
+    (uniforms.origin.value as THREE.Vector2).copy(pos);
+    const small = scale < 1 ? this.blit(renderer, pos, w, h, scale) : null;
+    if (small) {
+      uniforms.scene.value = small;
+      return;
+    }
     if (!this.tex || this.tex.image.width !== w || this.tex.image.height !== h) {
       this.tex?.dispose();
       this.tex = new THREE.FramebufferTexture(w, h);
       this.tex.magFilter = THREE.LinearFilter;
       this.tex.minFilter = THREE.LinearFilter;
     }
-    const pos = new THREE.Vector2(Math.round(x), Math.round(y));
     renderer.copyFramebufferToTexture(this.tex, pos);
     uniforms.scene.value = this.tex;
-    (uniforms.res.value as THREE.Vector2).set(w, h);
-    (uniforms.origin.value as THREE.Vector2).copy(pos);
+  }
+
+  /** Зменшена копія кадру (малювання — на екран) у власну ціль; null — неможливо. */
+  private blit(renderer: THREE.WebGLRenderer, pos: THREE.Vector2, w: number, h: number, scale: number): THREE.Texture | null {
+    const gl = renderer.getContext();
+    if (typeof WebGL2RenderingContext === 'undefined' || !(gl instanceof WebGL2RenderingContext)) return null;
+    if (renderer.getRenderTarget() || gl.getContextAttributes()?.antialias) return null;
+    const tw = Math.max(1, Math.round(w * scale));
+    const th = Math.max(1, Math.round(h * scale));
+    if (!this.small || this.small.width !== tw || this.small.height !== th) {
+      this.small?.dispose();
+      this.small = new THREE.WebGLRenderTarget(tw, th, { depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
+      renderer.initRenderTarget(this.small);
+    }
+    const fb = (renderer.properties.get(this.small) as { __webglFramebuffer?: WebGLFramebuffer }).__webglFramebuffer;
+    if (!fb) return null;
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, fb);
+    gl.blitFramebuffer(pos.x, pos.y, pos.x + w, pos.y + h, 0, 0, tw, th, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+    // Назад на екран: Three.js вважає, що прив'язане полотно (малювання кабіни йде туди ж).
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return this.small.texture;
   }
 
   dispose(): void {
     this.tex?.dispose();
     this.tex = null;
+    this.small?.dispose();
+    this.small = null;
   }
 }
 

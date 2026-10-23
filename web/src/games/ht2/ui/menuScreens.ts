@@ -21,8 +21,18 @@ import { DEFAULT_KEYS, type Action, type Command } from '../engine/input/input';
 export const RESOLUTION_W = [640, 800, 1024, 1600];
 export const RESOLUTION_H = [480, 600, 768, 1200];
 
-/** Щільність пікселів режиму «Баланс» — коли роздільність не вибрано (drive.ts resize). */
-export const BALANCE_DPR = 1.5;
+/**
+ * Щільність пікселів режиму «Баланс» — коли роздільність не вибрано (drive.ts resize): ПК — 1,5, телефон — 1,25
+ * (менше нагріву, на прохання користувача 2026-10-23; iPhone 844×390 — ≈ 1055×488 замість 1266×585).
+ */
+export function balanceDpr(): number {
+  return touchScreen() ? 1.25 : 1.5;
+}
+
+/** Частота кадрів, коли її не вибрано в меню: телефон — 40 (менше нагріву, на прохання користувача), ПК — 60. */
+export function defaultFps(): number {
+  return touchScreen() ? 40 : 60;
+}
 
 /**
  * Щільність пікселів рендерера для кнопки роздільності i на екрані w×h (CSS-пікселі), не вище за екран:
@@ -39,9 +49,13 @@ function resolutionScale(i: number, w: number, h: number): number {
   return touchScreen() ? Math.sqrt((RESOLUTION_W[i] * RESOLUTION_H[i]) / (w * h)) : RESOLUTION_H[i] / h;
 }
 
-/** Телефон чи планшет (сенсорний екран) — як в оболонці (app/platform/quality.ts). */
+/**
+ * Телефон чи планшет (сенсорний екран) — як в оболонці (app/platform/quality.ts). Запит — один (він «живий»):
+ * частоту кадрів drive.ts питає щокадру.
+ */
+let coarse: MediaQueryList | null = null;
 function touchScreen(): boolean {
-  return matchMedia('(pointer: coarse)').matches;
+  return (coarse ??= matchMedia('(pointer: coarse)')).matches;
 }
 
 /** Кнопка роздільності, найближча за щільністю пікселів dpr до тієї, що діє на екрані w×h. */
@@ -128,7 +142,7 @@ export function ht2GraphicsScreen(art: Ht2MenuArt, o: GraphicsScreen): () => voi
   // На місці вибору відеокарти (у порту вона одна — WebGL) — частота кадрів (порт, на прохання користувача): менше —
   // менше нагріву телефона. Стрілки — сусіднє значення FPS_MODES.
   const fpsLabel = text(stage, '', 329, 257, { width: 255, size: 14 });
-  const fpsAt = () => Math.max(0, FPS_MODES.indexOf(s.fps ?? 60));
+  const fpsAt = () => Math.max(0, FPS_MODES.indexOf(s.fps ?? defaultFps()));
   const stepFps = (d: number) => {
     s.fps = FPS_MODES[Math.min(FPS_MODES.length - 1, Math.max(0, fpsAt() + d))];
     o.onChange({ ...s });
@@ -145,9 +159,9 @@ export function ht2GraphicsScreen(art: Ht2MenuArt, o: GraphicsScreen): () => voi
     ['large', 329, 330, '1024×768'],
     ['huge', 441, 330, '1600×1200'],
   ];
-  // Не вибрано — світиться та, що найближча до того, що діє насправді (drive.ts «Баланс», щільність ≤ BALANCE_DPR):
-  // на телефоні це ≈ 800×600; раніше світилась 1024×768, і вибір нижчих майже не змінював картинку.
-  const current = () => s.resolution ?? nearestResolution(Math.min(window.devicePixelRatio, BALANCE_DPR), window.innerWidth, window.innerHeight);
+  // Не вибрано — світиться та, що найближча до того, що діє насправді (drive.ts «Баланс», щільність ≤ balanceDpr()):
+  // раніше світилась 1024×768, і вибір нижчих майже не змінював картинку.
+  const current = () => s.resolution ?? nearestResolution(Math.min(window.devicePixelRatio, balanceDpr()), window.innerWidth, window.innerHeight);
   res.forEach(([tex, x, y, label], i) => painters.push(texButton(art, stage, `g/${tex}`, x, y, label, { selected: () => current() === i, action: () => pick(i), after: repaint })));
   const set = (k: 'effects' | 'detail') => (v: number) => {
     s[k] = Math.round(Math.max(0, Math.min(1, v)) * 10) / 10;

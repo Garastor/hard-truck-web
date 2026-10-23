@@ -45,7 +45,7 @@ import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, 
 import { Caches, hiddenPlaces, type Cache } from './vehicles/caches';
 import { orderVehicle, vehicleOffers, vehiclePowers, vehiclePrices } from './career/carOrder';
 import { HIRED_MIN_SPEED, HiredOnRoads } from './career/hired';
-import { BALANCE_DPR, keyName, resolutionDpr } from './ui/menuScreens';
+import { balanceDpr, defaultFps, keyName, resolutionDpr } from './ui/menuScreens';
 import { driverCosts, hiredLoad, upgradeDriver } from './career/company';
 import { routeLength, type Store } from './career/economy';
 import { terrainCollider } from './world/terrain';
@@ -118,7 +118,7 @@ const SPAWN_LANE = 1.75;
  * (S/M/L/H — 170…480 px: розмір за роздільністю, гіпотеза; ≈ 30 % ширини екрана — тут найдетальніша H, масштабована).
  * Вікно рамки H — x 10…469, y 10…159. Кут огляду — підібраний (у king.exe не знайдено).
  */
-/** Режим «Баланс» (оптимізація для телефона, як типовий у першій грі): частота кадрів; щільність — BALANCE_DPR (меню). */
+/** Найбільша частота кадрів; без вибору в меню — defaultFps() (телефон 40), щільність «Балансу» — balanceDpr() (меню). */
 const MAX_FPS = 60;
 /** Дзеркало оновлюється не частіше (к/с): друге малювання світу — найдорожча частина виду з кабіни. */
 const MIRROR_FPS = 20;
@@ -3360,11 +3360,11 @@ export class Ht2Drive {
     const w = window.innerWidth;
     const h = window.innerHeight;
     // Роздільність з меню «Графіка»: висота кадру 480…1200 (не більше за фізичну).
-    // Не задано — режим «Баланс» (як типовий у першій грі): щільність пікселів не вище BALANCE_DPR — кількість
+    // Не задано — режим «Баланс» (як типовий у першій грі): щільність пікселів не вище balanceDpr() — кількість
     // пікселів найбільше гріє телефон.
     const res = this.opts.settings?.resolution;
     // Телефон і ПК — різні набори (ui/menuScreens.ts resolutionDpr): на телефоні — за кількістю пікселів.
-    this.opts.renderer.setPixelRatio(res !== undefined ? resolutionDpr(res, w, h) : Math.min(window.devicePixelRatio, BALANCE_DPR));
+    this.opts.renderer.setPixelRatio(res !== undefined ? resolutionDpr(res, w, h) : Math.min(window.devicePixelRatio, balanceDpr()));
     this.opts.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
@@ -3393,7 +3393,8 @@ export class Ht2Drive {
     // Не частіше за MAX_FPS (чи 30/40 к/с з меню «Графіка» — менше нагріву телефона): екрани 90/120 Гц інакше
     // малюють у півтора-два рази частіше. Розклад кадрів (nextFrame += інтервал), а не «від попереднього»: 40 к/с на
     // екрані 60 Гц — кадри через 2 і 1 оновлення по черзі (у середньому 40), а не 30; допуск 2 мс — тремтіння таймера.
-    const interval = 1000 / (this.opts.settings?.fps ?? MAX_FPS);
+    // Не вибрано в меню — 40 на телефоні, 60 на ПК (defaultFps).
+    const interval = 1000 / Math.min(MAX_FPS, this.opts.settings?.fps ?? defaultFps());
     if (now < this.nextFrame - 2) return;
     // Після паузи (вкладка у фоні, довгий кадр) — розклад від поточного моменту, без «наздоганяння».
     this.nextFrame = Math.max(this.nextFrame + interval, now);
@@ -3591,6 +3592,8 @@ export class Ht2Drive {
         return b ? parseMsk(b, asm.lib.palette ?? undefined) : null;
       };
       this.glassRain = new GlassRain(inner, mask('txr/glass_1.msk'), mask('txr/glass_2.msk'));
+      // Телефон — копія кадру під водою вдвічі менша (менше роботи відеочипа; лінза й так збільшує й розмиває).
+      if (matchMedia('(pointer: coarse)').matches) this.glassRain.copyScale = 0.5;
       this.glassRain.onStroke = () => this.audio?.play('wipers', 0.9);
     } finally {
       this.cabLoading = false;
