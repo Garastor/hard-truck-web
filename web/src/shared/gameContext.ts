@@ -41,5 +41,10 @@ export interface GameModule {
   devSource: FileSource;
   /** Фон меню й шрифти для екрана вибору (лише коли файли гри вже на пристрої). */
   selectArt(): Promise<SelectArt>;
+  /**
+   * Згладжування (MSAA), яке гра хоче для рендерера: оболонка створює його після вибору гри (атрибут контексту WebGL
+   * змінюється лише з перезавантаженням). null чи немає — як вирішить оболонка за якістю (`ht.quality`).
+   */
+  antialias?(): boolean | null;
   run(ctx: GameContext): Promise<void>;
 }

@@ -26,10 +26,17 @@ const status = $('status');
 const overlay = $('overlay');
 const params = new URLSearchParams(location.search);
 
-// Рендерер — спільний для ігор; згладжування за якістю з «Опцій» (змінюється з перезавантаженням).
-const quality = QUALITY[loadQuality()];
-const renderer = new THREE.WebGLRenderer({ canvas: $<HTMLCanvasElement>('view'), antialias: quality.antialias, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.dpr));
+/**
+ * Рендерер — спільний для ігор, створюється після вибору гри: згладжування — як хоче гра (GameModule.antialias), інакше
+ * за якістю з «Опцій» (змінюється з перезавантаженням).
+ */
+function makeRenderer(game: GameModule): THREE.WebGLRenderer {
+  const quality = QUALITY[loadQuality()];
+  const antialias = game.antialias?.() ?? quality.antialias;
+  const renderer = new THREE.WebGLRenderer({ canvas: $<HTMLCanvasElement>('view'), antialias, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.dpr));
+  return renderer;
+}
 
 // Сенсорні кнопки й відступи на малому екрані — пропорційно менші (style.css: var(--ui)).
 function setUiScale(): void {
@@ -235,7 +242,7 @@ async function boot(): Promise<void> {
   if (id === 'ht1') document.body.classList.remove('booting');
   try {
     await GAME_MODULES[id].run({
-      renderer,
+      renderer: makeRenderer(GAME_MODULES[id]),
       overlay,
       setStatus,
       showImport: async (again) => (await showImport(FILE_SETS[id], again)) === id,

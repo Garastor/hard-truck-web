@@ -55,6 +55,11 @@ export interface Ht2Settings {
    * (ui/menuScreens.ts FPS_MODES); не задано — defaultFps(): 40 на телефоні, 60 на ПК.
    */
   fps?: number;
+  /**
+   * Згладжування (MSAA) з меню «Графіка» (порт, на прохання користувача): діє з перезавантаженням (рендерер створює
+   * оболонка — GameModule.antialias). Не задано — як вирішить оболонка: ПК — так, телефон — ні (`ht.quality`).
+   */
+  antialias?: boolean;
   /** Перепризначені клавіші з меню «Керування»: дія → KeyboardEvent.code (engine/input Input.bind). */
   keys?: Partial<Record<Action | Command, string>>;
   /** Версія збережених налаштувань (REV). */
@@ -106,6 +111,16 @@ export function loadSettings(ini: Ini | null): Ht2Settings {
     return { ...def, ...saved, rev: REV };
   } catch {
     return def;
+  }
+}
+
+/** Згладжування зі збережених налаштувань (без TRUCK.INI — до запуску гри); null — не вибрано. */
+export function savedAntialias(): boolean | null {
+  try {
+    const v = (JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Ht2Settings>).antialias;
+    return typeof v === 'boolean' ? v : null;
+  } catch {
+    return null;
   }
 }
 

@@ -9,7 +9,8 @@ import { DEFAULT_KEYS, type Action, type Command } from '../engine/input/input';
  * - графіка — роздільність 640×480…1600×1200 (ПК — висота кадру рендерера, телефон — кількість пікселів;
  *   resolutionDpr), «Автопошук» — за екраном пристрою; повзунки
  *   «спецефекти» й «детальність» — пороги ефектів king.exe (ui/effects.ts); на місці вибору відеокарти — частота
- *   кадрів 30 / 40 / 60 (порт; `Ht2Settings.fps`, FPS_MODES);
+ *   кадрів 30 / 40 / 60 (порт; `Ht2Settings.fps`, FPS_MODES); під «Скасувати» — згладжування так/ні (порт;
+ *   `Ht2Settings.antialias`, діє з перезавантаженням сторінки);
  * - керування — таблиця 22 дій з клавішами порту; рядок дії порту — перепризначити клавішу (наступне натискання;
  *   зайнята іншою дією — обмін), «За замовчуванням» — типові;
  * - водії — логотип (`d/logo1…8`) і фото (`d/photo01…51`) поточного водія, поле імені (нове імʼя — новий водій),
@@ -110,7 +111,11 @@ function slider(art: Ht2MenuArt, stage: HTMLElement, x: number, y: number, value
 
 export interface GraphicsScreen {
   settings: Ht2Settings;
+  /** Чи діє згладжування зараз (атрибут контексту WebGL рендерера). */
+  antialias: boolean;
   onChange(s: Ht2Settings): void;
+  /** Згладжування вибрано інакше, ніж діє: зберегти й перезавантажити (атрибут контексту змінюється лише так). */
+  onAntialias(on: boolean): void;
   onCancel(): void;
   onRound(key: RoundKey): void;
 }
@@ -170,6 +175,19 @@ export function ht2GraphicsScreen(art: Ht2MenuArt, o: GraphicsScreen): () => voi
   };
   painters.push(slider(art, stage, 349, 370, () => s.effects, 'Спецефекти', set('effects')));
   painters.push(slider(art, stage, 349, 405, () => s.detail, 'Детальність', set('detail')));
+  // Згладжування (порт, на прохання користувача) — під «Скасувати», де фон порожній; кнопка-напис, як поле частоти
+  // кадрів. Вибір — збереження й перезавантаження сторінки (app.ts onAntialias).
+  const aa = document.createElement('button');
+  aa.className = 'menu-abs';
+  aa.style.cssText += TEXT + 'pointer-events:auto;cursor:pointer;font-size:13px;width:190px;height:24px;left:330px;top:507px;' +
+    'background:#000c;border:1px solid #5a7a2a;border-radius:4px;padding:0;';
+  aa.textContent = `ЗГЛАДЖУВАННЯ: ${o.antialias ? 'ТАК' : 'НІ'}`;
+  aa.setAttribute('aria-label', `Згладжування: ${o.antialias ? 'так' : 'ні'} (перемкнути — перезавантаження)`);
+  aa.addEventListener('click', () => {
+    aa.textContent = 'ПЕРЕЗАВАНТАЖЕННЯ…';
+    o.onAntialias(!o.antialias);
+  });
+  stage.append(aa);
   painters.push(
     texButton(art, stage, 'g/canc', 348, 452, 'Скасувати', {
       action: () => {

@@ -213,10 +213,16 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
             close = ht2GraphicsScreen(art, {
               ...common,
               settings,
+              antialias: ctx.renderer.getContext().getContextAttributes()?.antialias === true,
               onChange: (st) => {
                 settings = st;
                 saveSettings(st);
                 setFx(st.effects, st.detail);
+              },
+              onAntialias: (on) => {
+                settings = { ...settings, antialias: on };
+                saveSettings(settings);
+                location.reload();
               },
             });
           else if (key === 'contr')
