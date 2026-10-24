@@ -243,6 +243,8 @@ const OFFROAD_ROLL = 5;
 const HARD_SURFACE = new Set([1, 5, 10]);
 /** Покриття, на яких колеса лишають сліди (king.exe 0x502780: гілки 1/5, 2, 3, 8; на 4/7/9 і 6/10/11 — ні). */
 const TRACE_SURFACE = new Set([1, 2, 3, 5, 8]);
+/** Покриття з вереском шин (king.exe 0x54a380: типи 1, 5 — тон 1, 2, 6 — 0,7, але тон звук не бере). */
+const SKID_SURFACE = new Set([1, 2, 5, 6]);
 /** Промінь покриття — лише по світу (не по машинах і предметах). */
 const GROUND_RAY = groups(GROUP_WORLD, GROUP_WORLD);
 /**
@@ -646,6 +648,13 @@ export class Ht2Drive {
   private readonly debrisLook = new THREE.Vector3();
   private bolt: THREE.Sprite | null = null;
   private rainSound: ReturnType<EngineAudio['loopSound']> = null;
+  /** Вереск шин (петля breakSound king.exe) і його гучність з меню «Звук» («заноси», INI skivol). */
+  private skidSound: ReturnType<EngineAudio['loopSound']> = null;
+  private skidVolume = 0.9;
+  /** «Пшш» пневмогальм: гальма тягнуть зараз; час звуку зупинки (king.exe 0x538370, [0x6d20d8]). */
+  private airBrake = false;
+  private airStopAt = -Infinity;
+  private soundClock = 0;
   private windSound: ReturnType<EngineAudio['loopSound']> = null;
   private tick = 0;
   /**
@@ -3214,6 +3223,7 @@ export class Ht2Drive {
    */
   private applySettings(s: Ht2Settings, save: boolean): void {
     this.audio?.setVolumes(s.engine * s.sfx, s.sfx);
+    this.skidVolume = s.skid;
     this.music?.setVolume((s.music * s.sfx) / SFX_REF);
     this.input.steerSpeed = steerGain(s.steerSpeed);
     this.input.steerCenter = steerGain(s.steerCenter);
@@ -3843,6 +3853,7 @@ export class Ht2Drive {
     this.truck.syncVisual(alpha);
     this.trailer?.syncVisual(alpha);
     this.audio?.update(this.truck.rpm, state.throttle, this.truck.engineOn);
+    this.vehicleSounds(dt);
     this.trackSafe(dt);
     this.updateDayTime(dt);
     this.updateCamera(dt);
@@ -3950,6 +3961,55 @@ export class Ht2Drive {
   private barText = '';
 
   /** Повідомлення гравцю: на пейджер (з оригінальним інтерфейсом) чи в рядок табло на time с. */
+  /** Останні звуки машини гравця (налагодження: `window.ht2.drive.vehicleSoundLog`). */
+  readonly vehicleSoundLog: { name: string; t: number; volume: number; played: boolean }[] = [];
+
+  private vehicleSound(name: string, volume: number, once = false): void {
+    const played = once ? this.audio?.playOnce(name, volume) : !!this.audio?.play(name, volume);
+    // Без накладання (удар підвіски щокроку відбійника) — у журнал лише те, що справді запущено.
+    if (once && !played && this.audio?.running) return;
+    this.logVehicleSound(name, volume, !!played);
+  }
+
+  /** played = false — аудіоконтекст ще не розблоковано жестом (тестова вкладка): звук вирішено, але не чути. */
+  private logVehicleSound(name: string, volume: number, played = true): void {
+    this.vehicleSoundLog.push({ name, t: Math.round(this.soundClock * 100) / 100, volume: Math.round(volume * 100) / 100, played });
+    if (this.vehicleSoundLog.length > 30) this.vehicleSoundLog.shift();
+  }
+
+  /**
+   * Звуки ходової гравця за king.exe 0x538370 (re/notes/ht2/sounds.md):
+   * - «пшш» пневмогальм (машини понад 5000 кг): гальма взялись (педаль > 0,1 чи ручник) — pss2, відпущені — pss;
+   *   стоїмо (< 0,1 м/с) без гальм — pss2, якщо перед тим ≥ 1 с не стояли;
+   * - вереск шин — петля break гучністю TruckVehicle.skidLevel × повзунок «заноси», на покриттях 1, 2, 5, 6;
+   * - удар підвіски (приземлення, яма) — hit_suspension гучністю min(1; удар відбійників / 10), без накладання.
+   */
+  private vehicleSounds(dt: number): void {
+    this.soundClock += dt;
+    const truck = this.truck;
+    if (!this.audio) return;
+    if (truck.totalMass > 5000) {
+      const on = truck.airBrakeOn();
+      if (on !== this.airBrake) {
+        this.airBrake = on;
+        this.vehicleSound(on ? 'pss2' : 'pss', 1);
+      } else if (!on && truck.speedKmh / 3.6 < 0.1) {
+        if (this.soundClock > this.airStopAt + 1) this.vehicleSound('pss2', 1);
+        this.airStopAt = this.soundClock;
+      }
+    }
+    const skid = SKID_SURFACE.has(this.surface) ? truck.skidLevel() : 0;
+    this.skidSound ??= this.audio.loopSound('break');
+    this.skidSound?.set(skid * this.skidVolume);
+    if (skid > 0 && !this.skidOn && this.skidSound) this.logVehicleSound('break', skid * this.skidVolume);
+    this.skidOn = skid > 0;
+    const hit = truck.suspHit;
+    truck.suspHit = 0;
+    if (hit > 0) this.vehicleSound('hit_suspension', Math.min(1, hit / 10), true);
+  }
+
+  private skidOn = false;
+
   /** Звук з набору гри (гонка: `alarm` світлофора). */
   playSound(name: string): void {
     this.audio?.play(name);

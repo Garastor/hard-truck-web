@@ -405,6 +405,53 @@ export class TruckVehicle {
   private pedalNow = 0;
   /** Швидкість уперед останнього кроку, м/с (+ — уперед). */
   private vNow = 0;
+  /** Ручне гальмо останнього кроку. */
+  private handbrakeNow = false;
+  /**
+   * Удар відбійників підвіски для звуку: найбільша за кроки з останнього забору Σ сил відбійників / масу, м/с²
+   * (аналог «сили удару» пробою king.exe [ph+0x3be8+4i]; забирає drive.vehicleSounds і обнуляє).
+   */
+  suspHit = 0;
+
+  /** Гальма тягнуть повітря (king.exe 0x538370, «пшш»): педаль гальма > 0,1 або ручник. */
+  airBrakeOn(): boolean {
+    return this.pedalNow > 0.1 || this.handbrakeNow;
+  }
+
+  /** Маса машини з вантажем, кг (king.exe «пшш» — лише машинам понад 5000 кг). */
+  get totalMass(): number {
+    return this.mass;
+  }
+
+  /**
+   * Гучність вереску шин 0…1 (петля breakSound; king.exe 0x54a380 → [car+0x522c] → 0x538370). Колеса на землі:
+   * A — ковзає вбік (`skid`, [Г] прапорець [ph+0x346c+4i]), B — буксує чи заблоковане (`slip`, [Г] [ph+0x348c+4i]).
+   * Звук, лише коли (є A і горизонтальна швидкість > 0,5 м/с) або є B: S = 0,3·Σ A·min(1, |α|/0,349) (α — кут
+   * ковзання колеса, [Г] [ph+0x338c+4i]), V = S·(1 + f(v)) + 3·(0,06·A₀A₁ + 0,3·A₂ + 0,2·A₃) + 0,15·(B₀ + … + B₃),
+   * f(v) = 0,3 до 5 м/с уперед, 1 від 20, між ними лінійно; гучність = min(1; 0,3·V). Покриття — у drive.
+   */
+  skidLevel(): number {
+    if (!this.king) return 0;
+    const lv = this.body.linvel();
+    let anyA = false;
+    let s = 0;
+    let b = 0;
+    const a = [0, 0, 0, 0];
+    for (let i = 0; i < this.wheels; i++) {
+      if (!this.ctrl.wheelIsInContact(i)) continue;
+      if (this.skid[i]) {
+        anyA = true;
+        s += 0.3 * Math.min(1, Math.abs(this.skidAlpha[i] ?? 0) / 0.349);
+        if (i < 4) a[i] = 1;
+      }
+      if (this.slip[i] && i < 4) b++;
+    }
+    if (!((anyA && Math.hypot(lv.x, lv.z) > 0.5) || b > 0)) return 0;
+    const v = this.vNow;
+    const f = v < 5 ? 0.3 : v > 20 ? 1 : (v - 5) * (0.7 / 15) + 0.3;
+    const total = s * (1 + f) + 3 * (0.06 * a[0] * a[1] + 0.3 * a[2] + 0.2 * a[3]) + 0.15 * b;
+    return Math.min(1, 0.3 * total);
+  }
 
   /**
    * Пара з-під передніх коліс при різкому гальмуванні (king.exe 0x4ff800 → подія [ph+0x3c18] → 0x548250, біт 0x8000
@@ -886,6 +933,7 @@ export class TruckVehicle {
     const bp = this.brakeProfile;
     const brakePedal = brake > 0 ? brake * (bp ? bp.pedal(this.brakeTime, !!input.sharp) : this.brakeTime / (this.brakeTime + 1)) : 0;
     this.pedalNow = brakePedal;
+    this.handbrakeNow = !!input.handbrake;
     if (this.king) {
       this.hits.begin(dt);
       this.updateKing(dt, input.steer, brakePedal, !!input.handbrake, !!input.sharp);
@@ -1427,6 +1475,7 @@ export class TruckVehicle {
     const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
     const t = this.body.translation();
+    let hit = 0;
     for (let i = 0; i < this.wheels; i++) {
       if (!this.ctrl.wheelIsInContact(i)) continue;
       const excess = this.suspRest - (this.ctrl.wheelSuspensionLength(i) ?? this.suspRest) - S.bump_from;
@@ -1439,7 +1488,9 @@ export class TruckVehicle {
       const force = (this.mass / this.wheels) * (S.bump_stiffness * excess + S.bump_damping * Math.max(0, closing));
       this.body.applyImpulseAtPoint({ x: up.x * force * dt, y: up.y * force * dt, z: up.z * force * dt }, at, true);
       this.bumpDv += (force * dt) / this.mass;
+      hit += force / this.mass;
     }
+    this.suspHit = Math.max(this.suspHit, hit);
   }
 
 

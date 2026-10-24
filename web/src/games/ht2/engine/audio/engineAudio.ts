@@ -165,15 +165,20 @@ export class EngineAudio {
     };
   }
 
+  /** Аудіоконтекст розблоковано (є жест користувача). */
+  get running(): boolean {
+    return this.ctx.state === 'running';
+  }
+
   /** Кінець звуків, що не накладаються (playOnce), за часом аудіоконтексту. */
   private readonly busyUntil = new Map<string, number>();
 
   /** Одноразовий звук, лише якщо такий самий уже не звучить (сигнал: швидкі повторні натискання не накладаються). */
-  playOnce(name: string, volume = 1): void {
+  playOnce(name: string, volume = 1): boolean {
     const buf = this.buffers.get(name);
-    if (!buf || this.ctx.state !== 'running' || this.ctx.currentTime < (this.busyUntil.get(name) ?? 0)) return;
+    if (!buf || this.ctx.state !== 'running' || this.ctx.currentTime < (this.busyUntil.get(name) ?? 0)) return false;
     this.busyUntil.set(name, this.ctx.currentTime + buf.duration);
-    this.play(name, volume);
+    return !!this.play(name, volume);
   }
 
   /** Одноразовий звук; повертає зупинку (обірвати раніше кінця запису). */
