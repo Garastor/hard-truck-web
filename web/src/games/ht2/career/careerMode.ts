@@ -10,7 +10,7 @@ import type { Ht2Drive } from '../drive';
 import { gasPanel, jobPanel, orderPanel, salePanel, servicePanel } from './stations';
 import type { SidePanel } from '../ui/panel';
 import { active, advance, makeRivals, place, PREMIUM_SHARE, progress, rivalPlan, SPECIAL_ROUTE, specialOffsets, TOP_UP_EVERY, topUpPlan, topUpSpacing, type RivalRun } from './competition';
-import { hireOffer, hireTariff, LICENCE_TIME, newDriver } from './company';
+import { hirableNames, hireOffer, hireTariff, LICENCE_TIME, newDriver } from './company';
 import { CareerRaces } from './races';
 import { ukMessage } from '../ui/uk';
 import { StoreZones } from './storeZones';
@@ -230,6 +230,9 @@ export class CareerMode {
   /** Гонки на Кільці (career/races.ts). */
   readonly races: CareerRaces;
 
+  /** Чи відновлено продане на ринках зі збереження (Markets.restoreSold). */
+  private soldRestored = false;
+
   update(dt: number, throttle = 0): void {
     this.races.update(dt);
     if (this.forfeitCard && (this.forfeitCard.left -= dt) <= 0) {
@@ -239,6 +242,11 @@ export class CareerMode {
       else this.drive.say(this.msg('FORFEIT', 'НЕУСТОЙКА $%g', amount));
     }
     const c = this.career;
+    // Продане й найняте на ринках — зі збереження, щойно є ринки (до першого вікна продажу).
+    if (!this.soldRestored && this.drive.markets) {
+      this.drive.markets.restoreSold(c.sold ?? []);
+      this.soldRestored = true;
+    }
     if (this.busy) return;
     c.time += dt * this.drive.timeScale;
     this.burn(dt, throttle);
@@ -468,7 +476,8 @@ export class CareerMode {
     const tradeIn = Math.round((current?.price ?? 0) * 0.5);
     // На одному місці ринку — водій, що шукає роботу (зі своєю машиною).
     // Шукачі роботи — лише на ринках (стоянки-схованки — продавці вживаних і крадених).
-    const offer = near.hire ? hireOffer(m.id, day, [near.spot], this.drive.truckers?.allNames ?? []) : null;
+    // Уже найнятих не пропонує (hirableNames).
+    const offer = near.hire ? hireOffer(m.id, day, [near.spot], hirableNames(this.drive.truckers?.allNames ?? [], c.company)) : null;
     if (offer) {
       // Тариф — $/км (BackJob показує за км, 0x477350).
       const job = { ...offer, tariff: Math.round(hireTariff(this.drive.vehiclePrice(near.rec.carNode), this.marketShare()) * 10) / 10, model: near.rec.carNode, price: near.price, power: near.rec.horsePower, load: near.rec.cargoLoad };
@@ -1129,6 +1138,7 @@ export class CareerMode {
     if (this.drive.obstacles) this.career.obstacle = this.drive.obstacles.active;
     const fleet = this.drive.truckers?.snapshot();
     if (fleet) this.career.fleet = fleet;
+    if (this.drive.markets && this.soldRestored) this.career.sold = this.drive.markets.soldKeys(Math.floor(this.career.time / 86400));
     saveCareer(this.career);
   }
 

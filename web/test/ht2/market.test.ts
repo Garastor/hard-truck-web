@@ -53,4 +53,28 @@ describe('ринки й стоянки-схованки HT2 (parking у mod_*.sc
       expect(stolen[0].s.price).toBe(450);
     }
   });
+
+  it('найнятий водій і куплена машина не повертаються на ринок після збереження й завантаження (soldKeys/restoreSold)', () => {
+    const list = parseMarkets([{ sch: SCH }], ways(NODES));
+    const trucks = { records: [{ group: 'lorries', carNode: 'ZilR', price: 1000 }], asm: { block: () => ({}) } } as never;
+    const make = () => new Markets(null as never, null as never, trucks, list, () => 0, { forsale: 4, used: 2, stolen: 1 });
+    const mk = list[0];
+    // День, коли на ринку є шукач роботи.
+    const day = [0, 1, 2, 3, 4, 5, 6, 7].find((d) => make().stock(mk, d).some((s) => s.hire))!;
+    const a = make();
+    const hire = a.stock(mk, day).find((s) => s.hire)!;
+    const car = a.stock(mk, day).find((s) => !s.hire)!;
+    a.sell(mk, day, hire);
+    a.sell(mk, day, car);
+    a.sell(mk, day - 1, car);
+    // Збереження — лише поточний день і далі (вчорашні ринки вже інші).
+    const saved = a.soldKeys(day);
+    expect(saved).toHaveLength(2);
+    const b = make();
+    b.restoreSold(JSON.parse(JSON.stringify(saved)));
+    expect(b.stock(mk, day).some((s) => s.hire)).toBe(false);
+    expect(b.stock(mk, day).some((s) => s.spot === car.spot)).toBe(false);
+    // Без відновлення (як було) — водій знову стоїть на ринку.
+    expect(make().stock(mk, day).some((s) => s.hire)).toBe(true);
+  });
 });

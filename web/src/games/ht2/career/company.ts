@@ -71,6 +71,15 @@ export function hireOffer(market: number, day: number, free: readonly number[], 
   return { spot: free[h % free.length], name: names[h % names.length], photo: 1 + (h % 51) };
 }
 
+/**
+ * Хто може шукати роботу на ринку: далекобійники світу без уже найнятих гравцем (king.exe: найнятий — той самий запис
+ * далекобійника, з вільних він зникає). Інакше після збереження й завантаження той самий водій знову стояв на ринку.
+ */
+export function hirableNames(names: readonly string[], company: readonly { name: string }[] | undefined): string[] {
+  const taken = new Set((company ?? []).map((d) => d.name));
+  return names.filter((n) => !taken.has(n));
+}
+
 /** Новий найманий: аванс 10·тариф (уже виплачений при наймі). */
 export function newDriver(o: { name: string; photo: number }, truck: string, tariff: number, value: number, paint = 0): HiredDriver {
   return { name: o.name, truck, paint, tariff, photo: o.photo, km: 0, advance: ADVANCE_KM * tariff, profit: 0, value, v: 2 };

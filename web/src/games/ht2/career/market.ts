@@ -313,6 +313,16 @@ export class Markets {
     return out;
   }
 
+  /** Продані й найняті з дня day і пізніше (ключі `ринок:день:місце`) — для збереження кар'єри (Ht2Career.sold). */
+  soldKeys(day: number): string[] {
+    return [...this.sold].filter((k) => Number(k.split(':')[1]) >= day);
+  }
+
+  /** Відновити продані зі збереження: інакше після завантаження куплена машина й найнятий водій знову на ринку. */
+  restoreSold(keys: readonly string[]): void {
+    for (const k of keys) this.sold.add(k);
+  }
+
   sell(m: Market, day: number, item: ForSale): void {
     this.sold.add(`${m.id}:${day}:${item.spot}`);
     if (item.ordered) this.ordered.splice(0, this.ordered.length, ...this.ordered.filter((o) => !(o.market === m.id && o.spot === item.spot)));

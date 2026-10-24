@@ -1,6 +1,6 @@
 /** Наймані водії за king.exe: тариф від ціни моделі, аванс на 10 км, пальне, рейс зі складу (company.md §2, 2а). */
 import { describe, expect, it } from 'vitest';
-import { driverCosts, hireOffer, hireTariff, hiredLoad, newDriver } from '@ht2/career/company';
+import { driverCosts, hirableNames, hireOffer, hireTariff, hiredLoad, newDriver } from '@ht2/career/company';
 import { PAY_PER_M, type Goods, type Store } from '@ht2/career/economy';
 
 describe('HT2: наймані водії', () => {
@@ -40,5 +40,15 @@ describe('HT2: наймані водії', () => {
     expect(t.load.pay).toBe(Math.round(12 * (PAY_PER_M * 1000 + base)));
     const tr = hiredLoad(a, [a, b], [g], { mass: 10000, volume: 100 }, true, () => 1000, () => 0)!;
     expect(tr.load.pay).toBe(Math.round(12 * (PAY_PER_M * 1000 + base) * 1.5));
+  });
+
+  it('уже найнятого гравцем водія ринок у найм не пропонує (hirableNames), навіть того самого дня', () => {
+    const names = ['А', 'Б', 'В', 'Г'];
+    const company = [newDriver({ name: 'В', photo: 1 }, 'Zil', 10, 18000)];
+    const free = hirableNames(names, company);
+    expect(free).toEqual(['А', 'Б', 'Г']);
+    for (let market = 0; market < 15; market++)
+      for (let day = 0; day < 30; day++) expect(hireOffer(market, day, [0, 1], free)?.name).not.toBe('В');
+    expect(hirableNames(names, undefined)).toEqual(names);
   });
 });

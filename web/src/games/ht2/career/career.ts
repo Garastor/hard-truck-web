@@ -87,6 +87,8 @@ export interface Ht2Career {
   caches?: SavedCache[];
   /** Діючий завал (id `obstacle` з mod_*.sch, world/obstacles.ts); null — жодного. */
   obstacle?: string | null;
+  /** Продане й найняте на ринках (`ринок:день:місце`, лише поточний день і далі — Markets.soldKeys). */
+  sold?: string[];
   /** Замовлені рацією машини, що чекають на ринках (career/carOrder.ts). */
   orderedCars?: OrderedCar[];
   /** Перемог у гонках на Кільці поспіль (career/races.ts: ліцензії за перемогу). */
