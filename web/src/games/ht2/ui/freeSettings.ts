@@ -12,7 +12,8 @@ export interface FreeOption {
 
 export interface FreeField {
   label: string;
-  options: FreeOption[];
+  /** Функція — список залежить від інших полів (колір — від машини): вікно перебудовується після кожної зміни. */
+  options: FreeOption[] | (() => FreeOption[]);
   /** Поточне значення; '' — підказка «обрати» (дії без стану, як телепорт). */
   value(): string;
   set(value: string): void;
@@ -62,36 +63,40 @@ export function openFreeSettings(overlay: HTMLElement, fields: FreeField[], onCl
     back.remove();
     onClose();
   };
-  for (const f of fields) {
-    const label = el('label');
-    label.append(el('span', undefined, f.label));
-    const sel = el('select');
-    const cur = f.value();
-    if (cur === '') {
-      const o = el('option', undefined, '— обрати —');
-      o.value = '';
-      sel.append(o);
-    }
-    for (const opt of f.options) {
-      const o = el('option', undefined, opt.label);
-      o.value = opt.value;
-      sel.append(o);
-    }
-    sel.value = cur;
-    sel.addEventListener('change', () => {
-      if (sel.value === '') return;
-      f.set(sel.value);
-      if (f.closes) close();
-    });
-    label.append(sel);
-    form.append(label);
-  }
-  box.append(form);
-  const row = el('div', 'career-actions');
-  const ok = el('button', 'hud-btn primary', 'Закрити');
+  const ok = el('button', 'hud-btn primary ht2-free-close', 'Закрити');
   ok.addEventListener('click', close);
-  row.append(ok);
-  box.append(row);
+  const render = () => {
+    form.replaceChildren();
+    for (const f of fields) {
+      const label = el('label');
+      label.append(el('span', undefined, f.label));
+      const sel = el('select');
+      const cur = f.value();
+      if (cur === '') {
+        const o = el('option', undefined, '— обрати —');
+        o.value = '';
+        sel.append(o);
+      }
+      for (const opt of typeof f.options === 'function' ? f.options() : f.options) {
+        const o = el('option', undefined, opt.label);
+        o.value = opt.value;
+        sel.append(o);
+      }
+      sel.value = cur;
+      sel.addEventListener('change', () => {
+        if (sel.value === '') return;
+        f.set(sel.value);
+        if (f.closes) close();
+        else render();
+      });
+      label.append(sel);
+      form.append(label);
+    }
+    // «Закрити» — остання клітинка сітки (на телефоні — без окремого рядка).
+    form.append(ok);
+  };
+  render();
+  box.append(form);
   back.append(box);
   // Дотик поза вікном закриває його.
   back.addEventListener('pointerdown', (e) => {
@@ -105,5 +110,42 @@ export function openFreeSettings(overlay: HTMLElement, fields: FreeField[], onCl
   };
   window.addEventListener('keydown', onKey, true);
   overlay.append(back);
+  fitBetweenControls(back, box);
   return close;
+}
+
+/**
+ * Телефон у ландшафті (низький екран): вікно — у проміжку між табло зверху й кнопками керування (керма й педалей
+ * знизу, «☰»/шестерні й камери у верхніх кутах), щоб нічого не перекривало; межі — з положення кнопок у момент
+ * відкриття (масштаб інтерфейсу будь-який). Високий екран — по центру, як було.
+ */
+function fitBetweenControls(back: HTMLElement, box: HTMLElement): void {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  if (vh > 520) return;
+  const rects = (sel: string) =>
+    [...document.querySelectorAll<HTMLElement>(sel)]
+      // offsetParent не годиться: у табло position: fixed (offsetParent — null).
+      .filter((e) => !back.contains(e) && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden')
+      .map((e) => e.getBoundingClientRect())
+      .filter((r) => r.width > 0 && r.height > 0);
+  const tablo = rects('.ht2-tablo-hit');
+  const buttons = rects('.touch-btn, .ht2-hud-burger, .ht2-hud-gear');
+  const upper = buttons.filter((r) => r.top < vh / 2);
+  const lower = buttons.filter((r) => r.top >= vh / 2);
+  const top = Math.max(4, ...tablo.map((r) => r.bottom)) + 2;
+  let side = 8;
+  for (const r of upper) side = Math.max(side, r.left + r.width / 2 < vw / 2 ? r.right + 6 : vw - r.left + 6);
+  const bottom = Math.min(vh - 4, ...lower.map((r) => r.top - 6));
+  back.classList.add('fit');
+  Object.assign(box.style, {
+    position: 'fixed',
+    left: `${side}px`,
+    right: `${side}px`,
+    top: `${top}px`,
+    width: 'auto',
+    maxHeight: `${Math.max(120, bottom - top)}px`,
+    margin: '0',
+    overflow: 'auto',
+  });
 }

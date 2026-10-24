@@ -901,24 +901,60 @@ body.game-ht2 .career-box .career-actions button.primary {
   color: var(--ht2-tech);
 }
 
-/* Телефон у ландшафті (низький екран): поля у дві колонки — усе вікно без прокручування. */
+.ht2-free .career-box {
+  width: min(560px, 100%);
+}
+
+.ht2-free .career-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.ht2-free .career-form .ht2-free-close {
+  align-self: end;
+  min-height: 40px;
+}
+
+/* Телефон у ландшафті (низький екран): вікно між табло й кнопками керування (freeSettings.ts fitBetweenControls),
+   без заголовка, поля в три колонки, «Закрити» — дев'ята клітинка (на прохання користувача). */
 @media (max-height: 520px) {
+  .ht2-free.fit {
+    background: rgba(0, 0, 0, 0.25);
+  }
+
   .ht2-free .career-box {
-    width: min(720px, 100%);
-    padding: 8px 14px;
+    padding: 6px 8px;
   }
 
   .ht2-free .career-box h2 {
-    margin-bottom: 6px;
+    display: none;
   }
 
   .ht2-free .career-form {
-    grid-template-columns: 1fr 1fr;
-    gap: 6px 12px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px 8px;
   }
 
-  .ht2-free .career-box .career-actions {
-    margin-top: 8px;
+  .ht2-free .career-form label {
+    gap: 1px;
+    font-size: 11px;
+    line-height: 13px;
+  }
+
+  .ht2-free .career-form select {
+    min-height: 28px;
+    height: 28px;
+    padding: 0 4px;
+    font-size: 12px;
+  }
+
+  .ht2-free .career-form .ht2-free-close {
+    align-self: end;
+    margin-top: 0;
+    min-height: 28px;
+    height: 28px;
+    padding: 0 8px;
+    font-size: 12px;
   }
 }
 

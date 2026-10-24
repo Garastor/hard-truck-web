@@ -123,6 +123,59 @@ const SPAWN_LANE = 1.75;
 const MAX_FPS = 60;
 /** Дзеркало оновлюється не частіше (к/с): друге малювання світу — найдорожча частина виду з кабіни. */
 const MIRROR_FPS = 20;
+/** Час доби у вільній їзді (меню-шестерня, на прохання користувача): година, з якої далі йде звичайний годинник. */
+const FREE_HOURS = [
+  { hour: 7, label: 'Ранок' },
+  { hour: 13, label: 'День' },
+  { hour: 19, label: 'Вечір' },
+  { hour: 23, label: 'Ніч' },
+] as const;
+
+/** Який із FREE_HOURS зараз (за годиною freeTime, с): ранок 5–10, день 10–17, вечір 17–21, решта — ніч. */
+function freeHourOf(time: number): number {
+  const h = (time / 3600) % 24;
+  return h >= 5 && h < 10 ? 7 : h >= 10 && h < 17 ? 13 : h >= 17 && h < 21 ? 19 : 23;
+}
+
+/**
+ * Назва кольору фарбування за текстурами пофарбованих частин (RGBA-дані): якщо насичених пікселів (S > 0,3) хоча б
+ * 15 % — відтінок піку гістограми (10°, вага S·V, вікно 3 кошики), інакше сірий за медіаною яскравості; темний
+ * (медіана < 0,3) — «Темно-…». На око; у даних назв фарбувань немає.
+ */
+function paintName(texs: THREE.Texture[]): string {
+  const bins = new Array<number>(36).fill(0);
+  const lum: number[] = [];
+  let colored = 0;
+  for (const tex of texs) {
+    const d = (tex.image as { data?: ArrayLike<number> } | undefined)?.data;
+    if (!d) continue;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 128) continue;
+      const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255;
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      lum.push(mx);
+      if (mx < 0.15 || (mx - mn) / mx <= 0.3) continue;
+      colored++;
+      const c = mx - mn;
+      const h = ((mx === r ? ((g - b) / c) % 6 : mx === g ? (b - r) / c + 2 : (r - g) / c + 4) * 60 + 360) % 360;
+      bins[Math.floor(h / 10) % 36] += (c / mx) * mx;
+    }
+  }
+  if (!lum.length) return 'Колір';
+  lum.sort((x, y) => x - y);
+  const med = lum[lum.length >> 1];
+  if (colored / lum.length < 0.15) return med > 0.6 ? 'Білий' : med > 0.3 ? 'Сірий' : 'Чорний';
+  let peak = 0, best = -1;
+  for (let i = 0; i < 36; i++) {
+    const w = bins[(i + 35) % 36] + bins[i] + bins[(i + 1) % 36];
+    if (w > best) [best, peak] = [w, i];
+  }
+  const h = peak * 10 + 5;
+  const name =
+    h < 15 || h >= 340 ? 'Червоний' : h < 40 ? 'Помаранчевий' : h < 70 ? 'Жовтий' : h < 160 ? 'Зелений' : h < 200 ? 'Бірюзовий' : h < 255 ? 'Синій' : h < 290 ? 'Фіолетовий' : 'Малиновий';
+  return med < 0.3 ? `Темно-${name.toLowerCase()}` : name;
+}
+
 /** Скільки прожекторів буває в сцені: без фар, фари гравця, фари гравця й зустрічної (compileLit). */
 const LAMP_STATES = [0, 2, 4];
 /** Робочі обʼєкти кабіни (стрілки й кермо щокадру — без нових матриць). */
@@ -2321,9 +2374,16 @@ export class Ht2Drive {
     };
     const fields: FreeField[] = [
       { label: 'Автомобіль', options: vehicles, value: () => this.def.carNode, set: (v) => this.changeTruck(v) },
+      { label: 'Колір', options: () => this.paintOptions(), value: () => String(this.paint), set: (v) => this.changeTruck(this.def.carNode, Number(v)) },
+      {
+        label: 'Час доби',
+        options: FREE_HOURS.map((h) => ({ value: String(h.hour), label: h.label })),
+        value: () => String(freeHourOf(this.freeTime)),
+        set: (v) => (this.freeTime = Math.floor(this.freeTime / 86400) * 86400 + Number(v) * 3600),
+      },
+      { label: 'Погода', options: weather, value: () => (fixed === null ? 'auto' : String(weather.find((w) => w.value !== 'auto' && Math.abs(Number(w.value) - fixed) < 0.01)?.value ?? 'auto')), set: (v) => this.climate.setFixed(v === 'auto' ? null : Number(v)) },
       { label: 'Телепорт до міста', options: places.towns, value: () => '', set: goTo(places.towns, false), closes: true },
       { label: 'Телепорт до заправки', options: places.fuel, value: () => '', set: goTo(places.fuel, true), closes: true },
-      { label: 'Погода', options: weather, value: () => (fixed === null ? 'auto' : String(weather.find((w) => w.value !== 'auto' && Math.abs(Number(w.value) - fixed) < 0.01)?.value ?? 'auto')), set: (v) => this.climate.setFixed(v === 'auto' ? null : Number(v)) },
       {
         label: 'Розшук міліції',
         options: police.map((label, i) => ({ value: String(i), label })),
@@ -2347,6 +2407,48 @@ export class Ht2Drive {
       this.freeOpen = false;
       if (!this.teleporting) this.paused = this.freeWasPaused;
     });
+  }
+  /**
+   * Фарбування машини гравця (вільна їзда): варіанти — як у recolor (матеріали `…1` → `…N` у TRUCKS.B3D), лише
+   * текстуровані частини моделі; назва — paintName, однакові назви — з номером.
+   */
+  private paintOptions(): { value: string; label: string }[] {
+    const names = this.trucks.asm.b3d.materials.map((m) => m.toLowerCase());
+    const model = this.truck.visual.userData.model as { root: THREE.Object3D } | undefined;
+    // Основи назв матеріалів моделі (без цифри фарбування) з кількістю трикутників.
+    const bases = new Map<string, number>();
+    model?.root.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        const hit = /^(.*?)\d+$/.exec(m.name.toLowerCase());
+        if (!hit || !(m as THREE.MeshLambertMaterial).map || !names.includes(`${hit[1]}1`)) continue;
+        const tris = (mesh.geometry.index?.count ?? mesh.geometry.attributes.position.count) / 3;
+        bases.set(hit[1], (bases.get(hit[1]) ?? 0) + tris);
+      }
+    });
+    // Кількість фарбувань — у найбільшої частини (емблеми common_icon мають 8 варіантів, машина — менше); назва —
+    // за всіма частинами з такою самою кількістю варіантів (кабіна, капот).
+    const count = (b: string) => {
+      let n = 1;
+      while (names.includes(`${b}${n + 1}`)) n++;
+      return n;
+    };
+    const main = [...bases.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    const total = main ? count(main) : 1;
+    const painted = [...bases.keys()].filter((b) => count(b) === total);
+    const out: { value: string; label: string }[] = [];
+    const seen = new Map<string, number>();
+    for (let n = 1; n <= total; n++) {
+      const texs = painted
+        .map((b) => (this.trucks.asm.lib.material(names.indexOf(`${b}${n}`)) as THREE.MeshLambertMaterial).map)
+        .filter((t): t is THREE.Texture => !!t);
+      const base = paintName(texs);
+      const k = (seen.get(base) ?? 0) + 1;
+      seen.set(base, k);
+      out.push({ value: String(n - 1), label: k > 1 ? `${base} ${k}` : base });
+    }
+    return out.length ? out : [{ value: '0', label: 'Заводський' }];
   }
   private freeOpen = false;
   private freeWasPaused = false;
