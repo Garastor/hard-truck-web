@@ -198,11 +198,15 @@ const SINGLE = {
   load: [323, 355],
   cancel: [323, 485],
 } as const;
-/** Рядки повзунків: y центру; стрілки 29×29 — ARROW_X, бігунок (12×22) — від x 385 (0) до 502 (1). */
-const SLIDERS: [keyof Pick<Ht2Settings, 'traffic' | 'dayLength' | 'weather'>, number][] = [
-  ['traffic', 225],
-  ['dayLength', 255],
-  ['weather', 285],
+/**
+ * Рядки повзунків: y центру; стрілки 29×29 — ARROW_X, бігунок (12×22) — від x 385 (0) до 502 (1). Підписи стрілок —
+ * підказки оригіналу (mess 0x8b–0x8d «движение: слабое/интенсивное», «сутки: короткие/длинные», «погода:
+ * дождливо/солнечно»).
+ */
+const SLIDERS: [keyof Pick<Ht2Settings, 'traffic' | 'dayLength' | 'weather'>, number, string, string][] = [
+  ['traffic', 225, 'Рух: слабший', 'Рух: інтенсивніший'],
+  ['dayLength', 255, 'Доба: коротша', 'Доба: довша'],
+  ['weather', 285, 'Погода: дощовіше', 'Погода: сонячніше'],
 ];
 /**
  * Стрілки списку збережених ігор — лівий верхній кут у круглих гніздах фону ліворуч від поля: найкращий збіг картинки
@@ -270,15 +274,15 @@ export function ht2SingleScreen(art: Ht2MenuArt, o: SingleScreen): () => void {
   button('load', 'load', 'Завантажити гру', { disabled: !o.saves.length, action: () => o.onLoad(o.saves[pick]!.id) });
   button('cancel', 'canc', 'Скасувати', { action: o.onCancel });
 
-  for (const [key, y] of SLIDERS) {
+  for (const [key, y, less, more] of SLIDERS) {
     const set = (v: number) => {
       s[key] = Math.round(Math.min(1, Math.max(0, v)) * 10) / 10;
       changed();
     };
     // Стрілки: на межі — недоступні (_f).
     painters.push(
-      texButton(art, stage, 'aleft', ARROW_X[0], y - 14, `${key}: менше`, { ext: '.msk', disabled: () => s[key] <= 0, action: () => set(s[key] - 0.1) }),
-      texButton(art, stage, 'aright', ARROW_X[1], y - 14, `${key}: більше`, { ext: '.msk', disabled: () => s[key] >= 1, action: () => set(s[key] + 0.1) }),
+      texButton(art, stage, 'aleft', ARROW_X[0], y - 14, less, { ext: '.msk', disabled: () => s[key] <= 0, action: () => set(s[key] - 0.1) }),
+      texButton(art, stage, 'aright', ARROW_X[1], y - 14, more, { ext: '.msk', disabled: () => s[key] >= 1, action: () => set(s[key] + 0.1) }),
     );
     // Смуга — зона дотику (перетягування бігунка), бігунок — маска runner.
     const track = document.createElement('div');

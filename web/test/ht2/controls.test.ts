@@ -70,6 +70,23 @@ describe('HT2: доба й погода (king.exe weatherandtime)', () => {
   });
   it('доба: повзунок 0,5 → 16,2 хв', () => {
     expect(86400 / gameTimeScale(0.5) / 60).toBeCloseTo(16.2);
+    expect(86400 / gameTimeScale(0)).toBeCloseTo(72); // «сутки: короткие» — 0,02 год
+    expect(86400 / gameTimeScale(1) / 60).toBeCloseTo(31.2);
+  });
+  it('повзунок погоди «дождливо/солнечно»: 0 — завжди злива, 1 — завжди ясно', () => {
+    const share = (s: number) => {
+      const c = new Climate(s);
+      let rain = 0;
+      for (let i = 0; i < 44 * 60; i++) {
+        c.update(1);
+        if (c.rain) rain++;
+      }
+      return rain / (44 * 60);
+    };
+    expect(share(0)).toBe(1);
+    expect(share(1)).toBe(0);
+    expect(share(0.6)).toBeGreaterThan(0.1);
+    expect(share(0.6)).toBeLessThan(0.3);
   });
   it('погода як на живій грі: θ₁ 4,84, θ₂ 1,32, повзунок 0,6 → w 0,334, вітер 1,79', () => {
     const c = new Climate(0.6);
