@@ -305,8 +305,8 @@ envamb, moon, fogn/fogf/frpl. Показник погоди w, вітер, ка�
   - `lit ≠ 0`: ambient = C; EMISSIVEMATERIALSOURCE (0x94) = 0, DIFFUSEMATERIALSOURCE (0x91) = 0 — усе з матеріалу.
   - `lit = 0`: ambient = 0; 0x94 = 1 і 0x91 = 1 (D3DMCS_COLOR1) — emissive і diffuse з кольору вершини.
   Стан рендерера 0x005b0120: COLORVERTEX (0x8d) = 1, SPECULARMATERIALSOURCE (0x92) = 0, AMBIENTMATERIALSOURCE
-  (0x93) = 0, SPECULARENABLE (0x1d) = 1; NORMALIZENORMALS не вмикається, але нормалі світу в даних одиничні
-  (перевірено по ENV/*.b3d). Програмне освітлення (+0x21d8/+0x21dc, 0x005b1870) ніхто не вмикає (лише обнулення
+  (0x93) = 0, SPECULARENABLE (0x1d) = 1; NORMALIZENORMALS не вмикається, нормалі вершин світу в даних одиничні
+  (перевірено по ENV/*.b3d), але нормалі полігонів mtype 1 (формат 49) у bb і ba місцями нульові (2026-10-24). Програмне освітлення (+0x21d8/+0x21dc, 0x005b1870) ніхто не вмикає (лише обнулення
   в 0x005acd40); друга стадія «global intensity map» (+0x21b8) — лише кімната типу 41, у даних її немає (terrain.md).
 - **Хто `lit`** (0x005f1720 → 0x005f1620): mtype блоку 35 (поле +0x60, читання 0x005f08d0; 1 без прапорця 0x40 →
   2). mtype 1/2 — полігони з власними вершинами, `lit` = є буфер вершин, тобто завжди. mtype 3 — трикутники лише
