@@ -181,20 +181,24 @@ export class EngineAudio {
     return !!this.play(name, volume);
   }
 
-  /** Одноразовий звук; повертає зупинку (обірвати раніше кінця запису). */
-  play(name: string, volume = 1, rate = 1): { stop(): void } | null {
+  /** Одноразовий звук (loop — по колу до stop, з початку запису); повертає зупинку (обірвати раніше кінця). */
+  play(name: string, volume = 1, rate = 1, loop = false): { stop(): void } | null {
     const buf = this.buffers.get(name);
     if (!buf || this.ctx.state !== 'running') return null;
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
+    src.loop = loop;
     src.playbackRate.value = rate;
     const g = this.ctx.createGain();
     g.gain.value = volume;
     // Запуск двигуна — гучністю двигуна, решта — ефектів.
     src.connect(g).connect(name === 'start' ? this.engineBus : this.sfxBus);
     src.start();
+    // Петлю зупиняє й завершення гри (dispose).
+    if (loop) this.loops.add(src);
     return {
       stop: () => {
+        this.loops.delete(src);
         try {
           src.stop();
         } catch {

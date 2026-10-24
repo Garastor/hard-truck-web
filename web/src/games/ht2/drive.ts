@@ -495,9 +495,15 @@ export class Ht2Drive {
   readonly lights = new TrafficLights();
   /** Хто з інспекторів COP1…COP15 бере хабар (names.sch). */
   private copBribes: boolean[] = [];
-  /** Радар-детектор: фаза блимання лампи RD_LampKey і чи світить. */
-  private radarBlink = 0;
+  /** Радар-детектор: годинник, початок і тривалість циклу блимання (с), показаний рівень лампи RD_LampKey, звук. */
+  private radarClock = 0;
+  private radarStart = 0;
+  private radarPeriod = 0;
+  private radarLamp = 0;
   private radarLit = false;
+  private radarSound: { stop(): void } | null = null;
+  /** Останні спалахи радар-детектора (налагодження: `window.ht2.drive.radarLog`). */
+  readonly radarLog: { t: number; s: number; level: number; period: number; volume: number; played: boolean }[] = [];
   mafia: Mafia | null = null;
   /** Гелікоптери Ка-50 (Б11) і заборонена зона регіону db. */
   copters: Helicopters | null = null;
@@ -2973,25 +2979,42 @@ export class Ht2Drive {
   }
 
   /**
-   * Радар-детектор (king.exe 0x538370): пост ближче 100 м → сигнал s = відстань × 0,01; лампа RD_LampKey —
-   * рівень clamp(1 + ⌊3s⌋, 1…3), блимає з частотою 2 + 5s Гц (половину періоду світить), на спалах — звук antiradar.
+   * Радар-детектор (king.exe 0x538370, re/notes/ht2/police.md §3). Сигнал s (0…1, щокадру з нуля): машина міліції на
+   * посту ближче 100 м → відстань × 0,01 (0x4d1360; Stealth не рятує), зона камери-радара в бік камери → 0,5
+   * (0x56ffd0; у зоні самої камери — лише без Stealth). Ближчий пост — менший s: повільніше блимання й нижчий рівень.
+   * Лампа RD_LampKey — рівень clamp(1 + ⌊3s⌋, 1…3). Цикл блимання — 1/(2 + 5s) с, береться на початку циклу й до його
+   * кінця не змінюється; першу половину лампа світить. Поки світить — звук antiradar (COMMON.RES antiradar.wav)
+   * по колу, оновлюваний щокадру (0x52f930 → 0x5fd430): у кабіні гучність 1, з інших видів 0,5; лампа згасла чи сигналу
+   * немає — звук обривається (0x5fd160 зупиняє не оновлені за кадр). Лампа — лише коли кабіна завантажена.
    */
-  private updateRadarLamp(dt: number, radar: boolean): void {
-    if (!this.cabSwitch) return;
-    // Пост міліції (0x538370) чи зона камери-радара (0x56ffd0: сигнал 0,5).
-    const s = radar ? Math.max(this.police?.radarSignal(this.truck.visual.position) ?? 0, this.radars.signal) : 0;
-    if (s <= 0) {
-      if (this.radarLit) this.cabSwitch('RD_LampKey', 0);
-      this.radarLit = false;
-      this.radarBlink = 0;
-      return;
+  private updateRadarLamp(dt: number, radar: boolean, inside: boolean): void {
+    this.radarClock += dt;
+    const t = this.radarClock;
+    // Пост міліції чи зона камери. Хто з них «перебиває» за кадр в оригіналі — порядок оновлень, тут більший [Г].
+    const s = radar && !this.paused ? Math.min(1, Math.max(this.police?.radarSignal(this.truck.visual.position) ?? 0, this.radars.signal)) : 0;
+    let level = 0;
+    if (s > 0) {
+      // Новий цикл — лише коли минув попередній (тривалість не змінюється посеред циклу, як +0x1c0/+0x1c4).
+      if (t >= this.radarStart + this.radarPeriod) {
+        this.radarStart = t;
+        this.radarPeriod = 1 / (2 + 5 * s);
+      }
+      if (t < this.radarStart + this.radarPeriod / 2) level = THREE.MathUtils.clamp(1 + Math.floor(3 * s), 1, 3);
     }
-    this.radarBlink = (this.radarBlink + dt * (2 + 5 * s)) % 1;
-    const lit = this.radarBlink < 0.5;
-    if (lit !== this.radarLit) {
-      this.cabSwitch('RD_LampKey', lit ? THREE.MathUtils.clamp(1 + Math.floor(3 * s), 1, 3) : 0);
-      if (lit) this.audio?.play('antiradar');
-      this.radarLit = lit;
+    if (level !== this.radarLamp) {
+      this.cabSwitch?.('RD_LampKey', level);
+      this.radarLamp = level;
+    }
+    const volume = inside ? 1 : 0.5;
+    const was = this.radarLit;
+    this.radarLit = level > 0;
+    if (this.radarLit && !was) {
+      this.radarSound = this.audio?.play('antiradar', volume, 1, true) ?? null;
+      this.radarLog.push({ t: Math.round(t * 1000) / 1000, s: Math.round(s * 1000) / 1000, level, period: Math.round(this.radarPeriod * 1000) / 1000, volume, played: !!this.radarSound });
+      if (this.radarLog.length > 30) this.radarLog.shift();
+    } else if (!this.radarLit && this.radarSound) {
+      this.radarSound.stop();
+      this.radarSound = null;
     }
   }
 
@@ -3675,6 +3698,8 @@ export class Ht2Drive {
     this.clipRoof(inside);
     // Модель машини з кабіни не ховається (king.exe: режим кабіни, 0x548120 → +0x2590, вимикає лише плями фар на
     // дорозі, 0x552940): крізь скло видно капот, а оболонку кабіни зсередини відсікають однобічні полігони.
+    // Радар-детектор працює в будь-якому виді (0x538370 — щокадру для гравця), лампа — коли кабіна є.
+    this.updateRadarLamp(dt, !!this.tuning.antiRadar, inside);
     if (!this.cab) return;
     this.cab.visible = inside;
     if (this.glassRain) {
@@ -3702,8 +3727,8 @@ export class Ht2Drive {
       this.cabRadar = radar;
       this.cabSwitch('RD_Key', radar ? 1 : 0);
       this.cabSwitch('RD_LampKey', 0);
+      this.radarLamp = 0;
     }
-    this.updateRadarLamp(dt, radar);
     if (!inside) return;
     this.cabBase.decompose(this.cab.position, this.cab.quaternion, this.cab.scale);
     const rot = (o: THREE.Object3D | undefined, axis: THREE.Vector3, angle: number, size = 1) => {
