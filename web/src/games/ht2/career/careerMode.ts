@@ -441,7 +441,8 @@ export class CareerMode {
         art,
         this.drive.overlay,
         {
-          goods: this.cargoName(o),
+          goods: o.goods.name,
+          hidden: this.scannedGoods(o),
           town: to?.town ?? '?',
           pay: o.pay,
           hours: (o.deadline * this.drive.timeScale) / 3600,
@@ -604,12 +605,17 @@ export class CareerMode {
   }
 
   /**
-   * Назва вантажу: без сканера — прикриття; зі сканером прихований товар блимає раз на секунду з прикриттям (king.exe
-   * 0x56bc80, 0x5756f0 — інший колір; у порту — та сама назва з позначкою «!»).
+   * Прихований товар, який бачить сканер (king.exe 0x441120: назва прихованого — лише якщо в машини є сканер); на
+   * картці складу й F3 вона блимає з прикриттям раз на секунду червоним (stations.scanPhase, SCANNED).
    */
+  scannedGoods(o: { hidden?: Goods }): string | undefined {
+    return this.scanner ? o.hidden?.name : undefined;
+  }
+
+  /** Назва вантажу в нерухомому списку (блимати нікуди): без сканера — прикриття, зі сканером — і прихований. */
   cargoName(o: { goods: Goods; hidden?: Goods }): string {
-    if (!o.hidden || !this.scanner) return o.goods.name;
-    return Math.floor(performance.now() / 1000) % 2 ? `${o.hidden.name}!` : o.goods.name;
+    const h = this.scannedGoods(o);
+    return h ? `${o.goods.name} (${h}!)` : o.goods.name;
   }
 
   /**
@@ -1294,7 +1300,8 @@ export class CareerMode {
       const o = c.order;
       const to = this.stores.find((s) => s.id === o.to);
       order = {
-        goods: this.cargoName(o),
+        goods: o.goods.name,
+        hidden: this.scannedGoods(o),
         units: o.units,
         town: to?.town ?? '?',
         arrow: to ? arrowTo(fwd, toThree(...to.center).sub(p)) : '',
@@ -1362,7 +1369,7 @@ export class CareerMode {
 }
 
 export interface CareerInfo {
-  order: { goods: string; units: number; town: string; arrow: string; km: number; left: number; pay: number; premium: number; integrity: number; mass: number; volume: number } | null;
+  order: { goods: string; hidden?: string; units: number; town: string; arrow: string; km: number; left: number; pay: number; premium: number; integrity: number; mass: number; volume: number } | null;
   /** Без замовлення — найближчий склад. */
   near: { town: string; arrow: string; km: number } | null;
   money: number;

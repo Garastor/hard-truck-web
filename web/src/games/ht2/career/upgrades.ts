@@ -38,6 +38,7 @@ const KNOWN: Record<string, { name: string; effect: string }> = {
   'PR_HEADLIGHT_PROTECTION:1': { name: 'Захист фар', effect: 'вмʼятини переду ×0,2' },
   'PR_FIRE_PROTECTION:1': { name: 'Протипожежна система', effect: 'гасить пожежу через 5 с, 4 рази' },
   'PR_AIR_FILTER_SNORKEL:1': { name: 'Повітрозабірник', effect: 'у воду можна заїхати на 1 м глибше' },
+  'PR_CARGO_SCANNER:1': { name: 'Сканер вантажу', effect: 'видно прихований товар і крадену чи вживану машину' },
 };
 
 /**

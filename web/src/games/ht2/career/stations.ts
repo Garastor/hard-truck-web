@@ -10,12 +10,34 @@ import type { Upgrade } from './upgrades';
  */
 const VALUE = 'rgb(240, 232, 150)';
 const LCD = 'rgb(255, 40, 30)';
+/**
+ * Те, що показує сканер вантажу (прихований товар, «Ворованная»/«Подержанная»): king.exe малює його шрифтом
+ * matrix2.fon (0x6ced2c, 0x512ea0) — червоні літери 0xF800, звичайні значення — matrix1.fon.
+ */
+export const SCANNED = 'rgb(248, 24, 16)';
+
+/** Непарна секунда — те, що видно лише зі сканером (king.exe 0x56bc80, 0x5756f0: ftol(час) & 1). */
+export function scanPhase(): boolean {
+  return Math.floor(performance.now() / 1000) % 2 === 1;
+}
+
+/** Перемальовувати рядок, що блимає, поки панель на екрані (раз на чверть секунди — без запізнення фази). */
+function blink(p: SidePanel, draw: () => void): void {
+  draw();
+  const t = window.setInterval(() => {
+    if (!p.el.isConnected) return window.clearInterval(t);
+    draw();
+  }, 250);
+}
 /** Кнопки дій складу, ринку й найму: правий край вікна й ширина колонки значень, пікселі фону. */
 const ACT_RIGHT = 205;
 const ACT_W = 90;
 
 export interface OrderView {
+  /** Назва товару (для прихованого — прикриття). */
   goods: string;
+  /** Прихований товар, якщо в машини є сканер: назва блимає з прикриттям раз на секунду. */
+  hidden?: string;
   town: string;
   pay: number;
   /** Термін, години гри. */
@@ -34,7 +56,7 @@ export interface OrderView {
 export function orderPanel(art: EscArt, parent: HTMLElement, o: OrderView, take: () => void): SidePanel {
   const p = new SidePanel(art, parent, 'm_16\\BackOrder.txr');
   const rows = [
-    o.goods,
+    '',
     o.town,
     `$${Math.round(o.pay)}`,
     `${Math.floor(o.hours)}:${String(Math.round((o.hours % 1) * 60)).padStart(2, '0')}`,
@@ -42,9 +64,14 @@ export function orderPanel(art: EscArt, parent: HTMLElement, o: OrderView, take:
     `${o.volume.toFixed(2)}М3`,
     `${Math.round(o.fragility)}%`,
   ];
-  rows.forEach((t, i) => p.write(125, 569 + i * 20, t.slice(0, 16), VALUE));
-  // Підпис — посередині червоної смуги фону (рядки 716…735), біля правого краю вікна, як і кнопка.
-  p.write(ACT_RIGHT, 730, `СКЛАД ЗАВАНТАЖЕННЯ ${o.dock}`, VALUE, undefined, 'right');
+  blink(p, () => {
+    p.clear();
+    const scanned = !!o.hidden && scanPhase();
+    p.write(125, 569, (scanned ? o.hidden! : o.goods).slice(0, 16), scanned ? SCANNED : VALUE);
+    rows.forEach((t, i) => i && p.write(125, 569 + i * 20, t.slice(0, 16), VALUE));
+    // Підпис — посередині червоної смуги фону (рядки 716…735), біля правого краю вікна, як і кнопка.
+    p.write(ACT_RIGHT, 730, `СКЛАД ЗАВАНТАЖЕННЯ ${o.dock}`, VALUE, undefined, 'right');
+  });
   p.action(ACT_RIGHT - ACT_W, 745, ACT_W, 'Взяти', take);
   return p;
 }
@@ -54,7 +81,7 @@ export interface SaleView {
   price: number;
   power: number;
   load: number;
-  /** Позначка зі сканером вантажу (king.exe: заголовок блимає «Ворованная» / «Подержанная»). */
+  /** Позначка зі сканером вантажу (king.exe: замість назви моделі блимає «Ворованная» / «Подержанная»). */
   used: boolean;
   stolen?: boolean;
 }
@@ -62,10 +89,17 @@ export interface SaleView {
 /** Ринок: машина, біля якої стоїмо (king.exe: x = 103, рядки 600…660). */
 export function salePanel(art: EscArt, parent: HTMLElement, s: SaleView, buy: () => void): SidePanel {
   const p = new SidePanel(art, parent, 'm_16\\BackSale.txr');
-  p.write(103, 600, s.model + (s.stolen ? ' ВКРАД.' : s.used ? ' ВЖИВ.' : ''), VALUE);
-  p.write(103, 620, `$${Math.round(s.price)}`, VALUE);
-  p.write(103, 640, `${Math.round(s.power)} К.С.`, VALUE);
-  p.write(103, 660, `${(s.load / 1000).toFixed(2)}Т`, VALUE);
+  // King.exe 0x56bd4b: зі сканером рядок моделі (y = 600) у непарну секунду — «Ворованная» (mess 0x6d, крадена
+  // важливіша) чи «Подержанная» (0x6e) шрифтом сканера; у парну — модель.
+  const mark = s.stolen ? 'ВОРОВАНА' : s.used ? 'ВЖИВАНА' : '';
+  blink(p, () => {
+    p.clear();
+    const scanned = !!mark && scanPhase();
+    p.write(103, 600, scanned ? mark : s.model, scanned ? SCANNED : VALUE);
+    p.write(103, 620, `$${Math.round(s.price)}`, VALUE);
+    p.write(103, 640, `${Math.round(s.power)} К.С.`, VALUE);
+    p.write(103, 660, `${(s.load / 1000).toFixed(2)}Т`, VALUE);
+  });
   p.action(ACT_RIGHT - ACT_W, 690, ACT_W, 'Купити', buy);
   return p;
 }

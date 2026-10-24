@@ -2,6 +2,7 @@ import { SidePanel } from './panel';
 import type { EscArt } from './escArt';
 import type { CareerInfo } from '../career/careerMode';
 import { formatLeft } from '../career/careerMode';
+import { SCANNED, scanPhase } from '../career/stations';
 import type { HiredDriver } from '../career/company';
 import { netTable, type NetRow } from './netResults';
 
@@ -192,7 +193,9 @@ export class FPanels {
     if (o) {
       // Клітинки фону (у пікселях BackF3): рядок 472…492 (x 17…205), «ЗАКАЗ» 531…557 (x 17…92) — два рядки
       // розведено до країв клітинки, щоб більші векторні літери не налазили; премія — x 96…172.
-      p.write(20, 487, `${o.goods} → ${o.town}`, VALUE, undefined, 'left', 182);
+      // Зі сканером прихований товар блимає з прикриттям червоним (king.exe 0x5756f0).
+      const scanned = !!o.hidden && scanPhase();
+      p.write(20, 487, `${scanned ? o.hidden : o.goods} → ${o.town}`, scanned ? SCANNED : VALUE, undefined, 'left', 182);
       p.write(20, 542, `${o.arrow} ${o.km.toFixed(1)} КМ`, VALUE, undefined, 'left', 70);
       p.write(20, 555, o.left > 0 ? formatLeft(o.left).toUpperCase() : 'ТЕРМІН МИНУВ', o.left > 0 ? VALUE : LOW, undefined, 'left', 70);
       // Премія першому (конкуренти, G9 Б8); без конкурентів — прочерк.
