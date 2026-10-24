@@ -117,13 +117,35 @@ export function headlightMask(
  */
 const GROUND_UP = 0.5;
 
+/**
+ * Світлоповертальні знаки (матеріали з define HT2_RETRO — лицьові текстури знаків, engine/render/sceneBuilder.ts
+ * RETRO_TEX): плівка повертає світло туди, звідки воно прийшло, тож знак яскравий, коли камера майже на лінії
+ * світла від фари — кут між напрямками на фару й на камеру до RETRO_FULL — повне підсилення, від RETRO_ZERO — ніякого.
+ * Фари гравця поруч із камерою — знак сяє; від фар зустрічних (світло з протилежного боку) — звичайне освітлення,
+ * без прив'язки до конкретних прожекторів. Підсилення RETRO_GAIN × маска; вище лінії відсічки (маска 0) знак
+ * однаково ловить RETRO_SPILL від сили фари в цьому напрямку вбік (рядок маски нижче відсічки, RETRO_ROW) — як
+ * розсіяне світло ближньої фари на справжніх знаках. Числа — на око.
+ */
+const RETRO_GAIN = 3;
+const RETRO_SPILL = 0.35;
+const RETRO_ROW = 0.47;
+const RETRO_FULL = (12 * Math.PI) / 180;
+const RETRO_ZERO = (35 * Math.PI) / 180;
+
 export function installHeadlightShading(): void {
   const c = THREE.ShaderChunk as unknown as Record<string, string>;
   const from = 'directLight.color = inSpotLightMap ? directLight.color * spotColor.rgb : directLight.color;';
   if (!c.lights_fragment_begin.includes(from)) throw new Error('headlights: шматок шейдера прожектора змінився');
   c.lights_fragment_begin = c.lights_fragment_begin.replace(
     from,
-    `${from}
+    `#ifdef HT2_RETRO
+			{
+				float hlRetro = smoothstep( ${Math.cos(RETRO_ZERO).toFixed(4)}, ${Math.cos(RETRO_FULL).toFixed(4)}, dot( directLight.direction, geometryViewDir ) );
+				vec3 hlRow = texture2D( spotLightMap[ SPOT_LIGHT_MAP_INDEX ], vec2( spotLightCoord.x, ${RETRO_ROW.toFixed(2)} ) ).rgb;
+				spotColor.rgb = mix( spotColor.rgb, max( spotColor.rgb, ${RETRO_SPILL.toFixed(2)} * hlRow ) * ${RETRO_GAIN.toFixed(1)}, hlRetro );
+			}
+			#endif
+			${from}
 			{
 				float hlCos = dot( geometryNormal, directLight.direction );
 				float hlUp = dot( geometryNormal, normalize( ( viewMatrix * vec4( 0.0, 1.0, 0.0, 0.0 ) ).xyz ) );

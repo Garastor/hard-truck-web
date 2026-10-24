@@ -93,6 +93,14 @@ const LAYER_GRID_FROM = 64;
 const LAYER_OFFSET_UNITS = -4;
 /** Текстури ввімкнених ламп світлофора — малюються без освітлення (SceneAssembler.selfLit). */
 const SELF_LIT_TEX = /(^|\/)tl(red|yel|gre)on\.txr$/i;
+/**
+ * Лицьові текстури дорожніх знаків (`z*.txr` у моделях `<РЕГ>Z<nnn>`) і табличок міст (`town_*.txr`) —
+ * світлоповертальна плівка: матеріал отримує define HT2_RETRO (vehicles/headlights.ts). Ніжка (`col_white`, без
+ * текстури), зворотний бік (`back*.txr`), кабіни ЗІЛів (`zil_*`), розмітка (`zebra*`) — ні. Власна реалізація на
+ * прохання користувача (у king.exe знаки світлом фар не виділяються).
+ */
+const RETRO_TEX =
+  /(^|\/)(z(closed|cross|detourr|endoneway|gas|minuslane|noenter|onewayl|onewayr|park|pluslane|repair|spl\d+|splend|turnr|zigzag)|town_[a-z]{2})\.txr$/i;
 
 export class MaterialLibrary {
   private readonly cache = new Map<number, THREE.Material>();
@@ -181,6 +189,7 @@ export class MaterialLibrary {
       mat = new THREE.MeshPhongMaterial({ ...(params as THREE.MeshPhongMaterialParameters), specular: new THREE.Color(k, k, k), shininess: power });
     } else mat = this.lit ? new THREE.MeshLambertMaterial(params as THREE.MeshLambertMaterialParameters) : new THREE.MeshBasicMaterial(params);
     mat.name = name;
+    if (this.lit && RETRO_TEX.test((mat as THREE.MeshLambertMaterial).map?.name ?? '')) mat.defines = { HT2_RETRO: '' };
     // Опис матеріалу з архіву — для ефектів, що читають параметри (move, noz).
     mat.userData.def = def;
     // Рух текстури (move u v — річки, вода): своя копія текстури, зсув UV щосекунди робить світ (world.ts).
