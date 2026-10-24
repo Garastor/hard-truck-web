@@ -905,9 +905,12 @@ export class SceneAssembler {
   }
 
   /**
-   * Тип 28 — білборди, повернуті до камери (ореоли ліхтарів і фар, відблиски): u32 n, далі n полігонів —
-   * u32 формат (2), f32, u32, u32 матеріал, u32 k, k × (x, y — зміщення кута в метрах у площині екрана; u, v).
-   * Світяться — додаємо колір (адитивно), глибину не пишемо.
+   * Тип 28 — білборди (колони ґанку «Справки» `store_h4`, голови ліхтарів `mat_fonar`, мигалки міліції): u32 n, далі
+   * n полігонів — u32 формат (2), f32 (відкидається), u32, u32 матеріал, u32 k, k × (x, y — зміщення кута в метрах;
+   * u, v). Як king.exe (re/notes/ht2/rendering.md «Білборди (блок 28)»): без біта 0x100 формату — циліндричний
+   * (обертається лише навколо осі Z моделі до камери), без освітлення, з туманом і глибиною; змішування звичайне
+   * (альфа текстури чи прозорість матеріалу), адитивного немає — раніше порт складав колір, і непрозорі колони
+   * «Справки» світилися білими смугами.
    */
   private addSprites(center: [number, number, number], raw: Uint8Array, into: THREE.Object3D): void {
     const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
@@ -915,6 +918,7 @@ export class SceneAssembler {
     const n = dv.getUint32(o, true);
     o += 4;
     for (let p = 0; p < n && o + 20 <= raw.byteLength; p++) {
+      const screen = (dv.getUint32(o, true) & 0x100) !== 0;
       const material = dv.getUint32(o + 12, true);
       const k = dv.getUint32(o + 16, true);
       o += 20;
@@ -922,7 +926,7 @@ export class SceneAssembler {
       const pts: [number, number, number, number][] = [];
       for (let i = 0; i < k; i++, o += 16) pts.push([0, 4, 8, 12].map((j) => dv.getFloat32(o + j, true)) as [number, number, number, number]);
       if (k < 3) continue;
-      const sprite = this.sprite(material, pts);
+      const sprite = this.sprite(material, pts, screen);
       if (!sprite) continue;
       // Біля ліхтаря центр у даних — нуль або малий зсув (Renault: ±0,1 м) відносно скла.
       const lamp = this.spriteOrigin;
@@ -933,7 +937,7 @@ export class SceneAssembler {
     }
   }
 
-  private sprite(material: number, pts: [number, number, number, number][]): THREE.Sprite | null {
+  private sprite(material: number, pts: [number, number, number, number][], screen: boolean): THREE.Object3D | null {
     const base = this.lib.material(material) as THREE.MeshBasicMaterial;
     if (!base.map) return null;
     const xs = pts.map((q) => q[0]);
@@ -951,24 +955,29 @@ export class SceneAssembler {
     const [ubl, vbl] = uvAt(x0, y0);
     const [ubr, vbr] = uvAt(x1, y0);
     const [utl, vtl] = uvAt(x0, y1);
-    const key = `${material}|${ubl},${vbl},${ubr},${vbr},${utl},${vtl}`;
+    const key = `${material}|${screen ? 's' : 'c'}|${ubl},${vbl},${ubr},${vbr},${utl},${vtl}`;
     let mat = this.spriteMats.get(key);
     if (!mat) {
       const map = base.map.clone();
       map.matrixAutoUpdate = false;
       map.matrix.set(ubr - ubl, utl - ubl, ubl, vbr - vbl, vtl - vbl, vbl, 0, 0, 1);
       map.needsUpdate = true;
-      mat = new THREE.SpriteMaterial({ map, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+      // Прозорість — як у матеріалу світу (альфа текстури з порогом чи м'яка, transp); колір вершин білий — без світла.
+      const params = { map, transparent: base.transparent, alphaTest: base.alphaTest, depthWrite: base.depthWrite, opacity: base.opacity };
+      mat = screen ? new THREE.SpriteMaterial({ ...params, fog: false }) : new THREE.MeshBasicMaterial({ ...params, side: THREE.DoubleSide });
       this.spriteMats.set(key, mat);
     }
-    const s = new THREE.Sprite(mat);
-    s.center.set(-x0 / (x1 - x0), -y0 / (y1 - y0));
-    s.scale.set(x1 - x0, y1 - y0, 1);
     this.stats.sprites++;
-    return s;
+    if (screen && mat instanceof THREE.SpriteMaterial) {
+      const s = new THREE.Sprite(mat);
+      s.center.set(-x0 / (x1 - x0), -y0 / (y1 - y0));
+      s.scale.set(x1 - x0, y1 - y0, 1);
+      return s;
+    }
+    return new CylinderBillboard(x0, x1, y0, y1, mat as THREE.MeshBasicMaterial);
   }
 
-  private readonly spriteMats = new Map<string, THREE.SpriteMaterial>();
+  private readonly spriteMats = new Map<string, THREE.SpriteMaterial | THREE.MeshBasicMaterial>();
 
   /** name — імʼя блоку-екземпляра (напр. `anmobj0002090` — шипи засідки 1090), у `userData.instance`. */
   private addInstance(spaceName: string, objectName: string, into: THREE.Object3D, name = ''): void {
@@ -1347,4 +1356,42 @@ function overlapInPlane(a: THREE.Vector3[], b: THREE.Vector3[], n: THREE.Vector3
     }
   }
   return true;
+}
+
+const BB_UP = new THREE.Vector3(0, 0, 1);
+const BB_DIR = new THREE.Vector3();
+const BB_RIGHT = new THREE.Vector3();
+const BB_NORMAL = new THREE.Vector3();
+const BB_INV = new THREE.Matrix4();
+const BB_LOCAL = new THREE.Matrix4();
+
+/**
+ * Циліндричний білборд блоку 28 (king.exe 0x5b3010): «вгору» — вісь Z моделі, «праворуч» — норм(напрям камери × вгору)
+ * у системі моделі (вироджений випадок — вісь X), вершина = центр + x·праворуч + y·вгору. Квад у площині XY, поворот —
+ * щокадру перед малюванням (onBeforeRender, для кожної камери — і дзеркала). Сфера відсікання — навколо осі, тож не
+ * залежить від повороту.
+ */
+class CylinderBillboard extends THREE.Mesh {
+  constructor(x0: number, x1: number, y0: number, y1: number, material: THREE.MeshBasicMaterial) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute([x0, y0, 0, x1, y0, 0, x1, y1, 0, x0, y1, 0], 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
+    g.setIndex([0, 1, 2, 0, 2, 3]);
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), Math.hypot(Math.max(Math.abs(x0), Math.abs(x1)), Math.max(Math.abs(y0), Math.abs(y1))));
+    super(g, material);
+    // Не зливати зі статичною геометрією (world/mergeStatic.ts): поворот — свій щокадру.
+    this.userData.noMerge = true;
+  }
+
+  override onBeforeRender(_r: THREE.WebGLRenderer, _s: THREE.Scene, camera: THREE.Camera): void {
+    const parent = this.parent;
+    if (!parent) return;
+    camera.getWorldDirection(BB_DIR).transformDirection(BB_INV.copy(parent.matrixWorld).invert());
+    BB_RIGHT.crossVectors(BB_DIR, BB_UP);
+    if (BB_RIGHT.lengthSq() < 1e-8) BB_RIGHT.set(1, 0, 0);
+    BB_RIGHT.normalize();
+    BB_NORMAL.crossVectors(BB_RIGHT, BB_UP);
+    BB_LOCAL.makeBasis(BB_RIGHT, BB_UP, BB_NORMAL).setPosition(this.position);
+    this.matrixWorld.multiplyMatrices(parent.matrixWorld, BB_LOCAL);
+  }
 }
