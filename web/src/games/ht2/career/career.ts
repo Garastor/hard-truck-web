@@ -87,6 +87,8 @@ export interface Ht2Career {
   caches?: SavedCache[];
   /** Діючий завал (id `obstacle` з mod_*.sch, world/obstacles.ts); null — жодного. */
   obstacle?: string | null;
+  /** Залишок до наступної спроби змінити завал, с (world/obstacles.ts); −1 — нова кар'єра (перший — пізніше). */
+  obstacleTimer?: number;
   /** Продане й найняте на ринках (`ринок:день:місце`, лише поточний день і далі — Markets.soldKeys). */
   sold?: string[];
   /** Замовлені рацією машини, що чекають на ринках (career/carOrder.ts). */
@@ -139,7 +141,7 @@ export const DEFAULT_DRIVER = 'Водій';
  */
 
 export function newCareer(driver: string, truck: string): Ht2Career {
-  return { driver, id: newId(), money: START_MONEY, truck, damage: 0, fuel: null, time: 10 * 3600, order: null, delivered: 0, earned: 0 };
+  return { driver, id: newId(), money: START_MONEY, truck, damage: 0, fuel: null, time: 10 * 3600, order: null, delivered: 0, earned: 0, obstacleTimer: -1 };
 }
 
 const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;

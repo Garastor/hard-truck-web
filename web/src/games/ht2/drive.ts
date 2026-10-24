@@ -1019,6 +1019,7 @@ export class Ht2Drive {
         list,
         { player: () => this.truck.visual.position, apply: (ob, on, announce) => this.applyObstacle(ob, on, announce, closed) },
         o.career?.obstacle,
+        o.career?.obstacleTimer,
       );
     }
     this.audio = await EngineAudio.create(this.world.commonRmp).catch(() => null);

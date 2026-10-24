@@ -1135,7 +1135,10 @@ export class CareerMode {
     this.career.heading = [f.x, -f.z];
     if (this.drive.presents) this.career.presents = this.drive.presents.snapshot();
     if (this.drive.caches) this.career.caches = this.drive.caches.snapshot();
-    if (this.drive.obstacles) this.career.obstacle = this.drive.obstacles.active;
+    if (this.drive.obstacles) {
+      this.career.obstacle = this.drive.obstacles.active;
+      this.career.obstacleTimer = this.drive.obstacles.remaining;
+    }
     const fleet = this.drive.truckers?.snapshot();
     if (fleet) this.career.fleet = fleet;
     if (this.drive.markets && this.soldRestored) this.career.sold = this.drive.markets.soldKeys(Math.floor(this.career.time / 86400));

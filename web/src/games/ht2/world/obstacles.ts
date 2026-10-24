@@ -17,7 +17,9 @@ import { toThree } from './world';
  *   KATOK (`etrashboxes.sch`, клас roadwork; 0x41cff0);
  * - вимкнення — текст «відкрито», перемикач → 0, дорога відкрита, каток прибрано;
  * - на карті й мінікарті — значок I_debris у центрі завалу (0x4420b0 → 0x529890);
- * - стан кожного завалу зберігається з грою (0x4827f0).
+ * - стан кожного завалу зберігається з грою (0x4827f0), а з ним — і час останнього запуску задачі (0x68d108,
+ *   зсув 0x480650): після завантаження відлік продовжується, а не починається заново; у новій грі перший запуск
+ *   відкладено ще на 600 с (0x434780: 0x68d108 = зараз + 600) — перший завал за 1200…1499 с гри.
  * Позиція (для відстаней і значка) — як у king.exe 0x411b10: середина між вузлами завалу, а якщо є місця катка —
  * останнє з них (кожне по черзі перезаписує позицію).
  */
@@ -41,6 +43,8 @@ const PERIOD_RND = 300;
 /** Не ближче до гравця й до діючого завалу, м (0x64b860). */
 const MIN_DIST = 500;
 const TRIES = 5;
+/** Відкладення першого запуску в новій грі, с (0x64b870). */
+const FIRST_DELAY = 600;
 
 export function parseObstacles(mods: Iterable<{ sch: SExpr[] }>, ways: Iterable<{ way: Way }>): Obstacle[] {
   const nodes = new Map<string, THREE.Vector3>();
@@ -127,8 +131,13 @@ export class Obstacles {
     private readonly deps: ObstacleDeps,
     /** Діючий завал зі збереження. */
     active?: string | null,
+    /**
+     * Залишок до наступного запуску задачі зі збереження, с; від'ємне — нова гра (перший запуск через
+     * 600 + період), не задано — через період (вільна їзда, старі збереження).
+     */
+    timer?: number,
   ) {
-    this.timer = this.period();
+    this.timer = timer === undefined ? this.period() : timer < 0 ? FIRST_DELAY + this.period() : timer;
     const o = active ? list.find((x) => x.id === active) : undefined;
     if (o) {
       this.current = o;
@@ -143,6 +152,11 @@ export class Obstacles {
 
   get activeObstacle(): Obstacle | null {
     return this.current;
+  }
+
+  /** Залишок до наступного запуску задачі, с — для збереження (у king.exe — час останнього запуску 0x68d108). */
+  get remaining(): number {
+    return Math.max(0, this.timer);
   }
 
   private rnd(): number {

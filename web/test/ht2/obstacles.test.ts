@@ -147,4 +147,21 @@ describe('HT2: вибір діючого завалу (0x42b3a0)', () => {
     obs.update(2);
     expect(calls.length).toBeGreaterThan(1);
   });
+
+  it('таймер зі збереження продовжується; нова гра — перший запуск через 600 + період (0x68d108)', () => {
+    const far = { player: () => new THREE.Vector3(9999, 0, 0), random: () => 0 };
+    // Збережено 30 с до запуску — завал за 30 с, а не через нові 600…899.
+    const saved = new Obstacles(list, { ...far, apply: () => {} }, null, 30);
+    saved.update(29);
+    expect(saved.active).toBeNull();
+    expect(saved.remaining).toBeCloseTo(1);
+    saved.update(2);
+    expect(saved.active).not.toBeNull();
+    // Нова кар'єра (−1): 600 + 600 с.
+    const fresh = new Obstacles(list, { ...far, apply: () => {} }, null, -1);
+    fresh.update(1199);
+    expect(fresh.active).toBeNull();
+    fresh.update(2);
+    expect(fresh.active).not.toBeNull();
+  });
 });
