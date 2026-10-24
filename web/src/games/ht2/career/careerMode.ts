@@ -1312,6 +1312,7 @@ export class CareerMode {
         integrity: o.integrity,
         mass: o.goods.mass * o.units,
         volume: o.goods.volume * o.units,
+        payout: settle(o, c.time).pay,
       };
     }
     let near: CareerInfo['near'] = null;
@@ -1335,7 +1336,21 @@ export class CareerMode {
       tons: c.tons ?? 0,
       driver: c.driver,
       time: c.time,
+      ...this.truckValue(),
     };
+  }
+
+  /**
+   * Вартість машини гравця для смуги грошей F3/F4 (king.exe 0x473600 / 0x473680): ціна моделі (крадена — ×0,45,
+   * 0x66c728) + ціна встановлених покращень (0x476980); «залишкова» — мінус пошкодження × 5000 (0x64b848). Уживаної
+   * своєї машини порт не позначає — без множника 0,65.
+   */
+  private truckValue(): { truckValue: number; truckWorth: number } {
+    const c = this.career;
+    const model = this.drive.drivableTrucks().find((r) => r.carNode === c.truck)?.price ?? 0;
+    const extras = (c.upgrades ?? []).reduce((s, key) => s + (this.upgrades.find((u) => u.key === key)?.price ?? 0), 0);
+    const value = model * (c.stolen ? 0.45 : 1) + extras;
+    return { truckValue: value, truckWorth: value - c.damage * 5000 };
   }
 
   hud(short = false): string {
@@ -1369,10 +1384,15 @@ export class CareerMode {
 }
 
 export interface CareerInfo {
-  order: { goods: string; hidden?: string; units: number; town: string; arrow: string; km: number; left: number; pay: number; premium: number; integrity: number; mass: number; volume: number } | null;
+  order: { goods: string; hidden?: string; units: number; town: string; arrow: string; km: number; left: number; pay: number; premium: number; integrity: number; mass: number; volume: number;
+    /** Скільки заплатять, якщо здати зараз (оплата мінус шкода й запізнення, career.settle). */
+    payout: number } | null;
   /** Без замовлення — найближчий склад. */
   near: { town: string; arrow: string; km: number } | null;
   money: number;
+  /** Вартість своєї машини з покращеннями й вона ж мінус пошкодження (смуга грошей F3/F4, king.exe 0x473600/0x473680). */
+  truckValue: number;
+  truckWorth: number;
   truck: string;
   damage: number;
   fuel: number;

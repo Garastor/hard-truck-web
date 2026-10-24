@@ -53,8 +53,33 @@ export function writeRating(p: SidePanel, rows: readonly [string, number, number
 
 /** Висота рядка кнопок порту під табло, CSS px. */
 const HUD_ROW = 40;
-const BAR = 'rgb(165, 205, 174)';
 const LOW = 'rgb(255, 120, 60)';
+/**
+ * Смуги-шкали F3/F4 king.exe (0x5756f0, 0x526c90) — суцільні прямокутники кольорами палітри `common.plm`: 5 —
+ * червоний (гроші, вантаж, стан систем, аванс), 6 — жовтий (вартість машин). Суми на смузі грошей king.exe пише
+ * темним шрифтом пейджера `matrix.fon` (0x569740); у порту — векторний шрифт панелей темним «чорнилом».
+ */
+const RED = 'rgb(255, 0, 0)';
+const YELLOW = 'rgb(255, 255, 0)';
+const INK = 'rgba(0, 0, 0, 0.8)';
+const SELECTED = RED;
+
+/**
+ * Смуга «гроші + машини» (F3 0x5756f0, F4 0x526c90): ліворуч червона — вільні гроші, праворуч жовта — вартість машин,
+ * обидві в частках від їхньої суми (менше 1 — 1) на всю ширину w; посередині лишається фон, якщо машини пошкоджені
+ * (жовта — за «залишковою» вартістю worth, сума на ній — за повною value). Суми — на смугах: гроші від x0 + 6,
+ * машини — до правого краю − 5. Відʼємні гроші — без червоної смуги.
+ */
+function moneyBar(p: SidePanel, x0: number, y0: number, y1: number, w: number, money: number, value: number, worth: number, base: number): void {
+  const total = Math.max(1, money + value);
+  const part = (v: number) => Math.max(0, Math.min(w, Math.trunc((v * w) / total)));
+  const red = part(money);
+  const yellow = part(worth);
+  p.bar(x0, y0, red, y1 - y0 + 1, RED);
+  p.bar(x0 + w - yellow, y0, yellow, y1 - y0 + 1, YELLOW);
+  p.write(x0 + 6, base, `$${Math.round(money)}`, INK, undefined, 'left', w / 2 - 8);
+  p.write(x0 + w - 5, base, `$${Math.round(value)}`, INK, undefined, 'right', w / 2 - 8);
+}
 
 const BACK: Record<FPanel, string> = {
   1: 'm_16\\BackF1.txr',
@@ -200,21 +225,29 @@ export class FPanels {
       p.write(20, 555, o.left > 0 ? formatLeft(o.left).toUpperCase() : 'ТЕРМІН МИНУВ', o.left > 0 ? VALUE : LOW, undefined, 'left', 70);
       // Премія першому (конкуренти, G9 Б8); без конкурентів — прочерк.
       p.write(127, 552, o.premium ? `$${Math.round(o.premium)}` : '—', VALUE, undefined, 'left', 44);
+      // Під клітинкою «ЗАКАЗ» — частка оплати, яку дадуть зараз (шкода вантажу, запізнення): 99 px на всю
+      // (king.exe: поле OrderInfo +0x80 / +0x78 × 99, y 557…565).
+      p.bar(17, 557, Math.max(0, Math.min(99, Math.trunc((o.payout * 99) / Math.max(1, o.pay)))), 9, RED);
     } else if (info.near) {
       p.write(20, 487, `СКЛАД ${info.near.town}`, VALUE, undefined, 'left', 182);
       p.write(20, 548, `${info.near.arrow} ${info.near.km.toFixed(1)} КМ`, VALUE, undefined, 'left', 70);
     }
-    p.write(23, 601, `$${Math.round(info.money)}`, VALUE, undefined, 'left', 68);
-    p.write(170, 601, info.truck, VALUE, undefined, 'right', 70);
-    const bar = (x: number, y: number, w: number, v: number) => p.bar(x, y, Math.round(w * Math.max(0, Math.min(1, v))), 8, v < 0.3 ? LOW : BAR);
-    bar(17, 628, 75, o ? o.mass / info.capacity.mass : 0);
-    bar(96, 628, 76, o ? o.volume / info.capacity.volume : 0);
-    // Стан систем — один показник пошкодження порту для всіх (окремих систем порт ще не рахує).
+    // Гроші й машина — одна смуга 158 px (x 17…175, y 587…606), king.exe 0x5756f0.
+    moneyBar(p, 17, 587, 606, 158, info.money, info.truckValue, info.truckWorth, 601);
+    // Назва машини — клітинка над схемою (king.exe: x 47, y 720, ширина 145).
+    p.write(47, 716, info.truck, VALUE, undefined, 'left', 145);
+    // Шкали 76 px заввишки 9 (king.exe: частка × 76): ліві від x 17, праві від x 96.
+    const bar = (x: number, y: number, v: number) => p.bar(x, y, Math.max(0, Math.min(76, Math.trunc(76 * v))), 9, RED);
+    bar(17, 628, o ? o.mass / info.capacity.mass : 0);
+    bar(96, 628, o ? o.volume / info.capacity.volume : 0);
+    // Стан систем king.exe — шини (+0x3f24), гальма (+0x3f58), двигун (+0x3ebc) — «системи техстану», трансмісія —
+    // 1 − накопичене пошкодження від ударів (+0x3cc0). Порт знос шин і гальм не моделює (нові — повні), а двигун і
+    // трансмісію веде одним пошкодженням від ударів.
     const ok = 1 - info.damage;
-    bar(17, 658, 75, ok);
-    bar(96, 658, 76, ok);
-    bar(17, 688, 75, ok);
-    bar(96, 688, 76, ok);
+    bar(17, 658, 1);
+    bar(96, 658, 1);
+    bar(17, 688, ok);
+    bar(96, 688, ok);
     // Схема машини: значки встановлених покращень, пошкоджені двигун і гальма.
     p.image('m_16\\upgradet.txr', 17, 722);
     const owned = new Set(info.upgrades.map((u) => u.split(':')[0]));
@@ -229,26 +262,29 @@ export class FPanels {
   private selected = 0;
 
   /**
-   * F4: гроші, машини (своя й водіїв), прибуток водіїв усього, скільки можу найняти (ліцензії); таблиця водіїв —
-   * імʼя, аванс, прибуток, машина (рядки з 544 через 20); фото вибраного (32, 760); «помінятися місцями» (186, 774) і
-   * «звільнити» (85, 774) — king.exe 0x526470. Значення стовпчиків «ВСЬОГО» і «МОЖУ НАЙНЯТИ» — гіпотези.
+   * F4 (king.exe 0x526470, малювання 0x526c90): смуга «гроші + машини» (своя й водіїв) 172 px (x 32…204, y 479…498),
+   * «ВСЬОГО» — їхня сума (208), «МОЖУ НАЙНЯТИ» (292) — ліцензії [Г]; таблиця водіїв — імʼя (вибране — червоне), аванс
+   * смугою (x 89, 71 px × частка оплачених 10 км, y 545…563 + 20·n), прибуток, машина; фото вибраного (32, 760);
+   * «помінятися місцями» (186, 774) і «звільнити» (85, 774).
    */
   private company(p: SidePanel, d: FPanelData): void {
     const info = d.info;
     if (!info) return;
     const list = d.company;
     this.selected = Math.min(this.selected, Math.max(0, list.length - 1));
-    p.write(36, 493, `$${Math.round(info.money)}`, VALUE);
-    p.write(200, 493, String(1 + list.length), VALUE, undefined, 'right', 30);
-    p.write(246, 493, `$${Math.round(list.reduce((s, x) => s + x.profit, 0))}`, VALUE, undefined, 'center', 60);
-    p.write(323, 493, String(d.licences), VALUE, undefined, 'center', 50);
+    // Машини компанії: своя й водіїв (повертається при звільненні); жовта смуга — без пошкоджень своєї.
+    const fleet = list.reduce((s, x) => s + (x.value ?? 0), 0);
+    moneyBar(p, 32, 479, 498, 172, info.money, info.truckValue + fleet, info.truckWorth + fleet, 492);
+    p.write(208, 492, `$${Math.round(info.money + info.truckValue + fleet)}`, VALUE, undefined, 'left', 80);
+    p.write(292, 492, String(d.licences), VALUE, undefined, 'left', 50);
     list.slice(0, 10).forEach((x, i) => {
       const y = 559 + i * 20;
-      const color = i === this.selected ? 'rgb(255, 255, 255)' : VALUE;
-      p.write(36, y, x.name, color, undefined, 'left', 62);
-      p.write(130, y, `$${Math.round(x.advance)}`, color, undefined, 'center', 56);
-      p.write(195, y, `$${Math.round(x.profit)}`, color, undefined, 'center', 56);
-      p.write(280, y, x.truck, color, undefined, 'center', 96);
+      // Аванс — смугою без суми (як в оригіналі): яка частина оплачених 10 км лишилась.
+      const f = x.advance / Math.max(1e-6, 10 * x.tariff);
+      p.bar(89, 545 + i * 20, Math.max(0, Math.min(71, Math.trunc(71 * f))), 19, RED);
+      p.write(36, y, x.name, i === this.selected ? SELECTED : VALUE, undefined, 'left', 50);
+      p.write(195, y, `$${Math.round(x.profit)}`, VALUE, undefined, 'center', 56);
+      p.write(280, y, x.truck, VALUE, undefined, 'center', 96);
     });
     const sel = list[this.selected];
     if (sel) p.image(`m16\\escphoto${String(sel.photo).padStart(2, '0')}.txr`, 33, 761);
