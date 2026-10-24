@@ -16,6 +16,12 @@ export interface TechRecord {
   index: number;
   /** Група за файлом-джерелом: cars | lorries | tractors | trailers. */
   group: string;
+  /**
+   * Розділ за межами індексів із заголовка (king.exe 0x508300 → 0x6ce330…0x6ce348): cars | lorries | tractors |
+   * semitrailers | trailers | helicopters. За ним king.exe розрізняє машини (напр., дзеркало 0x595290); від group
+   * відрізняється: Sobol описано в cars.tch, але він у розділі LORRIES.
+   */
+  section: TechSection;
   /** Внутрішнє імʼя (vch, напр. «ZIL»), назва, префікс вузлів моделі («Zil»), префікс кабіни, вузол моделі. */
   vch: string;
   name: string;
@@ -110,6 +116,11 @@ export interface Tech {
   records: TechRecord[];
 }
 
+export type TechSection = 'cars' | 'lorries' | 'tractors' | 'semitrailers' | 'trailers' | 'helicopters';
+
+/** Розділи vehicle.tech у порядку king.exe (0x508300: CARS, LORRIES, TRACTORS, SEMI-TRAILERS, TRAILERS, HELICOPTERS). */
+const SECTIONS: TechSection[] = ['cars', 'lorries', 'tractors', 'semitrailers', 'trailers', 'helicopters'];
+
 export const TECH_RECORD_SIZE = 2416;
 const RAD = 180 / Math.PI;
 
@@ -120,14 +131,20 @@ export function parseTech(bytes: Uint8Array): Tech {
   const recSize = r.u32();
   const count = r.u32();
   if (recSize !== TECH_RECORD_SIZE) throw new Error(`TECH: розмір запису ${recSize}`);
-  r.skip(28); // межі груп (зсуви індексів)
+  // Межі розділів — 7 індексів (king.exe 0x6ce330…0x6ce348): початок CARS, LORRIES, …, HELICOPTERS, кінець.
+  const bounds = Array.from({ length: 7 }, () => r.u32());
+  const sectionOf = (i: number): TechSection => {
+    let k = 0;
+    while (k < 5 && i >= bounds[k + 1]) k++;
+    return SECTIONS[k];
+  };
   const base = r.pos;
   const records: TechRecord[] = [];
-  for (let i = 0; i < count; i++) records.push(readRecord(new BinReader(bytes, base + i * recSize), i));
+  for (let i = 0; i < count; i++) records.push({ ...readRecord(new BinReader(bytes, base + i * recSize), i), section: sectionOf(i) });
   return { records };
 }
 
-function readRecord(r: BinReader, index: number): TechRecord {
+function readRecord(r: BinReader, index: number): Omit<TechRecord, 'section'> {
   const v3 = (): Vec3 => [r.f32(), r.f32(), r.f32()];
   const f = (n: number) => Array.from(r.f32s(n));
   const u = (n: number) => Array.from({ length: n }, () => r.u32());

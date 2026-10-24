@@ -116,7 +116,8 @@ const SPAWN_LANE = 1.75;
 /**
  * Дзеркало заднього огляду (M) — лише з кабіни, посередині під табло, у рамці `m16\mirrT?.msk` з esc16.RES
  * (S/M/L/H — 170…480 px: розмір за роздільністю, гіпотеза; ≈ 30 % ширини екрана — тут найдетальніша H, масштабована).
- * Вікно рамки H — x 10…469, y 10…159. Кут огляду — підібраний (у king.exe не знайдено).
+ * Вікно рамки H — x 10…469, y 10…159. Піраміда — як у king.exe (0x595290: камера +0x58 = 1, +0x54 = h/w вікна):
+ * ширина 1 на відстані 1, тобто горизонтальний кут 2·atan(0,5) ≈ 53,1°, вертикальний — за пропорцією вікна.
  */
 /** Найбільша частота кадрів; без вибору в меню — defaultFps() (телефон 40), щільність «Балансу» — balanceDpr() (меню). */
 const MAX_FPS = 60;
@@ -134,7 +135,8 @@ const MIRROR_W = 480;
 const MIRROR_H = 170;
 const MIRROR_IN = [10, 10, 469, 159] as const;
 const MIRROR_SHARE = 0.3;
-const MIRROR_FOV = 20;
+/** Половина ширини піраміди дзеркала на відстані 1 (king.exe: ширина +0x58 = 1). */
+const MIRROR_HALF_W = 0.5;
 const CHASE_UP = 4.2;
 const CHASE_PITCH = Math.asin(0.437);
 /**
@@ -3513,7 +3515,7 @@ export class Ht2Drive {
       frame.className = 'ht2-mirror';
       if (url) (frame as HTMLImageElement).src = url;
       this.opts.overlay.append(frame);
-      this.mirror = { rt, cam: new THREE.PerspectiveCamera(MIRROR_FOV, w / h, 0.5, this.camera.far), scene, ortho: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), frame };
+      this.mirror = { rt, cam: new THREE.PerspectiveCamera(20, w / h, 0.5, this.camera.far), scene, ortho: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), frame };
     }
     const m = this.mirror;
     const ratio = r.getPixelRatio();
@@ -3553,15 +3555,19 @@ export class Ht2Drive {
   private drawMirror(r: THREE.WebGLRenderer, m: NonNullable<typeof this.mirror>, aspect: number): void {
     this.mirrorAt = performance.now();
     m.cam.aspect = aspect;
+    m.cam.fov = 2 * THREE.MathUtils.radToDeg(Math.atan(MIRROR_HALF_W / aspect));
     m.cam.far = this.camera.far;
     m.cam.updateProjectionMatrix();
     // Погляд назад: орієнтація машини, розвернута на 180° навколо вертикалі, з точки дзеркала (king.exe 0x595290 —
-    // верхнє дзеркало): ліве бокове дзеркало (tv_camera 0), з причепом — посередині між лівим і правим (0 і 2,
-    // ×0,5). З місця водія камера бачила тент кузова. Без точок у tech — з місця водія.
+    // верхнє дзеркало): у вантажівок (розділи LORRIES, TRACTORS — з причепом чи без) — з лівого бокового дзеркала
+    // (tv_camera 0), у розділі CARS ([0x6ce330; 0x6ce334) — межі з заголовка vehicle.tech; Sobol там уже LORRIES) —
+    // посередині між лівим і правим (0 і 2, ×0,5). Середина у вантажівки — в кабіні: дзеркало показувало лише передню
+    // стінку напівпричепа чи борт кузова. Зсув голови king.exe додає до точки (до 7 см) — не перенесено. Без точок —
+    // з місця водія.
     const pts = this.def.tech.mirrors;
     if (pts?.length) {
       const a = pts[0];
-      const b = this.trailer && pts[2] ? pts[2] : a;
+      const b = this.rec?.section === 'cars' && pts[2] ? pts[2] : a;
       this.mirrorPoint.set((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2);
       this.truck.visual.updateWorldMatrix(true, false);
       m.cam.position.copy(this.truck.visual.localToWorld(g2t(this.mirrorPoint)));

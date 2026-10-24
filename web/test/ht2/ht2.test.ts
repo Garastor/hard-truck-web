@@ -154,6 +154,14 @@ describe.skipIf(!has)('HT2: vehicle.tech', () => {
     expect(tech.records.length).toBe(43);
     expect(new Set(tech.records.map((t) => t.group))).toEqual(new Set(['cars', 'lorries', 'tractors', 'trailers']));
   });
+  it('розділи за межами із заголовка: CARS 0…16, LORRIES 17…25 (з Sobol), TRACTORS 26…38, SEMI-TRAILERS 39…42', () => {
+    const at = (s: string) => tech.records.filter((t) => t.section === s).map((t) => t.index);
+    expect(at('cars')).toEqual(Array.from({ length: 17 }, (_, i) => i));
+    expect(at('lorries')).toEqual(Array.from({ length: 9 }, (_, i) => 17 + i));
+    expect(at('tractors')).toEqual(Array.from({ length: 13 }, (_, i) => 26 + i));
+    expect(at('semitrailers')).toEqual([39, 40, 41, 42]);
+    expect(tech.records.find((t) => t.carNode === 'Sobol')).toMatchObject({ group: 'cars', section: 'lorries' });
+  });
   it('Zil-тягач = [TECH1] першої гри', () => {
     const zil = tech.records.find((t) => t.group === 'tractors' && t.carNode === 'Zil')!;
     expect(zil.mass).toBe(4100);
