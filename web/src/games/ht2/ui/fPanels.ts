@@ -287,7 +287,10 @@ export class FPanels {
       p.write(280, y, x.truck, VALUE, undefined, 'center', 96);
     });
     const sel = list[this.selected];
-    if (sel) p.image(`m16\\escphoto${String(sel.photo).padStart(2, '0')}.txr`, 33, 761);
+    // Фото водіїв — 100×100, а king.exe перекопіює вибране в поверхню 50×50 (0x50bda0, розмір escphoto53/54) — інакше
+    // його накриває кнопка «звільнити» (85, 774).
+    const photo = sel ? p.image(`m16\\escphoto${String(sel.photo).padStart(2, '0')}.txr`, 33, 761) : null;
+    if (photo) photo.style.width = photo.style.height = '50px';
   }
 
   /** Кнопки й вибір рядка F4 — один раз при відкритті (вміст перемальовується окремо). */
