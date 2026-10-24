@@ -91,6 +91,8 @@ const LAYER_CELL = 4;
 /** Сітку будуємо лише для площин з більшою кількістю трикутників (малі — простий перебір дешевший). */
 const LAYER_GRID_FROM = 64;
 const LAYER_OFFSET_UNITS = -4;
+/** Текстури ввімкнених ламп світлофора — малюються без освітлення (SceneAssembler.selfLit). */
+const SELF_LIT_TEX = /(^|\/)tl(red|yel|gre)on\.txr$/i;
 
 export class MaterialLibrary {
   private readonly cache = new Map<number, THREE.Material>();
@@ -662,11 +664,29 @@ export class SceneAssembler {
     return m;
   }
 
+  private readonly selfLitCache = new Map<number, boolean>();
+
+  /**
+   * Увімкнені лампи світлофора (`tlredon`/`tlyelon`/`tlgreon.txr` у станах `TrafficLightKey`) — без освітлення,
+   * як самосвітні: у даних це освітлювані полігони, уночі Lambert робив їх чорними, а ореоли TLGlow порт не малює
+   * (на прохання користувача, Docs/ht2/lighting.md).
+   */
+  private selfLit(index: number): boolean {
+    let v = this.selfLitCache.get(index);
+    if (v === undefined) {
+      const map = (this.lib.material(index) as THREE.MeshBasicMaterial).map;
+      v = SELF_LIT_TEX.test(map?.name ?? '');
+      this.selfLitCache.set(index, v);
+    }
+    return v;
+  }
+
   private addPolys(polys: Polygon[], vs: VertexSource, batches: Batches, mtype?: number): void {
     // Блок 35 з mtype 3 — трикутники лише з індексів вершин блоку 37 (king.exe 0x005f08d0); освітлення тоді
     // вирішує формат вершин (0x005f1620: прапорець — нормаль у FVF). mtype 1/2 мають свої вершини — завжди освітлені.
-    const unlit = this.lit && !!vs.prelit && mtype === 3;
+    const prelit = this.lit && !!vs.prelit && mtype === 3;
     for (const p of polys) {
+      const unlit = prelit || (this.lit && this.selfLit(p.material));
       const key = unlit ? ~p.material : p.material;
       let b = batches.get(key);
       if (!b) batches.set(key, (b = { pos: [], uv: [], ord: [], nrm: this.lit && !unlit ? [] : null }));
