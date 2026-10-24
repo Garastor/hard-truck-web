@@ -131,6 +131,13 @@ const FREE_HOURS = [
   { hour: 23, label: 'Ніч' },
 ] as const;
 
+/** Назви моделей напівпричепів у меню вільної їзди (evehicles.sch: модуль, цистерна, причіп «Урагану»). */
+const SEMI_NAMES: Record<string, string> = {
+  strailerm: 'Тентований',
+  strailert: 'Цистерна',
+  strailerstorm: '«Ураган»',
+};
+
 /** Який із FREE_HOURS зараз (за годиною freeTime, с): ранок 5–10, день 10–17, вечір 17–21, решта — ніч. */
 function freeHourOf(time: number): number {
   const h = (time / 3600) % 24;
@@ -1807,11 +1814,16 @@ export class Ht2Drive {
     const c = this.opts.career;
     if (c && c.trailer === undefined) c.trailer = /^Storm/i.test(rec.carNode) ? { id: 'URAGAN_SEMITRAILER', carNode: 'STrailerStorm', cluster: 0 } : { id: 'SEMITRAILER1', carNode: 'STrailerM', cluster: 0 };
     if (c && !c.trailer) return;
-    const want = c?.trailer ? c.trailer.carNode : /^Storm/i.test(rec.carNode) ? 'STrailerStorm' : this.opts.trailer || 'STrailerM';
+    // Вільна їзда: тип і фарбування з меню-шестерні (freeSemi; null — без причепа), якщо підходить тягачу.
+    const free = !c ? this.freeSemi : undefined;
+    if (free === null) return;
+    const freeOk = free && this.semiFor(rec.carNode).some((k) => k.carNode === free.carNode && k.cluster === free.cluster);
+    const want = c?.trailer ? c.trailer.carNode : freeOk ? free!.carNode : /^Storm/i.test(rec.carNode) ? 'STrailerStorm' : this.opts.trailer || 'STrailerM';
     const tr = trailers.find((r) => r.carNode.toLowerCase() === want.toLowerCase()) ?? trailers[0];
     const def = tr && truckDef(this.trucks, tr);
     if (!tr || !def) return;
-    const cluster = c?.trailer?.cluster ?? 0;
+    const cluster = c?.trailer?.cluster ?? (freeOk ? free!.cluster : 0);
+    this.semiNow = { carNode: tr.carNode, cluster };
     const paint = cluster > 0 ? (root: THREE.Object3D) => recolor(root, this.trucks, cluster + 1) : undefined;
     this.trailer = new Trailer(this.rapier, this.trucks.asm, def, tr, { body: this.truck.body, saddle: rec.lowSaddle }, this.cargoMass, paint);
     this.world.scene.add(this.trailer.visual);
@@ -1987,6 +1999,8 @@ export class Ht2Drive {
         this.dropTrailer();
         this.say('ПРИЧІП ВІДЧЕПЛЕНО');
       } else {
+        // «Без причепа» з меню — клавіша знову чіпляє типовий.
+        if (this.freeSemi === null) this.freeSemi = undefined;
         this.hitch();
         if (this.trailer) this.say('ПРИЧІП ПРИЧЕПЛЕНО');
       }
@@ -2376,6 +2390,36 @@ export class Ht2Drive {
       { label: 'Автомобіль', options: vehicles, value: () => this.def.carNode, set: (v) => this.changeTruck(v) },
       { label: 'Колір', options: () => this.paintOptions(), value: () => String(this.paint), set: (v) => this.changeTruck(this.def.carNode, Number(v)) },
       {
+        label: 'Напівпричіп',
+        hidden: () => this.rec?.group !== 'tractors',
+        options: () => [
+          ...[...new Set(this.semiFor(this.def.carNode).map((k) => k.carNode))]
+            .sort((a, b) => Number(/^STrailerT$/i.test(a)) - Number(/^STrailerT$/i.test(b))) // типовий тентований — першим
+            .map((m) => ({ value: m, label: SEMI_NAMES[m.toLowerCase()] ?? m })),
+          { value: 'none', label: 'Без причепа' },
+        ],
+        value: () => (this.trailer ? this.semiNow.carNode : 'none'),
+        set: (v) => {
+          if (v === 'none') {
+            this.freeSemi = null;
+            this.dropTrailer();
+          } else {
+            this.freeSemi = { carNode: v, cluster: 0 };
+            this.hitch();
+          }
+        },
+      },
+      {
+        label: 'Колір причепа',
+        hidden: () => this.rec?.group !== 'tractors' || !this.trailer,
+        options: () => this.paintOptions(this.trailer?.visual, this.semiFor(this.def.carNode).filter((k) => k.carNode === this.semiNow.carNode).length || undefined),
+        value: () => String(this.semiNow.cluster),
+        set: (v) => {
+          this.freeSemi = { carNode: this.semiNow.carNode, cluster: Number(v) };
+          this.hitch();
+        },
+      },
+      {
         label: 'Час доби',
         options: FREE_HOURS.map((h) => ({ value: String(h.hour), label: h.label })),
         value: () => String(freeHourOf(this.freeTime)),
@@ -2412,12 +2456,14 @@ export class Ht2Drive {
    * Фарбування машини гравця (вільна їзда): варіанти — як у recolor (матеріали `…1` → `…N` у TRUCKS.B3D), лише
    * текстуровані частини моделі; назва — paintName, однакові назви — з номером.
    */
-  private paintOptions(): { value: string; label: string }[] {
+  private paintOptions(
+    root: THREE.Object3D | undefined = (this.truck.visual.userData.model as { root: THREE.Object3D } | undefined)?.root,
+    limit?: number,
+  ): { value: string; label: string }[] {
     const names = this.trucks.asm.b3d.materials.map((m) => m.toLowerCase());
-    const model = this.truck.visual.userData.model as { root: THREE.Object3D } | undefined;
     // Основи назв матеріалів моделі (без цифри фарбування) з кількістю трикутників.
     const bases = new Map<string, number>();
-    model?.root.traverse((o) => {
+    root?.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
       for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
@@ -2434,9 +2480,11 @@ export class Ht2Drive {
       while (names.includes(`${b}${n + 1}`)) n++;
       return n;
     };
+    // limit — кількість фарбувань з даних гри (причепи: кластери evehicles.sch), інакше — варіанти матеріалів.
     const main = [...bases.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-    const total = main ? count(main) : 1;
-    const painted = [...bases.keys()].filter((b) => count(b) === total);
+    const own = main ? count(main) : 1;
+    const total = limit ?? own;
+    const painted = [...bases.keys()].filter((b) => count(b) === own);
     const out: { value: string; label: string }[] = [];
     const seen = new Map<string, number>();
     for (let n = 1; n <= total; n++) {
@@ -2450,6 +2498,23 @@ export class Ht2Drive {
     }
     return out.length ? out : [{ value: '0', label: 'Заводський' }];
   }
+  /**
+   * Напівпричіп вільної їзди (меню-шестерня, на прохання користувача): модель і кластер фарбування з типів
+   * evehicles.sch (semiTypes); null — без причепа, undefined — типовий (модуль, у «Шторма» — свій).
+   */
+  private freeSemi: { carNode: string; cluster: number } | null | undefined = undefined;
+  /** Модель і фарбування причепа, причепленого останнім (hitch) — поточні значення в меню. */
+  private semiNow = { carNode: '', cluster: 0 };
+
+  /**
+   * Типи напівпричепів для тягача: «Шторм» — лише свій (URAGAN_SEMITRAILER), решта — модуль і цистерна (як presents
+   * на базах; платформи STrailerP оригінал не видає).
+   */
+  private semiFor(carNode: string): SemiKind[] {
+    const storm = /^Storm/i.test(carNode);
+    return this.semiTypes.filter((k) => /^STrailerStorm$/i.test(k.carNode) === storm);
+  }
+
   private freeOpen = false;
   private freeWasPaused = false;
   private teleporting = false;

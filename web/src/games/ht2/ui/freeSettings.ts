@@ -19,6 +19,8 @@ export interface FreeField {
   set(value: string): void;
   /** Після вибору закрити вікно. */
   closes?: boolean;
+  /** Поле сховане (напівпричіп — лише в тягача); перевіряється при кожній перебудові вікна. */
+  hidden?: () => boolean;
 }
 
 /** Назви машин для списку (з поля name vehicle.tech; власні — для впізнаваних). */
@@ -68,6 +70,7 @@ export function openFreeSettings(overlay: HTMLElement, fields: FreeField[], onCl
   const render = () => {
     form.replaceChildren();
     for (const f of fields) {
+      if (f.hidden?.()) continue;
       const label = el('label');
       label.append(el('span', undefined, f.label));
       const sel = el('select');
