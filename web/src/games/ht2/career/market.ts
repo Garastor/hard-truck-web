@@ -9,8 +9,6 @@ import { drivable, selectable, truckDef, type Ht2Trucks } from '../vehicles/truc
 import { toThree } from '../world/world';
 import { ukName } from '../ui/uk';
 import { recolor } from '../traffic/traffic';
-import { Blinkers } from '../traffic/blinkers';
-import { disposePool, makePool, setPoolFade } from '../traffic/headPools';
 import { hireOffer } from './company';
 
 /**
@@ -210,18 +208,7 @@ function seeded(seed: number): () => number {
 interface Shown {
   market: Market;
   day: number;
-  parts: Part[];
-}
-
-/** Машина на місці продажу: модель із перемикачами (фари), колайдер, плями фар на землі (уночі). */
-interface Part {
-  root: THREE.Object3D;
-  body: RAPIER.RigidBody;
-  model: string;
-  setSwitch?: (name: string, state: number) => void;
-  pool: THREE.Group | null;
-  /** Стан фар, з яким зараз показано (null — ще не ставили). */
-  lit: boolean | null;
+  parts: { root: THREE.Object3D; body: RAPIER.RigidBody }[];
 }
 
 export class Markets {
@@ -236,15 +223,6 @@ export class Markets {
   density = 1;
   /** З цього дня гри продають і «тупі» легковики (king.exe 0x68d1a0: частка капіталу гравця ≥ 52 %). */
   carsFrom = Infinity;
-  /**
-   * Фари машин на продаж (king.exe 0x4cf620: кожна створена машина, крім гравця, отримує ближнє світло, якщо година
-   * > 22 чи < 6; продавці — теж). Ставить drive: ніч і повзунки графіки, як у трафіку.
-   */
-  lights = false;
-  /** Дальність видимості, м — плями фар згасають з 70 % до 100 % (як у трафіку). */
-  viewRange = 400;
-  /** Точки фар моделі (краї refer_HeadLightKey) — для плям на землі. */
-  private readonly lampPoints: Blinkers;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -253,9 +231,7 @@ export class Markets {
     readonly list: Market[],
     private readonly ground: (p: THREE.Vector3) => number,
     private readonly limits: SaleLimits = { forsale: 25, used: 5, stolen: 5 },
-  ) {
-    this.lampPoints = new Blinkers(trucks);
-  }
+  ) {}
 
   private planDay = -1;
   private planned = new Map<number, Map<number, SaleKind>>();
@@ -428,45 +404,13 @@ export class Markets {
       if (cur && (d > SHOW_R * 1.2 || cur.day !== day)) this.hide(m.id);
       if (d < SHOW_R && !this.shown.has(m.id)) this.show(m, day);
     }
-    this.updateLights(p);
-  }
-
-  /**
-   * Фари машин на продаж: перемикачі моделі (світіння фар і габарити, як у трафіку — без справжніх джерел світла) і
-   * плями на землі (traffic/headPools.ts, колір — спільний з трафіком, drive.updateCarLamp). У king.exe фари
-   * вмикаються лише при створенні машини; порт, як і трафік, перемикає їх і на тих, що вже стоять.
-   */
-  private updateLights(p: THREE.Vector3): void {
-    const R = this.viewRange;
-    for (const s of this.shown.values())
-      for (const part of s.parts) {
-        const lit = this.lights;
-        if (part.lit !== lit) {
-          part.lit = lit;
-          const on = lit ? 1 : 0;
-          part.setSwitch?.('refer_HeadLightKey', on);
-          part.setSwitch?.('refer_SizeLightKey', on);
-          // Задні вогні — вимкнені (у king.exe габарити й стопи — окремий режим +0x51b4, у стоячої машини 0).
-          for (const k of ['StopFaraKeyL', 'StopFaraKeyR', 'BackFaraKeyL', 'BackFaraKeyR']) part.setSwitch?.(k, 0);
-          if (part.pool) disposePool(part.pool);
-          part.pool = null;
-          const pts = lit ? this.lampPoints.points(part.model) : null;
-          if (pts) {
-            // Модель стоїть на ґрунті в початку координат root (y = 0), уперед — −Z.
-            part.pool = makePool(0, pts[0].z, pts[0].x, pts[2].x);
-            part.root.add(part.pool);
-          }
-        }
-        if (part.pool) setPoolFade(part.pool, THREE.MathUtils.clamp((R - part.root.position.distanceTo(p)) / (0.3 * R), 0, 1));
-      }
   }
 
   private show(m: Market, day: number): void {
     const parts: Shown['parts'] = [];
     for (const item of this.stock(m, day)) {
       const def = truckDef(this.trucks, item.rec);
-      // Динамічна модель — з перемикачами фар (статичний шаблон їх не має).
-      const model = def && buildTruckModel(this.trucks.asm, def, true);
+      const model = def && buildTruckModel(this.trucks.asm, def, false);
       if (!model) continue;
       if (item.cluster) recolor(model.root, this.trucks, item.cluster + 1);
       const spot = m.spots[item.spot];
@@ -492,7 +436,7 @@ export class Markets {
         body,
       );
       this.scene.add(root);
-      parts.push({ root, body, model: item.rec.carNode, setSwitch: model.setSwitch, pool: null, lit: null });
+      parts.push({ root, body });
     }
     this.shown.set(m.id, { market: m, day, parts });
   }
@@ -501,7 +445,6 @@ export class Markets {
     const s = this.shown.get(id);
     if (!s) return;
     for (const p of s.parts) {
-      if (p.pool) disposePool(p.pool);
       this.scene.remove(p.root);
       this.rapier.removeRigidBody(p.body);
     }

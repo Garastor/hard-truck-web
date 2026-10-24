@@ -2155,11 +2155,6 @@ export class Ht2Drive {
       if (this.truckers) this.truckers.lights = this.traffic.lights;
       this.updateCarLamp(this.traffic.lights && trafficLamp());
     }
-    // Машини на продаж — уночі з фарами (king.exe 0x4cf620, як трафік), плями — того ж кольору (updateCarLamp).
-    if (this.markets) {
-      this.markets.lights = trafficLights(hour) && trafficHeadlights();
-      this.markets.viewRange = this.traffic?.view?.range() ?? VIEW_FALLBACK;
-    }
     this.rainSound ??= this.audio?.loopSound('rain') ?? null;
     this.windSound ??= this.audio?.loopSound('wind') ?? null;
     // Набір кімнати з thund=off (тунелі): шум дощу й вітру не гучніший за 1 − k (king.exe 0x5a9dc0) — стихає з глибиною.
