@@ -61,7 +61,7 @@ import { NetCars } from './netCars';
 import type { Arena } from './world/world';
 import { FIRST_RIVAL, FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, PLAYER_COLORS, STATE_RATE } from './net/state';
 import { Trailer } from './vehicles/trailer';
-import { headlightMask } from './vehicles/headlights';
+import { beamProfile, headlightMask } from './vehicles/headlights';
 import { setPoolLight } from './traffic/headPools';
 import { AITRUCK, Truckers, truckerKinds, truckerNames } from './traffic/truckers';
 // Точки вздовж машини у світі — для трафіку й ботів (навколо кожної півдовжина 2,5 м).
@@ -224,12 +224,11 @@ function flashLevel(t: number): number {
 const FOG_FALLBACK = new THREE.Color(0.5, 0.5, 0.5);
 /**
  * Фари гравця (mountLamps): межа ближнього світла попереду, м; півкут конуса (60° — світять на 120°, на прохання
- * користувача; повна сила вбік до LAMP_SIDE_FULL, далі згасання до краю конуса); освітленість від однієї фари (вона ж
+ * користувача; яскравий центр і плавне згасання до краю конуса — beamProfile); освітленість від однієї фари (вона ж
  * сила: без згасання й залежності від кута, vehicles/headlights.ts) — на око.
  */
 const LAMP_CUTOFF = 80;
 const LAMP_ANGLE = (60 * Math.PI) / 180;
-const LAMP_SIDE_FULL = Math.tan((45 * Math.PI) / 180);
 const LAMP_ROAD = 0.56;
 /** Півкут прожекторів зустрічної машини — вужчий: їх змінюють плями-наліпки (traffic/headPools.ts) тієї ж ширини. */
 const CAR_LAMP_ANGLE = (30 * Math.PI) / 180;
@@ -2029,7 +2028,7 @@ export class Ht2Drive {
     const rec = this.trucks.records.find((r) => r.carNode === this.def.carNode);
     const spots = rec ? [rec.faraFL, rec.faraFR] : [[-0.8, 2.4, 0.2], [0.8, 2.4, 0.2]];
     const h = g2t(spots[0] as [number, number, number]).y - this.truck.lightGeometry.groundY;
-    this.lampMask = headlightMask(h, LAMP_CUTOFF, LAMP_ANGLE, LAMP_SIDE_FULL, Math.tan(LAMP_ANGLE));
+    this.lampMask = headlightMask(h, LAMP_CUTOFF, LAMP_ANGLE, beamProfile(LAMP_ANGLE));
     for (const f of spots) {
       const p = g2t(f as [number, number, number]);
       const lamp = new THREE.SpotLight(0xfff2d0, LAMP_ROAD, LAMP_CUTOFF * 2, LAMP_ANGLE, 0.15, 0);

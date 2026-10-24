@@ -12,8 +12,9 @@ import * as THREE from 'three';
  *   зустрічні машини й усе, що вище цієї площини, — ні (межа, як у справжньої ближньої фари); нижче — повна сила;
  * - асиметрія («галочка», як у європейських фар): ліворуч від осі межа рівна, праворуч від осі піднімається під
  *   RISE_SLOPE (15°) на RIGHT_RISE вище — праве узбіччя й знаки світяться далі, зустрічних ліворуч не сліпить;
- * - убік — повна сила до |tx| < sideFull, далі плавно до нуля на sideZero (тангенси; у фар гравця — до краю
- *   конуса 120°, у зустрічних — вужче, SIDE_FULL / SIDE_ZERO).
+ * - убік — профіль side(tx) (tx — тангенс кута від осі): у зустрічних — повна сила до SIDE_FULL, далі плавно до
+ *   нуля на SIDE_ZERO (sideFalloff); у фар гравця — beamProfile: яскравий центр і широке розсіяне світло, що
+ *   плавно гасне до краю конуса 120°, як у справжньої фари (на прохання користувача, 2026-10-24).
  */
 const W = 256;
 /** Висота полотна: межа світла — кілька пікселів навіть у широкому конусі (span 2 · tan 60° ≈ 3,5). */
@@ -29,16 +30,43 @@ const EDGE_SOFT = 0.012;
 const RIGHT_RISE = 0.02;
 const RISE_SLOPE = Math.tan((15 * Math.PI) / 180);
 
+/** Профіль убік: повна сила до sideFull, далі smoothstep до нуля на sideZero (тангенси кута від осі). */
+export function sideFalloff(sideFull = SIDE_FULL, sideZero = SIDE_ZERO): (tx: number) => number {
+  return (tx) => {
+    const s = Math.min(1, Math.max(0, (sideZero - tx) / (sideZero - sideFull)));
+    return s * s * (3 - 2 * s);
+  };
+}
+
+/**
+ * Профіль справжньої фари вбік (кут θ від осі, на око): ядро — гаус BEAM_CORE (частка BEAM_CORE_SHARE) + широке
+ * розсіяне світло — гаус BEAM_SPILL; за BEAM_EDGE до краю конуса angle світло ще плавно гасне до нуля. У центрі — 1
+ * (сила по осі — як була), ≈0,6 на 20°, ≈0,35 на 30°, ≈0,15 на 45°.
+ */
+const BEAM_CORE = (22 * Math.PI) / 180;
+const BEAM_SPILL = (50 * Math.PI) / 180;
+const BEAM_CORE_SHARE = 0.6;
+const BEAM_EDGE = (12 * Math.PI) / 180;
+
+export function beamProfile(angle: number): (tx: number) => number {
+  return (tx) => {
+    const a = Math.atan(tx);
+    const core = Math.exp(-((a / BEAM_CORE) ** 2));
+    const spill = Math.exp(-((a / BEAM_SPILL) ** 2));
+    const e = Math.min(1, Math.max(0, (angle - a) / BEAM_EDGE));
+    return (BEAM_CORE_SHARE * core + (1 - BEAM_CORE_SHARE) * spill) * e * e * (3 - 2 * e);
+  };
+}
+
 /**
  * Маска для фари на висоті h над землею (м), межа світла на відстані cutoff (м), півкут конуса angle (рад);
- * sideFull / sideZero — де вбік (тангенс кута від осі) світло починає згасати й гасне зовсім.
+ * side — сила вбік залежно від тангенса кута від осі (sideFalloff чи beamProfile).
  */
 export function headlightMask(
   h: number,
   cutoff: number,
   angle: number,
-  sideFull = SIDE_FULL,
-  sideZero = SIDE_ZERO,
+  side: (tx: number) => number = sideFalloff(),
 ): THREE.Texture {
   const canvas = document.createElement('canvas');
   canvas.width = W;
@@ -51,15 +79,13 @@ export function headlightMask(
     const x = ((i + 0.5) / W - 0.5) * span;
     // Межа цього стовпця: праворуч (x > 0) — вище на min(RIGHT_RISE, x · tan 15°).
     const cut = tc - Math.min(RIGHT_RISE, Math.max(0, x) * RISE_SLOPE);
-    const tx = Math.abs(x);
-    const s = Math.min(1, Math.max(0, (sideZero - tx) / (sideZero - sideFull)));
-    const side = s * s * (3 - 2 * s);
+    const sv = side(Math.abs(x));
     for (let j = 0; j < H; j++) {
       // Верхній рядок полотна — угору (CanvasTexture перевертає: v = 1 — верх проєкції); t — тангенс кута вниз.
       const t = -((1 - (j + 0.5) / H) - 0.5) * span;
       const e = Math.min(1, Math.max(0, (t - cut) / EDGE_SOFT + 1));
       const edge = e * e * (3 - 2 * e);
-      const v = Math.round(255 * edge * side);
+      const v = Math.round(255 * edge * sv);
       const k = (j * W + i) * 4;
       img.data[k] = img.data[k + 1] = img.data[k + 2] = v;
       img.data[k + 3] = 255;
