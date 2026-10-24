@@ -221,12 +221,16 @@ function flashLevel(t: number): number {
 /** Колір туману, якщо в сцені його немає (дощ — world/precipitation.ts). */
 const FOG_FALLBACK = new THREE.Color(0.5, 0.5, 0.5);
 /**
- * Фари гравця (mountLamps): межа ближнього світла попереду, м; півкут конуса; освітленість від однієї фари (вона ж
+ * Фари гравця (mountLamps): межа ближнього світла попереду, м; півкут конуса (60° — світять на 120°, на прохання
+ * користувача; повна сила вбік до LAMP_SIDE_FULL, далі згасання до краю конуса); освітленість від однієї фари (вона ж
  * сила: без згасання й залежності від кута, vehicles/headlights.ts) — на око.
  */
 const LAMP_CUTOFF = 80;
-const LAMP_ANGLE = (30 * Math.PI) / 180;
+const LAMP_ANGLE = (60 * Math.PI) / 180;
+const LAMP_SIDE_FULL = Math.tan((45 * Math.PI) / 180);
 const LAMP_ROAD = 0.56;
+/** Півкут прожекторів зустрічної машини — вужчий: їх змінюють плями-наліпки (traffic/headPools.ts) тієї ж ширини. */
+const CAR_LAMP_ANGLE = (30 * Math.PI) / 180;
 /** Прожектори найближчої зустрічної машини трафіку (по одному в кожній фарі): межа світла, м. */
 const CAR_LAMP_CUTOFF = 50;
 /** Висота фар легковика над дорогою для маски, м — на око (у трафіку різні машини, маска одна). */
@@ -2016,7 +2020,7 @@ export class Ht2Drive {
     const rec = this.trucks.records.find((r) => r.carNode === this.def.carNode);
     const spots = rec ? [rec.faraFL, rec.faraFR] : [[-0.8, 2.4, 0.2], [0.8, 2.4, 0.2]];
     const h = g2t(spots[0] as [number, number, number]).y - this.truck.lightGeometry.groundY;
-    this.lampMask = headlightMask(h, LAMP_CUTOFF, LAMP_ANGLE);
+    this.lampMask = headlightMask(h, LAMP_CUTOFF, LAMP_ANGLE, LAMP_SIDE_FULL, Math.tan(LAMP_ANGLE));
     for (const f of spots) {
       const p = g2t(f as [number, number, number]);
       const lamp = new THREE.SpotLight(0xfff2d0, LAMP_ROAD, LAMP_CUTOFF * 2, LAMP_ANGLE, 0.15, 0);
@@ -2047,9 +2051,9 @@ export class Ht2Drive {
       return;
     }
     if (!this.carLamps.length) {
-      const mask = headlightMask(CAR_LAMP_HEIGHT, CAR_LAMP_CUTOFF, LAMP_ANGLE);
+      const mask = headlightMask(CAR_LAMP_HEIGHT, CAR_LAMP_CUTOFF, CAR_LAMP_ANGLE);
       for (let i = 0; i < 2; i++) {
-        const lamp = new THREE.SpotLight(LAMP_COLOR, 0, CAR_LAMP_CUTOFF * 2, LAMP_ANGLE, 0.15, 0);
+        const lamp = new THREE.SpotLight(LAMP_COLOR, 0, CAR_LAMP_CUTOFF * 2, CAR_LAMP_ANGLE, 0.15, 0);
         lamp.map = mask;
         this.world.scene.add(lamp, lamp.target);
         this.carLamps.push(lamp);

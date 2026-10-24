@@ -12,10 +12,12 @@ import * as THREE from 'three';
  *   зустрічні машини й усе, що вище цієї площини, — ні (межа, як у справжньої ближньої фари); нижче — повна сила;
  * - асиметрія («галочка», як у європейських фар): ліворуч від осі межа рівна, праворуч від осі піднімається під
  *   RISE_SLOPE (15°) на RIGHT_RISE вище — праве узбіччя й знаки світяться далі, зустрічних ліворуч не сліпить;
- * - убік — повна сила до |tx| < SIDE_FULL, далі плавно до нуля на SIDE_ZERO.
+ * - убік — повна сила до |tx| < sideFull, далі плавно до нуля на sideZero (тангенси; у фар гравця — до краю
+ *   конуса 120°, у зустрічних — вужче, SIDE_FULL / SIDE_ZERO).
  */
 const W = 256;
-const H = 1024;
+/** Висота полотна: межа світла — кілька пікселів навіть у широкому конусі (span 2 · tan 60° ≈ 3,5). */
+const H = 2048;
 const SIDE_FULL = 0.21;
 const SIDE_ZERO = 0.42;
 /**
@@ -28,9 +30,16 @@ const RIGHT_RISE = 0.02;
 const RISE_SLOPE = Math.tan((15 * Math.PI) / 180);
 
 /**
- * Маска для фари на висоті h над землею (м), межа світла на відстані cutoff (м), півкут конуса angle (рад).
+ * Маска для фари на висоті h над землею (м), межа світла на відстані cutoff (м), півкут конуса angle (рад);
+ * sideFull / sideZero — де вбік (тангенс кута від осі) світло починає згасати й гасне зовсім.
  */
-export function headlightMask(h: number, cutoff: number, angle: number): THREE.Texture {
+export function headlightMask(
+  h: number,
+  cutoff: number,
+  angle: number,
+  sideFull = SIDE_FULL,
+  sideZero = SIDE_ZERO,
+): THREE.Texture {
   const canvas = document.createElement('canvas');
   canvas.width = W;
   canvas.height = H;
@@ -43,7 +52,7 @@ export function headlightMask(h: number, cutoff: number, angle: number): THREE.T
     // Межа цього стовпця: праворуч (x > 0) — вище на min(RIGHT_RISE, x · tan 15°).
     const cut = tc - Math.min(RIGHT_RISE, Math.max(0, x) * RISE_SLOPE);
     const tx = Math.abs(x);
-    const s = Math.min(1, Math.max(0, (SIDE_ZERO - tx) / (SIDE_ZERO - SIDE_FULL)));
+    const s = Math.min(1, Math.max(0, (sideZero - tx) / (sideZero - sideFull)));
     const side = s * s * (3 - 2 * s);
     for (let j = 0; j < H; j++) {
       // Верхній рядок полотна — угору (CanvasTexture перевертає: v = 1 — верх проєкції); t — тангенс кута вниз.
