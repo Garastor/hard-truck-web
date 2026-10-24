@@ -1266,13 +1266,14 @@ export class CareerMode {
     this.persist();
   }
 
-  /** Куди їхати (Three.js): склад призначення, без вантажу — найближчий склад. */
+  /**
+   * Куди їхати (Three.js): склад призначення взятого замовлення; без замовлення — нічого. Як king.exe: блимає на карті
+   * лише ціль замовлення (re/notes/ht2/ui.md, 0x529890); раніше без вантажу блимав найближчий склад — після доставки
+   * це була щойно відвідана база, наче доставки не було.
+   */
   target(): THREE.Vector3 | null {
-    const c = this.career;
-    const p = this.drive.truck.visual.position;
-    const store = c.order
-      ? this.stores.find((s) => s.id === c.order!.to)
-      : this.stores.reduce<Store | null>((best, s) => (!best || Math.hypot(s.center[0] - p.x, s.center[1] + p.z) < Math.hypot(best.center[0] - p.x, best.center[1] + p.z) ? s : best), null);
+    const order = this.career.order;
+    const store = order ? this.stores.find((s) => s.id === order.to) : null;
     return store ? toThree(...store.center) : null;
   }
 
