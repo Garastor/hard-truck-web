@@ -1,9 +1,15 @@
 /** Наймані водії за king.exe: тариф від ціни моделі, аванс на 10 км, пальне, рейс зі складу (company.md §2, 2а). */
 import { describe, expect, it } from 'vitest';
-import { driverCosts, hirableNames, hireOffer, hireTariff, hiredLoad, newDriver } from '@ht2/career/company';
+import { driverCosts, hirableNames, hireOffer, hireTariff, hiredLoad, licenceCount, licenceSeconds, newDriver } from '@ht2/career/company';
 import { PAY_PER_M, type Goods, type Store } from '@ht2/career/economy';
 
 describe('HT2: наймані водії', () => {
+  it('ліцензії king.exe: min(3, ⌊√(серія + 1)⌋), строк 360…719 с', () => {
+    expect([1, 2, 3, 4, 7, 8, 20].map(licenceCount)).toEqual([1, 1, 2, 2, 2, 3, 3]);
+    expect(licenceSeconds(() => 0)).toBe(360);
+    expect(licenceSeconds(() => 0.999)).toBe(719);
+  });
+
   it('пропозиція найму — стала для ринку й дня, на одному з вільних місць', () => {
     const a = hireOffer(3, 10, [1, 3, 4], ['А', 'Б', 'В']);
     expect(hireOffer(3, 10, [1, 3, 4], ['А', 'Б', 'В'])).toEqual(a);
