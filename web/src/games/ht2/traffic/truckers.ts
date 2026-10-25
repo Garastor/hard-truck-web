@@ -7,7 +7,7 @@ import { isList, num, str, type SExpr } from '../formats/sexpr';
 import { drivable, truckDef, type Ht2Trucks } from '../vehicles/trucks';
 import { Trailer } from '../vehicles/trailer';
 import type { SemiKind } from '../vehicles/presents';
-import { recolor, SPOT_FACING, SPOT_RANGE, spotShare } from './traffic';
+import { recolor } from './traffic';
 import { disposePool, makePool, setPoolFade } from './headPools';
 import { markMover } from '../world/roomVisibility';
 import { g2t } from '../engine/physics/world';
@@ -159,11 +159,6 @@ export class Truckers {
   private blinkers: Blinkers | null = null;
   /** Фари вночі (drive: як у трафіку, за годиною й повзунками графіки). */
   lights = false;
-  /** Шукати машину для прожекторів фар (drive.updateCarLamp) і чи віддано їх найближчій зустрічній (this.spot). */
-  spotWanted = false;
-  spotTaken = false;
-  /** Найближча зустрічна з фарами ближче SPOT_RANGE: точки фар, напрям, відстань — кандидат на прожектори. */
-  spot: { left: THREE.Vector3; right: THREE.Vector3; dir: THREE.Vector3; dist: number; rig: Rival } | null = null;
 
   constructor(
     private readonly drive: Ht2Drive,
@@ -586,11 +581,10 @@ export class Truckers {
 
   /**
    * Фари ботів (порт, як у трафіку — на прохання користувача): уночі фари, габарити й задні вогні-габарити тягача й
-   * причепа (StopFaraKey стан 2), світлові плями на дорозі; найближча зустрічна — кандидат на справжні прожектори.
+   * причепа (StopFaraKey стан 2), світлові плями на дорозі (лише плями, без прожекторів — на прохання користувача).
    */
   private updateLights(player: THREE.Vector3): void {
     const R = this.drive.traffic?.view?.range() ?? 400;
-    let best: Truckers['spot'] = null;
     for (const r of this.rigs) {
       if (r.lit !== this.lights) {
         r.lit = this.lights;
@@ -612,22 +606,12 @@ export class Truckers {
       }
       const [fl, fr] = r.faras;
       if (!r.pool) {
-        r.pool = makePool(r.truck.lightGeometry.groundY, fl.z, fl.x, fr.x);
+        r.pool = makePool('head', r.truck.lightGeometry.groundY, fl.z, fl.x, fr.x);
         host.add(r.pool);
       }
       const d = host.position.distanceTo(player);
-      const to = player.clone().sub(host.position).setY(0).normalize();
-      if (this.spotWanted && d < SPOT_RANGE && d < (best?.dist ?? Infinity) && r.truck.forward().setY(0).normalize().dot(to) >= SPOT_FACING) {
-        const left = host.localToWorld(fl.clone());
-        const right = host.localToWorld(fr.clone());
-        const dir = host.localToWorld(fl.clone().add(new THREE.Vector3(0, 0, -20))).sub(left).normalize();
-        best = { left, right, dir, dist: d, rig: r };
-      }
       setPoolFade(r.pool, THREE.MathUtils.clamp((R - d) / (0.3 * R), 0, 1));
     }
-    this.spot = best;
-    // Прожектори світять за пляму: її сховати (drive вирішує, чи віддати їх боту, — spotTaken з минулого кадру).
-    if (best && this.spotTaken && best.rig.pool) setPoolFade(best.rig.pool, 1 - spotShare(best.dist));
   }
 
   private remove(i: number): void {
