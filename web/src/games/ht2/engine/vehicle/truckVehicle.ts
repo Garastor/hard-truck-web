@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { GROUP_BUMPER, GROUP_MOVABLE, g2t, groups } from '../physics/world';
 import type { ControlState } from '../input/input';
-import { visibleBox, type TruckDef, type TruckModel } from './trucks';
+import { rearAbove, visibleBox, type TruckDef, type TruckModel } from './trucks';
 import { Engine, GEAR_N, GEAR_R, type EngineProfile } from './engine';
 import { HitMeter } from './hitMeter';
 import { RoomBounds } from '../physics/roomBounds';
@@ -134,6 +134,8 @@ const LEAN_PITCH = 0.2;
 /** Бампери: висота низу над дорогою й товщина, м (гіпотеза). */
 const BUMPER_CLEARANCE = 0.35;
 const BUMPER_DEPTH = 0.5;
+/** Товщина рами тягача під сідлом для колізії, м (гіпотеза порту). */
+const FRAME_DEPTH = 0.3;
 /** Утримання гальма на місці до вмикання задньої передачі, с. */
 const REVERSE_HOLD = 0.3;
 
@@ -488,6 +490,11 @@ export class TruckVehicle {
   /** Для світлових плям фар і габаритів (локальна система машини). */
   lightGeometry: LightGeometry = { groundY: -1, frontZ: -4, backZ: 4, width: 2.5 };
   /**
+   * Рама тягача позаду кабіни (система тіла, Three.js): верх — висота сідла, від задньої стінки кабіни до заду, сідло
+   * (z). Під нею заїжджають під передок напівпричепа (presents.ts); null — не тягач.
+   */
+  frame: { top: number; front: number; rear: number; halfWidth: number; saddleZ: number } | null = null;
+  /**
    * Покриття під колесами: множники зчеплення, опору кочення й межі керма (1 — асфальт) і найбільша швидкість,
    * м/с. Аркада — без впливу.
    */
@@ -770,14 +777,37 @@ export class TruckVehicle {
     // Вантаж: центр — над дном вантажу (center_of_cargo_bottom) на половині висоти шару.
     const [bx, by, bz] = tech.cargoBottom;
     const cargoAt = new THREE.Vector3(bx, bz + (setup.cargoHeight ?? 0) / 2, -by);
+    // Тягач: позаду кабіни — лише рама до висоти сідла (lowSaddle), щоб сідлом можна було заїхати під передок
+    // напівпричепа (presents.ts). Коробка на всю висоту стояла б стіною під рамою причепа. Кабіна — до її задньої
+    // стінки (найзадніша видима точка на 0,6 м вище сідла).
+    const hull = { half: new THREE.Vector3(size.x / 2, (size.y / 2) * 0.8, size.z / 2), at: colliderAt.clone() };
+    if (tech.saddle) {
+      const saddle = g2t(tech.saddle);
+      const saddleY = saddle.y;
+      const cabBack = rearAbove(model.body, saddleY + 0.6);
+      if (cabBack > box.min.z + 1 && cabBack < box.max.z - 0.5) {
+        hull.half.z = (cabBack - box.min.z) / 2;
+        hull.at.z = (cabBack + box.min.z) / 2;
+        const bottom = Math.min(colliderAt.y - hull.half.y, saddleY - FRAME_DEPTH);
+        world.createCollider(
+          RAPIER.ColliderDesc.cuboid(size.x / 2, (saddleY - bottom) / 2, (box.max.z - cabBack) / 2)
+            .setTranslation(colliderAt.x, (saddleY + bottom) / 2, (box.max.z + cabBack) / 2)
+            .setDensity(0)
+            .setFriction(0.3)
+            .setRestitution(0.1),
+          this.body,
+        );
+        this.frame = { top: saddleY, front: cabBack, rear: box.max.z, halfWidth: size.x / 2, saddleZ: saddle.z };
+      }
+    }
     const com = new THREE.Vector3(cx, cy, -cz)
       .multiplyScalar(mass - cargo)
       .addScaledVector(cargoAt, cargo)
       .divideScalar(mass)
-      .sub(colliderAt);
+      .sub(hull.at);
     world.createCollider(
-      RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2 * 0.8, size.z / 2)
-        .setTranslation(colliderAt.x, colliderAt.y, colliderAt.z)
+      RAPIER.ColliderDesc.cuboid(hull.half.x, hull.half.y, hull.half.z)
+        .setTranslation(hull.at.x, hull.at.y, hull.at.z)
         .setMassProperties(mass, { x: com.x, y: com.y, z: com.z }, {
           x: mass * (size.y ** 2 + size.z ** 2) / 12,
           y: mass * (size.x ** 2 + size.z ** 2) / 12,

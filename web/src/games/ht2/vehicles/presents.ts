@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { buildTruckModel, visibleBox } from '../engine/vehicle/trucks';
-import { g2t } from '../engine/physics/world';
+import { GROUP_WORLD, g2t, groups } from '../engine/physics/world';
 import { isList, num, str, type SExpr } from '../formats/sexpr';
 import { recolor } from '../traffic/traffic';
 import { toThree } from '../world/world';
@@ -133,6 +133,18 @@ const HITCH_COS = 0.2;
 /** Кинутий причіп прибирається, коли старший і далі від гравця (0x42a1c0), с і м. */
 const STRAY_AGE = 1200;
 const STRAY_FAR = 5000;
+/**
+ * Передок на рамі тягача (raise; гіпотеза порту — в оригіналі шворінь тягне пружина зчіпки 0x558f20, а що тримає
+ * передок, коли під нього заїжджає сідло, не знайдено): рама тягача під рамою причепа ближче LIFT_AHEAD від її
+ * переднього краю — передок піднімається так, щоб рама причепа була на LIFT_CLEAR вище рами тягача; швидкість
+ * підйому й опускання — LIFT_RATE м/с (на шворні); вище LIFT_MAX (тягач зависокий) — не піднімається.
+ */
+const LIFT_AHEAD = 0.8;
+const LIFT_CLEAR = 0.04;
+const LIFT_RATE = 0.6;
+const LIFT_MAX = 0.6;
+/** Рама тягача шукається біля presents ближче цього, м. */
+const LIFT_RANGE = 25;
 /** Множник ваги типу після кожного вибору (0x64b700). */
 const WEIGHT_DECAY = 0.75;
 
@@ -174,6 +186,14 @@ export interface Present {
     /** Точка дотику коліс (середня вісь) у системі моделі (Three.js). */
     contact: THREE.Vector3;
     grounded: boolean;
+    /** Поза на опорах (settle) — від неї піднімається передок. */
+    rest: { pos: THREE.Vector3; quat: THREE.Quaternion } | null;
+    /** Підйом шворня над позою на опорах, м (передок на рамі тягача, raise). */
+    lift: number;
+    /** Рама в системі моделі: передній край і перед візка коліс (z), півширина. */
+    front: number;
+    gearFront: number;
+    halfWidth: number;
   } | null;
 }
 
@@ -273,7 +293,8 @@ export class Presents {
    * Крок: поповнення до ліміту (вільні місця), прибирання кинутих, моделі поблизу гравця. compatible — чи може
    * тягач гравця тягти тип (×2 до ваги); time — ігровий час, с.
    */
-  update(player: THREE.Vector3, time: number, compatible: (k: SemiKind) => boolean, dt = 1 / 60): void {
+  update(player: THREE.Vector3, time: number, compatible: (k: SemiKind) => boolean, dt = 1 / 60, frame: THREE.Vector3[] | null = null): void {
+    this.frame = frame;
     for (let i = this.list.length - 1; i >= 0; i--) {
       const p = this.list[i];
       if (p.dropped !== null && !p.order && time - p.dropped > STRAY_AGE && p.pos.distanceTo(player) > STRAY_FAR) this.remove(i);
@@ -314,7 +335,51 @@ export class Presents {
       else if (!near && p.model) this.unbuild(p);
       // Колізії регіону зʼявляються лише біля машин — поки ґрунту під причепом немає, висота з вузла WAY.
       if (p.model && !p.model.grounded) this.settle(p);
+      else if (p.model) this.raise(p, dt);
     }
+  }
+
+  /** Точки верху рами тягача гравця без причепа (світ) — під них піднімається передок (raise); null — немає. */
+  private frame: THREE.Vector3[] | null = null;
+
+  /**
+   * Передок на рамі тягача: заїжджаючи під причіп заднім ходом (чи виїжджаючи з-під щойно відчепленого), рама тягача
+   * піднімає передок, як сідло (поворот навколо осі коліс); тягач поїхав — передок знову на опорах. instant — одразу
+   * (щойно поставлений причіп над рамою).
+   */
+  private raise(p: Present, dt: number, instant = false): void {
+    const m = p.model;
+    if (!m?.rest) return;
+    const reach = m.contact.z - m.topSaddle.z;
+    let target = 0;
+    if (this.frame && reach > 1 && this.frame[0] && this.frame[0].distanceTo(m.rest.pos) < LIFT_RANGE) {
+      const inv = new THREE.Matrix4().compose(m.rest.pos, m.rest.quat, new THREE.Vector3(1, 1, 1)).invert();
+      const l = new THREE.Vector3();
+      for (const w of this.frame) {
+        l.copy(w).applyMatrix4(inv);
+        if (Math.abs(l.x) > m.halfWidth + 0.2 || l.z < m.front - LIFT_AHEAD || l.z > m.gearFront) continue;
+        const arm = m.contact.z - l.z;
+        if (arm > 0.5) target = Math.max(target, ((l.y + LIFT_CLEAR - m.topSaddle.y) * reach) / arm);
+      }
+      if (target > LIFT_MAX) target = 0;
+    }
+    const lift = instant ? target : m.lift + THREE.MathUtils.clamp(target - m.lift, -LIFT_RATE * dt, LIFT_RATE * dt);
+    if (Math.abs(lift - m.lift) < 1e-5 && !instant) return;
+    m.lift = lift;
+    const q = m.rest.quat.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.atan2(lift, reach)));
+    // Вісь коліс лишається на місці.
+    const pos = m.contact.clone().applyQuaternion(m.rest.quat).add(m.rest.pos).sub(m.contact.clone().applyQuaternion(q));
+    m.visual.position.copy(pos);
+    m.visual.quaternion.copy(q);
+    m.visual.updateMatrixWorld(true);
+    if (instant) {
+      m.body.setTranslation(pos, true);
+      m.body.setRotation(q, true);
+    } else {
+      m.body.setNextKinematicTranslation(pos);
+      m.body.setNextKinematicRotation(q);
+    }
+    m.kingpin.copy(m.topSaddle).applyMatrix4(m.visual.matrixWorld);
   }
 
   /** Місце зайняте: поруч стоїть причіп (кинутий гравцем на місці, яке звільнилось, — 0x482d20 позначає й такі). */
@@ -385,7 +450,11 @@ export class Presents {
     this.list.splice(i, 1);
   }
 
-  /** Модель на опорах (SupportKey 1, логотипа немає) і нерухома коробка колізії. */
+  /**
+   * Модель на опорах (SupportKey 1, логотипа немає) і колізія: рама — від висоти шворня вгору на всю довжину, під нею
+   * — лише візок коліс (між опорами під передком вільно — туди заїжджає рама тягача). Тіло кінематичне: передок
+   * піднімається (raise).
+   */
   private build(p: Present): void {
     const { trucks, scene, rapier } = this.ctx;
     const rec = trucks.records.find((r) => r.carNode.toLowerCase() === p.kind.carNode.toLowerCase());
@@ -415,12 +484,35 @@ export class Presents {
     visual.updateMatrixWorld(true);
     scene.add(visual);
     const q = visual.quaternion;
-    const body = rapier.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(visual.position.x, visual.position.y, visual.position.z).setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }));
-    rapier.createCollider(RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2).setTranslation(center.x, center.y, center.z), body);
+    const body = rapier.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(visual.position.x, visual.position.y, visual.position.z).setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }));
     const topSaddle = g2t(rec.topSaddle);
+    // Перед візка коліс (z Three — назад): найпередніше колесо мінус радіус і запас.
+    const gearFront = model.wheelBase.length ? Math.min(...model.wheelBase.map((m) => -m.elements[13])) - rec.wheelRadius - 0.2 : center.z;
+    const deckLow = Math.min(topSaddle.y, box.max.y - 0.5);
+    const cuboid = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number) =>
+      rapier.createCollider(
+        RAPIER.ColliderDesc.cuboid((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2)
+          .setTranslation((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2)
+          .setCollisionGroups(groups(GROUP_WORLD, 0xffff)),
+        body,
+      );
+    cuboid(box.min.x, box.max.x, deckLow, box.max.y, box.min.z, box.max.z);
+    if (gearFront < box.max.z - 0.5 && box.min.y + 0.2 < deckLow) cuboid(box.min.x, box.max.x, box.min.y + 0.2, deckLow, gearFront, box.max.z);
     const axleY = model.wheelBase.reduce((s, m) => s + m.elements[13], 0) / Math.max(1, model.wheelBase.length);
     const contact = new THREE.Vector3(0, -lift, -axleY);
-    p.model = { visual, body, kingpin: topSaddle.clone().applyMatrix4(visual.matrixWorld), topSaddle, contact, grounded: false };
+    p.model = {
+      visual,
+      body,
+      kingpin: topSaddle.clone().applyMatrix4(visual.matrixWorld),
+      topSaddle,
+      contact,
+      grounded: false,
+      rest: null,
+      lift: 0,
+      front: box.min.z,
+      gearFront,
+      halfWidth: size.x / 2,
+    };
     this.settle(p);
   }
 
@@ -450,14 +542,10 @@ export class Presents {
     // Початок моделі — так, щоб точка дотику коліс опинилась на ґрунті під віссю.
     const contactW = m.contact.clone().applyQuaternion(q);
     const flatW = m.contact.clone().applyQuaternion(yawQ);
-    m.visual.quaternion.copy(q);
-    m.visual.position.set(p.pos.x + flatW.x - contactW.x, ya - contactW.y, p.pos.z + flatW.z - contactW.z);
-    m.visual.updateMatrixWorld(true);
-    const t = m.visual.position;
-    m.body.setTranslation({ x: t.x, y: t.y, z: t.z }, true);
-    m.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
-    m.kingpin.copy(m.topSaddle).applyMatrix4(m.visual.matrixWorld);
+    m.rest = { pos: new THREE.Vector3(p.pos.x + flatW.x - contactW.x, ya - contactW.y, p.pos.z + flatW.z - contactW.z), quat: q };
     m.grounded = true;
+    // Поза — на опорах, а якщо над рамою тягача (щойно відчеплений) — одразу на ній.
+    this.raise(p, 0, true);
   }
 
   private unbuild(p: Present): void {

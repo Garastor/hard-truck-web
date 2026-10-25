@@ -56,6 +56,8 @@ export interface TruckTech {
   mirrors?: [number, number, number][];
   /** Труби вихлопу: точка й напрям у системі моделі (SmokePosition/SmokeDirection, …2; немає — z = 20). */
   smoke?: { pos: [number, number, number]; dir: [number, number, number] }[];
+  /** Сідло тягача (lowSaddle vehicle.tech, система моделі: x, уперед, угору); немає — не тягач. */
+  saddle?: [number, number, number];
 }
 
 export function parseTrucks(tchText: string): TruckDef[] {
@@ -290,6 +292,29 @@ function shadowMat(m: THREE.Material): THREE.Material {
  * Габарити видимої геометрії моделі: без білбордів (відблиски фар бувають у кілька метрів) і схованих варіантів
  * (рівні деталізації, вмʼятини, гілки перемикачів) — інакше коробка колізії росте й не пролазить у тунелі.
  */
+/**
+ * Найзадніша точка (найбільше z Three.js) видимої геометрії вище minY — у системі root (його світові матриці мають
+ * збігатися з локальними, як у visibleBox): задня стінка кабіни тягача над рамою.
+ */
+export function rearAbove(root: THREE.Object3D, minY: number): number {
+  let rear = -Infinity;
+  const v = new THREE.Vector3();
+  root.updateWorldMatrix(true, true);
+  const walk = (o: THREE.Object3D): void => {
+    if (!o.visible) return;
+    const mesh = o as THREE.Mesh;
+    const pos = mesh.isMesh ? mesh.geometry.attributes.position : undefined;
+    if (pos)
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+        if (v.y > minY && v.z > rear) rear = v.z;
+      }
+    for (const c of o.children) walk(c);
+  };
+  walk(root);
+  return rear;
+}
+
 export function visibleBox(root: THREE.Object3D): THREE.Box3 {
   const box = new THREE.Box3();
   const tmp = new THREE.Box3();
