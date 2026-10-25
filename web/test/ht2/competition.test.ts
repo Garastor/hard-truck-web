@@ -9,9 +9,10 @@ function seq(...v: number[]): () => number {
 }
 
 describe('HT2: конкуренція', () => {
-  it('суперники лише з імовірністю, 1–3, час у дорозі — маршрут / швидкість', () => {
-    expect(makeRivals(10000, ['А'], seq(0.9))).toEqual([]);
-    const r = makeRivals(10000, ['А', 'Б'], seq(0.1, 0.99, 0.5, 0.5, 0.5, 0.9));
+  it('суперники без водіїв: завжди (крім пального), 1–3, час у дорозі — маршрут / швидкість', () => {
+    expect(makeRivals(10000, ['А'], seq(0.9), true)).toEqual([]);
+    expect(makeRivals(10000, ['А'], seq(0.1)).length).toBe(1);
+    const r = makeRivals(10000, ['А', 'Б'], seq(0.99, 0.5, 0.5, 0.5, 0.9));
     expect(r.length).toBe(3);
     for (const x of r) expect(x.eta).toBeGreaterThan(10000 / (55 / 3.6) / 1.2);
   });
@@ -31,11 +32,13 @@ describe('HT2: конкуренція', () => {
   });
 
   it('king.exe: 3–7 суперників (повний трафік), попереду 0–3; зсуви на дорозі через 150 м, попереду й позаду', () => {
-    expect(rivalPlan(1, seq(0.9)).count).toBe(0);
-    expect(rivalPlan(1, seq(0.1, 0, 0))).toEqual({ count: 3, ahead: 0 });
-    expect(rivalPlan(1, seq(0.1, 0.99, 0.99))).toEqual({ count: 7, ahead: 3 });
+    // Шансу немає (0x4262a0): суперники на кожному складському замовленні, крім пального (прапорець товару 4).
+    expect(rivalPlan(1, seq(0.99, 0.5)).count).toBeGreaterThanOrEqual(3);
+    expect(rivalPlan(1, seq(0.5), true)).toEqual({ count: 0, ahead: 0 });
+    expect(rivalPlan(1, seq(0, 0))).toEqual({ count: 3, ahead: 0 });
+    expect(rivalPlan(1, seq(0.99, 0.99))).toEqual({ count: 7, ahead: 3 });
     // Найменший трафік: ftol(4) − 2 = 2 → 3–4.
-    expect(rivalPlan(0, seq(0.1, 0.99, 0)).count).toBe(4);
+    expect(rivalPlan(0, seq(0.99, 0)).count).toBe(4);
     // ahead 2 з 5: 300, 150 попереду, далі −150, −300, −450 (розкид rand % 20 − 10; ближче 150 — рівно 150).
     expect(specialOffsets(5, 2, seq(0.5))).toEqual([300, 150, -150, -300, -450]);
     expect(specialOffsets(2, 1, seq(0))).toEqual([150, -160]);
