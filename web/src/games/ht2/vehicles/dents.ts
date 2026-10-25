@@ -157,6 +157,11 @@ export class Dents {
   private lastStop = -1;
   private lastBack = -1;
 
+  /** Які вогні заднього ходу горять (після rearLights): біт 1 — лівий, біт 2 — правий. */
+  get backLights(): number {
+    return Math.max(0, this.lastBack);
+  }
+
   private stateOf(name: string, d: number): number {
     const n = this.states?.(name) ?? 0;
     return n > 1 ? Math.min(n - 1, Math.trunc((n - 1) * d)) : 0;

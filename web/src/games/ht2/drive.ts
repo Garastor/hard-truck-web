@@ -17,7 +17,7 @@ import { Ht2World, toThree, yieldTask, type LoadedRegion } from './world/world';
 import { noFarClip } from './engine/render/farClip';
 import { AutoPilot } from './engine/vehicle/autopilot';
 import { Ht2Roads } from './world/roads';
-import { Traffic, recolor, spotShare, trafficKinds } from './traffic/traffic';
+import { Traffic, recolor, trafficKinds } from './traffic/traffic';
 import { groundNear } from './traffic/layers';
 import { Accidents } from './traffic/accidents';
 import { TrafficLights } from './world/trafficLights';
@@ -31,7 +31,7 @@ import { Radars } from './traffic/radars';
 import { showGameOver, showVictory, type LoseScreen } from './ui/gameOver';
 import { playVideo } from './engine/video/player';
 import { sharedContext } from './engine/audio/engineAudio';
-import { glassDrops, precipitation, trafficHeadlights, trafficLamp } from './ui/effects';
+import { glassDrops, precipitation, trafficHeadlights } from './ui/effects';
 import { WeatherRooms } from './world/weatherRooms';
 import { markMover } from './world/roomVisibility';
 import { WIN_SHARE } from './career/share';
@@ -61,8 +61,8 @@ import { NetCars } from './netCars';
 import type { Arena } from './world/world';
 import { FIRST_RIVAL, FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, PLAYER_COLORS, STATE_RATE } from './net/state';
 import { Trailer } from './vehicles/trailer';
-import { beamProfile, headlightMask } from './vehicles/headlights';
-import { setPoolLight } from './traffic/headPools';
+import { HEAD_HALF_ANGLE, beamProfile, headlightMask } from './vehicles/headlights';
+import { disposePool, makePool, setPoolFade, setPoolLight } from './traffic/headPools';
 import { AITRUCK, Truckers, truckerKinds, truckerNames } from './traffic/truckers';
 // Точки вздовж машини у світі — для трафіку й ботів (навколо кожної півдовжина 2,5 м).
 import { alongPoints } from './traffic/botDriver';
@@ -183,8 +183,11 @@ function paintName(texs: THREE.Texture[]): string {
   return med < 0.3 ? `Темно-${name.toLowerCase()}` : name;
 }
 
-/** Скільки прожекторів буває в сцені: без фар, фари гравця, фари гравця й зустрічної (compileLit). */
-const LAMP_STATES = [0, 2, 4];
+/**
+ * Скільки прожекторів буває в сцені: без фар і фари гравця (compileLit). Фари трафіку й ботів — лише плями-наліпки
+ * (traffic/headPools.ts), прожекторів не мають (на прохання користувача).
+ */
+const LAMP_STATES = [0, 2];
 /** Робочі обʼєкти кабіни (стрілки й кермо щокадру — без нових матриць). */
 const CAB_TMP = new THREE.Matrix4();
 const AXIS_Y = new THREE.Vector3(0, 1, 0);
@@ -288,17 +291,19 @@ const FOG_FALLBACK = new THREE.Color(0.5, 0.5, 0.5);
  * сила: без згасання й залежності від кута, vehicles/headlights.ts) — на око.
  */
 const LAMP_CUTOFF = 80;
-const LAMP_ANGLE = (60 * Math.PI) / 180;
+const LAMP_ANGLE = HEAD_HALF_ANGLE;
 const LAMP_ROAD = 0.56;
-/** Півкут прожекторів зустрічної машини — вужчий: їх змінюють плями-наліпки (traffic/headPools.ts) тієї ж ширини. */
-const CAR_LAMP_ANGLE = (30 * Math.PI) / 180;
-/** Прожектори найближчої зустрічної машини трафіку (по одному в кожній фарі): межа світла, м. */
-const CAR_LAMP_CUTOFF = 50;
-/** Висота фар легковика над дорогою для маски, м — на око (у трафіку різні машини, маска одна). */
-const CAR_LAMP_HEIGHT = 0.8;
-/** Колір світла фар (гравця й трафіку). */
+/** Колір світла фар (гравця й плям трафіку). */
 const LAMP_COLOR = new THREE.Color(0xfff2d0);
 const POOL_BASE = new THREE.Color();
+/**
+ * Пляма вогнів заднього ходу позаду машини гравця (traffic/headPools.ts, вид back) — власна реалізація на прохання
+ * користувача, в king.exe такої немає: колір і освітленість від одного вогню (частка фари) — на око.
+ */
+const BACK_COLOR = new THREE.Color(1, 0.98, 0.95);
+const BACK_POWER = 0.5;
+/** Вогні заднього ходу — на стільки, м, усередину від бортів машини (точних точок у даних не шукали; на око). */
+const BACK_INSET = 0.4;
 /** Опір кочення поза твердим покриттям, множник (телеметрія king.exe: узбіччя ≈ +0,06 g). */
 const OFFROAD_ROLL = 5;
 /**
@@ -734,8 +739,9 @@ export class Ht2Drive {
    */
   private readonly lamps: THREE.SpotLight[] = [];
   private lampMask: THREE.Texture | null = null;
-  /** Прожектори фар зустрічної машини (Traffic.spot): увесь час у сцені вночі, без машини — сила 0 (без перекомпіляції шейдерів). */
-  private readonly carLamps: THREE.SpotLight[] = [];
+  /** Пляма вогнів заднього ходу (headPools.ts) — на тягачі чи зчепленому причепі; сутінки й ніч (updateDayTime). */
+  private backPool: THREE.Group | null = null;
+  private dusk = false;
   private lightsManual = false;
   /** Двірники — лише вручну (W; на прохання користувача — у дощ самі не вмикаються). */
   private wipersManual = false;
@@ -1331,9 +1337,9 @@ export class Ht2Drive {
   }
 
   /**
-   * Шейдери root наперед — для всіх станів фар: без прожекторів, фари гравця (2), фари гравця й зустрічної (4).
-   * Кількість прожекторів — у ключі шейдера three.js: без цього перше ввімкнення фар (чи сутінки з фарами зустрічних)
-   * компілювало заново шейдери всього видимого (на ПК 16 шейдерів за 0,18 с; на телефоні — у кілька разів довше).
+   * Шейдери root наперед — для всіх станів фар: без прожекторів і фари гравця (2).
+   * Кількість прожекторів — у ключі шейдера three.js: без цього перше ввімкнення фар компілювало заново шейдери
+   * всього видимого (на ПК 16 шейдерів за 0,18 с; на телефоні — у кілька разів довше).
    * Шейдери кожного стану three.js тримає в матеріалі, тож далі перемикання — без компіляції. Стан задають сховані
    * прожектори-замінники (warmLamps, у сцені), справжні на час виклику ховаються; поточний стан — останнім.
    */
@@ -1341,7 +1347,7 @@ export class Ht2Drive {
     const r = this.opts.renderer;
     if (!this.warmLamps.length) {
       const map = new THREE.Texture();
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < Math.max(...LAMP_STATES); i++) {
         const l = new THREE.SpotLight(0xffffff, 0);
         l.map = map;
         l.visible = false;
@@ -1349,7 +1355,7 @@ export class Ht2Drive {
         this.warmLamps.push(l);
       }
     }
-    const real = [...this.lamps, ...this.carLamps];
+    const real = this.lamps;
     const now = real.filter((l) => l.visible).length;
     const tasks: Promise<unknown>[] = [];
     for (const count of [...LAMP_STATES.filter((c) => c !== now), now]) {
@@ -1375,10 +1381,14 @@ export class Ht2Drive {
    * (зміна камери, дощ, вибух, фари) — ривок.
    */
   private async warmScene(): Promise<void> {
+    // Плями фар і заднього ходу (headPools.ts) зʼявляються лише в сутінки — їхній шейдер теж наперед.
+    const pool = makePool('head', 0, 0, -0.8, 0.8);
+    this.world.scene.add(pool);
     for (const c of [...this.world.scene.children]) {
       if (this.warmLamps.includes(c as THREE.SpotLight)) continue;
       await this.compileLit(c);
     }
+    disposePool(pool);
     // Салон — своя сцена зі своїм світлом (фари на нього не діють).
     if (this.cab) await compileWithin(this.opts.renderer, this.cab, this.camera, this.overlayScene);
   }
@@ -2160,43 +2170,48 @@ export class Ht2Drive {
   }
 
   /**
-   * Прожектори фар найближчої зустрічної машини: точки й напрям — з Traffic.spot чи Truckers.spot (оновлюють
-   * traffic.update і truckers.after), ближча з двох; трафік не бере машин, далших за бота-кандидата.
+   * Колір плям фар трафіку й ботів і заднього ходу (headPools.ts) — як від фари гравця при поточному нічному світлі:
+   * розсіяне + місяць під ~45° (cos ≈ 0,7); сила лампи — у тих самих одиницях (÷ π).
    */
-  private updateCarLamp(on: boolean): void {
-    const t = this.traffic!;
-    const b = this.truckers;
-    // Нічне світло дороги: розсіяне + місяць під ~45° (cos ≈ 0,7); сила фари — у тих самих одиницях (÷ π).
+  private updatePoolLight(): void {
     POOL_BASE.copy(this.world.moonColor).multiplyScalar(0.7).add(this.world.ambientColor);
-    setPoolLight(LAMP_COLOR, LAMP_ROAD / Math.PI, POOL_BASE);
-    t.spotWanted = on;
-    if (b) b.spotWanted = on;
-    t.spotLimit = b?.spot?.dist ?? Infinity;
-    if (!on) {
-      for (const l of this.carLamps) l.visible = false;
+    setPoolLight('head', LAMP_COLOR, LAMP_ROAD / Math.PI, POOL_BASE);
+    setPoolLight('back', BACK_COLOR, (BACK_POWER * LAMP_ROAD) / Math.PI, POOL_BASE);
+  }
+
+  /**
+   * Пляма вогнів заднього ходу (на прохання користувача; в king.exe немає): позаду тягача, а зі зчепленим причепом —
+   * позаду причепа (вогні заднього ходу причепа вмикає тягач, dents.rearLights); лише в сутінки й уночі (як фари —
+   * удень пляма на дорозі непомітна; гіпотеза). Горить один вогонь (другий розбитий) — пляма вдвічі тьмяніша.
+   */
+  private updateBackPool(): void {
+    const t = this.trailer;
+    const bits = (t ? this.trailerDents : this.dents)?.backLights ?? 0;
+    const host = t ? t.visual : this.truck.visual;
+    if (!bits || !this.dusk) {
+      if (this.backPool) this.backPool.visible = false;
       return;
     }
-    if (!this.carLamps.length) {
-      const mask = headlightMask(CAR_LAMP_HEIGHT, CAR_LAMP_CUTOFF, CAR_LAMP_ANGLE);
-      for (let i = 0; i < 2; i++) {
-        const lamp = new THREE.SpotLight(LAMP_COLOR, 0, CAR_LAMP_CUTOFF * 2, CAR_LAMP_ANGLE, 0.15, 0);
-        lamp.map = mask;
-        this.world.scene.add(lamp, lamp.target);
-        this.carLamps.push(lamp);
+    if (!this.backPool || this.backPool.parent !== host) {
+      if (this.backPool) disposePool(this.backPool);
+      let ground: number;
+      let back: number;
+      let half: number;
+      if (t) {
+        ground = t.lightBox.min.y;
+        back = t.lightBox.max.z;
+        half = (t.lightBox.max.x - t.lightBox.min.x) / 2;
+      } else {
+        const g = this.truck.lightGeometry;
+        ground = g.groundY;
+        back = g.backZ;
+        half = g.width / 2;
       }
+      half = Math.max(0.3, half - BACK_INSET);
+      this.backPool = makePool('back', ground, back, -half, half);
+      host.add(this.backPool);
     }
-    const s = t.spot ?? b?.spot ?? null;
-    if (b) b.spotTaken = !t.spot && !!b.spot;
-    // Пляма й прожектори перетікають одне в одне (spotShare), колір плями — як від прожектора (setPoolLight).
-    const share = s ? spotShare(s.dist) : 0;
-    this.carLamps.forEach((lamp, i) => {
-      lamp.visible = true;
-      lamp.intensity = LAMP_ROAD * share;
-      if (!s) return;
-      lamp.position.copy(i ? s.right : s.left);
-      lamp.target.position.copy(lamp.position).addScaledVector(s.dir, 20);
-      lamp.target.updateMatrixWorld();
-    });
+    setPoolFade(this.backPool, bits === 3 ? 1 : 0.5);
   }
 
   /** Листя на вітрі: точка землі під вантажівкою (променем униз) і напрям погляду камери. */
@@ -2266,14 +2281,15 @@ export class Ht2Drive {
     this.updateWheelFx();
     this.blastFx().update(dt, c.wind, this.camera.position);
     const dusk = sunHeight(hour) < 0.2;
+    this.dusk = dusk;
     this.world.setNight(dusk);
     this.cabLight?.color.setScalar(cabAmbient(hour));
     // Фари чужих машин — ще й за повзунками графіки (g > 0,5 і d > 0,5, ui/effects.ts).
     if (this.traffic) {
       this.traffic.lights = trafficLights(hour) && trafficHeadlights();
       if (this.truckers) this.truckers.lights = this.traffic.lights;
-      this.updateCarLamp(this.traffic.lights && trafficLamp());
     }
+    this.updatePoolLight();
     this.rainSound ??= this.audio?.loopSound('rain') ?? null;
     this.windSound ??= this.audio?.loopSound('wind') ?? null;
     // Набір кімнати з thund=off (тунелі): шум дощу й вітру не гучніший за 1 − k (king.exe 0x5a9dc0) — стихає з глибиною.
@@ -4147,6 +4163,7 @@ export class Ht2Drive {
     const reverse = this.truck.gear < 0;
     this.dents?.rearLights(this.truck.brakePedal(state) > 0, reverse, this.sizeLights);
     this.trailerDents?.rearLights(false, reverse, this.sizeLights);
+    this.updateBackPool();
     // Двірники — два стани (увімкнені / вимкнені): світяться, поки ввімкнені (і без скла кабіни — за вибором чи дощем).
     this.input.setToggle('wipers', this.glassRain?.wipersOn ?? this.wipersManual);
     this.input.setToggle('mirror', this.mirrorOn);

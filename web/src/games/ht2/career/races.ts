@@ -40,7 +40,8 @@ export class CareerRaces {
     private readonly drive: Ht2Drive,
     private readonly career: Ht2Career,
     private readonly msg: (key: string, fallback: string, value?: number) => string,
-    private readonly licenceTime: number,
+    /** Строк ліцензії, с ігрового часу (company.ts licenceSeconds × timeScale). */
+    private readonly licenceTime: () => number,
   ) {
     for (const r of drive.world.regions.values())
       for (const room of r.way.rooms) for (const n of room.nodes) if (/^start1_\d$/.test(n.name)) this.nodes.set(n.name, toThree(...n.pos));
@@ -86,7 +87,9 @@ export class CareerRaces {
         // Перемога в гонці (подія 0xb з бітом 0, king.exe 0x4d76b0) — ролик кубка TRw.bne.
         void this.drive.clip('TRw.bne');
         const n = Math.min(3, Math.floor(Math.sqrt(c.raceWins + 1)));
-        c.licences = [...(c.licences ?? []), ...Array.from({ length: n }, () => c.time + this.licenceTime)];
+        // Строк — як за доставку (0x4774e0, 360 + rand % 360 с; аргументи в 0x426b00 не розібрано — гіпотеза).
+        const until = c.time + this.licenceTime();
+        c.licences = [...(c.licences ?? []), ...Array.from({ length: n }, () => until)];
       } else this.career.raceWins = 0;
       race.dispose();
       this.drive.race = null;

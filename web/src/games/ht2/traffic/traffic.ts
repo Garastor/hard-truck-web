@@ -65,14 +65,6 @@ const PHYS_HALF = 1.1;
  * лежать до ±1,3 м від настилу, тож модель «пливла» й підскакувала при переході у фізику). Замір раз на GROUND_EVERY с,
  * висота згладжена з GROUND_LAG с; модель піднята на REST_LIFT — як фізична машина на підвісці в спокої.
  */
-/** Справжній прожектор фар (drive.ts) — найближчій зустрічній машині з фарами ближче за SPOT_RANGE, м. */
-export const SPOT_RANGE = 90;
-/** Зустрічна: курс машини на гравця, косинус кута не менший за SPOT_FACING. */
-export const SPOT_FACING = 0.7;
-/** Перехід пляма → прожектори на останніх SPOT_BLEND м до SPOT_RANGE (без помітної підміни). */
-export const SPOT_BLEND = 30;
-/** Частка прожекторів (0…1) на відстані d; пляма — 1 − частка. */
-export const spotShare = (d: number): number => THREE.MathUtils.clamp((SPOT_RANGE - d) / SPOT_BLEND, 0, 1);
 const GROUND_EVERY = 0.12;
 /** Нова машина на багатосмуговій дорозі — у крайній правій з такою імовірністю (порт). */
 const KEEP_RIGHT = 0.8;
@@ -221,15 +213,6 @@ export class Traffic {
   /** Покажчики повороту (traffic/blinkers.ts; далеким абстрактним машинам — нічого). */
   private readonly blinkers: Blinkers;
 
-  /**
-   * Справжні прожектори фар — найближчій зустрічній машині з фарами (точки лівої й правої фари й напрям, Three.js),
-   * інакше null; її пляма схована (світять прожектори). Оновлюється в update.
-   */
-  spot: { left: THREE.Vector3; right: THREE.Vector3; dir: THREE.Vector3; dist: number } | null = null;
-  /** Чи шукати машину для прожектора (повзунки графіки, drive.ts) і не далі за кого (ближчий бот-далекобійник). */
-  spotWanted = false;
-  spotLimit = Infinity;
-
   /** Що бачить гравець: дальність (кінець туману, м) і чи видно точку з камери. Без нього — без перевірок. */
   view: { range(): number; sees(p: THREE.Vector3): boolean } | null = null;
 
@@ -345,28 +328,14 @@ export class Traffic {
   }
 
   /**
-   * Світлові плями фар (headPools.ts) на машинах з фарами: згасають від 70 % до 100 % дальності видимості. Найближча
-   * зустрічна ближче SPOT_RANGE — замість плями справжній прожектор (this.spot).
+   * Світлові плями фар (headPools.ts) на машинах з фарами: згасають від 70 % до 100 % дальності видимості. Справжніх
+   * прожекторів у машин трафіку немає (на прохання користувача — лише плями).
    */
   private updatePools(player: THREE.Vector3): void {
     // Фари вмикаються й гаснуть з часом доби й на машинах, що вже їдуть поруч (порт, на прохання користувача; king.exe
     // ставить фари лише при створенні машини — ті, що зʼявились удень, їхали вночі без світла).
     for (const c of this.cars) if (c.lit !== this.lights) this.relight(c);
     const R = this.view?.range() ?? VISIBLE_ON;
-    let best: Car | null = null;
-    let bestD = Math.min(SPOT_RANGE, this.spotLimit);
-    if (this.spotWanted)
-      for (const c of this.cars) {
-        if (!c.lit) continue;
-        const d = c.pos.distanceTo(player);
-        if (d >= bestD || d < 1) continue;
-        const to = player.clone().sub(c.pos).setY(0).normalize();
-        const fwd = c.vehicle ? c.vehicle.forward().setY(0).normalize() : c.heading;
-        if (fwd.dot(to) < SPOT_FACING) continue;
-        best = c;
-        bestD = d;
-      }
-    this.spot = null;
     for (const c of this.cars) {
       const host = c.vehicle ? c.vehicle.visual : c.root;
       const pts = c.lit && host ? this.signalPoints(c.kind.model) : null;
@@ -376,23 +345,13 @@ export class Traffic {
         continue;
       }
       // Кінематична модель піднята обгорткою над початком координат root (дорога — y = 0); фізична — у системі моделі.
-      const lift = c.vehicle ? 0 : (c.root!.children[0]?.position.y ?? 0);
       const ground = c.vehicle ? c.vehicle.lightGeometry.groundY : 0;
       const front = pts[0].z;
       if (!c.pool || c.pool.parent !== host) {
         if (c.pool) disposePool(c.pool);
-        c.pool = makePool(ground, front, pts[0].x, pts[2].x);
-        host.add(c.pool);
-      }
-      if (c === best) {
-        setPoolFade(c.pool, 1 - spotShare(bestD));
         // Точки покажчиків на краях фар — на 0,15 м усередину, тобто майже в самих фарах.
-        const y = pts[0].y + lift;
-        const left = host.localToWorld(new THREE.Vector3(pts[0].x, y, front));
-        const right = host.localToWorld(new THREE.Vector3(pts[2].x, y, front));
-        const dir = host.localToWorld(new THREE.Vector3(pts[0].x, y, front - 20)).sub(left).normalize();
-        this.spot = { left, right, dir, dist: bestD };
-        continue;
+        c.pool = makePool('head', ground, front, pts[0].x, pts[2].x);
+        host.add(c.pool);
       }
       const d = c.pos.distanceTo(player);
       setPoolFade(c.pool, THREE.MathUtils.clamp((R - d) / (0.3 * R), 0, 1));

@@ -12,15 +12,13 @@ import * as THREE from 'three';
  *   зустрічні машини й усе, що вище цієї площини, — ні (межа, як у справжньої ближньої фари); нижче — повна сила;
  * - асиметрія («галочка», як у європейських фар): ліворуч від осі межа рівна, праворуч від осі піднімається під
  *   RISE_SLOPE (15°) на RIGHT_RISE вище — праве узбіччя й знаки світяться далі, зустрічних ліворуч не сліпить;
- * - убік — профіль side(tx) (tx — тангенс кута від осі): у зустрічних — повна сила до SIDE_FULL, далі плавно до
- *   нуля на SIDE_ZERO (sideFalloff); у фар гравця — beamProfile: яскравий центр і широке розсіяне світло, що
- *   плавно гасне до краю конуса 120°, як у справжньої фари (на прохання користувача, 2026-10-24).
+ * - убік — профіль side(tx) (tx — тангенс кута від осі): beamProfile — яскравий центр і широке розсіяне світло, що
+ *   плавно гасне до краю конуса 120°, як у справжньої фари (на прохання користувача, 2026-10-24). Той самий профіль
+ *   — у плямах фар трафіку й ботів (traffic/headPools.ts).
  */
 const W = 256;
 /** Висота полотна: межа світла — кілька пікселів навіть у широкому конусі (span 2 · tan 60° ≈ 3,5). */
 const H = 2048;
-const SIDE_FULL = 0.21;
-const SIDE_ZERO = 0.42;
 /**
  * Ширина плавного переходу над межею (тангенс кута, ≈ 0,7°): світло згасає smoothstep від лінії відсічки вгору —
  * дорога до межі освітлена повністю, далі тьмяніє поступово (на прохання користувача — без різкого обриву).
@@ -30,13 +28,8 @@ const EDGE_SOFT = 0.012;
 const RIGHT_RISE = 0.02;
 const RISE_SLOPE = Math.tan((15 * Math.PI) / 180);
 
-/** Профіль убік: повна сила до sideFull, далі smoothstep до нуля на sideZero (тангенси кута від осі). */
-export function sideFalloff(sideFull = SIDE_FULL, sideZero = SIDE_ZERO): (tx: number) => number {
-  return (tx) => {
-    const s = Math.min(1, Math.max(0, (sideZero - tx) / (sideZero - sideFull)));
-    return s * s * (3 - 2 * s);
-  };
-}
+/** Півкут конуса фар (60° — світять на 120°, на прохання користувача): фари гравця й плями фар трафіку. */
+export const HEAD_HALF_ANGLE = (60 * Math.PI) / 180;
 
 /**
  * Профіль справжньої фари вбік (кут θ від осі, на око): ядро — гаус BEAM_CORE (частка BEAM_CORE_SHARE) + широке
@@ -60,13 +53,13 @@ export function beamProfile(angle: number): (tx: number) => number {
 
 /**
  * Маска для фари на висоті h над землею (м), межа світла на відстані cutoff (м), півкут конуса angle (рад);
- * side — сила вбік залежно від тангенса кута від осі (sideFalloff чи beamProfile).
+ * side — сила вбік залежно від тангенса кута від осі (beamProfile).
  */
 export function headlightMask(
   h: number,
   cutoff: number,
   angle: number,
-  side: (tx: number) => number = sideFalloff(),
+  side: (tx: number) => number,
 ): THREE.Texture {
   const canvas = document.createElement('canvas');
   canvas.width = W;

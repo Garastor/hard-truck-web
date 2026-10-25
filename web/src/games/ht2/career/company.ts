@@ -45,8 +45,21 @@ export interface HiredDriver {
   v?: 2;
 }
 
-/** Строк ліцензії, с ігрового часу (доба гри). */
-export const LICENCE_TIME = 24 * 3600;
+/**
+ * Строк ліцензії (king.exe 0x443d50 → 0x4774e0): 360 + rand % 360 одиниць годинника симуляції 0x401000 — секунди
+ * (табло «ЛИЦЕНЗИЙ» мм:сс, картка — секунди / 60 хв, 0x56b0a0). У порту — с реального часу; у `career.time` — × timeScale.
+ */
+export function licenceSeconds(rnd = Math.random): number {
+  return 360 + Math.floor(rnd() * 360);
+}
+
+/**
+ * Скільки ліцензій за доставку першим (0x443d50) чи перемогу (0x426b00): streak — серія поспіль разом із цією
+ * (`+0x218`, не першим — 0); min(3, ⌊√(streak + 1)⌋) → 1, 1, 2, 2, 2, 2, 2, 3…
+ */
+export function licenceCount(streak: number): number {
+  return Math.min(3, Math.floor(Math.sqrt(streak + 1)));
+}
 /** Оплата авансу — на 10 км уперед (0x423f40). */
 const ADVANCE_KM = 10;
 const FUEL_K = 0.00002;

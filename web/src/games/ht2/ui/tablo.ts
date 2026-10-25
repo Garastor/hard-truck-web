@@ -173,7 +173,7 @@ export class Tablo {
     // Показання, що видно на табло; без змін — canvas не перемальовуємо (телефон: щокадру це ~0,3 мс на ПК).
     const t = (v: number | null | undefined) => (v == null ? -1 : Math.floor(Math.max(0, v) / 60));
     const key = [
-      this.layout.w, this.layout.h, this.blink, s.position?.place, s.position?.of, t(s.timeLeft), s.licences?.count, t(s.licences?.left),
+      this.layout.w, this.layout.h, this.blink, s.position?.place, s.position?.of, t(s.timeLeft), s.licences?.count, s.licences ? Math.floor(Math.max(0, s.licences.left)) : -1,
       Math.round(s.mph ? s.speed / 1.609 : s.speed), s.mph, s.handbrake, s.gear, s.automatic, Math.round(s.rpm / 100), s.trailer,
       Math.round(s.fuel * 10), s.fuel > 0.3, Math.round(s.condition * 10), s.condition > 0.3, s.nav, s.compass, pager?.shown, pager?.icon,
       this.art.matrix && this.art.icon ? 1 : 0,
@@ -205,7 +205,8 @@ export class Tablo {
       icon(o + 85, 43, small(`${two(t / 60)}:${two(t % 60)}`));
     }
     if (s.licences && s.licences.count > 0) {
-      const t = Math.max(0, Math.floor(s.licences.left / 60));
+      // мм:сс (re/notes/ht2/ui.md): строк ліцензії — 6…12 хв (career/company.ts licenceSeconds).
+      const t = Math.max(0, Math.floor(s.licences.left));
       label(o + 154, 23, 'ЛІЦЕНЗІЙ');
       label(o + 210, 23, String(s.licences.count));
       icon(o + 158, 43, small(`${two(t / 60)}:${two(t % 60)}`));
