@@ -11,9 +11,12 @@
  * Без водія (`member` немає: старі збереження, світ без далекобійників) — як раніше, розрахунок часу: довжина маршруту
  * / середня швидкість (гіпотеза порту).
  *
- * Гіпотези порту: імовірність CHANCE, що замовлення взагалі беруть суперники (king.exe перевіряє поле замовлення
- * `+0x68` = 1 і прапорець складу — зміст не розібрано); x = 1 у формулі кількості; хто з водіїв іде в суперники —
- * найближчі до гравця (предикат king.exe не розібрано); знак «гумової нитки» (поле `+0x1f8` — гіпотеза: що лишилось).
+ * Коли (king.exe 0x4262a0): суперники є на **кожному** складському замовленні гравця — лот зі складу має тип
+ * `+0x68` = 1 (0x4715f0 з loadOrder 0x443d50), — крім товару з прапорцем 4 = клас `fuel` (таблиця товарів 0x68ccb8
+ * `+0x30`; прапорці 0x40b4a0: illegal 1, formafia 2, fuel 4, cars 8, trucks 0x10). Випадкового «шансу» немає.
+ *
+ * Гіпотези порту: хто з водіїв іде в суперники — найближчі до гравця (предикат king.exe 0x426a90 не розібрано); знак
+ * «гумової нитки» (поле `+0x1f8` — гіпотеза: що лишилось).
  */
 export interface RivalRun {
   name: string;
@@ -37,8 +40,6 @@ export interface RivalRun {
   slow?: number;
 }
 
-/** Ймовірність, що замовлення беруть і суперники (гіпотеза порту). */
-const CHANCE = 0.6;
 /** Суперник без водія: найбільше суперників, середня швидкість, м/с (≈ 55 км/год), розкид ±15 %. */
 const MAX_RIVALS = 3;
 const SPEED = 55 / 3.6;
@@ -57,10 +58,10 @@ export const RUBBER_MIN = 9.722222222222221;
 /**
  * Скільки суперників і скільки з них попереду (king.exe 0x425610): N = 3 + rand % (ftol(3,1·x + 4) − 2), x — густота
  * трафіку 0…1 (0x66c6f0 = повзунок trafs × частка за памʼяттю / 100 · 0,01, 0x515710 → 0x571f20) → повний трафік
- * 3…7, найменший 3…4; попереду — rand & 3 (0…3). Порожньо — замовлення без конкуренції.
+ * 3…7, найменший 3…4; попереду — rand & 3 (0…3). Пальне (`fuel`, 0x4262a0) — без конкуренції (порожньо).
  */
-export function rivalPlan(density = 1, rnd = Math.random): { count: number; ahead: number } {
-  if (rnd() > CHANCE) return { count: 0, ahead: 0 };
+export function rivalPlan(density = 1, rnd = Math.random, fuel = false): { count: number; ahead: number } {
+  if (fuel) return { count: 0, ahead: 0 };
   const span = Math.floor(3.1 * Math.max(0, Math.min(1, density)) + 4) - 2;
   return { count: 3 + Math.floor(rnd() * span), ahead: Math.floor(rnd() * 4) };
 }
@@ -119,9 +120,12 @@ export function topUpPlan(rivals: readonly RivalRun[], target: number, playerLef
   return { missing, live, special: missing > 0 && racing === 0 && live === 0 && (playerLeft ?? 0) > SPECIAL_ROUTE };
 }
 
-/** Суперники без водіїв для нового замовлення (може бути порожньо): route — довжина маршруту, м. */
-export function makeRivals(route: number, names: readonly string[], rnd = Math.random): RivalRun[] {
-  if (!names.length || route <= 0 || rnd() > CHANCE) return [];
+/**
+ * Суперники без водіїв для нового замовлення (світу ще немає): route — довжина маршруту, м. Пальне — порожньо
+ * (0x4262a0); кількість 1–MAX_RIVALS — гіпотеза порту.
+ */
+export function makeRivals(route: number, names: readonly string[], rnd = Math.random, fuel = false): RivalRun[] {
+  if (fuel || !names.length || route <= 0) return [];
   const n = 1 + Math.floor(rnd() * MAX_RIVALS);
   const out: RivalRun[] = [];
   for (let i = 0; i < n; i++) {

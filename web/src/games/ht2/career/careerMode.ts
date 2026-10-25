@@ -10,7 +10,7 @@ import type { Ht2Drive } from '../drive';
 import { gasPanel, jobPanel, orderPanel, salePanel, servicePanel } from './stations';
 import type { SidePanel } from '../ui/panel';
 import { active, advance, makeRivals, place, PREMIUM_SHARE, progress, rivalPlan, SPECIAL_ROUTE, specialOffsets, TOP_UP_EVERY, topUpPlan, topUpSpacing, type RivalRun } from './competition';
-import { hirableNames, hireOffer, hireTariff, LICENCE_TIME, newDriver } from './company';
+import { hirableNames, hireOffer, hireTariff, licenceCount, licenceSeconds, newDriver } from './company';
 import { CareerRaces } from './races';
 import { ukMessage } from '../ui/uk';
 import { StoreZones } from './storeZones';
@@ -75,7 +75,7 @@ export class CareerMode {
           }
           if (/^node_car_fuel/i.test(n.name)) this.fuelSpots.push(n.pos);
         }
-    this.races = new CareerRaces(drive, career, (k, fb, v) => this.msg(k, fb, v), LICENCE_TIME);
+    this.races = new CareerRaces(drive, career, (k, fb, v) => this.msg(k, fb, v), () => licenceSeconds() * this.drive.timeScale);
   }
 
   /** Бак і витрата з vehicle.tech: витрата у файлі × 10 = л/100 км (ЗіЛ — 51), запас ходу = бак / витрата. */
@@ -861,10 +861,10 @@ export class CareerMode {
     return !!d && Math.hypot(d[0] - gx, d[1] - gy) < (key[0] === 'f' ? FUEL_RADIUS : STO_RADIUS) * 2;
   }
 
-  /** Ліцензії (табло «ЛІЦЕНЗІЙ N» і час найближчої до закінчення), с ігрового часу. */
+  /** Ліцензії (табло «ЛІЦЕНЗІЙ N» і час найближчої до закінчення), с реального часу (строк king.exe — с симуляції). */
   licenceInfo(): { count: number; left: number } | null {
     const l = this.career.licences ?? [];
-    return l.length ? { count: l.length, left: Math.min(...l) - this.career.time } : null;
+    return l.length ? { count: l.length, left: (Math.min(...l) - this.career.time) / this.drive.timeScale } : null;
   }
 
   /** Закінчення ліцензій і робота найманих водіїв. */
@@ -897,16 +897,30 @@ export class CareerMode {
     this.closePanel();
   }
 
-  /** Доставка: якщо були суперники й ніхто не доїхав раніше — премія першому. */
-  private firstBonus(o: NonNullable<Ht2Career['order']>): void {
-    if (!o.rivals?.length || o.beaten) return;
+  /**
+   * Доставка (king.exe loadOrder 0x443d50): ніхто з суперників ще не доїхав і хтось іще змагається (вектор 0x68a980
+   * не порожній) — гравець перший: премія, серія `firsts` += 1 і min(3, ⌊√(серія + 1)⌋) ліцензій на найм, кожна на
+   * 360 + rand % 360 с; картка 1 «Ты лучший в заезде!» (серія 1) чи 2 «Ты снова лучший» замість картки 4. Інакше
+   * серія — 0. Повертає, чи показано картку ліцензії.
+   */
+  private firstBonus(o: NonNullable<Ht2Career['order']>): boolean {
     const c = this.career;
+    const racing = (o.rivals ?? []).some((r) => !r.out && !r.done);
+    if (o.beaten || !racing) {
+      c.firsts = 0;
+      return false;
+    }
     c.money += o.premium ?? 0;
     c.firsts = (c.firsts ?? 0) + 1;
     this.drive.say(`ВИ ПЕРШИЙ! ПРЕМІЯ $${o.premium ?? 0}`);
-    // Ліцензія на найм (посібник: за доставку першим); перша — картка 1 «можеш відкрити свою компанію», далі — 2.
-    c.licences = [...(c.licences ?? []), c.time + LICENCE_TIME];
-    this.drive.cards?.show(c.firsts === 1 ? 1 : 2, { drivers: c.licences.length, name: c.driver, minutes: Math.round(LICENCE_TIME / 60) });
+    const n = licenceCount(c.firsts);
+    const seconds = licenceSeconds();
+    const until = c.time + seconds * this.drive.timeScale;
+    c.licences = [...(c.licences ?? []), ...Array.from({ length: n }, () => until)];
+    // Картка: кількість виданих (0x56b0a0 — `+0x38` % 100; гіпотеза: ці ліцензії, не всі), кому, строк у хв.
+    if (!this.drive.cards) return false;
+    this.drive.cards.show(c.firsts === 1 ? 1 : 2, { drivers: n, name: c.driver, minutes: Math.floor(seconds / 60) });
+    return true;
   }
 
   /** Позиція серед конкурентів (табло «ПОЗИЦІЯ N З M»), оновлюється раз на пів секунди. */
@@ -927,14 +941,14 @@ export class CareerMode {
     o.start = [p.x, p.y, p.z, f.x, f.z];
     const T = this.drive.truckers;
     if (T?.fleet && T.freight) {
-      const plan = rivalPlan(this.drive.trafficDensity);
+      const plan = rivalPlan(this.drive.trafficDensity, Math.random, o.goods.fuel);
       const offsets = route > SPECIAL_ROUTE ? specialOffsets(plan.count, plan.ahead) : null;
       const heading = f.clone().setY(0).normalize();
       const ids = T.recruitRivals(o, plan.count, offsets, p.clone(), heading);
       o.rivals = ids.map((i) => this.rivalRun(i));
       // Змагання є — далі доповнюється до N (topUpRivals), навіть якщо зараз набрано менше.
       if (plan.count > 0) (o.rivalTarget = plan.count), (o.rivalAhead = plan.ahead);
-    } else o.rivals = makeRivals(route, T?.allNames ?? []);
+    } else o.rivals = makeRivals(route, T?.allNames ?? [], Math.random, o.goods.fuel);
     const n = o.rivalTarget ?? o.rivals.length;
     o.premium = n ? Math.round(o.pay * PREMIUM_SHARE) : 0;
     if (n) this.drive.say(`ЦЕЙ ВАНТАЖ ВЕЗУТЬ ЩЕ ${n}. ПРЕМІЯ ПЕРШОМУ $${o.premium}`);
@@ -1158,13 +1172,13 @@ export class CareerMode {
     try {
       if (c.order && c.order.to === store.id && this.drive.cards) {
         const s = settle(c.order, c.time);
-        this.drive.cards.show(4, { integrity: c.order.integrity * 100, forfeit: s.damagePenalty + s.latePenalty, fee: c.order.pay });
+        // Перший — картка ліцензії (1/2), інакше — «Заказ выполнен» (4): одне повідомлення 0xb (0x443d50).
+        if (!this.firstBonus(c.order)) this.drive.cards.show(4, { integrity: c.order.integrity * 100, forfeit: s.damagePenalty + s.latePenalty, fee: c.order.pay });
         this.drive.say(this.msg('YOU_MADE', 'ВИ ЗАРОБИЛИ: %g', s.pay));
         c.money += s.pay;
         c.earned += s.pay;
         c.delivered++;
         c.tons = (c.tons ?? 0) + (c.order.goods.mass * c.order.units) / 1000;
-        this.firstBonus(c.order);
         this.releaseRivals(c.order);
         c.order = null;
         this.drive.setCargo(0);
