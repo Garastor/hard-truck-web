@@ -62,7 +62,7 @@ import type { Arena } from './world/world';
 import { FIRST_RIVAL, FLAG_BRAKE, FLAG_LIGHTS, FLAG_REVERSE, PLAYER_COLORS, STATE_RATE } from './net/state';
 import { Trailer } from './vehicles/trailer';
 import { HEAD_HALF_ANGLE, beamProfile, headlightMask } from './vehicles/headlights';
-import { disposePool, makePool, setPoolFade, setPoolLight } from './traffic/headPools';
+import { disposePool, drapePool, makePool, setPlayerLamps, setPoolFade, setPoolLight } from './traffic/headPools';
 import { AITRUCK, Truckers, truckerKinds, truckerNames } from './traffic/truckers';
 // Точки вздовж машини у світі — для трафіку й ботів (навколо кожної півдовжина 2,5 м).
 import { alongPoints } from './traffic/botDriver';
@@ -2212,6 +2212,7 @@ export class Ht2Drive {
       host.add(this.backPool);
     }
     setPoolFade(this.backPool, bits === 3 ? 1 : 0.5);
+    drapePool(this.backPool, this.rapier);
   }
 
   /** Листя на вітрі: точка землі під вантажівкою (променем униз) і напрям погляду камери. */
@@ -4164,6 +4165,8 @@ export class Ht2Drive {
     this.dents?.rearLights(this.truck.brakePedal(state) > 0, reverse, this.sizeLights);
     this.trailerDents?.rearLights(false, reverse, this.sizeLights);
     this.updateBackPool();
+    // Плями фар трафіку, ботів і заднього ходу не множать світло фар гравця (headPools.ts FRAGMENT).
+    setPlayerLamps(this.lamps);
     // Двірники — два стани (увімкнені / вимкнені): світяться, поки ввімкнені (і без скла кабіни — за вибором чи дощем).
     this.input.setToggle('wipers', this.glassRain?.wipersOn ?? this.wipersManual);
     this.input.setToggle('mirror', this.mirrorOn);

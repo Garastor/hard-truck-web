@@ -9,7 +9,7 @@ import { Navigator } from '../world/navigator';
 import { control, newPhysState, type PhysState } from './physical';
 import type { TruckVehicle } from '../engine/vehicle/truckVehicle';
 import type { Ht2Trucks } from '../vehicles/trucks';
-import { disposePool, makePool, setPoolFade } from './headPools';
+import { DRAPE_NEAR, disposePool, drapePool, makePool, setPoolFade } from './headPools';
 import { markMover } from '../world/roomVisibility';
 import { Blinkers } from './blinkers';
 import { groundNear, layered } from './layers';
@@ -355,6 +355,7 @@ export class Traffic {
       }
       const d = c.pos.distanceTo(player);
       setPoolFade(c.pool, THREE.MathUtils.clamp((R - d) / (0.3 * R), 0, 1));
+      if (d < DRAPE_NEAR) drapePool(c.pool, this.rapier);
     }
   }
 

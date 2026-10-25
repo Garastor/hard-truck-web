@@ -8,7 +8,7 @@ import { drivable, truckDef, type Ht2Trucks } from '../vehicles/trucks';
 import { Trailer } from '../vehicles/trailer';
 import type { SemiKind } from '../vehicles/presents';
 import { recolor } from './traffic';
-import { disposePool, makePool, setPoolFade } from './headPools';
+import { DRAPE_NEAR, disposePool, drapePool, makePool, setPoolFade } from './headPools';
 import { markMover } from '../world/roomVisibility';
 import { g2t } from '../engine/physics/world';
 import { Freight, type FreightCapacity, type FreightJob } from './freight';
@@ -611,6 +611,7 @@ export class Truckers {
       }
       const d = host.position.distanceTo(player);
       setPoolFade(r.pool, THREE.MathUtils.clamp((R - d) / (0.3 * R), 0, 1));
+      if (d < DRAPE_NEAR) drapePool(r.pool, this.drive.rapierWorld);
     }
   }
 
