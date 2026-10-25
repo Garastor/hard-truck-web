@@ -107,6 +107,7 @@ export function truckDef(t: Ht2Trucks, r: TechRecord): TruckDef | null {
         { pos: r.smokePosition, dir: r.smokeDirection },
         { pos: r.smokePosition2, dir: r.smokeDirection2 },
       ],
+      ...(r.group === 'tractors' ? { saddle: [r.lowSaddle[0], r.lowSaddle[1], r.lowSaddle[2]] as [number, number, number] } : {}),
     },
   };
 }

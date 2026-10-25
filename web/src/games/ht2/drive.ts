@@ -41,7 +41,7 @@ import { WorldMap, type MapPoint } from './world/worldMap';
 import { MapReveal } from './world/mapReveal';
 import { GlassRain } from './engine/render/glassRain';
 import { Dents, dentGeometry, hitEnergy } from './vehicles/dents';
-import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type SemiKind, type TrailerChoice } from './vehicles/presents';
+import { basePlaces, fuelNodes, Presents, roadPlaces, semiKinds, type Present, type SemiKind, type TrailerChoice } from './vehicles/presents';
 import { Caches, hiddenPlaces, type Cache } from './vehicles/caches';
 import { orderVehicle, vehicleOffers, vehiclePowers, vehiclePrices } from './career/carOrder';
 import { HIRED_MIN_SPEED, HiredOnRoads } from './career/hired';
@@ -1606,6 +1606,9 @@ export class Ht2Drive {
     const forward = this.truck.forward();
     const model = buildTruckModel(this.trucks.asm, this.def, true);
     if (!model) return;
+    // Причіп лишається, де стояв (зокрема ще підтягується до сідла) — шворінь сам дійде в сідло (Trailer.pull).
+    const tb = this.trailer?.body;
+    const keep = tb ? { position: new THREE.Vector3().copy(tb.translation()), quaternion: new THREE.Quaternion().copy(tb.rotation()) } : undefined;
     if (this.paint > 0) recolor(model.root, this.trucks, this.paint + 1);
     this.world.scene.remove(this.truck.visual);
     this.truck.dispose();
@@ -1613,7 +1616,7 @@ export class Ht2Drive {
     this.truck.visual.userData.model = model;
     this.truck.setDamage({ power: 1, lostGears: 0, brakes: this.tuning.brakes });
     this.world.scene.add(this.truck.visual);
-    this.hitch();
+    this.hitch(keep);
     this.mountLamps();
   }
 
@@ -1790,7 +1793,7 @@ export class Ht2Drive {
    * Напівпричіп тягача: STrailerM (кузов-модуль) або заданий; у «Шторма» — свій STrailerStorm. Вантаж — у
    * причепі. Старий причіп прибираємо.
    */
-  private hitch(): void {
+  private hitch(start?: { position: THREE.Vector3; quaternion: THREE.Quaternion }): void {
     this.skipHits = 3;
     // Нова модель — перемикачі вмʼятин і вогнів (стан пошкоджень — з кар'єри).
     const m = this.truck.visual.userData.model as TruckModel | undefined;
@@ -1825,7 +1828,7 @@ export class Ht2Drive {
     const cluster = c?.trailer?.cluster ?? (freeOk ? free!.cluster : 0);
     this.semiNow = { carNode: tr.carNode, cluster };
     const paint = cluster > 0 ? (root: THREE.Object3D) => recolor(root, this.trucks, cluster + 1) : undefined;
-    this.trailer = new Trailer(this.rapier, this.trucks.asm, def, tr, { body: this.truck.body, saddle: rec.lowSaddle }, this.cargoMass, paint);
+    this.trailer = new Trailer(this.rapier, this.trucks.asm, def, tr, { body: this.truck.body, saddle: rec.lowSaddle }, this.cargoMass, paint, start);
     this.world.scene.add(this.trailer.visual);
     this.trailer.setSwitch?.('refer_IconKey', this.ownIcon);
     const trl = this.trailer;
@@ -1945,6 +1948,25 @@ export class Ht2Drive {
     return this.rec?.group;
   }
 
+  /**
+   * Верх рами тягача без причепа (світ): сітка точок від задньої стінки кабіни до заду на висоті сідла — під неї
+   * піднімається передок причепа на опорах (Presents.raise). Перша точка — сідло. Не тягач чи з причепом — null.
+   */
+  private frameTop(): THREE.Vector3[] | null {
+    const f = this.truck.frame;
+    if (!f || this.trailer) return null;
+    const t = this.truck.body.translation();
+    const r = this.truck.body.rotation();
+    const m = new THREE.Matrix4().compose(new THREE.Vector3(t.x, t.y, t.z), new THREE.Quaternion(r.x, r.y, r.z, r.w), new THREE.Vector3(1, 1, 1));
+    const pts = [new THREE.Vector3(0, f.top, f.saddleZ).applyMatrix4(m)];
+    const n = Math.max(1, Math.ceil((f.rear - f.front) / 0.5));
+    for (let i = 0; i <= n; i++) {
+      const z = f.front + ((f.rear - f.front) * i) / n;
+      for (const x of [-f.halfWidth, 0, f.halfWidth]) pts.push(new THREE.Vector3(x, f.top, z).applyMatrix4(m));
+    }
+    return pts;
+  }
+
   /** Тягач гравця може тягти тип причепа: «Шторм» — лише свій, інші — модулі й цистерни (evehicles.sch). */
   private canTow(k: SemiKind): boolean {
     const storm = /^Storm/i.test(this.rec?.carNode ?? '');
@@ -1961,10 +1983,16 @@ export class Ht2Drive {
    * місці present'ом, з вантажем — «місією» з тим самим замовленням і строком; у вільній їзді (presents немає) —
    * зникає.
    */
-  private dropTrailer(): void {
+  private dropTrailer(leave = true): void {
     if (!this.trailer) return;
     const c = this.opts.career;
     const t = this.trailer.visual;
+    // Вільна їзда: причіп лишається на дорозі (без збереження), його можна знову причепити; «Без причепа» з меню —
+    // зникає.
+    if (!c && leave && this.presents && !this.race) {
+      const kind = this.semiTypes.find((k) => k.carNode === this.semiNow.carNode && k.cluster === this.semiNow.cluster);
+      if (kind) this.presents.drop(kind, t.position.clone(), new THREE.Vector3(0, 0, -1).applyQuaternion(t.quaternion), 0, { dents: { ...this.freeTrailerDents } });
+    }
     if (c && this.presents) {
       const kind = this.semiTypes.find((k) => k.id === c.trailer?.id);
       const order = c.order ?? undefined;
@@ -1988,22 +2016,45 @@ export class Ht2Drive {
     }
   }
 
+  /** Причіп для зчіпки поруч (умови king.exe 0x55f000, presents.hitchable). */
+  private nearPresent(): ReturnType<Presents['hitchable']> {
+    const saddle = g2t(this.rec!.lowSaddle).applyMatrix4(this.truck.visual.matrixWorld);
+    return this.presents!.hitchable(saddle, this.truck.forward(), (k) => this.canTow(k));
+  }
+
+  /** Поза моделі причепа, що стоїть окремо (з піднятим передком), — з неї починається зчеплений причіп. */
+  private presentPose(p: Present): { position: THREE.Vector3; quaternion: THREE.Quaternion } | undefined {
+    const v = p.model?.visual;
+    return v ? { position: v.position.clone(), quaternion: v.quaternion.clone() } : undefined;
+  }
+
   private toggleTrailer(): void {
     const c = this.opts.career;
     if (!this.hitched || this.race) return;
-    // Вільна їзда (кинутих причепів — presents — немає): причіп зникає й зʼявляється знову на сідлі (порт; раніше
-    // клавіша тут мовчки нічого не робила).
+    // Вільна їзда: відчеплений причіп лишається на дорозі (presents, без збереження), T біля нього чіпляє його; поруч
+    // причепа немає — зʼявляється новий на сідлі (порт).
     if (!c || !this.presents) {
       if (this.truck.speedKmh > 5) return this.say(this.trailer ? 'ЗУПИНІТЬСЯ, ЩОБ ВІДЧЕПИТИ ПРИЧІП' : 'ЗУПИНІТЬСЯ, ЩОБ ПРИЧЕПИТИ ПРИЧІП');
       if (this.trailer) {
         this.dropTrailer();
         this.say('ПРИЧІП ВІДЧЕПЛЕНО');
-      } else {
-        // «Без причепа» з меню — клавіша знову чіпляє типовий.
-        if (this.freeSemi === null) this.freeSemi = undefined;
-        this.hitch();
-        if (this.trailer) this.say('ПРИЧІП ПРИЧЕПЛЕНО');
+        return;
       }
+      const near = this.presents ? this.nearPresent() : null;
+      if (near?.present) {
+        const p = near.present;
+        const start = this.presentPose(p);
+        this.freeSemi = { carNode: p.kind.carNode, cluster: p.kind.cluster };
+        this.presents!.take(p);
+        this.hitch(start);
+        if (this.trailer) this.say('ПРИЧІП ПРИЧЕПЛЕНО');
+        return;
+      }
+      if (near && near.why !== 'far') return this.say(near.why === 'type' ? 'ЦЕЙ ПРИЧІП НЕ ПІДХОДИТЬ ДО ТЯГАЧА' : 'ПІДЇДЬТЕ СІДЛОМ ДО ШВОРНЯ ПРИЧЕПА');
+      // «Без причепа» з меню — клавіша знову чіпляє типовий.
+      if (this.freeSemi === null) this.freeSemi = undefined;
+      this.hitch();
+      if (this.trailer) this.say('ПРИЧІП ПРИЧЕПЛЕНО');
       return;
     }
     if (this.trailer) {
@@ -2012,18 +2063,18 @@ export class Ht2Drive {
       this.say('ПРИЧІП ВІДЧЕПЛЕНО');
       return;
     }
-    const rec = this.rec!;
-    const saddle = g2t(rec.lowSaddle).applyMatrix4(this.truck.visual.matrixWorld);
-    const { present, why } = this.presents.hitchable(saddle, this.truck.forward(), (k) => this.canTow(k));
+    const { present, why } = this.nearPresent();
     if (!present) {
       this.say(why === 'type' ? 'ЦЕЙ ПРИЧІП НЕ ПІДХОДИТЬ ДО ТЯГАЧА' : why === 'align' ? 'ПІДЇДЬТЕ СІДЛОМ ДО ШВОРНЯ ПРИЧЕПА' : 'ПОРУЧ НЕМАЄ ПРИЧЕПА');
       return;
     }
     const take = () => {
+      // Причіп лишається, де стоїть (передок — на рамі), шворінь підтягується в сідло (Trailer.pull).
+      const start = this.presentPose(present);
       this.presents!.take(present);
       c.trailer = { id: present.kind.id, carNode: present.kind.carNode, cluster: present.kind.cluster } satisfies TrailerChoice;
       c.trailerDents = { ...(present.dents ?? {}) };
-      this.hitch();
+      this.hitch(start);
       this.say('ПРИЧІП ПРИЧЕПЛЕНО');
       c.presents = this.presents!.snapshot();
       this.careerMode?.persist();
@@ -2402,7 +2453,7 @@ export class Ht2Drive {
         set: (v) => {
           if (v === 'none') {
             this.freeSemi = null;
-            this.dropTrailer();
+            this.dropTrailer(false);
           } else {
             this.freeSemi = { carNode: v, cluster: 0 };
             this.hitch();
@@ -4102,11 +4153,11 @@ export class Ht2Drive {
     // Причепити / відчепити — лише тягачем; світиться, поки причіп зчеплений.
     this.input.setToggle('attach', !!this.trailer, !this.hitched || !!this.race);
     if (this.careerMode) this.hiredStep(dt);
-    // Вільна їзда: причепи лише стоять (поповнення й моделі біля гравця), T прибирає й повертає свій причіп.
-    if (this.presents && !this.careerMode) this.presents.update(this.truck.visual.position, 0, (k) => this.canTow(k), dt);
+    // Вільна їзда: причепи лише стоять (поповнення й моделі біля гравця), T чіпляє й кидає причіп.
+    if (this.presents && !this.careerMode) this.presents.update(this.truck.visual.position, 0, (k) => this.canTow(k), dt, this.frameTop());
     if (this.presents && this.careerMode) {
       const cm = this.careerMode;
-      this.presents.update(this.truck.visual.position, cm.career.time, (k) => this.canTow(k), dt);
+      this.presents.update(this.truck.visual.position, cm.career.time, (k) => this.canTow(k), dt, this.frameTop());
       const expired = this.presents.expire(cm.career.time);
       // Причепи — у даних кар'єри раз на секунду (їх зберігає будь-яке збереження кар'єри), прострочення — одразу.
       if ((this.presentsSaveTimer -= dt) <= 0 || expired) {

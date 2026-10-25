@@ -50,6 +50,8 @@ const BREAK_TILT = Math.cos((45 * Math.PI) / 180);
 const BREAK_GAP = 5;
 /** Повернення до спільного крену, 1/с. */
 const ROLL_RETURN = 5;
+/** Підтягування шворня до сідла після зчеплення (pull), м/с — гіпотеза порту. */
+const PULL_SPEED = 2.5;
 
 /** Зчеплення шин для динамічного руху причепа (dynamic) — від тягача: μ поздовжнє й множник бічного. */
 export interface TrailerTires {
@@ -74,6 +76,8 @@ export class Trailer {
   private readonly wheels: { obj: THREE.Object3D; base: THREE.Matrix4 }[];
   private readonly kingpin: THREE.Vector3;
   private readonly saddle: THREE.Vector3;
+  /** Точка шарніра на тягачі (система тягача): у сідлі, а під час підтягування (pull) — ще дорогою до нього. */
+  private readonly anchor = new THREE.Vector3();
   /** Перемикачі моделі причепа (вмʼятини, побиті колеса, габарити, стоп-сигнали) і кількість їхніх станів. */
   readonly setSwitch: ((name: string, state: number) => void) | undefined;
   readonly switchStates: ((name: string) => number) | undefined;
@@ -95,6 +99,11 @@ export class Trailer {
     cargoMass = 0,
     /** Фарбування (кластер TRUCKS.OVL, presents.ts) — перефарбувати модель. */
     paint?: (root: THREE.Object3D) => void,
+    /**
+     * Поза причепа, що стояв окремо (present): причіп лишається там, а шворінь підтягується в сідло (pull) — як
+     * пружина зчіпки king.exe у стані «підтягування» (0x558850, `+0x5584` = −1, до d < 0,5 м). Без пози — одразу в сідлі.
+     */
+    start?: { position: THREE.Vector3; quaternion: THREE.Quaternion },
   ) {
     // Окремий екземпляр моделі — свої перемикачі (вмʼятини, колеса й вогні цього причепа).
     const model = buildTruckModel(asm, def, true);
@@ -119,7 +128,7 @@ export class Trailer {
 
     this.kingpin = g2t(rec.topSaddle);
     this.saddle = g2t(tractor.saddle);
-    const { position, rotation } = this.poseBehind();
+    const { position, rotation } = start ? { position: start.position, rotation: start.quaternion } : this.poseBehind();
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic().setTranslation(position.x, position.y, position.z).setRotation(rotation).setAngularDamping(0.5).setCanSleep(false),
     );
@@ -159,8 +168,11 @@ export class Trailer {
       tire.setEnabled(false);
       this.tires.push(tire);
     });
+    // Шарнір — від того місця на тягачі, де зараз шворінь (start); далі pull веде його до сідла.
+    if (start) this.anchor.copy(this.kingpin).applyMatrix4(matrixOf(this.body)).applyMatrix4(matrixOf(tractor.body).invert());
+    else this.anchor.copy(this.saddle);
     const joint = RAPIER.JointData.spherical(
-      { x: this.saddle.x, y: this.saddle.y, z: this.saddle.z },
+      { x: this.anchor.x, y: this.anchor.y, z: this.anchor.z },
       { x: this.kingpin.x, y: this.kingpin.y, z: this.kingpin.z },
     );
     this.joint = world.createImpulseJoint(joint, tractor.body, this.body, true);
@@ -214,6 +226,8 @@ export class Trailer {
 
   /** Після перестановки тягача (відновлення на дорозі) — причіп за ним. */
   reset(): void {
+    this.anchor.copy(this.saddle);
+    this.joint.setAnchor1(this.anchor);
     const { position, rotation } = this.poseBehind();
     this.body.setTranslation(position, true);
     this.body.setRotation(rotation, true);
@@ -278,7 +292,7 @@ export class Trailer {
     n.normalize();
     const tq = this.tractor.body.rotation();
     const tt = this.tractor.body.translation();
-    const kp = this.saddle.clone().applyQuaternion(new THREE.Quaternion(tq.x, tq.y, tq.z, tq.w)).add(new THREE.Vector3(tt.x, tt.y, tt.z));
+    const kp = this.anchor.clone().applyQuaternion(new THREE.Quaternion(tq.x, tq.y, tq.z, tq.w)).add(new THREE.Vector3(tt.x, tt.y, tt.z));
     const vk = this.tractor.body.velocityAtPoint(kp);
     const vK = new THREE.Vector3(vk.x, vk.y, vk.z);
     const r = this.body.rotation();
@@ -488,6 +502,7 @@ export class Trailer {
    */
   update(dt: number, brake: number, brakePower: number, kinematic = false, tires?: TrailerTires): void {
     this.savePrev();
+    this.pull(dt);
     this.kinematic = kinematic;
     this.updateTip();
     if (this.tipped) {
@@ -631,9 +646,27 @@ export class Trailer {
     return [-4, 0, 5].map((z) => new THREE.Vector3(0, 0, z).applyMatrix4(this.visual.matrix));
   }
 
-  /** Відстань між шкворнем і сідлом (розрив зчеплення, для перевірки). */
+  /** Шворінь ще підтягується до сідла (pull). */
+  get pulling(): boolean {
+    return this.anchor.distanceToSquared(this.saddle) > 1e-8;
+  }
+
+  /**
+   * Підтягування шворня в сідло після зчеплення з причепом, що стояв окремо: точка шарніра на тягачі йде до сідла
+   * зі швидкістю PULL_SPEED (king.exe 0x558850/0x558f20 — пружина зчіпки м'якшає в стані −1 до d < 0,5 м; сила
+   * пружини — не перенесено, швидкість — гіпотеза порту). Контакти тягач — причіп вимкнено шарніром.
+   */
+  private pull(dt: number): void {
+    if (!this.pulling) return;
+    const d = this.saddle.clone().sub(this.anchor);
+    const len = d.length();
+    this.anchor.addScaledVector(d, Math.min(1, (PULL_SPEED * dt) / len));
+    this.joint.setAnchor1(this.anchor);
+  }
+
+  /** Відстань між шкворнем і точкою шарніра на тягачі (розрив зчеплення, для перевірки). */
   get gap(): number {
-    const a = this.saddle.clone().applyMatrix4(matrixOf(this.tractor.body));
+    const a = this.anchor.clone().applyMatrix4(matrixOf(this.tractor.body));
     const b = this.kingpin.clone().applyMatrix4(matrixOf(this.body));
     return a.distanceTo(b);
   }
