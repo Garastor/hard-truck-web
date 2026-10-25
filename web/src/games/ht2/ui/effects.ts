@@ -31,11 +31,6 @@ export function geometryKey(d: number): number {
 export const glassDrops = (): boolean => cur.g > 0.5 && cur.d > 0.2;
 /** Фари чужих машин (0x696040, setLampValue): g > 0,5 і d > 0,5. */
 export const trafficHeadlights = (): boolean => cur.g > 0.5 && cur.d > 0.5;
-/**
- * Справжній прожектор фар найближчої зустрічної машини (порт, на прохання користувача; дорожчий за плями
- * traffic/headPools.ts): фари трафіку й висока деталізація d > 0,75.
- */
-export const trafficLamp = (): boolean => trafficHeadlights() && cur.d > 0.75;
 /** Дощ і сніг частинками CRain/CSnow (0x696060, 0x696080): g > 0,5 і d > 0,5. */
 export const precipitation = (): boolean => cur.g > 0.5 && cur.d > 0.5;
 /** Світло від вогню ThrowLamp (0x4d9cd0): g > 0,5. */

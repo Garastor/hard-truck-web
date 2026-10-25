@@ -79,6 +79,8 @@ export class Trailer {
   readonly switchStates: ((name: string) => number) | undefined;
   /** Колеса й габарити для пошкоджень (dents.ts). */
   readonly dentGeom: DentGeometry;
+  /** Коробка видимої геометрії в системі visual (Three.js): пляма заднього ходу (drive.updateBackPool). */
+  readonly lightBox: THREE.Box3;
   /** Горизонтальна швидкість після попереднього виклику velocityChange (удари). */
   private readonly lastVel = new THREE.Vector3();
   /** Удари в русі king.exe (follow) — без власного кінематичного кроку. */
@@ -114,6 +116,7 @@ export class Trailer {
     frame.updateMatrixWorld(true);
     const box = visibleBox(model.body);
     this.dentGeom = dentGeometry(model, box);
+    this.lightBox = box.clone();
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
 
