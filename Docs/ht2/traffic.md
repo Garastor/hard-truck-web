@@ -196,7 +196,8 @@ aa, bc, cb). Сам біт 0x10 базу не позначає: він є й н�
     Лінії чи складу вже немає — водій на випадковій дорозі чи з новим рейсом.
 - **Суперники на замовленні гравця** (2026-10-22; king.exe `provideCompetitionRegular` 0x4262a0 / `Special` 0x425dd0,
   `re/notes/ht2/company.md` §4): ті самі водії `Fleet` з позначкою `FleetMember.rival` (рейс змагання, `slow`,
-  `delay`). `careerMode.attachRivals` → `rivalPlan(d.trafficDensity)` (повний трафік — 3–7, найменший — 3–4, попереду 0–3; з імовірністю 0,6 — гіпотеза) →
+  `delay`). `careerMode.attachRivals` → `rivalPlan(d.trafficDensity)` (повний трафік — 3–7, найменший — 3–4, попереду 0–3; на **кожному** складському замовленні, крім товару `fuel` —
+  king.exe 0x4262a0, гіпотезу «шанс 0,6» прибрано 2026-10-25) →
   `Truckers.recruitRivals`: найближчі вільні водії (не наймані, не машиною) отримують рейс `deliver` того самого
   замовлення (`Freight.sendLoaded`, вантаж у причепі); маршрут > `SPECIAL_ROUTE` 1000 м — `Fleet.placeBest` на смугу
   гравця + `Fleet.shift` на `specialOffsets` (k·150 ± 10 м: попереду, далі позаду; назад — попередніми лініями).
