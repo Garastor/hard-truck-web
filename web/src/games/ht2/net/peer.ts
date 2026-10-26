@@ -11,7 +11,7 @@ import { decodeSignal, encodeSignal, sdpFromSignal, sdpMid, signalFromSdp, Signa
  * Версія протоколу: різні версії порту не з'єднуються (повідомлення гравцям). Своя в другої гри — коди `HT2:` і так
  * не підходять першій (signal.ts).
  */
-export const NET_VERSION = 4;
+export const NET_VERSION = 5;
 /** Скільки чекати збору адрес (у локальній мережі — частки секунди), мс. */
 const GATHER_TIMEOUT = 4000;
 /**
@@ -70,19 +70,22 @@ export type NetTrack = 'ring' | 'trial' | 'ball' | 'career';
 /**
  * Вибір господаря — поля екрана «Сервер» king.exe (re/notes/ht2/tracks.md §2): траса, аркада чи симулятор,
  * повзунки «Насыщенность трасс», «Длительность суток», «Погода» (0…1). Однакові в усіх телефонів — однакові доба й
- * погода (у гонці погода стала, Climate за повзунком).
+ * погода (у гонці погода стала, Climate за повзунком). `rivals` — суперників на автопілоті в Кільці й Тріалі (точне
+ * число 0…15 стрілками; власний інтерфейс порту, у king.exe — завжди вільні місця решітки); `traffic` — лише в
+ * мережевій кар'єрі (насиченість трас, як повзунок одиночної гри).
  */
 export interface NetSetup {
   track: NetTrack;
   arcade: boolean;
+  rivals: number;
   traffic: number;
   dayLength: number;
   weather: number;
 }
 
-export const DEFAULT_SETUP: NetSetup = { track: 'ring', arcade: false, traffic: 0.5, dayLength: 0.5, weather: 0.6 };
+export const DEFAULT_SETUP: NetSetup = { track: 'ring', arcade: false, rivals: 6, traffic: 0.5, dayLength: 0.5, weather: 0.6 };
 
-/** Машина: car_node (vehicle.tech) і колір (0…3, картинки n/<марка><колір>.msk). */
+/** Машина: car_node (vehicle.tech) і колір (0…3; фото — net/cars.ts carPhoto). */
 export interface NetCar {
   truck: string;
   color: number;

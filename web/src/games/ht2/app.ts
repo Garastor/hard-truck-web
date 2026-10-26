@@ -18,9 +18,13 @@ import { parseIni } from './engine/formats/ini';
 import { decodeCp1251 } from './engine/formats/binary';
 import { WorldViewer } from './ui/viewer';
 import { Ht2Drive } from './drive';
-import { DEFAULT_DRIVER, currentDriver, deleteDriver, formatMoney, listDrivers, listSaves, loadCareer, newCareer, putDriver, selectDriver, type Ht2Career } from './career/career';
+import { DEFAULT_DRIVER, currentDriver, deleteDriver, formatMoney, listDrivers, listSaves, loadCareer, netCareerFor, newCareer, putDriver, selectDriver, type Ht2Career } from './career/career';
 import { modal, setHudFont } from './engine/ui/modal';
-import { DEFAULT_CAR, ht2NetMenu, type NetStart } from './ui/netScreens';
+import { DEFAULT_CAR, ht2NetMenu, type CarSpecs, type NetStart } from './ui/netScreens';
+import { EscArt } from './ui/escArt';
+import { parseTech } from './formats/tech';
+import { readSch } from './formats/sexpr';
+import { vehiclePowers } from './career/carOrder';
 import type { NetCar } from './net/peer';
 import type { NetSession } from './net/session';
 import { joinNetCareer, joinNetDrive } from './netPlay';
@@ -37,12 +41,54 @@ function arenaParam(v: string | null): Arena | null {
  * Мережева кар'єра водія (М6): окреме збереження `net-<водій>` з позначкою net (у списку збережень одиночної гри його
  * немає); немає — нова, з машиною з екрана «Мережева гра».
  */
-function netCareer(driver: string, truck: string): Ht2Career {
-  const id = `net-${driver}`;
-  const c = loadCareer(id) ?? { ...newCareer(driver, truck), id, net: true };
+function netCareer(driver: string, car: NetCar): Ht2Career {
+  const c = netCareerFor(driver, car.truck, netSave.get(driver));
+  // Нова — з кольором машини з екрана; вибір у лобі тепер вказує на неї (наступного разу — продовжити).
+  if (!c.savedAt) c.paint = car.color;
+  if (c.id) netSave.set(driver, c.id);
   const d = listDrivers().find((x) => x.name === driver);
   if (d) Object.assign(c, { logo: d.logo, photo: d.photo });
   return c;
+}
+
+/**
+ * Вибране збереження мережевої кар'єри для кожного водія (`ht2.netsave.v1`: водій → id чи null — нова); водія немає —
+ * найновіше збереження (career.ts netCareerFor).
+ */
+const NET_SAVE_KEY = 'ht2.netsave.v1';
+const netSave = {
+  all(): Record<string, string | null> {
+    try {
+      const v = JSON.parse(localStorage.getItem(NET_SAVE_KEY) ?? '{}') as unknown;
+      return v && typeof v === 'object' ? (v as Record<string, string | null>) : {};
+    } catch {
+      return {};
+    }
+  },
+  get(driver: string): string | null | undefined {
+    const v = this.all()[driver];
+    return v === null || typeof v === 'string' ? v : undefined;
+  },
+  set(driver: string, id: string | null): void {
+    try {
+      localStorage.setItem(NET_SAVE_KEY, JSON.stringify({ ...this.all(), [driver]: id }));
+    } catch {
+      // приватний режим — не запамʼятовуємо
+    }
+  },
+};
+
+/** Потужність (evehicles.sch, як у вікні замовлення) і вантажопідйомність (vehicle.tech) — для екрана машини. */
+async function netCarSpecs(source: FileSource): Promise<CarSpecs> {
+  const out: CarSpecs = new Map();
+  try {
+    const [tech, sch] = await Promise.all([source.read('vehicle.tech').then(parseTech), source.read('evehicles.sch').then(readSch).catch(() => [])]);
+    const powers = vehiclePowers(sch);
+    for (const r of tech.records) out.set(r.carNode, { power: powers.get(r.carNode) ?? r.horsePower, capacity: Math.round(r.cargoLoad / 1000) });
+  } catch {
+    // без характеристик — лише назва
+  }
+  return out;
 }
 
 /** Машина мережевої гри (екран n/backMult) — запамʼятовується в браузері. */
@@ -177,6 +223,7 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   // Мережева гра: сесія, до якої повернутися із заїзду, і заїзд, який почав сервер, поки ми ще їхали.
   let netFrom: NetSession | null = null;
   let netNext: NetStart | null = null;
+  let carSpecs: Promise<CarSpecs> | null = null;
   for (;;) {
     const driver = currentDriver();
     const note = driver ? `За кермом: ${driver.name}` : 'Дальнобойщики 2 — порт у розробці';
@@ -347,7 +394,18 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
     if (choice === 'net' && art) {
       // «Мережева гра»: вибір машини, сервер/клієнт, сесія (ui/netScreens.ts) → заїзд → назад до сесії.
       const driverName = currentDriver()?.name ?? DEFAULT_DRIVER;
-      const start = netNext ?? (await ht2NetMenu(art, { driver: driverName, car: loadNetCar(), from: netFrom, onCar: saveNetCar }));
+      const start =
+        netNext ??
+        (await ht2NetMenu(art, {
+          driver: driverName,
+          car: loadNetCar(),
+          from: netFrom,
+          onCar: saveNetCar,
+          // Фото варіантів машин — esc16.RES (57 МБ; кеш на джерело — у заїзді не читається вдруге).
+          escArt: EscArt.load(source),
+          specs: (carSpecs ??= netCarSpecs(source)),
+          careerSave: { get: () => netSave.get(driverName), set: (id) => netSave.set(driverName, id) },
+        }));
       netNext = null;
       netFrom = null;
       if (!start) continue;
@@ -386,11 +444,12 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           color: mine.color,
         };
         // Мережева кар'єра (М6): своє збереження `net-<водій>` (окреме від одиночних), доба й погода — свої.
-        const career = track === 'career' ? netCareer(driverName, mine.truck) : null;
+        const career = track === 'career' ? netCareer(driverName, mine) : null;
         // Доба, погода й складність трас — сервера (однакові в усіх); звук, графіка й клавіші — свої.
         const netSettings: Ht2Settings = { ...settings, arcade: start.setup.arcade, traffic: start.setup.traffic, dayLength: start.setup.dayLength, weather: start.setup.weather };
         (career
-          ? Ht2Drive.start({ ...common, career, netCareer: { myId, host: session.host, players, rivals: [] }, settings })
+          ? // Насиченість трас — сервера (повзунок налаштувань мережевої кар'єри), доба й погода — свої.
+            Ht2Drive.start({ ...common, career, netCareer: { myId, host: session.host, players, rivals: [] }, settings: { ...settings, traffic: start.setup.traffic } })
           : Ht2Drive.start({
               ...common,
               truck: mine.truck,

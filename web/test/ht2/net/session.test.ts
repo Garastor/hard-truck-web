@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CloseReason, NetMessage, NetPeer, NetPeerEvents } from '../../../src/games/ht2/net/peer';
 import { MAX_PLAYERS, NetSession } from '../../../src/games/ht2/net/session';
 import { emptyState, packFleet, unpackFleet } from '../../../src/games/ht2/net/state';
+import { pickRivals } from '../../../src/games/ht2/net/cars';
 
 /** Підставне з'єднання в пам'яті: два кінці, повідомлення — одразу іншому кінцю (як канали WebRTC, по порядку). */
 class FakePeer {
@@ -80,8 +81,8 @@ describe('сесія мережевої гри HT2', () => {
 
   it('вибір екрана «Сервер» і старт — усім; готовність гостей лічить господар', async () => {
     const { host, ira, taras } = await threeWay();
-    host.setSetup({ track: 'trial', arcade: true, traffic: 0.2, dayLength: 0.7, weather: 0.9 });
-    expect(ira.setup).toEqual({ track: 'trial', arcade: true, traffic: 0.2, dayLength: 0.7, weather: 0.9 });
+    host.setSetup({ track: 'trial', arcade: true, rivals: 11, traffic: 0.2, dayLength: 0.7, weather: 0.9 });
+    expect(ira.setup).toEqual({ track: 'trial', arcade: true, rivals: 11, traffic: 0.2, dayLength: 0.7, weather: 0.9 });
     const got: NetMessage[] = [];
     taras.events = { onMessage: (m) => got.push(m) };
     host.start([{ truck: 'Volvo', color: 1 }]);
@@ -152,5 +153,19 @@ describe('сесія мережевої гри HT2', () => {
     const [hx] = pair('Олег', 'Зайвий');
     expect(host.addGuest(hx)).toBe(false);
     host.close();
+  });
+
+  it('вибрана кількість суперників доходить до гостей: сервер стартує рівно стільки, гості отримують той самий список', async () => {
+    const { host, ira, taras } = await threeWay();
+    host.setSetup({ ...host.setup, track: 'ring', rivals: 13 });
+    expect(ira.setup.rivals).toBe(13);
+    const got: NetMessage[] = [];
+    ira.events = { onMessage: (m) => got.push(m) };
+    const m = host.start(pickRivals(host.setup, [...host.players.values()].map((p) => p.truck)));
+    expect(m.rivals).toHaveLength(13);
+    const start = got.find((x) => x.t === 'start') as NetMessage & { t: 'start' };
+    expect(start.rivals).toEqual(m.rivals);
+    expect(start.setup.rivals).toBe(13);
+    void taras;
   });
 });

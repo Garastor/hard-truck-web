@@ -1,20 +1,31 @@
 /**
- * «Мережева гра» другої гри: екрани оригіналу з LOAD.RES — вибір машини `n/backMult` (марка стрілками, колір,
- * «Сервер» / «Клиент») і екран сервера `h/backHost` (траса, складність, повзунки; re/notes/ht2/tracks.md §2). Сама
- * мережа — власна (net/, як у першій грі): WebRTC у локальній Wi-Fi, коди з'єднання QR-кодом чи текстом, до 8
- * гравців «зіркою» через господаря. Панель кодів і списку гравців — порту (в оригіналі DirectPlay, такого екрана
- * немає): лежить у колі екрана сервера над його кнопками; «Далее» оригіналу — старт, «Отмена» — назад.
+ * «Мережева гра» другої гри — власний інтерфейс порту (на прохання користувача, 2026-10-26: екрани оригіналу
+ * `n/backMult` / `h/backHost` не дають вибрати кількість суперників, змінити машину в сесії, вибрати збереження
+ * мережевої кар'єри). Екрани на весь екран у панелі-склі (ui/art/net-panel.png — згенерована під стиль меню king.exe):
+ * 1. машина й «Створити гру» / «Приєднатися» — фото варіантів з вікна замовлення машини (net/cars.ts);
+ * 2. налаштування заїзду (сервер): режим, суперники точним числом 0…15 (Кільце, Тріал), складність, доба й погода;
+ *    у кар'єрі — повзунок «Насиченість трас»;
+ * 3. коди з'єднання (QR, камера, текст) — як раніше;
+ * 4. лобі: гравці, заїзд, «+ Гравець», «Моя машина», «Змінити», «Старт»;
+ * 5. мережева кар'єра — своє збереження чи нова.
+ * Графіка оригіналу: стрілки `aleft`/`aright` і бігунок `runner_*` (LOAD.RES), фото машин `m16\<модель><колір>.msk`
+ * (esc16.RES; без нього — картинки марок `n/<марка><колір>.msk`). Сама мережа — net/ (WebRTC у локальній Wi-Fi).
  */
 import { DEFAULT_SETUP, NetPeer, type CloseReason, type NetCar, type NetPlayer, type NetSetup, type NetTrack } from '../net/peer';
 import { MAX_PLAYERS, NetSession } from '../net/session';
 import { PLAYER_COLORS } from '../net/state';
 import { QrScanner, cameraAvailable, qrCanvas } from '../net/qr';
-import { screen, texButton, type Ht2MenuArt, type RoundKey } from './menu';
+import { KIND_NAME, MAX_RIVALS, NET_MODELS, brandPhoto, carName, carPhoto, clampRivals, hasRivals, pickRivals } from '../net/cars';
+import { deleteSave, formatMoney, listNetSaves, type Ht2Career } from '../career/career';
+import { texButtonEl, type Ht2MenuArt, type RoundKey } from './menu';
+import type { EscArt } from './escArt';
+import panelUrl from './art/net-panel.png';
+import iconsUrl from './art/net-icons.png';
+
+export { DEFAULT_CAR, carName } from '../net/cars';
 
 /** Скільки чекати з'єднання після обміну кодами, мс. */
 const CONNECT_TIMEOUT = 15000;
-/** Місць на решітці (суперники господаря — на вільних, як `aitruck 8` у MENV/GAME.CNF). */
-const GRID = 8;
 
 const CLOSE_TEXT: Record<CloseReason, string> = {
   bye: 'Друг вийшов із гри.',
@@ -24,39 +35,7 @@ const CLOSE_TEXT: Record<CloseReason, string> = {
   local: '',
 };
 
-/**
- * Машини екрана «Мережева гра»: картинки `n/<марка><колір>.msk` (4 кольори) → car_node. Відповідність — з таблиць
- * king.exe поруч із цими назвами (0x275fe4…0x2761b4: `ZilR`, `KamazR`… і `Mack`, `Kenw`, `Frei`, `Peter` — тягачі):
- * де є вантажівка `…R` — вона (гонка без причепа), тягачі — Mack, Kenworth, Freightliner, Peterbilt, International;
- * легкові — BmwM5, Patrol, Sobol, Gazelle [гіпотеза за назвами]. Порядок — як у ресурсах; типово — RenaultR
- * (`live 1 "RenaultR"` у MENV/GAME.CNF).
- */
-export const NET_CARS: { brand: string; truck: string; name: string }[] = [
-  { brand: 'bmw', truck: 'BmwM5', name: 'BMW M5' },
-  { brand: 'daf', truck: 'DafR', name: 'DAF' },
-  { brand: 'frei', truck: 'Freightliner', name: 'Freightliner' },
-  { brand: 'gaz', truck: 'Gazelle', name: 'ГАЗель' },
-  { brand: 'inter', truck: 'International', name: 'International' },
-  { brand: 'kamaz', truck: 'KamazR', name: 'КамАЗ' },
-  { brand: 'kenw', truck: 'Kenworth', name: 'Kenworth' },
-  { brand: 'mack', truck: 'Mack', name: 'Mack' },
-  { brand: 'mers', truck: 'MercedesR', name: 'Mercedes' },
-  { brand: 'patrol', truck: 'Patrol', name: 'Nissan Patrol' },
-  { brand: 'peter', truck: 'Peterbilt', name: 'Peterbilt' },
-  { brand: 'reno', truck: 'RenaultR', name: 'Renault' },
-  { brand: 'scania', truck: 'ScaniaR', name: 'Scania' },
-  { brand: 'sobol', truck: 'Sobol', name: 'Соболь' },
-  { brand: 'storm', truck: 'StormR', name: 'Storm' },
-  { brand: 'volvo', truck: 'VolvoR', name: 'Volvo' },
-  { brand: 'zil', truck: 'ZilR', name: 'ЗіЛ' },
-];
-export const DEFAULT_CAR: NetCar = { truck: 'RenaultR', color: 0 };
-
-export function carName(truck: string): string {
-  return NET_CARS.find((c) => c.truck === truck)?.name ?? truck;
-}
-
-const TRACK_NAME: Record<NetTrack, string> = { ring: 'Кільце', trial: 'Тріал', ball: 'Автобол', career: 'кар’єра' };
+const TRACK_NAME: Record<NetTrack, string> = { ring: 'Кільце', trial: 'Тріал', ball: 'Автобол', career: 'Кар’єра' };
 
 /** Початок заїзду: сесія, вибір господаря, гравці з машинами, машини суперників (номери від FIRST_RIVAL). */
 export interface NetStart {
@@ -66,19 +45,8 @@ export interface NetStart {
   rivals: NetCar[];
 }
 
-/**
- * Суперники господаря (перед стартом): на вільні місця решітки — вантажівки й тягачі, яких немає в гравців (без
- * легкових і Storm — довгий для решітки), кольори по колу.
- */
-function pickRivals(session: NetSession): NetCar[] {
-  // Автобол — без суперників на автопілоті (MTB: GAME.CNF не читається, 0x512920); кар'єра — далекобійники світу.
-  if (session.setup.track === 'ball' || session.setup.track === 'career') return [];
-  const taken = new Set([...session.players.values()].map((p) => p.truck));
-  const pool = NET_CARS.filter((c) => !['BmwM5', 'Patrol', 'Sobol', 'Gazelle', 'StormR'].includes(c.truck));
-  const free = pool.filter((c) => !taken.has(c.truck));
-  const from = free.length ? free : pool;
-  return Array.from({ length: Math.max(0, GRID - session.players.size) }, (_, i) => ({ truck: from[(i * 5) % from.length].truck, color: i % 4 }));
-}
+/** Потужність (к. с., evehicles.sch — як у вікні замовлення) і вантажопідйомність (т, vehicle.tech) моделі. */
+export type CarSpecs = Map<string, { power: number; capacity: number }>;
 
 export interface NetMenuOptions {
   driver: string;
@@ -88,23 +56,33 @@ export interface NetMenuOptions {
   from?: NetSession | null;
   /** Машину змінено — зберегти вибір. */
   onCar?(car: NetCar): void;
+  /** Графіка esc16.RES (фото машин); null — немає файлу. */
+  escArt?: Promise<EscArt | null>;
+  /** Потужність і вантажопідйомність моделей. */
+  specs?: Promise<CarSpecs>;
+  /** Мережева кар'єра: вибране збереження (undefined — найновіше, null — нова) і зміна вибору. */
+  careerSave?: { get(): string | null | undefined; set(id: string | null): void };
 }
 
 /**
- * Розділ «Мережева гра»: вибір машини → «Сервер» (вибір траси) чи «Клиент» → обмін кодами → сесія. Результат —
- * початок заїзду, кругла кнопка рамки (інший розділ меню) чи null (головне меню).
+ * Розділ «Мережева гра»: машина → «Створити гру» (налаштування → коди) чи «Приєднатися» (коди) → лобі. Результат —
+ * початок заїзду чи null (головне меню). RoundKey — лише для сумісності з рештою меню (тут круглих кнопок немає).
  */
 export async function ht2NetMenu(art: Ht2MenuArt, o: NetMenuOptions): Promise<NetStart | RoundKey | null> {
+  const photos = new CarPhotos(art, o.escArt);
+  const specs = o.specs ?? Promise.resolve<CarSpecs>(new Map());
   let note: string | null = null;
   let session = o.from ?? null;
-  const car: NetCar = { ...(session?.me ?? o.car) };
+  let car: NetCar = { ...(session?.me ?? o.car) };
   for (;;) {
     if (!session || session.closed) {
-      const r = await multScreen(art, car, note, (c) => o.onCar?.(c));
+      const r = await carScreen(art, photos, specs, o.driver, car, note);
       note = null;
-      if (r === null || (r !== 'host' && r !== 'join')) return r;
-      if (r === 'host') {
-        const setup = await hostScreen(art, { ...DEFAULT_SETUP });
+      if (!r) return null;
+      car = r.car;
+      o.onCar?.({ ...car });
+      if (r.go === 'host') {
+        const setup = await setupScreen(art, { ...DEFAULT_SETUP }, false);
         if (!setup) continue;
         const peer = await connectPanel(art, o.driver, 'host', false);
         if (!peer) continue;
@@ -122,19 +100,32 @@ export async function ht2NetMenu(art: Ht2MenuArt, o: NetMenuOptions): Promise<Ne
         }
       }
     }
-    const r = await sessionPanel(art, o.driver, session);
+    const r = await lobby(art, photos, o, session);
+    // Поки відкрито інший екран, сесію веде сама сесія (гості чекають, списки оновлюються).
+    session.events = {};
     if (r === 'add') {
-      // Господар додає гравця: гості чекають у сесії (її веде сама сесія).
-      session.events = {};
       const peer = await connectPanel(art, o.driver, 'host', true);
       if (peer && !session.closed) session.addGuest(peer);
       else peer?.close();
       continue;
     }
     if (r === 'setup') {
-      session.events = {};
-      const s = await hostScreen(art, session.setup);
+      const s = await setupScreen(art, session.setup, true);
       if (s && !session.closed) session.setSetup(s);
+      continue;
+    }
+    if (r === 'car') {
+      const c = await carScreen(art, photos, specs, o.driver, session.me, null, true);
+      if (c && !session.closed) {
+        car = c.car;
+        session.pickCar(car);
+        o.onCar?.({ ...car });
+      }
+      continue;
+    }
+    if (r === 'save') {
+      const s = await saveScreen(art, photos, o.driver, o.careerSave?.get(), car);
+      if (s !== undefined) o.careerSave?.set(s);
       continue;
     }
     if (r && typeof r === 'object') return r;
@@ -143,167 +134,288 @@ export async function ht2NetMenu(art: Ht2MenuArt, o: NetMenuOptions): Promise<Ne
   }
 }
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string): HTMLElementTagNameMap[K] {
+// ——— Фото машин ———
+
+/** Фото варіантів: esc16.RES (коли довантажиться — onReady), до того й без нього — картинка марки з LOAD.RES. */
+class CarPhotos {
+  private esc: EscArt | null = null;
+  private waiting = new Set<() => void>();
+  constructor(
+    private readonly art: Ht2MenuArt,
+    esc?: Promise<EscArt | null>,
+  ) {
+    void esc?.then((e) => {
+      this.esc = e;
+      if (e) for (const f of this.waiting) f();
+      this.waiting.clear();
+    });
+  }
+  /** URL фото (null — немає жодного). */
+  url(truck: string, color: number): string | null {
+    const name = carPhoto(truck, color);
+    if (this.esc?.has(name)) return this.esc.url(name);
+    const b = brandPhoto(truck, color);
+    return b ? this.art.image(b) : null;
+  }
+  /** Перемалювати, коли з'являться справжні фото варіантів (лише раз). */
+  onReady(f: () => void): void {
+    if (!this.esc) this.waiting.add(f);
+  }
+}
+
+// ——— Будівельні блоки ———
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
-  e.className = cls;
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
   return e;
 }
 
-/** Елемент у точці (x, y) сцени 800×600 розміром w×h. */
-function place<T extends HTMLElement>(stage: HTMLElement, e: T, x: number, y: number, w: number, h: number): T {
-  e.classList.add('menu-abs');
-  Object.assign(e.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
-  stage.append(e);
+/** Екран на весь вікно: панель-скло із заголовком, вміст і рядок кнопок унизу. */
+function frame(title: string): { root: HTMLElement; head: HTMLElement; sub: HTMLElement; body: HTMLElement; foot: HTMLElement; close: () => void } {
+  const root = el('div', 'ht2-nui');
+  root.style.setProperty('--nui-panel', `url("${panelUrl}")`);
+  root.style.setProperty('--nui-icons', `url("${iconsUrl}")`);
+  const panel = el('div', 'ht2-nui-panel');
+  const top = el('div', 'ht2-nui-top');
+  const head = el('div', 'ht2-nui-title', title);
+  const sub = el('div', 'ht2-nui-sub');
+  top.append(head, sub);
+  const body = el('div', 'ht2-nui-body');
+  const foot = el('div', 'ht2-nui-foot');
+  panel.append(top, body, foot);
+  root.append(panel);
+  document.body.append(root);
+  document.body.classList.add('in-menu');
+  return {
+    root,
+    head,
+    sub,
+    body,
+    foot,
+    close: () => {
+      root.remove();
+      if (!document.querySelector('.ht2-nui, .menu-screen')) document.body.classList.remove('in-menu');
+    },
+  };
+}
+
+/** Кнопка-«пігулка» (зелена; primary — світла, як вибрана кнопка оригіналу). */
+function btn(text: string, action: () => void, cls = ''): HTMLButtonElement {
+  const b = el('button', `ht2-nui-btn ${cls}`.trim(), text);
+  b.addEventListener('click', action);
+  return b;
+}
+
+/** Стрілка оригіналу (`aleft`/`aright` з LOAD.RES). */
+function arrow(art: Ht2MenuArt, dir: 'left' | 'right', label: string, action: () => void, disabled?: () => boolean): { button: HTMLButtonElement; paint: () => void } {
+  const r = texButtonEl(art, dir === 'left' ? 'aleft' : 'aright', label, { ext: '.msk', action, disabled });
+  r.button.classList.add('ht2-nui-arrow');
+  return r;
+}
+
+/** Значок з аркуша ui/art/net-icons.png: 0 — сервер, 1 — на трасі, 2 — немає зв'язку, 3 — нове. */
+function icon(i: number, title: string): HTMLElement {
+  const e = el('i', 'ht2-nui-icon');
+  e.style.backgroundPosition = `${(i * 100) / 3}% 0`;
+  e.title = title;
   return e;
 }
+
+/** Рядок «підпис ◀ значення ▶» (лічильник). Повертає перемальовування. */
+function stepper(art: Ht2MenuArt, parent: HTMLElement, label: string, get: () => number, set: (v: number) => void, min: number, max: number, hint: () => string): () => void {
+  const row = el('div', 'ht2-nui-field');
+  const name = el('span', 'ht2-nui-label', label);
+  const value = el('span', 'ht2-nui-count');
+  const tip = el('span', 'ht2-nui-hint');
+  const paints: (() => void)[] = [];
+  const paint = () => {
+    value.textContent = String(get());
+    tip.textContent = hint();
+    paints.forEach((p) => p());
+  };
+  const l = arrow(art, 'left', `${label}: менше`, () => (set(Math.max(min, get() - 1)), paint()), () => get() <= min);
+  const r = arrow(art, 'right', `${label}: більше`, () => (set(Math.min(max, get() + 1)), paint()), () => get() >= max);
+  paints.push(l.paint, r.paint);
+  row.append(name, l.button, value, r.button, tip);
+  parent.append(row);
+  paint();
+  return paint;
+}
+
+/** Повзунок 0…1 (крок 0,1): стрілки й бігунок `runner_*` оригіналу. Повертає перемальовування. */
+function slider(art: Ht2MenuArt, parent: HTMLElement, label: string, get: () => number, set: (v: number) => void): () => void {
+  const row = el('div', 'ht2-nui-field');
+  const name = el('span', 'ht2-nui-label', label);
+  const bar = el('div', 'ht2-nui-bar');
+  const knob = el('img', 'ht2-nui-knob') as HTMLImageElement;
+  knob.alt = '';
+  knob.draggable = false;
+  bar.append(knob);
+  let drag = false;
+  const paints: (() => void)[] = [];
+  const put = (v: number) => {
+    set(Math.round(Math.min(1, Math.max(0, v)) * 10) / 10);
+    paint();
+  };
+  const paint = () => {
+    knob.src = art.image(`runner_${drag ? 'ap' : 'p'}.msk`) ?? '';
+    knob.style.left = `${get() * 100}%`;
+    paints.forEach((p) => p());
+  };
+  const l = arrow(art, 'left', `${label}: менше`, () => put(get() - 0.1), () => get() <= 0);
+  const r = arrow(art, 'right', `${label}: більше`, () => put(get() + 0.1), () => get() >= 1);
+  paints.push(l.paint, r.paint);
+  const fromEvent = (e: PointerEvent) => {
+    const b = bar.getBoundingClientRect();
+    put((e.clientX - b.left) / Math.max(1, b.width));
+  };
+  bar.addEventListener('pointerdown', (e) => {
+    drag = true;
+    bar.setPointerCapture(e.pointerId);
+    fromEvent(e);
+  });
+  bar.addEventListener('pointermove', (e) => drag && fromEvent(e));
+  const up = () => {
+    drag = false;
+    paint();
+  };
+  bar.addEventListener('pointerup', up);
+  bar.addEventListener('pointercancel', up);
+  row.append(name, l.button, bar, r.button);
+  parent.append(row);
+  paint();
+  return paint;
+}
+
+/** Перемикач-«пігулки» (одна вибрана). Повертає перемальовування. */
+function choice<T>(parent: HTMLElement, items: [T, string][], get: () => T, set: (v: T) => void, after?: () => void, label?: string): () => void {
+  const row = el('div', 'ht2-nui-tabs');
+  if (label) {
+    row.classList.add('ht2-nui-field');
+    row.append(el('span', 'ht2-nui-label', label));
+  }
+  const bs = items.map(([v, text]) => {
+    const b = btn(text, () => {
+      set(v);
+      paint();
+      after?.();
+    });
+    row.append(b);
+    return [v, b] as const;
+  });
+  const paint = () => bs.forEach(([v, b]) => b.classList.toggle('on', v === get()));
+  parent.append(row);
+  paint();
+  return paint;
+}
+
+// ——— 1. Машина ———
 
 /**
- * Екран «Мережева гра» (n/backMult; місця — king.exe 0x51a580, збігаються з гніздами фону): марка в колі
- * (`n/<марка><колір>.msk` 160×160), стрілки `aleft`/`aright`, «Цвет», «Сервер», «Клиент», «Отмена». У полі
- * «Способы соединения» — підказка порту (з'єднання — Wi-Fi, коди QR).
+ * Машина гравця: фото варіанта між стрілками, назва з варіантом, потужність і вантажопідйомність, колір 1–4. pick —
+ * зміна машини з лобі («Готово»); інакше — «Створити гру» / «Приєднатися».
  */
-function multScreen(art: Ht2MenuArt, car: NetCar, note: string | null, onCar: (c: NetCar) => void): Promise<'host' | 'join' | RoundKey | null> {
+function carScreen(
+  art: Ht2MenuArt,
+  photos: CarPhotos,
+  specs: Promise<CarSpecs>,
+  driver: string,
+  from: NetCar,
+  note: string | null,
+  pick = false,
+): Promise<{ car: NetCar; go: 'host' | 'join' | 'pick' } | null> {
   return new Promise((resolve) => {
-    const done = (v: 'host' | 'join' | RoundKey | null) => {
-      sc.close();
-      resolve(v);
+    const f = frame(pick ? 'Моя машина' : 'Мережева гра');
+    f.sub.textContent = `Водій: ${driver}`;
+    let i = Math.max(0, NET_MODELS.findIndex((c) => c.truck === from.truck));
+    let color = from.color & 3;
+    let spec: CarSpecs = new Map();
+    const done = (go: 'host' | 'join' | 'pick' | null) => {
+      f.close();
+      resolve(go ? { car: { truck: NET_MODELS[i].truck, color }, go } : null);
     };
-    const sc = screen(art, 'n/backmult.txr', (k) => {
-      if (k !== 'multi') done(k);
-    });
-    const { stage } = sc;
-    let i = Math.max(0, NET_CARS.findIndex((c) => c.truck === car.truck));
-    const pic = place(stage, el('img', 'ht2-net-car'), 360, 135, 160, 160) as HTMLImageElement;
+    const left = el('div', 'ht2-nui-col ht2-nui-carcol');
+    const view = el('div', 'ht2-nui-carview');
+    const pic = el('img', 'ht2-nui-photo') as HTMLImageElement;
     pic.alt = '';
     pic.draggable = false;
-    const label = place(stage, el('div', 'ht2-net-carname'), 340, 98, 200, 22);
-    const info = place(stage, el('div', 'ht2-net-conn'), 368, 366, 206, 52);
-    const paint = () => {
-      const c = NET_CARS[i];
-      pic.src = art.image(`n/${c.brand}${car.color}.msk`) ?? '';
-      label.textContent = c.name;
-      Object.assign(car, { truck: c.truck });
-      onCar({ ...car });
-    };
     const step = (d: number) => () => {
-      i = (i + d + NET_CARS.length) % NET_CARS.length;
+      i = (i + d + NET_MODELS.length) % NET_MODELS.length;
       paint();
     };
-    texButton(art, stage, 'aleft', 323, 200, 'Попередня машина', { ext: '.msk', action: step(-1) });
-    texButton(art, stage, 'aright', 528, 200, 'Наступна машина', { ext: '.msk', action: step(1) });
-    texButton(art, stage, 'n/color', 390, 303, 'Колір', {
-      action: () => {
-        car.color = (car.color + 1) % 4;
-        paint();
-      },
+    const l = arrow(art, 'left', 'Попередня машина', step(-1));
+    const r = arrow(art, 'right', 'Наступна машина', step(1));
+    view.append(l.button, pic, r.button);
+    const name = el('div', 'ht2-nui-carname');
+    const info = el('div', 'ht2-nui-hint');
+    left.append(view, name, info);
+    stepper(art, left, 'Колір', () => color + 1, (v) => {
+      color = v - 1;
+      paint();
+    }, 1, 4, () => '');
+    const right = el('div', 'ht2-nui-col ht2-nui-actions');
+    const tip = el('div', note ? 'ht2-nui-note warn' : 'ht2-nui-note', note ?? 'Телефони — в одній Wi-Fi мережі; коди з’єднання — QR або текстом.');
+    if (pick) right.append(btn('Готово', () => done('pick'), 'primary'), btn('Скасувати', () => done(null)), tip);
+    else right.append(btn('Створити гру', () => done('host'), 'primary'), btn('Приєднатися', () => done('join')), tip);
+    f.body.append(left, right);
+    if (!pick) f.foot.append(btn('Назад', () => done(null)));
+    const paint = () => {
+      const c = NET_MODELS[i];
+      pic.src = photos.url(c.truck, color) ?? '';
+      pic.hidden = !pic.src;
+      name.textContent = `${c.name} — ${KIND_NAME[c.kind]}`;
+      const s = spec.get(c.truck);
+      info.textContent = s ? `${s.power} к. с. · ${s.capacity} т` : '';
+    };
+    photos.onReady(paint);
+    void specs.then((s) => {
+      spec = s;
+      paint();
     });
-    texButton(art, stage, 'n/host', 348, 428, 'Сервер — створити гру', { action: () => done('host') });
-    texButton(art, stage, 'n/join', 451, 428, 'Клієнт — приєднатися', { action: () => done('join') });
-    texButton(art, stage, 'n/cancel', 323, 488, 'Скасувати', { action: () => done(null) });
-    info.textContent = note ?? 'Wi-Fi, одна мережа: коди з’єднання — QR-кодом або текстом. СЕРВЕР — створити гру, КЛІЄНТ — приєднатися.';
-    info.classList.toggle('note', !!note);
     paint();
   });
 }
 
-/**
- * Екран сервера (h/backHost, king.exe 0x51add0): траса КОЛЬЦО / ТРИАЛ / АВТОБОЛ (радіо), аркада / симулятор,
- * повзунки «Насыщенность трасс», «Длительность суток», «Погода» (aleft/aright/runner, ширина 187), «Далее»,
- * «Отмена». Результат — вибір (null — скасовано).
- */
-function hostScreen(art: Ht2MenuArt, from: NetSetup): Promise<NetSetup | null> {
+// ——— 2. Налаштування заїзду ———
+
+/** Налаштування заїзду (сервер): режим, суперники, складність, доба, погода; кар'єра — насиченість трас. */
+function setupScreen(art: Ht2MenuArt, from: NetSetup, inSession: boolean): Promise<NetSetup | null> {
   return new Promise((resolve) => {
-    const s = { ...from };
+    const s: NetSetup = { ...DEFAULT_SETUP, ...from, rivals: clampRivals(from.rivals ?? DEFAULT_SETUP.rivals) };
+    const f = frame('Налаштування заїзду');
+    f.sub.textContent = 'Обирає сервер; гравці бачать вибір у лобі';
     const done = (v: NetSetup | null) => {
-      sc.close();
+      f.close();
       resolve(v);
     };
-    const sc = screen(art, 'h/backhost.txr');
-    const { stage } = sc;
-    const painters: (() => void)[] = [];
-    const repaint = () => painters.forEach((p) => p());
-    const track = (key: NetTrack, tex: string, x: number, label: string) =>
-      painters.push(
-        texButton(art, stage, `h/${tex}`, x, 202, label, {
-          selected: () => s.track === key,
-          action: () => {
-            s.track = key;
-          },
-          after: repaint,
-        }),
-      );
-    track('ring', 'circ', 324, 'Кільце');
-    track('trial', 'trial', 402, 'Тріал');
-    track('ball', 'tball', 473, 'Автобол');
-    painters.push(
-      texButton(art, stage, 'h/arcad', 348, 254, 'Аркадний', { selected: () => s.arcade, action: () => (s.arcade = true), after: repaint }),
-      texButton(art, stage, 'h/simul', 450, 254, 'Симулятор', { selected: () => !s.arcade, action: () => (s.arcade = false), after: repaint }),
-    );
-    // Повзунки: ліва стрілка в (356, y), права — на x + 187 − 29; бігунок між ними (як на екрані одиночної гри).
-    const sliders: [keyof Pick<NetSetup, 'traffic' | 'dayLength' | 'weather'>, number, string][] = [
-      ['traffic', 306, 'Насиченість трас'],
-      ['dayLength', 336, 'Тривалість доби'],
-      ['weather', 366, 'Погода'],
-    ];
-    const RUN_X0 = 391;
-    const RUN_X1 = 509;
-    for (const [key, y, label] of sliders) {
-      const set = (v: number) => {
-        s[key] = Math.round(Math.min(1, Math.max(0, v)) * 10) / 10;
-        repaint();
-      };
-      painters.push(
-        texButton(art, stage, 'aleft', 356, y, `${label}: менше`, { ext: '.msk', disabled: () => s[key] <= 0, action: () => set(s[key] - 0.1) }),
-        texButton(art, stage, 'aright', 514, y, `${label}: більше`, { ext: '.msk', disabled: () => s[key] >= 1, action: () => set(s[key] + 0.1) }),
-      );
-      const bar = el('div', 'ht2-track');
-      place(stage, bar, RUN_X0 - 8, y + 1, RUN_X1 - RUN_X0 + 16, 26);
-      bar.style.height = '';
-      const knob = el('img', 'ht2-runner') as HTMLImageElement;
-      knob.alt = '';
-      knob.draggable = false;
-      bar.append(knob);
-      let drag = false;
-      const paint = () => {
-        knob.src = art.image(`runner_${drag ? 'ap' : 'p'}.msk`) ?? '';
-        knob.style.left = `${8 + (RUN_X1 - RUN_X0) * s[key] - 6}px`;
-      };
-      const fromEvent = (e: PointerEvent) => {
-        const r = bar.getBoundingClientRect();
-        const k = r.width / (RUN_X1 - RUN_X0 + 16);
-        set((e.clientX - r.left - 8 * k) / ((RUN_X1 - RUN_X0) * k));
-      };
-      bar.addEventListener('pointerdown', (e) => {
-        drag = true;
-        bar.setPointerCapture(e.pointerId);
-        fromEvent(e);
-      });
-      bar.addEventListener('pointermove', (e) => drag && fromEvent(e));
-      const up = () => {
-        drag = false;
-        paint();
-      };
-      bar.addEventListener('pointerup', up);
-      bar.addEventListener('pointercancel', up);
-      painters.push(paint);
-    }
-    texButton(art, stage, 'h/next', 372, 412, 'Далі', { action: () => done(s) });
-    texButton(art, stage, 'h/cancel', 323, 477, 'Скасувати', { action: () => done(null) });
-    repaint();
+    const col = el('div', 'ht2-nui-col ht2-nui-wide');
+    f.body.append(col);
+    const parts = el('div', 'ht2-nui-fields');
+    const build = () => {
+      parts.replaceChildren();
+      const career = s.track === 'career';
+      if (hasRivals(s.track))
+        stepper(art, parts, 'Суперники', () => s.rivals, (v) => (s.rivals = v), 0, MAX_RIVALS, () => `0…${MAX_RIVALS}, на автопілоті`);
+      else if (s.track === 'ball') parts.append(el('div', 'ht2-nui-note', 'В Автоболі суперників на автопілоті немає (як в оригіналі).'));
+      if (career) {
+        slider(art, parts, 'Насиченість трас', () => s.traffic, (v) => (s.traffic = v));
+        parts.append(el('div', 'ht2-nui-note', 'Кожен грає своє збереження у своєму світі; доба й погода — свої. Хто перший захопить 51 % ринку — виграв.'));
+        return;
+      }
+      choice(parts, [[true, 'Аркада'], [false, 'Симулятор']], () => s.arcade, (v) => (s.arcade = v), undefined, 'Складність');
+      slider(art, parts, 'Тривалість доби', () => s.dayLength, (v) => (s.dayLength = v));
+      slider(art, parts, 'Погода', () => s.weather, (v) => (s.weather = v));
+    };
+    choice(col, [['ring', 'Кільце'], ['trial', 'Тріал'], ['ball', 'Автобол'], ['career', 'Кар’єра']] as [NetTrack, string][], () => s.track, (v) => (s.track = v), build);
+    col.append(parts);
+    build();
+    f.foot.append(btn(inSession ? 'Скасувати' : 'Назад', () => done(null)), btn(inSession ? 'Готово' : 'Далі — запросити гравців', () => done(s), 'primary'));
   });
 }
 
-/**
- * Панель порту в колі екрана сервера (над трасою й повзунками, до кнопки «Далее»): x 316…646, y 116…404.
- * Фон — h/backHost (кнопки оригіналу поза панеллю лишаються: «Далее», «Отмена»).
- */
-const PANEL = [316, 116, 330, 288] as const;
-
-function panelScreen(art: Ht2MenuArt): { stage: HTMLElement; root: HTMLElement; panel: HTMLElement; close: () => void } {
-  const sc = screen(art, 'h/backhost.txr');
-  const panel = place(sc.stage, el('div', 'ht2-net-panel'), ...PANEL);
-  return { ...sc, panel };
-}
+// ——— 3. Коди з'єднання ———
 
 /**
  * Обмін кодами з'єднання (як у першій грі): господар — QR-код запрошення, камера чекає відповідь друга; гість — камера
@@ -311,29 +423,23 @@ function panelScreen(art: Ht2MenuArt): { stage: HTMLElement; root: HTMLElement; 
  * ПК; або надіслати месенджером). Результат — з'єднаний друг (null — назад).
  */
 function connectPanel(art: Ht2MenuArt, driver: string, mode: 'host' | 'join', adding: boolean): Promise<NetPeer | null> {
+  void art;
   return new Promise((resolve) => {
-    const sc = panelScreen(art);
-    const { panel } = sc;
-    const head = el('div', 'ht2-net-head');
-    head.textContent = mode === 'host' ? (adding ? 'НОВИЙ ГРАВЕЦЬ' : 'СТВОРИТИ ГРУ') : 'ПРИЄДНАТИСЯ';
-    const body = el('div', 'ht2-net-body');
+    const f = frame(mode === 'host' ? (adding ? 'Новий гравець' : 'Створити гру') : 'Приєднатися');
+    f.sub.textContent = mode === 'host' ? 'Покажіть код другу, потім відскануйте його відповідь' : 'Відскануйте код друга, що створив гру, і покажіть йому свій';
     const qrBox = el('div', 'ht2-net-qr');
-    const right = el('div', 'ht2-net-right');
+    const right = el('div', 'ht2-nui-col ht2-net-right');
     const video = el('video', 'ht2-net-video');
     video.muted = true;
     video.playsInline = true;
     const codes = el('div', 'ht2-net-codes');
-    const ownLabel = el('div', '');
-    ownLabel.textContent = 'Ваш код:';
+    const ownLabel = el('div', '', 'Ваш код:');
     const own = el('textarea', 'ht2-net-code');
     own.readOnly = true;
     own.addEventListener('focus', () => own.select());
-    const send = el('button', 'ht2-net-link');
     const share = typeof navigator.share === 'function';
-    send.textContent = share ? 'Надіслати' : 'Копіювати';
-    send.addEventListener('click', () => void sendCode(own, share));
-    const friendLabel = el('div', '');
-    friendLabel.textContent = 'Код друга:';
+    const send = btn(share ? 'Надіслати' : 'Копіювати', () => void sendCode(own, share), 'small');
+    const friendLabel = el('div', '', 'Код друга:');
     const friend = el('textarea', 'ht2-net-code');
     friend.placeholder = 'вставте код';
     friend.addEventListener('input', () => {
@@ -341,11 +447,14 @@ function connectPanel(art: Ht2MenuArt, driver: string, mode: 'host' | 'join', ad
       if (v.startsWith('HT2:') && v.length > 60) void gotCode(v);
     });
     codes.append(ownLabel, own, send, friendLabel, friend);
-    right.append(video, codes);
-    body.append(qrBox, right);
-    const status = el('div', 'ht2-net-status');
-    const toggle = el('button', 'ht2-net-button');
-    panel.append(head, body, status, toggle);
+    const status = el('div', 'ht2-nui-note');
+    right.append(video, codes, status);
+    f.body.append(qrBox, right);
+    const toggle = btn('', () => {
+      textMode = !textMode;
+      layout();
+    });
+    f.foot.append(btn('Назад', () => done(null)), toggle);
 
     const camera = cameraAvailable();
     let textMode = !camera;
@@ -380,13 +489,9 @@ function connectPanel(art: Ht2MenuArt, driver: string, mode: 'host' | 'join', ad
       codes.hidden = !textMode;
       friend.disabled = !needScan();
       toggle.hidden = !camera;
-      toggle.textContent = textMode ? 'КАМЕРА' : 'КОД ТЕКСТОМ';
+      toggle.textContent = textMode ? 'Камера' : 'Код текстом';
       updateScan();
     };
-    toggle.addEventListener('click', () => {
-      textMode = !textMode;
-      layout();
-    });
     // Дотик до QR-коду — на весь екран (більші клітинки — камера друга читає з більшої відстані).
     qrBox.title = 'Торкніться — більше';
     qrBox.addEventListener('click', () => own.value && showBigQr(own.value));
@@ -400,7 +505,7 @@ function connectPanel(art: Ht2MenuArt, driver: string, mode: 'host' | 'join', ad
       scanner?.stop();
       scanner = null;
       if (!v) peer?.close();
-      sc.close();
+      f.close();
       resolve(v);
     };
     const watch = (p: NetPeer) => {
@@ -466,7 +571,6 @@ function connectPanel(art: Ht2MenuArt, driver: string, mode: 'host' | 'join', ad
       }
       layout();
     };
-    texButton(art, sc.stage, 'h/cancel', 323, 477, 'Назад', { action: () => done(null) });
     if (mode === 'host') void startHost();
     else {
       say(textMode ? 'Вставте код друга, що створив гру.' : 'Наведіть камеру на QR-код друга, що створив гру.');
@@ -475,52 +579,99 @@ function connectPanel(art: Ht2MenuArt, driver: string, mode: 'host' | 'join', ad
   });
 }
 
+// ——— 4. Лобі ———
+
+/** Короткий опис заїзду для лобі. */
+export function setupSummary(s: NetSetup): string[] {
+  if (s.track === 'career') return ['Мережева кар’єра: змагання за ринок', `Насиченість трас ${Math.round(s.traffic * 100)} %`];
+  const rivals = hasRivals(s.track) ? `Суперники: ${clampRivals(s.rivals)}` : 'Без суперників на автопілоті';
+  return [`${TRACK_NAME[s.track]} · ${s.arcade ? 'аркада' : 'симулятор'}`, rivals, `Доба ${Math.round(s.dayLength * 100)} % · погода ${Math.round(s.weather * 100)} %`];
+}
+
+/** Назва збереження мережевої кар'єри: гроші, машина, дата. */
+function saveTitle(c: Ht2Career): string {
+  const date = c.savedAt ? new Date(c.savedAt).toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit' }) : '';
+  return `${formatMoney(c.money)} · ${carName(c.truck)}${date ? ` · ${date}` : ''}`;
+}
+
 /**
- * Сесія: гравці (до 8) з машинами, кольором і затримкою; господар додає гравців («+ Гравець» — обмін кодами з
- * наступним гостем), змінює вибір («Траса»), «Далее» — старт (усі вантажать трасу), «Отмена» — закрити з'єднання.
- * Результат — початок заїзду, 'add', 'setup' чи причина закриття для екрана вибору (null — вийшли самі).
+ * Лобі: гравці (до 8) з машинами, кольором і затримкою; сервер додає гравців, змінює заїзд, починає; кожен може
+ * змінити свою машину; у кар'єрі — вибір свого збереження. Результат — початок заїзду, дія ('add', 'setup', 'car',
+ * 'save') чи причина закриття для екрана машини (null — вийшли самі).
  */
-function sessionPanel(art: Ht2MenuArt, driver: string, session: NetSession): Promise<NetStart | 'add' | 'setup' | string | null> {
+function lobby(art: Ht2MenuArt, photos: CarPhotos, o: NetMenuOptions, session: NetSession): Promise<NetStart | 'add' | 'setup' | 'car' | 'save' | string | null> {
+  void art;
   return new Promise((resolve) => {
-    const sc = panelScreen(art);
-    const { panel } = sc;
     const host = session.host;
-    const head = el('div', 'ht2-net-head');
-    const list = el('div', 'ht2-net-players');
-    const setupLine = el('div', 'ht2-net-setup');
-    const row = el('div', 'ht2-net-row');
-    const foot = el('div', 'ht2-net-status');
-    panel.append(head, list, setupLine, row, foot);
-    const button = (text: string, click: () => void) => {
-      const b = el('button', 'ht2-net-button');
-      b.textContent = text;
-      b.addEventListener('click', click);
-      row.append(b);
-      return b;
+    const f = frame('Лобі');
+    const left = el('div', 'ht2-nui-col ht2-nui-players');
+    const list = el('div', 'ht2-nui-list');
+    const leftButtons = el('div', 'ht2-nui-row');
+    left.append(list, leftButtons);
+    const right = el('div', 'ht2-nui-col ht2-nui-side');
+    const summary = el('div', 'ht2-nui-summary');
+    const saveBox = el('div', 'ht2-nui-save');
+    const status = el('div', 'ht2-nui-note');
+    right.append(summary, saveBox, status);
+    f.body.append(left, right);
+    const done = (v: NetStart | 'add' | 'setup' | 'car' | 'save' | string | null) => {
+      clearInterval(timer);
+      session.events = {};
+      f.close();
+      resolve(v);
     };
-    const add = host ? button('+ ГРАВЕЦЬ', () => done('add')) : null;
-    if (host) button('ТРАСА', () => done('setup'));
-    // Мережева кар'єра (М6, власний режим порту): кнопка порту поруч із вибором траси; ще раз — назад до трас.
-    const mode = host
-      ? button('КАРʼЄРА', () => session.setSetup({ ...session.setup, track: session.setup.track === 'career' ? 'ring' : 'career' }))
+    const add = host ? btn('+ Гравець', () => done('add')) : null;
+    if (add) leftButtons.append(add);
+    leftButtons.append(btn('Моя машина', () => done('car')));
+    const change = host ? btn('Змінити заїзд', () => done('setup')) : null;
+    if (change) right.insertBefore(change, saveBox);
+    const start = host
+      ? btn(
+          'Старт',
+          () => {
+            if (session.players.size < 2) return;
+            const m = session.start(pickRivals(session.setup, [...session.players.values()].map((p) => p.truck)));
+            done({ session, setup: m.setup, players: m.players, rivals: m.rivals });
+          },
+          'primary',
+        )
       : null;
+    const leave = () => {
+      session.close();
+      done(null);
+    };
+    f.foot.append(btn('Вийти', leave));
+    if (start) f.foot.append(start);
     const renderList = () => {
-      head.textContent = `МЕРЕЖЕВА ГРА · ${session.players.size} з ${MAX_PLAYERS}`;
+      f.sub.textContent = `Гравці: ${session.players.size} з ${MAX_PLAYERS}`;
       list.replaceChildren(
         ...[...session.players.values()]
           .sort((a, b) => a.id - b.id)
           .map((p) => {
-            const line = el('div', p.id === session.myId ? 'me' : '');
-            const sq = el('i', '');
+            const me = p.id === session.myId;
+            const line = el('div', me ? 'ht2-nui-player me' : 'ht2-nui-player');
+            const sq = el('i', 'ht2-nui-color');
             sq.style.background = PLAYER_COLORS[p.id] ?? '#fff';
-            const ms = p.id === session.myId || (!host && p.id !== 0) ? null : session.rtt(p.id);
-            const who = p.id === session.myId ? driver : p.name;
-            const span = el('span', '');
+            const thumb = el('img', 'ht2-nui-thumb') as HTMLImageElement;
+            thumb.alt = '';
+            thumb.src = photos.url(p.truck, p.color) ?? '';
+            thumb.hidden = !thumb.src;
+            const who = el('span', 'ht2-nui-who', `${p.id + 1}. ${me ? o.driver : p.name}${me ? ' (ви)' : ''}`);
+            const car = el('span', 'ht2-nui-hint', carName(p.truck));
             // Зв'язок завис (М5): господар знає про кожного гостя, гість — про сервер (і про інших — від сервера).
             const stalled = p.stalled || (!host && p.id === 0 && !!session.link(0)?.stalled);
-            span.textContent = `${p.id + 1}. ${who}${p.id === 0 ? ' (сервер)' : ''} — ${carName(p.truck)}${p.driving && p.id !== session.myId ? ' (на трасі)' : ''}${stalled ? ' · немає зв’язку…' : ms !== null ? ` · ${Math.round(ms)} мс` : ''}`;
-            if (stalled) line.classList.add('stalled');
-            line.append(sq, span);
+            const ms = me || (!host && p.id !== 0) ? null : session.rtt(p.id);
+            const state = el('span', 'ht2-nui-ms', stalled ? '' : ms !== null ? `${Math.round(ms)} мс` : '');
+            const text = el('div', 'ht2-nui-pl');
+            text.append(who, car);
+            line.append(sq, thumb, text);
+            if (p.id === 0) line.append(icon(0, 'Сервер'));
+            if (p.driving && !me) line.append(icon(1, 'На трасі'));
+            if (stalled) {
+              line.classList.add('stalled');
+              line.append(icon(2, 'Немає зв’язку'));
+            }
+            line.append(state);
             return line;
           }),
       );
@@ -528,27 +679,26 @@ function sessionPanel(art: Ht2MenuArt, driver: string, session: NetSession): Pro
     const render = () => {
       renderList();
       const s = session.setup;
-      const career = s.track === 'career';
-      setupLine.textContent = career ? 'Мережева кар’єра: змагання за ринок' : `Траса: ${TRACK_NAME[s.track]} · ${s.arcade ? 'аркада' : 'симулятор'}`;
+      summary.replaceChildren(el('div', 'ht2-nui-label', 'Заїзд'), ...setupSummary(s).map((t, k) => el('div', k ? 'ht2-nui-hint' : 'ht2-nui-value', t)));
       if (add) add.hidden = session.full;
-      if (mode) mode.textContent = career ? 'ГОНКИ' : 'КАРʼЄРА';
-      foot.textContent = host
+      // Мережева кар'єра: кожен обирає своє збереження (у кожного свій світ).
+      saveBox.replaceChildren();
+      if (s.track === 'career') {
+        const id = o.careerSave?.get();
+        const saves = listNetSaves(o.driver);
+        const cur = id === null ? null : id === undefined ? (saves[0] ?? null) : (saves.find((c) => c.id === id) ?? null);
+        saveBox.append(el('div', 'ht2-nui-label', 'Моя кар’єра'), el('div', 'ht2-nui-value', cur ? saveTitle(cur) : 'Нова кар’єра'), btn('Обрати збереження', () => done('save'), 'small'));
+      }
+      status.textContent = host
         ? session.players.size > 1
-          ? career
-            ? 'ДАЛІ — кожен у своїй мережевій кар’єрі, в одному світі. Хто перший захопить 51 % ринку — виграв.'
-            : 'ДАЛІ — старт: усі завантажать трасу разом з вами. Суперники займуть вільні місця.'
-          : 'Додайте гравця (+ ГРАВЕЦЬ), щоб почати гру.'
-        : career
-          ? 'Мережева кар’єра: чекаємо, поки сервер натисне ДАЛІ.'
-          : 'Трасу обирає сервер. Чекаємо, поки він натисне ДАЛІ.';
+          ? s.track === 'career'
+            ? 'Старт — кожен у своїй мережевій кар’єрі, в одному світі.'
+            : 'Старт — усі завантажать трасу разом з вами.'
+          : 'Додайте гравця (+ Гравець), щоб почати.'
+        : 'Заїзд обирає сервер. Чекаємо, поки він почне.';
+      start?.classList.toggle('off', session.players.size < 2);
     };
     const timer = window.setInterval(renderList, 1000);
-    const done = (v: NetStart | 'add' | 'setup' | string | null) => {
-      clearInterval(timer);
-      session.events = {};
-      sc.close();
-      resolve(v);
-    };
     session.events = {
       onChange: render,
       onMessage: (m) => {
@@ -561,22 +711,87 @@ function sessionPanel(art: Ht2MenuArt, driver: string, session: NetSession): Pro
         render();
       },
     };
-    const leave = () => {
-      session.close();
-      done(null);
-    };
-    if (host)
-      texButton(art, sc.stage, 'h/next', 372, 412, 'Далі — старт', {
-        action: () => {
-          if (session.players.size < 2) return;
-          const m = session.start(pickRivals(session));
-          done({ session, setup: m.setup, players: m.players, rivals: m.rivals });
-        },
-      });
-    texButton(art, sc.stage, 'h/cancel', 323, 477, 'Вийти з гри', { action: leave });
+    photos.onReady(renderList);
     // Повернення із заїзду — інші мають знати (у них машина зникає, у сесії — не «на трасі»).
     if (session.me.driving) session.backToLobby();
     render();
+  });
+}
+
+// ——— 5. Збереження мережевої кар'єри ———
+
+/**
+ * Вибір збереження мережевої кар'єри: свої збереження (найновіші першими) і «Нова кар'єра» (з машиною з екрана
+ * машини). Результат — id, null (нова) чи undefined (скасовано).
+ */
+function saveScreen(art: Ht2MenuArt, photos: CarPhotos, driver: string, current: string | null | undefined, car: NetCar): Promise<string | null | undefined> {
+  void art;
+  return new Promise((resolve) => {
+    const f = frame('Моя мережева кар’єра');
+    f.sub.textContent = `Водій: ${driver}`;
+    let saves = listNetSaves(driver);
+    let pick: string | null = current === undefined ? (saves[0]?.id ?? null) : current;
+    let confirmDel = false;
+    const done = (v: string | null | undefined) => {
+      f.close();
+      resolve(v);
+    };
+    const left = el('div', 'ht2-nui-col ht2-nui-players');
+    const list = el('div', 'ht2-nui-list');
+    left.append(list);
+    const right = el('div', 'ht2-nui-col ht2-nui-side');
+    const pic = el('img', 'ht2-nui-photo') as HTMLImageElement;
+    pic.alt = '';
+    const about = el('div', 'ht2-nui-note');
+    right.append(pic, about);
+    f.body.append(left, right);
+    const del = btn('Видалити', () => {
+      if (!pick) return;
+      if (!confirmDel) {
+        confirmDel = true;
+        return paint();
+      }
+      deleteSave(pick);
+      saves = listNetSaves(driver);
+      pick = saves[0]?.id ?? null;
+      confirmDel = false;
+      paint();
+    });
+    f.foot.append(btn('Назад', () => done(undefined)), del, btn('Обрати', () => done(pick), 'primary'));
+    const paint = () => {
+      list.replaceChildren(
+        ...saves.map((c) => {
+          const row = el('button', `ht2-nui-player pick${c.id === pick ? ' on' : ''}`);
+          row.append(el('span', 'ht2-nui-who', saveTitle(c)), el('span', 'ht2-nui-hint', `доставок ${c.delivered}`));
+          row.addEventListener('click', () => {
+            pick = c.id ?? null;
+            confirmDel = false;
+            paint();
+          });
+          return row;
+        }),
+        (() => {
+          const row = el('button', `ht2-nui-player pick${pick === null ? ' on' : ''}`);
+          row.append(icon(3, 'Нова'), el('span', 'ht2-nui-who', 'Нова кар’єра'), el('span', 'ht2-nui-hint', carName(car.truck)));
+          row.addEventListener('click', () => {
+            pick = null;
+            confirmDel = false;
+            paint();
+          });
+          return row;
+        })(),
+      );
+      const c = saves.find((x) => x.id === pick);
+      pic.src = c ? (photos.url(c.truck, c.paint ?? 0) ?? '') : (photos.url(car.truck, car.color) ?? '');
+      pic.hidden = !pic.src;
+      about.textContent = c
+        ? 'Машина, гроші й найняті — зі збереження; світ, доба й погода — свої.'
+        : 'Нова кар’єра: 5000 $ і машина з екрана «Мережева гра».';
+      del.hidden = !c;
+      del.textContent = confirmDel ? 'Точно видалити?' : 'Видалити';
+    };
+    photos.onReady(paint);
+    paint();
   });
 }
 
