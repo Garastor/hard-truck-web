@@ -9,7 +9,6 @@ import { drivable, selectable, truckDef, type Ht2Trucks } from '../vehicles/truc
 import { toThree } from '../world/world';
 import { ukName } from '../ui/uk';
 import { recolor } from '../traffic/traffic';
-import { hireOffer } from './company';
 
 /**
  * Ринки вантажівок HT2 — `parking` з `ENV/mod_<регіон>.sch`:
@@ -25,9 +24,13 @@ import { hireOffer } from './company';
  *
  * Машина продавця — тип evehicles.sch (модель + фарбування; re/notes/ht2/company.md §5, `pickDealerKind`).
  *
- * Гіпотези порту: набір перераховується щодня гри (у king.exe продавців дозаповнює задача updateDealers, далі
- * мінімальної відстані від гравця), тип — випадковий з тими самими частками (king.exe — перемішаний список по колу);
- * вживана дешевша на 35 % і побита.
+ * Оновлення (king.exe задача updateDealers 0x422370, раз на 27,5 с; re/notes/ht2/company.md §6): продавець, що
+ * простояв 900…1019 с і стоїть далі 2 км від гравця, зникає; групи дозаповнюються до лімітів на місцях далі 700 м.
+ * Купівля — обмін машинами: продавець лишається на місці зі старою машиною гравця й зникає за тим самим правилом.
+ * Шукачі роботи (forhire 20) чекають 1200…2699 с і йдуть, коли пул повний. Стан — у збереженні (`ParkingState`).
+ *
+ * Гіпотези порту: тип — випадковий з тими самими частками (king.exe — перемішаний список по колу); вживана дешевша
+ * на 35 % і побита; шукачі роботи з'являються задачею оновлення (у king.exe — вільні далекобійники після доставки).
  */
 const SHOW_R = 450;
 /** Замовлену машину приганяють на ринок далі цієї відстані від абонента, м (0x64b860). */
@@ -87,8 +90,12 @@ export interface ForSale {
   cluster?: number;
   /** Замовлена рацією. */
   ordered?: boolean;
-  /** Машина водія, що шукає роботу (найм, careerMode.salePanel). */
+  /** Машина водія, що шукає роботу (найм, careerMode.salePanel): його імʼя й фото. */
   hire?: boolean;
+  name?: string;
+  photo?: number;
+  /** Пошкодження 0…1 (стара машина гравця, залишена продавцеві). */
+  damage?: number;
 }
 
 export function parseMarkets(mods: Iterable<{ sch: SExpr[] }>, ways: Iterable<{ way: Way }>): Market[] {
@@ -193,36 +200,90 @@ export function pickDealerKind(kinds: readonly DealerKind[], allCars: boolean, d
   return kinds.find((k) => k.trucker || allCars) ?? null;
 }
 
-/** Псевдовипадкові числа з зерна (mulberry32). */
-function seeded(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 interface Shown {
   market: Market;
-  day: number;
+  /** Версія стану стоянок, з якою звірено показане, і набір машин (signature). */
+  rev: number;
+  sig: string;
   parts: { root: THREE.Object3D; body: RAPIER.RigidBody }[];
+}
+
+/**
+ * Машина, що стоїть на місці стоянки: продавець (king.exe тип 9, стан 0x100) чи водій, що шукає роботу (тип 2, стан
+ * 0x101). Зберігається в кар'єрі (`Ht2Career.parking`).
+ */
+export interface ParkedCar {
+  market: number;
+  spot: number;
+  /** Група продавців (0 нова, 1 вживана, 2 крадена — 0x68ced0/ee0/ef0) чи 'hire' — шукач роботи. */
+  group: SaleKind | 'hire';
+  carNode: string;
+  /** Фарбування — кластер TRUCKS.OVL з нуля. */
+  cluster: number;
+  /** Коли з'явився, с годинника стоянок (`ParkingState.clock`; king.exe поле особи `+0x3b0`). */
+  born: number;
+  /** Шукач роботи: імʼя й фото. */
+  name?: string;
+  photo?: number;
+  /** Шукач роботи: до якого моменту годинника чекає (king.exe 0x419cb0: прибуття + 1200 + rand % 1500 с). */
+  until?: number;
+  /** Стара машина гравця, що лишилася продавцеві після купівлі (king.exe 0x4738c0): її стан. */
+  traded?: { damage: number; stolen: boolean };
+}
+
+/** Стан стоянок у збереженні кар'єри. */
+export interface ParkingState {
+  /** Годинник стоянок, с реального часу гри (king.exe 0x401000 — секунди симуляції, не ігрова доба). */
+  clock: number;
+  /** До наступного запуску задачі updateDealers, с. */
+  timer: number;
+  cars: ParkedCar[];
+}
+
+/** Період задачі updateDealers, с (king.exe 0x434780: 27,5 — double 0x403b8000). */
+export const DEALERS_PERIOD = 27.5;
+/** Продавець старший за 900 + rand % 120 с (0x421c00) … */
+export const DEALER_AGE = 900;
+export const DEALER_AGE_RAND = 120;
+/** … і далі 2000 м від гравця (0x64b758) — зникає. */
+export const DEALER_GONE_R = 2000;
+/** Нових ставлять не ближче 700 м від гравця (0x422370 → 0x4221d0, аргумент 700.0). */
+export const DEALER_NEW_R = 700;
+/** До 100 спроб дозаповнити кожну групу (0x4221d0). */
+const REFILL_TRIES = 100;
+/** Шукач роботи чекає 1200 + rand % 1500 с (0x419cb0 → 0x477bd0). */
+export const SEEKER_WAIT = 1200;
+export const SEEKER_WAIT_RAND = 1500;
+/** Ціна машини мінус пошкодження × 5000 $ (0x473680, 0x64b848). */
+export const DAMAGE_PRICE = 5000;
+
+/**
+ * Вартість машини (king.exe 0x473680): ціна моделі × 0,65 вживана / × 0,45 крадена (0x473600) мінус пошкодження
+ * 0…1 × 5000 $; не менше нуля. Покращення порт переносить на нову машину, тож тут їх немає.
+ */
+export function carValue(price: number, o: { used?: boolean; stolen?: boolean; damage?: number }): number {
+  const base = price * (o.used ? USED_DISCOUNT : o.stolen ? STOLEN_DISCOUNT : 1);
+  return Math.max(0, Math.round(base - (o.damage ?? 0) * DAMAGE_PRICE));
 }
 
 export class Markets {
   private readonly shown = new Map<number, Shown>();
-  /** Продані сьогодні: `ринок:день:місце`. */
-  private readonly sold = new Set<string>();
   /** Замовлені рацією машини (зберігаються в кар'єрі). */
   ordered: OrderedCar[] = [];
   /** Типи машин продавців з evehicles.sch (dealerKinds). */
   kinds: DealerKind[] = [];
   /** Густота трафіку 0…1 (частка легковиків серед продавців). */
   density = 1;
-  /** З цього дня гри продають і «тупі» легковики (king.exe 0x68d1a0: частка капіталу гравця ≥ 52 %). */
-  carsFrom = Infinity;
+  /** Продавці мають і «тупі» легковики (king.exe 0x68d1a0: частка капіталу гравця ≥ 52 %) — для нових продавців. */
+  allCars = false;
+  /** Ліміт шукачів роботи на весь світ (GAME.CNF `forhire`, 0x68d150). */
+  forhire = 20;
+  /** Імена, з яких беруться шукачі роботи (далекобійники світу без найнятих гравцем — company.hirableNames). */
+  hirable: () => readonly string[] = () => [];
+  /** Стан стоянок (зберігається в кар'єрі). */
+  state: ParkingState = { clock: 0, timer: DEALERS_PERIOD, cars: [] };
+  /** Лічильник змін стану (перебудова показаних ринків). */
+  private rev = 0;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -231,101 +292,184 @@ export class Markets {
     readonly list: Market[],
     private readonly ground: (p: THREE.Vector3) => number,
     private readonly limits: SaleLimits = { forsale: 25, used: 5, stolen: 5 },
+    private readonly rnd: () => number = Math.random,
   ) {}
 
-  private planDay = -1;
-  private planned = new Map<number, Map<number, SaleKind>>();
-
-  /** Розстановка продавців на день (0x418c10): стоянка з найменшою кількістю зайнятих місць, місце — випадкове вільне. */
-  private plan(day: number): Map<number, Map<number, SaleKind>> {
-    if (this.planDay === day) return this.planned;
-    const rnd = seeded(day * 104729 + 0x51ed);
-    // Замовлені машини стоять на місцях-містах (прапорець 4), куди нових не ставлять, — розстановку не міняють
-    // (інакше машини на ринку переставлялися б посеред дня).
-    const taken = new Map<number, Map<number, SaleKind>>();
-    const limits: [SaleKind, number][] = [[0, this.limits.forsale], [1, this.limits.used], [2, this.limits.stolen]];
-    for (const [kind, n] of limits)
-      for (let k = 0; k < n; k++) {
-        let best: Market | null = null;
-        let free: number[] = [];
-        for (const m of this.list) {
-          const t = taken.get(m.id);
-          if (best && (t?.size ?? 0) >= (taken.get(best.id)?.size ?? 0)) continue;
-          const f = m.flags.map((fl, i) => (fits(fl, kind) && !t?.has(i) ? i : -1)).filter((i) => i >= 0);
-          if (f.length) [best, free] = [m, f];
-        }
-        if (!best) break;
-        if (!taken.has(best.id)) taken.set(best.id, new Map());
-        taken.get(best.id)!.set(free[Math.floor(rnd() * free.length)], kind);
-      }
-    this.planDay = day;
-    this.planned = taken;
-    return taken;
+  /**
+   * Стан зі збереження. Немає (нова кар'єра чи збереження до 2026-10-26) — заповнити стоянки, як на старті king.exe
+   * (0x4221d0 до лімітів, 0x423ad0 — шукачі роботи), без умови відстані: машин ще не видно.
+   */
+  restore(saved: ParkingState | undefined): void {
+    if (saved && Array.isArray(saved.cars) && Number.isFinite(saved.clock)) {
+      const known = new Set(this.list.map((m) => m.id));
+      this.state = {
+        clock: saved.clock,
+        timer: Number.isFinite(saved.timer) ? saved.timer : DEALERS_PERIOD,
+        cars: saved.cars.filter((c) => known.has(c.market) && this.list.find((m) => m.id === c.market)!.spots[c.spot]),
+      };
+    } else this.state = { clock: 0, timer: DEALERS_PERIOD, cars: [] };
+    if (!this.state.cars.length) this.refill(null);
+    this.changed();
   }
 
-  /** Що продається на ринку (чи стоянці-схованці) в цей день гри. */
-  stock(m: Market, day: number): ForSale[] {
-    const pool = drivable(this.trucks).filter((r) => !/^Storm/i.test(r.carNode));
-    const allCars = day >= this.carsFrom;
-    const rnd = seeded(m.id * 7919 + day * 104729);
-    // Продавець — тип evehicles (модель + фарбування), без даних — модель з vehicle.tech у першому фарбуванні.
-    const dealer = (): { rec: TechRecord; cluster: number } | null => {
-      const k = pickDealerKind(this.kinds, allCars, this.density, rnd);
-      const rec = k && this.trucks.records.find((r) => r.carNode === k.carNode);
-      if (rec) return { rec, cluster: k.cluster };
-      const r = pool[Math.floor(rnd() * pool.length)];
-      return r ? { rec: r, cluster: 0 } : null;
-    };
-    // Шукач роботи — далекобійник (king.exe тип 2) на своїй вантажівці у своєму фарбуванні.
-    const seeker = (): { rec: TechRecord; cluster: number } | null => {
-      const ks = this.kinds.filter((k) => k.trucker && !k.car && pool.some((r) => r.carNode === k.carNode));
-      const k = ks.length ? ks[Math.floor(rnd() * ks.length)] : null;
-      const rec = k && pool.find((r) => r.carNode === k.carNode);
-      if (rec) return { rec, cluster: k.cluster };
-      const r = pool[Math.floor(rnd() * pool.length)];
-      return r ? { rec: r, cluster: 0 } : null;
-    };
-    const plan = this.plan(day).get(m.id);
-    const out: ForSale[] = [];
-    m.spots.forEach((_, spot) => {
-      const pick = dealer();
-      // Замовлена машина стоїть на своєму місці, доки її не куплять (king.exe 0x433b60: звичайна машина на продаж).
-      const own = this.ordered.find((o) => o.market === m.id && o.spot === spot);
-      const oRec = own && this.trucks.records.find((r) => r.carNode === own.carNode);
-      if (own && oRec) {
-        out.push({ rec: oRec, used: false, stolen: own.stolen, price: Math.round(oRec.price * (own.stolen ? STOLEN_DISCOUNT : 1)), spot, cluster: own.cluster, ordered: true });
-        return;
-      }
-      const kind = plan?.get(spot);
-      if (kind === undefined || !pick || this.sold.has(`${m.id}:${day}:${spot}`)) return;
-      const { rec, cluster } = pick;
-      const used = kind === 1;
-      const stolen = kind === 2;
-      out.push({ rec, used, stolen, price: Math.round(rec.price * (used ? USED_DISCOUNT : stolen ? STOLEN_DISCOUNT : 1)), spot, cluster });
+  /**
+   * Годинник і задача updateDealers (king.exe 0x422370, раз на 27,5 с): продавці й шукачі роботи, що простояли
+   * 900…1019 с і далі 2 км від гравця, зникають (0x421c00); групи дозаповнюються до лімітів на місцях далі 700 м
+   * (0x4221d0). Повертає, чи змінився стан.
+   */
+  tick(dt: number, player: THREE.Vector3): boolean {
+    const s = this.state;
+    s.clock += dt;
+    if ((s.timer -= dt) > 0) return false;
+    s.timer = DEALERS_PERIOD;
+    const before = s.cars.length;
+    s.cars = s.cars.filter((c) => {
+      if (c.group === 'hire') return true;
+      // Межа віку — щоразу нове випадкове (0x421c00: rand % 120 на кожного продавця при кожному запуску).
+      const age = DEALER_AGE + Math.floor(this.rnd() * DEALER_AGE_RAND);
+      if (s.clock - c.born <= age) return true;
+      return this.spotPos(c).distanceTo(player) <= DEALER_GONE_R;
     });
-    // Водій, що шукає роботу, — на вільному звичайному місці ринку (не схованки й не місце-місто для замовлених).
-    if (!m.hidden) {
-      const free = m.flags.map((fl, i) => (fl & 4 || out.some((o) => o.spot === i) ? -1 : i)).filter((i) => i >= 0);
-      const offer = hireOffer(m.id, day, free, ['?']);
-      const pick = seeker();
-      if (offer && pick && !this.sold.has(`${m.id}:${day}:${offer.spot}`)) out.push({ rec: pick.rec, used: false, price: pick.rec.price, spot: offer.spot, hire: true, cluster: pick.cluster });
+    // Шукач роботи, що відчекав, іде, коли пул повний (king.exe 0x41ae60: тих, що чекають, ≥ forhire; 0x45d1b0:
+    // > forhire − 2 — випадковий із відчеклих). Порт — один випадковий за запуск задачі.
+    const seekers = s.cars.filter((c) => c.group === 'hire');
+    const done = seekers.filter((c) => (c.until ?? 0) <= s.clock);
+    if (done.length && seekers.length > this.forhire - 2) s.cars.splice(s.cars.indexOf(done[Math.floor(this.rnd() * done.length)]), 1);
+    const removed = s.cars.length !== before;
+    const added = this.refill(player);
+    if (removed || added) this.changed();
+    return removed || added;
+  }
+
+  /** Позиція місця машини. */
+  private spotPos(c: { market: number; spot: number }): THREE.Vector3 {
+    return this.list.find((m) => m.id === c.market)!.spots[c.spot].pos;
+  }
+
+  /** Зайняті місця ринку: машини стоянок і замовлені. */
+  private occupied(m: Market): Set<number> {
+    const t = new Set<number>();
+    for (const c of this.state.cars) if (c.market === m.id) t.add(c.spot);
+    for (const o of this.ordered) if (o.market === m.id) t.add(o.spot);
+    return t;
+  }
+
+  /**
+   * Місце для нової машини (0x418c10 findAppropriateParkingPlace): стоянка, де зайнято найменше і є вільне придатне
+   * місце далі minR від гравця (перша з рівних), місце — випадкове з придатних.
+   */
+  private place(kind: SaleKind, player: THREE.Vector3 | null, minR: number): { market: number; spot: number } | null {
+    let best: Market | null = null;
+    let bestN = Infinity;
+    let free: number[] = [];
+    for (const m of this.list) {
+      const t = this.occupied(m);
+      if (t.size >= bestN) continue;
+      const f = m.flags
+        .map((fl, i) => (fits(fl, kind) && !t.has(i) && (!player || m.spots[i].pos.distanceTo(player) > minR) ? i : -1))
+        .filter((i) => i >= 0);
+      if (f.length) [best, bestN, free] = [m, t.size, f];
+    }
+    return best ? { market: best.id, spot: free[Math.floor(this.rnd() * free.length)] } : null;
+  }
+
+  /** Дозаповнити групи продавців і шукачів роботи (player null — старт, без умови відстані). */
+  private refill(player: THREE.Vector3 | null): boolean {
+    const s = this.state;
+    let added = false;
+    const groups: [SaleKind, number][] = [[0, this.limits.forsale], [1, this.limits.used], [2, this.limits.stolen]];
+    for (const [kind, limit] of groups)
+      for (let i = 0; i < REFILL_TRIES && s.cars.filter((c) => c.group === kind).length < limit; i++) {
+        const at = this.place(kind, player, DEALER_NEW_R);
+        const k = at && this.dealerKind();
+        if (!at || !k) break;
+        s.cars.push({ ...at, group: kind, carNode: k.carNode, cluster: k.cluster, born: s.clock });
+        added = true;
+      }
+    // Шукачі роботи (king.exe goHireIt 0x419030: далекобійник ІІ на вільне місце групи нових, ліміт forhire). Там
+    // ним стає вільний далекобійник після доставки й доїжджає до місця; порт рейсів ботів до стоянок не веде —
+    // дозаповнює тією самою задачею [Г] і ставить одразу, далі 700 м від гравця (не на очах).
+    for (let i = 0; i < REFILL_TRIES && s.cars.filter((c) => c.group === 'hire').length < this.forhire; i++) {
+      const taken = new Set(s.cars.map((c) => c.name).filter(Boolean));
+      const names = this.hirable().filter((n) => !taken.has(n));
+      const at = names.length ? this.place(0, player, DEALER_NEW_R) : null;
+      const k = at && this.seekerKind();
+      if (!at || !k) break;
+      const name = names[Math.floor(this.rnd() * names.length)];
+      s.cars.push({ ...at, group: 'hire', carNode: k.carNode, cluster: k.cluster, born: s.clock, name, photo: 1 + Math.floor(this.rnd() * 51), until: s.clock + SEEKER_WAIT + Math.floor(this.rnd() * SEEKER_WAIT_RAND) });
+      added = true;
+    }
+    return added;
+  }
+
+  /** Тип машини нового продавця (pickDealerKind), без даних — модель з vehicle.tech у першому фарбуванні. */
+  private dealerKind(): { carNode: string; cluster: number } | null {
+    const k = pickDealerKind(this.kinds, this.allCars, this.density, this.rnd);
+    if (k && this.trucks.records.some((r) => r.carNode === k.carNode)) return k;
+    const pool = this.pool();
+    const r = pool[Math.floor(this.rnd() * pool.length)];
+    return r ? { carNode: r.carNode, cluster: 0 } : null;
+  }
+
+  /** Машина шукача роботи — вантажівка далекобійника (king.exe тип 2) у своєму фарбуванні. */
+  private seekerKind(): { carNode: string; cluster: number } | null {
+    const pool = this.pool();
+    const ks = this.kinds.filter((k) => k.trucker && !k.car && pool.some((r) => r.carNode === k.carNode));
+    if (ks.length) return ks[Math.floor(this.rnd() * ks.length)];
+    const r = pool[Math.floor(this.rnd() * pool.length)];
+    return r ? { carNode: r.carNode, cluster: 0 } : null;
+  }
+
+  private pool(): TechRecord[] {
+    return drivable(this.trucks).filter((r) => !/^Storm/i.test(r.carNode));
+  }
+
+  private changed(): void {
+    this.rev++;
+  }
+
+  /** Що стоїть на ринку (чи стоянці-схованці) зараз. */
+  stock(m: Market): ForSale[] {
+    const out: ForSale[] = [];
+    // Замовлена машина стоїть на своєму місці, доки її не куплять (king.exe 0x433b60: звичайна машина на продаж).
+    for (const own of this.ordered) {
+      const rec = own.market === m.id && this.trucks.records.find((r) => r.carNode === own.carNode);
+      if (rec) out.push({ rec, used: false, stolen: own.stolen, price: Math.round(rec.price * (own.stolen ? STOLEN_DISCOUNT : 1)), spot: own.spot, cluster: own.cluster, ordered: true });
+    }
+    for (const c of this.state.cars) {
+      const rec = c.market === m.id && !out.some((o) => o.spot === c.spot) && this.trucks.records.find((r) => r.carNode === c.carNode);
+      if (!rec) continue;
+      if (c.group === 'hire') {
+        out.push({ rec, used: false, price: rec.price, spot: c.spot, hire: true, cluster: c.cluster, name: c.name, photo: c.photo });
+        continue;
+      }
+      const used = c.group === 1;
+      const stolen = c.group === 2 || !!c.traded?.stolen;
+      const price = carValue(rec.price, { used, stolen, damage: c.traded?.damage });
+      out.push({ rec, used, stolen, price, spot: c.spot, cluster: c.cluster, damage: c.traded?.damage });
     }
     return out;
   }
 
-  /** Продані й найняті з дня day і пізніше (ключі `ринок:день:місце`) — для збереження кар'єри (Ht2Career.sold). */
-  soldKeys(day: number): string[] {
-    return [...this.sold].filter((k) => Number(k.split(':')[1]) >= day);
-  }
-
-  /** Відновити продані зі збереження: інакше після завантаження куплена машина й найнятий водій знову на ринку. */
-  restoreSold(keys: readonly string[]): void {
-    for (const k of keys) this.sold.add(k);
-  }
-
-  sell(m: Market, day: number, item: ForSale): void {
-    this.sold.add(`${m.id}:${day}:${item.spot}`);
-    if (item.ordered) this.ordered.splice(0, this.ordered.length, ...this.ordered.filter((o) => !(o.market === m.id && o.spot === item.spot)));
+  /**
+   * Купівля (king.exe 0x4738c0): продавець і гравець міняються машинами — продавець лишається на місці зі старою
+   * машиною гравця (той самий вік: зникне з наступним оновленням, коли простоїть свій строк). Без старої — місце
+   * звільняється. Найм (0x476bc0 → 0x419760) — шукач роботи йде з місця.
+   */
+  sell(m: Market, item: ForSale, old?: { carNode: string; cluster: number; damage: number; stolen: boolean } | null): void {
+    if (item.ordered) {
+      this.ordered.splice(0, this.ordered.length, ...this.ordered.filter((o) => !(o.market === m.id && o.spot === item.spot)));
+      // Замовлена — теж продавець (0x433b60): стара машина гравця лишається на цьому місці.
+      if (old && !item.hire) this.state.cars.push({ market: m.id, spot: item.spot, group: 0, carNode: old.carNode, cluster: old.cluster, born: this.state.clock, traded: { damage: old.damage, stolen: old.stolen } });
+    } else {
+      const i = this.state.cars.findIndex((c) => c.market === m.id && c.spot === item.spot);
+      if (i >= 0) {
+        const c = this.state.cars[i];
+        if (old && !item.hire) this.state.cars[i] = { ...c, carNode: old.carNode, cluster: old.cluster, traded: { damage: old.damage, stolen: old.stolen } };
+        else this.state.cars.splice(i, 1);
+      }
+    }
+    this.changed();
     this.hide(m.id);
   }
 
@@ -366,6 +510,8 @@ export class Markets {
   deliver(m: Market, car: Omit<OrderedCar, 'market' | 'spot'>): void {
     const spot = m.townSpot;
     this.ordered.splice(0, this.ordered.length, ...this.ordered.filter((o) => !(o.market === m.id && o.spot === spot)), { market: m.id, spot, ...car });
+    this.state.cars = this.state.cars.filter((c) => !(c.market === m.id && c.spot === spot));
+    this.changed();
     this.hide(m.id);
   }
 
@@ -377,15 +523,14 @@ export class Markets {
   /**
    * Машина на продаж, ближча за 20 м до точки (king.exe 0x56fc10: щокадру обхід машин із прапорцем «продається» чи
    * «шукає роботу», відстань між машинами < 20 м — подія 0x12/0x18, вікно «ПРОДАЁТСЯ» / «ИЩУ РАБОТУ»; швидкість не
-   * перевіряється). skip — модель, якої не показуємо (своя). Найближча з тих, що поруч.
+   * перевіряється). Найближча з тих, що поруч.
    */
-  nearSale(p: THREE.Vector3, day: number, skip?: string): { market: Market; item: ForSale } | null {
+  nearSale(p: THREE.Vector3): { market: Market; item: ForSale } | null {
     let best: { market: Market; item: ForSale } | null = null;
     let bd = NEAR_R;
     for (const m of this.list) {
       if (!m.spots.some((s) => Math.hypot(s.pos.x - p.x, s.pos.z - p.z) < NEAR_R + 5)) continue;
-      for (const item of this.stock(m, day)) {
-        if (item.rec.carNode === skip) continue;
+      for (const item of this.stock(m)) {
         const d = m.spots[item.spot].pos.distanceTo(p);
         if (d < bd) {
           bd = d;
@@ -396,19 +541,27 @@ export class Markets {
     return best;
   }
 
-  /** Показати машини на ринках поблизу (і сховати далекі), день гри — для асортименту. */
-  update(p: THREE.Vector3, day: number): void {
+  /** Показати машини на ринках поблизу (і сховати далекі); змінився набір машин ринку — перебудувати. */
+  update(p: THREE.Vector3): void {
     for (const m of this.list) {
       const d = Math.min(...m.spots.map((s) => Math.hypot(s.pos.x - p.x, s.pos.z - p.z)));
       const cur = this.shown.get(m.id);
-      if (cur && (d > SHOW_R * 1.2 || cur.day !== day)) this.hide(m.id);
-      if (d < SHOW_R && !this.shown.has(m.id)) this.show(m, day);
+      if (cur && (d > SHOW_R * 1.2 || (cur.rev !== this.rev && cur.sig !== this.signature(m)))) this.hide(m.id);
+      else if (cur) cur.rev = this.rev;
+      if (d < SHOW_R && !this.shown.has(m.id)) this.show(m);
     }
   }
 
-  private show(m: Market, day: number): void {
+  /** Що стоїть на ринку — рядком (чи треба перебудувати показані машини). */
+  private signature(m: Market): string {
+    return this.stock(m)
+      .map((s) => `${s.spot}:${s.rec.carNode}#${s.cluster ?? 0}`)
+      .join(',');
+  }
+
+  private show(m: Market): void {
     const parts: Shown['parts'] = [];
-    for (const item of this.stock(m, day)) {
+    for (const item of this.stock(m)) {
       const def = truckDef(this.trucks, item.rec);
       const model = def && buildTruckModel(this.trucks.asm, def, false);
       if (!model) continue;
@@ -438,7 +591,7 @@ export class Markets {
       this.scene.add(root);
       parts.push({ root, body });
     }
-    this.shown.set(m.id, { market: m, day, parts });
+    this.shown.set(m.id, { market: m, rev: this.rev, sig: this.signature(m), parts });
   }
 
   private hide(id: number): void {
