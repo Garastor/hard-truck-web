@@ -6,12 +6,13 @@
  * потрібен).
  */
 import { decodeSignal, encodeSignal, sdpFromSignal, sdpMid, signalFromSdp, SignalError } from './signal';
+import type { AllyMember, AllyOp, AllyStart, AllyState, CareerKind } from '../career/allies';
 
 /**
  * Версія протоколу: різні версії порту не з'єднуються (повідомлення гравцям). Своя в другої гри — коди `HT2:` і так
  * не підходять першій (signal.ts).
  */
-export const NET_VERSION = 5;
+export const NET_VERSION = 6;
 /** Скільки чекати збору адрес (у локальній мережі — частки секунди), мс. */
 const GATHER_TIMEOUT = 4000;
 /**
@@ -40,7 +41,7 @@ export type NetMessage =
   /** Машина гравця id: car_node і колір (екран «Мережева гра» n/backMult). */
   | { t: 'pick'; truck: string; color: number; id: number }
   /** Господар почав заїзд: вибір, гравці з машинами, машини суперників (усі вантажать трасу). */
-  | { t: 'start'; setup: NetSetup; players: NetPlayer[]; rivals: NetCar[] }
+  | { t: 'start'; setup: NetSetup; players: NetPlayer[]; rivals: NetCar[]; ally?: AllyStart }
   /** Гравець id повернувся із заїзду до сесії. */
   | { t: 'lobby'; id: number }
   /** Гравець id завантажив трасу — готовий до старту. */
@@ -58,6 +59,17 @@ export type NetMessage =
   | { t: 'taken'; id: number; store: number; dock: number }
   /** Мережева кар'єра: гравець id захопив ринок (частка ≥ 0,51) — для інших кінець гри (BackLoose1). */
   | { t: 'won'; id: number }
+  /**
+   * Мережева кар'єра, сервер — усім раз на 3 с: ігровий час і кути погоди (Climate th1, th2) — однакові доба й погода
+   * (суперництво — лише година доби, союзники — і сам час).
+   */
+  | { t: 'clock'; time: number; th1: number; th2: number }
+  /** Союзники, гість — серверу: зміни лічильників і списків компанії (career/allies.ts AllyOp). */
+  | { t: 'allyOp'; id: number; op: AllyOp }
+  /** Союзники, сервер — усім: стан спільної компанії. */
+  | { t: 'allyState'; state: AllyState }
+  /** Союзники, гість — серверу: особисте (машина, замовлення, позиція) — у збереження сервера. */
+  | { t: 'allyMember'; id: number; name: string; member: AllyMember }
   /** Гравець id фінішував: час заїзду від зеленого, с; місце серед усіх (з суперниками). */
   | { t: 'finish'; time: number; place: number; id: number };
 
@@ -72,10 +84,12 @@ export type NetTrack = 'ring' | 'trial' | 'ball' | 'career';
  * повзунки «Насыщенность трасс», «Длительность суток», «Погода» (0…1). Однакові в усіх телефонів — однакові доба й
  * погода (у гонці погода стала, Climate за повзунком). `rivals` — суперників на автопілоті в Кільці й Тріалі (точне
  * число 0…15 стрілками; власний інтерфейс порту, у king.exe — завжди вільні місця решітки); `traffic` — лише в
- * мережевій кар'єрі (насиченість трас, як повзунок одиночної гри).
+ * мережевій кар'єрі (насиченість трас, як повзунок одиночної гри); доба й погода — у всіх режимах, у кар'єрі теж.
  */
 export interface NetSetup {
   track: NetTrack;
+  /** Мережева кар'єра: суперництво (кожен — своя компанія) чи союзники (спільна компанія сервера). */
+  career?: CareerKind;
   arcade: boolean;
   rivals: number;
   traffic: number;
@@ -83,7 +97,7 @@ export interface NetSetup {
   weather: number;
 }
 
-export const DEFAULT_SETUP: NetSetup = { track: 'ring', arcade: false, rivals: 6, traffic: 0.5, dayLength: 0.5, weather: 0.6 };
+export const DEFAULT_SETUP: NetSetup = { track: 'ring', career: 'rivals', arcade: false, rivals: 6, traffic: 0.5, dayLength: 0.5, weather: 0.6 };
 
 /** Машина: car_node (vehicle.tech) і колір (0…3; фото — net/cars.ts carPhoto). */
 export interface NetCar {

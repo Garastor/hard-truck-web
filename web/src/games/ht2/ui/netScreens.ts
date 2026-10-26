@@ -17,6 +17,7 @@ import { PLAYER_COLORS } from '../net/state';
 import { QrScanner, cameraAvailable, qrCanvas } from '../net/qr';
 import { KIND_NAME, MAX_RIVALS, NET_MODELS, brandPhoto, carName, carPhoto, clampRivals, hasRivals, pickRivals } from '../net/cars';
 import { deleteSave, formatMoney, listNetSaves, type Ht2Career } from '../career/career';
+import { MAX_CAREER_PLAYERS, type AllyStart, type CareerKind } from '../career/allies';
 import { texButtonEl, type Ht2MenuArt, type RoundKey } from './menu';
 import type { EscArt } from './escArt';
 import panelUrl from './art/net-panel.png';
@@ -43,6 +44,8 @@ export interface NetStart {
   setup: NetSetup;
   players: NetPlayer[];
   rivals: NetCar[];
+  /** Мережева кар'єра «Союзники»: спільна компанія сервера й особисте кожного (career/allies.ts). */
+  ally?: AllyStart;
 }
 
 /** Потужність (к. с., evehicles.sch — як у вікні замовлення) і вантажопідйомність (т, vehicle.tech) моделі. */
@@ -60,9 +63,15 @@ export interface NetMenuOptions {
   escArt?: Promise<EscArt | null>;
   /** Потужність і вантажопідйомність моделей. */
   specs?: Promise<CarSpecs>;
-  /** Мережева кар'єра: вибране збереження (undefined — найновіше, null — нова) і зміна вибору. */
-  careerSave?: { get(): string | null | undefined; set(id: string | null): void };
+  /** Мережева кар'єра: вибране збереження режиму (undefined — найновіше, null — нова) і зміна вибору. */
+  careerSave?: { get(kind: CareerKind): string | null | undefined; set(kind: CareerKind, id: string | null): void };
+  /** Сервер, старт кар'єри «Союзники»: спільна компанія зі свого збереження для гостей. */
+  allyStart?(car: NetCar): AllyStart;
 }
+
+/** Режим мережевої кар'єри. */
+const kindOf = (s: NetSetup): CareerKind => s.career ?? 'rivals';
+const KIND_TITLE: Record<CareerKind, string> = { rivals: 'суперництво', allies: 'союзники' };
 
 /**
  * Розділ «Мережева гра»: машина → «Створити гру» (налаштування → коди) чи «Приєднатися» (коди) → лобі. Результат —
@@ -124,8 +133,9 @@ export async function ht2NetMenu(art: Ht2MenuArt, o: NetMenuOptions): Promise<Ne
       continue;
     }
     if (r === 'save') {
-      const s = await saveScreen(art, photos, o.driver, o.careerSave?.get(), car);
-      if (s !== undefined) o.careerSave?.set(s);
+      const kind = kindOf(session.setup);
+      const s = await saveScreen(art, photos, o.driver, o.careerSave?.get(kind), car, kind);
+      if (s !== undefined) o.careerSave?.set(kind, s);
       continue;
     }
     if (r && typeof r === 'object') return r;
@@ -400,8 +410,18 @@ function setupScreen(art: Ht2MenuArt, from: NetSetup, inSession: boolean): Promi
         stepper(art, parts, 'Суперники', () => s.rivals, (v) => (s.rivals = v), 0, MAX_RIVALS, () => `0…${MAX_RIVALS}, на автопілоті`);
       else if (s.track === 'ball') parts.append(el('div', 'ht2-nui-note', 'В Автоболі суперників на автопілоті немає (як в оригіналі).'));
       if (career) {
+        const note = el('div', 'ht2-nui-note');
+        const tell = () =>
+          (note.textContent =
+            kindOf(s) === 'allies'
+              ? `Спільна компанія: гроші, наймані й ліцензії — одні на всіх, збереження — у сервера. До ${MAX_CAREER_PLAYERS} гравців.`
+              : `Кожен — своя компанія і своє збереження; хто перший захопить 51 % ринку — виграв. До ${MAX_CAREER_PLAYERS} гравців.`);
+        choice(parts, [['rivals', 'Суперництво'], ['allies', 'Союзники']] as [CareerKind, string][], () => kindOf(s), (v) => (s.career = v), tell, 'Компанія');
         slider(art, parts, 'Насиченість трас', () => s.traffic, (v) => (s.traffic = v));
-        parts.append(el('div', 'ht2-nui-note', 'Кожен грає своє збереження у своєму світі; доба й погода — свої. Хто перший захопить 51 % ринку — виграв.'));
+        slider(art, parts, 'Тривалість доби', () => s.dayLength, (v) => (s.dayLength = v));
+        slider(art, parts, 'Погода', () => s.weather, (v) => (s.weather = v));
+        parts.append(note);
+        tell();
         return;
       }
       choice(parts, [[true, 'Аркада'], [false, 'Симулятор']], () => s.arcade, (v) => (s.arcade = v), undefined, 'Складність');
@@ -583,7 +603,12 @@ function connectPanel(art: Ht2MenuArt, driver: string, mode: 'host' | 'join', ad
 
 /** Короткий опис заїзду для лобі. */
 export function setupSummary(s: NetSetup): string[] {
-  if (s.track === 'career') return ['Мережева кар’єра: змагання за ринок', `Насиченість трас ${Math.round(s.traffic * 100)} %`];
+  if (s.track === 'career')
+    return [
+      `Мережева кар’єра: ${KIND_TITLE[kindOf(s)]}`,
+      kindOf(s) === 'allies' ? 'Спільна компанія сервера' : 'Кожен — своя компанія, змагання за ринок',
+      `Трафік ${Math.round(s.traffic * 100)} % · доба ${Math.round(s.dayLength * 100)} % · погода ${Math.round(s.weather * 100)} %`,
+    ];
   const rivals = hasRivals(s.track) ? `Суперники: ${clampRivals(s.rivals)}` : 'Без суперників на автопілоті';
   return [`${TRACK_NAME[s.track]} · ${s.arcade ? 'аркада' : 'симулятор'}`, rivals, `Доба ${Math.round(s.dayLength * 100)} % · погода ${Math.round(s.weather * 100)} %`];
 }
@@ -629,9 +654,11 @@ function lobby(art: Ht2MenuArt, photos: CarPhotos, o: NetMenuOptions, session: N
       ? btn(
           'Старт',
           () => {
-            if (session.players.size < 2) return;
-            const m = session.start(pickRivals(session.setup, [...session.players.values()].map((p) => p.truck)));
-            done({ session, setup: m.setup, players: m.players, rivals: m.rivals });
+            if (session.players.size < 2 || tooMany()) return;
+            const s = session.setup;
+            const ally = s.track === 'career' && kindOf(s) === 'allies' ? o.allyStart?.(session.me) : undefined;
+            const m = session.start(pickRivals(s, [...session.players.values()].map((p) => p.truck)), ally);
+            done({ session, setup: m.setup, players: m.players, rivals: m.rivals, ally });
           },
           'primary',
         )
@@ -640,6 +667,8 @@ function lobby(art: Ht2MenuArt, photos: CarPhotos, o: NetMenuOptions, session: N
       session.close();
       done(null);
     };
+    /** Мережева кар'єра — до MAX_CAREER_PLAYERS гравців (гонки — до 8). */
+    const tooMany = () => session.setup.track === 'career' && session.players.size > MAX_CAREER_PLAYERS;
     f.foot.append(btn('Вийти', leave));
     if (start) f.foot.append(start);
     const renderList = () => {
@@ -680,29 +709,39 @@ function lobby(art: Ht2MenuArt, photos: CarPhotos, o: NetMenuOptions, session: N
       renderList();
       const s = session.setup;
       summary.replaceChildren(el('div', 'ht2-nui-label', 'Заїзд'), ...setupSummary(s).map((t, k) => el('div', k ? 'ht2-nui-hint' : 'ht2-nui-value', t)));
-      if (add) add.hidden = session.full;
-      // Мережева кар'єра: кожен обирає своє збереження (у кожного свій світ).
+      if (add) add.hidden = session.full || (s.track === 'career' && session.players.size >= MAX_CAREER_PLAYERS);
+      // Мережева кар'єра: у суперництві кожен обирає своє збереження; у союзників — збереження сервера.
       saveBox.replaceChildren();
       if (s.track === 'career') {
-        const id = o.careerSave?.get();
-        const saves = listNetSaves(o.driver);
-        const cur = id === null ? null : id === undefined ? (saves[0] ?? null) : (saves.find((c) => c.id === id) ?? null);
-        saveBox.append(el('div', 'ht2-nui-label', 'Моя кар’єра'), el('div', 'ht2-nui-value', cur ? saveTitle(cur) : 'Нова кар’єра'), btn('Обрати збереження', () => done('save'), 'small'));
+        const kind = kindOf(s);
+        if (kind === 'allies' && !host) saveBox.append(el('div', 'ht2-nui-label', 'Компанія'), el('div', 'ht2-nui-value', 'Спільна, у сервера'));
+        else {
+          const id = o.careerSave?.get(kind);
+          const saves = listNetSaves(o.driver, kind === 'allies');
+          const cur = id === null ? null : id === undefined ? (saves[0] ?? null) : (saves.find((c) => c.id === id) ?? null);
+          saveBox.append(
+            el('div', 'ht2-nui-label', kind === 'allies' ? 'Спільна компанія' : 'Моя кар’єра'),
+            el('div', 'ht2-nui-value', cur ? saveTitle(cur) : 'Нова кар’єра'),
+            btn('Обрати збереження', () => done('save'), 'small'),
+          );
+        }
       }
-      status.textContent = host
+      status.textContent = tooMany()
+        ? `У мережевій кар’єрі — до ${MAX_CAREER_PLAYERS} гравців: зайві мають вийти, або оберіть гонку.`
+        : host
         ? session.players.size > 1
           ? s.track === 'career'
             ? 'Старт — кожен у своїй мережевій кар’єрі, в одному світі.'
             : 'Старт — усі завантажать трасу разом з вами.'
           : 'Додайте гравця (+ Гравець), щоб почати.'
         : 'Заїзд обирає сервер. Чекаємо, поки він почне.';
-      start?.classList.toggle('off', session.players.size < 2);
+      start?.classList.toggle('off', session.players.size < 2 || tooMany());
     };
     const timer = window.setInterval(renderList, 1000);
     session.events = {
       onChange: render,
       onMessage: (m) => {
-        if (m.t === 'start') done({ session, setup: m.setup, players: m.players, rivals: m.rivals });
+        if (m.t === 'start') done({ session, setup: m.setup, players: m.players, rivals: m.rivals, ally: m.ally });
         else render();
       },
       onStall: render,
@@ -724,12 +763,13 @@ function lobby(art: Ht2MenuArt, photos: CarPhotos, o: NetMenuOptions, session: N
  * Вибір збереження мережевої кар'єри: свої збереження (найновіші першими) і «Нова кар'єра» (з машиною з екрана
  * машини). Результат — id, null (нова) чи undefined (скасовано).
  */
-function saveScreen(art: Ht2MenuArt, photos: CarPhotos, driver: string, current: string | null | undefined, car: NetCar): Promise<string | null | undefined> {
+function saveScreen(art: Ht2MenuArt, photos: CarPhotos, driver: string, current: string | null | undefined, car: NetCar, kind: CareerKind): Promise<string | null | undefined> {
   void art;
   return new Promise((resolve) => {
-    const f = frame('Моя мережева кар’єра');
-    f.sub.textContent = `Водій: ${driver}`;
-    let saves = listNetSaves(driver);
+    const allied = kind === 'allies';
+    const f = frame(allied ? 'Спільна компанія' : 'Моя мережева кар’єра');
+    f.sub.textContent = allied ? `Збереження сервера (${driver}) — у ньому машини всіх союзників` : `Водій: ${driver}`;
+    let saves = listNetSaves(driver, allied);
     let pick: string | null = current === undefined ? (saves[0]?.id ?? null) : current;
     let confirmDel = false;
     const done = (v: string | null | undefined) => {
@@ -752,7 +792,7 @@ function saveScreen(art: Ht2MenuArt, photos: CarPhotos, driver: string, current:
         return paint();
       }
       deleteSave(pick);
-      saves = listNetSaves(driver);
+      saves = listNetSaves(driver, allied);
       pick = saves[0]?.id ?? null;
       confirmDel = false;
       paint();
@@ -784,8 +824,11 @@ function saveScreen(art: Ht2MenuArt, photos: CarPhotos, driver: string, current:
       const c = saves.find((x) => x.id === pick);
       pic.src = c ? (photos.url(c.truck, c.paint ?? 0) ?? '') : (photos.url(car.truck, car.color) ?? '');
       pic.hidden = !pic.src;
+      const members = c?.allies ? Object.keys(c.allies) : [];
       about.textContent = c
-        ? 'Машина, гроші й найняті — зі збереження; світ, доба й погода — свої.'
+        ? allied
+          ? `Гроші, наймані й ліцензії компанії, машини союзників${members.length ? ` (${members.join(', ')})` : ''} — зі збереження.`
+          : 'Машина, гроші й найняті — зі збереження; світ свій, доба й погода — як у сервера.'
         : 'Нова кар’єра: 5000 $ і машина з екрана «Мережева гра».';
       del.hidden = !c;
       del.textContent = confirmDel ? 'Точно видалити?' : 'Видалити';

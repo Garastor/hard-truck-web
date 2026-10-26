@@ -1886,6 +1886,8 @@ export class Ht2Drive {
     const c = cm?.career;
     const drivers = c?.company ?? [];
     if (!cm || !c || (!drivers.length && !this.truckers?.hired.size && !this.hiredMarks.length)) return;
+    // Союзники: наймані спільної компанії їздять лише в сервера (витрати й рейси — раз).
+    if (cm.allies === 'guest') return;
     const hr = (this.hiredRoads ??= new HiredOnRoads(this.roads));
     const want: { name: string; carNode: string; paint: number; pos: THREE.Vector3; forward: THREE.Vector3 }[] = [];
     // Абстрактна швидкість (0x41a9d0): не менше 13,89 м/с або згладжена швидкість гравця.
@@ -2242,8 +2244,23 @@ export class Ht2Drive {
 
   /** Година доби гри (0…24). */
   get hour(): number {
-    const t = this.careerMode ? this.careerMode.career.time : this.freeTime;
-    return (t / 3600) % 24;
+    const t = this.careerMode ? this.careerMode.career.time + this.dayOffset : this.freeTime;
+    return (((t / 3600) % 24) + 24) % 24;
+  }
+
+  /**
+   * Мережева кар'єра, суперництво: зсув свого ігрового часу до години доби сервера, с (career/allies.ts dayOffset;
+   * дата й строки — свої). Небо, світло, фари й годинник табло — за зсунутим часом.
+   */
+  dayOffset = 0;
+
+  /** Мережева кар'єра: кути погоди (Climate th1, th2) — сервер розсилає, гості приймають. */
+  get weatherState(): { th1: number; th2: number } {
+    return { th1: this.climate.th1, th2: this.climate.th2 };
+  }
+  setWeatherState(th1: number, th2: number): void {
+    this.climate.th1 = th1;
+    this.climate.th2 = th2;
   }
 
   /**

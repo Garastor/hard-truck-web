@@ -6,6 +6,7 @@ import type { SavedPresent, TrailerChoice } from '../vehicles/presents';
 import type { SavedCache } from '../vehicles/caches';
 import type { OrderedCar, ParkingState } from './market';
 import type { SavedTrucker } from '../traffic/fleet';
+import type { AllyMember } from './allies';
 
 /**
  * Кар'єра Дальнобойщиків 2 (перша версія): гроші, вантажівка, стан, поточне замовлення, ігровий час. Зберігається в
@@ -41,6 +42,13 @@ export interface Ht2Career {
   id?: string;
   /** Мережева кар'єра (М6, `net-<водій>`): немає в списку збережень одиночної гри. */
   net?: boolean;
+  /**
+   * Мережева кар'єра «Союзники» (career/allies.ts): спільна компанія сервера; особисте союзників — у `allies` за
+   * іменем водія. `ally` — кар'єра гостя-союзника в пам'яті (не зберігається в нього; особисте йде серверу).
+   */
+  allied?: boolean;
+  allies?: Record<string, AllyMember>;
+  ally?: boolean;
   savedAt?: number;
   /** Логотип (0…7, `d/logo1…8`) і фото (0…50, `d/photo01…51`) водія — меню «Водії» (king.exe .pl1). */
   logo?: number;
@@ -228,18 +236,18 @@ export function loadCareer(id?: string): Ht2Career | null {
  * Мережеві кар'єри водія (М6; позначка net), найновіші першими: старе єдине збереження `net-<водій>` і нові з
  * власним id — у кожного водія їх може бути кілька, у лобі гравець обирає, яку продовжити.
  */
-export function listNetSaves(driver: string): Ht2Career[] {
-  return listSaves().filter((c) => c.net && c.driver === driver);
+export function listNetSaves(driver: string, allied = false): Ht2Career[] {
+  return listSaves().filter((c) => c.net && c.driver === driver && !!c.allied === allied);
 }
 
 /**
  * Мережева кар'єра для заїзду: збереження id (немає — нова з машиною truck). `undefined` — як раніше: найновіша
  * мережева кар'єра водія, а без жодної — нова. Нова отримує id одразу (щоб вибір у лобі її пам'ятав).
  */
-export function netCareerFor(driver: string, truck: string, id?: string | null): Ht2Career {
-  const saved = id ? loadCareer(id) : id === undefined ? (listNetSaves(driver)[0] ?? null) : null;
-  if (saved?.net) return saved;
-  return { ...newCareer(driver, truck), net: true };
+export function netCareerFor(driver: string, truck: string, id?: string | null, allied = false): Ht2Career {
+  const saved = id ? loadCareer(id) : id === undefined ? (listNetSaves(driver, allied)[0] ?? null) : null;
+  if (saved?.net && !!saved.allied === allied) return saved;
+  return { ...newCareer(driver, truck), net: true, ...(allied ? { allied: true, allies: {} } : {}) };
 }
 
 /** Записати кар'єру в її збереження (немає id — нове). */

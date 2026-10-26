@@ -398,7 +398,8 @@ export class RaceMode {
       this.targets = [start.clone(), mean(/^check1_/), mean(/^fline1_/)];
       const head = this.targets[1].clone().sub(start).setY(0).normalize();
       this.trialRoute = (k: number) => {
-        const from = this.slot(k) ?? start;
+        // Місця 1…8 — вузли (маршрут гравця будується ще до this.slot), 9…23 — extraSlot.
+        const from = nodes.get(`start1_${k}`) ?? (k > GRID_SLOTS ? this.slot(k) : undefined) ?? start;
         const a = path(roads, from, nodes.get(`check1_${k}`) ?? this.targets[1], head);
         const b = path(roads, a[a.length - 1], nodes.get(`fline1_${k}`) ?? this.targets[2]);
         return new RouteNet(despike([...a, ...b.slice(1)]));

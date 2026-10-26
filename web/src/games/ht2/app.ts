@@ -25,6 +25,7 @@ import { EscArt } from './ui/escArt';
 import { parseTech } from './formats/tech';
 import { readSch } from './formats/sexpr';
 import { vehiclePowers } from './career/carOrder';
+import { allyCareer, stateOf, type CareerKind } from './career/allies';
 import type { NetCar } from './net/peer';
 import type { NetSession } from './net/session';
 import { joinNetCareer, joinNetDrive } from './netPlay';
@@ -41,19 +42,19 @@ function arenaParam(v: string | null): Arena | null {
  * Мережева кар'єра водія (М6): окреме збереження `net-<водій>` з позначкою net (у списку збережень одиночної гри його
  * немає); немає — нова, з машиною з екрана «Мережева гра».
  */
-function netCareer(driver: string, car: NetCar): Ht2Career {
-  const c = netCareerFor(driver, car.truck, netSave.get(driver));
+function netCareer(driver: string, car: NetCar, kind: CareerKind = 'rivals'): Ht2Career {
+  const c = netCareerFor(driver, car.truck, netSave.get(driver, kind), kind === 'allies');
   // Нова — з кольором машини з екрана; вибір у лобі тепер вказує на неї (наступного разу — продовжити).
   if (!c.savedAt) c.paint = car.color;
-  if (c.id) netSave.set(driver, c.id);
+  if (c.id) netSave.set(driver, c.id, kind);
   const d = listDrivers().find((x) => x.name === driver);
   if (d) Object.assign(c, { logo: d.logo, photo: d.photo });
   return c;
 }
 
 /**
- * Вибране збереження мережевої кар'єри для кожного водія (`ht2.netsave.v1`: водій → id чи null — нова); водія немає —
- * найновіше збереження (career.ts netCareerFor).
+ * Вибране збереження мережевої кар'єри для кожного водія (`ht2.netsave.v1`: водій → id чи null — нова; союзники —
+ * ключ `<водій>|allies`); водія немає — найновіше збереження режиму (career.ts netCareerFor).
  */
 const NET_SAVE_KEY = 'ht2.netsave.v1';
 const netSave = {
@@ -65,13 +66,14 @@ const netSave = {
       return {};
     }
   },
-  get(driver: string): string | null | undefined {
-    const v = this.all()[driver];
+  key: (driver: string, kind: CareerKind) => (kind === 'allies' ? `${driver}|allies` : driver),
+  get(driver: string, kind: CareerKind = 'rivals'): string | null | undefined {
+    const v = this.all()[this.key(driver, kind)];
     return v === null || typeof v === 'string' ? v : undefined;
   },
-  set(driver: string, id: string | null): void {
+  set(driver: string, id: string | null, kind: CareerKind = 'rivals'): void {
     try {
-      localStorage.setItem(NET_SAVE_KEY, JSON.stringify({ ...this.all(), [driver]: id }));
+      localStorage.setItem(NET_SAVE_KEY, JSON.stringify({ ...this.all(), [this.key(driver, kind)]: id }));
     } catch {
       // приватний режим — не запамʼятовуємо
     }
@@ -224,6 +226,8 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   let netFrom: NetSession | null = null;
   let netNext: NetStart | null = null;
   let carSpecs: Promise<CarSpecs> | null = null;
+  /** Союзники, сервер: кар'єра компанії, з якої розіслано старт. */
+  let allyHost: Ht2Career | null = null;
   for (;;) {
     const driver = currentDriver();
     const note = driver ? `За кермом: ${driver.name}` : 'Дальнобойщики 2 — порт у розробці';
@@ -404,7 +408,12 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           // Фото варіантів машин — esc16.RES (57 МБ; кеш на джерело — у заїзді не читається вдруге).
           escArt: EscArt.load(source),
           specs: (carSpecs ??= netCarSpecs(source)),
-          careerSave: { get: () => netSave.get(driverName), set: (id) => netSave.set(driverName, id) },
+          careerSave: { get: (kind) => netSave.get(driverName, kind), set: (kind, id) => netSave.set(driverName, id, kind) },
+          // Союзники: спільна компанія — зі збереження сервера; та сама кар'єра потім іде в заїзд (allyHost).
+          allyStart: (car) => {
+            allyHost = netCareer(driverName, car, 'allies');
+            return { state: stateOf(allyHost), members: allyHost.allies ?? {} };
+          },
         }));
       netNext = null;
       netFrom = null;
@@ -444,12 +453,25 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
           color: mine.color,
         };
         // Мережева кар'єра (М6): своє збереження `net-<водій>` (окреме від одиночних), доба й погода — свої.
-        const career = track === 'career' ? netCareer(driverName, mine) : null;
+        // Союзники: сервер — збереження компанії (те саме, з якого розіслано старт), гість — компанія сервера й своє
+        // особисте з неї; суперництво — своє збереження.
+        const kind = start.setup.career ?? 'rivals';
+        const career =
+          track !== 'career'
+            ? null
+            : kind === 'allies'
+              ? session.host
+                ? (allyHost ?? netCareer(driverName, mine, 'allies'))
+                : start.ally
+                  ? allyCareer(start.ally, driverName, mine.truck, mine.color)
+                  : netCareer(driverName, mine)
+              : netCareer(driverName, mine);
+        allyHost = null;
         // Доба, погода й складність трас — сервера (однакові в усіх); звук, графіка й клавіші — свої.
         const netSettings: Ht2Settings = { ...settings, arcade: start.setup.arcade, traffic: start.setup.traffic, dayLength: start.setup.dayLength, weather: start.setup.weather };
         (career
           ? // Насиченість трас — сервера (повзунок налаштувань мережевої кар'єри), доба й погода — свої.
-            Ht2Drive.start({ ...common, career, netCareer: { myId, host: session.host, players, rivals: [] }, settings: { ...settings, traffic: start.setup.traffic } })
+            Ht2Drive.start({ ...common, career, netCareer: { myId, host: session.host, players, rivals: [] }, settings: { ...settings, traffic: start.setup.traffic, dayLength: start.setup.dayLength, weather: start.setup.weather } })
           : Ht2Drive.start({
               ...common,
               truck: mine.truck,
