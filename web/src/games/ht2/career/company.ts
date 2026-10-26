@@ -73,18 +73,6 @@ export function hireTariff(price: number, share: number): number {
 }
 
 /**
- * Пропозиція найму на ринку: один водій зі своєю машиною на ринок на день (ймовірність 0,75 — GAME.CNF forhire 20 на
- * 15 ринків) — на одному з вільних місць free (без машини на продаж; у king.exe шукачі роботи — окремі машини, тож на
- * ринку їх видно разом із тими, що продаються). Імʼя й фото — від ринку й дня, не від місця.
- */
-export function hireOffer(market: number, day: number, free: readonly number[], names: readonly string[]): { spot: number; name: string; photo: number } | null {
-  if (!names.length || !free.length) return null;
-  const h = Math.abs((market * 7919 + day * 104729) ^ 0x5bd1e995);
-  if (h % 4 === 0) return null;
-  return { spot: free[h % free.length], name: names[h % names.length], photo: 1 + (h % 51) };
-}
-
-/**
  * Хто може шукати роботу на ринку: далекобійники світу без уже найнятих гравцем (king.exe: найнятий — той самий запис
  * далекобійника, з вільних він зникає). Інакше після збереження й завантаження той самий водій знову стояв на ринку.
  */

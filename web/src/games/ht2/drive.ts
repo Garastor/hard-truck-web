@@ -906,6 +906,8 @@ export class Ht2Drive {
         used: cnf ? num(assoc(cnf, 'forsale_used')?.[1], 5) : 5,
         stolen: cnf ? num(assoc(cnf, 'forsale_stolen')?.[1], 5) : 5,
       });
+      // Шукачі роботи на весь світ (GAME.CNF forhire, king.exe 0x68d150).
+      this.markets.forhire = cnf ? num(assoc(cnf, 'forhire')?.[1], 20) : 20;
       // Замовлені рацією машини — зі збереження (стоять на ринку, доки не куплять).
       this.markets.ordered = o.career.orderedCars ??= [];
     }
@@ -3265,9 +3267,8 @@ export class Ht2Drive {
       if (d < RADIO_R) out.push({ kind: 'nei', id: i + r.name.length, name: `ВОДІЙ ${r.name.toUpperCase()}`, d, sub: 'trucker' });
     });
     // Продавці на ринках і водії звичайного трафіку (king.exe 0x526080: ближче 100 м; замовлення машини — у них).
-    const day = this.careerMode ? Math.floor(this.careerMode.career.time / 86400) : 0;
     for (const m of this.markets?.list ?? [])
-      for (const item of this.markets!.stock(m, day)) {
+      for (const item of this.markets!.stock(m)) {
         const d = m.spots[item.spot].pos.distanceTo(p);
         if (d < RADIO_R) out.push({ kind: 'nei', id: m.id * 7 + item.spot, name: 'ПРОДАВЕЦЬ', d, sub: 'dealer' });
       }
@@ -4139,15 +4140,16 @@ export class Ht2Drive {
     this.updateFreeDamage(dt);
     this.updateMafia(dt);
     if (this.markets && this.careerMode) {
-      const day = Math.floor(this.careerMode.career.time / 86400);
-      // Частка капіталу ≥ 52 % (king.exe 0x41fcf0, при завантаженні — 0x434780): продавці мають і «тупі» легковики.
-      // Під час гри — з наступного дня (розставлені сьогодні машини не міняються), при завантаженні — одразу.
-      const first = this.dealerShareTimer < 0;
-      if (this.markets.carsFrom === Infinity && (first || (this.dealerShareTimer -= dt) <= 0)) {
-        if (this.careerMode.marketShare() >= DEALER_CARS_SHARE) this.markets.carsFrom = first ? 0 : day + 1;
+      // Частка капіталу ≥ 52 % (king.exe 0x41fcf0, при завантаженні — 0x434780): нові продавці мають і «тупі»
+      // легковики (ті, що вже стоять, не міняються).
+      if (!this.markets.allCars && (this.dealerShareTimer -= dt) <= 0) {
+        this.markets.allCars = this.careerMode.marketShare() >= DEALER_CARS_SHARE;
         this.dealerShareTimer = 1;
       }
-      this.markets.update(this.truck.visual.position, day);
+      // Оновлення стоянок (updateDealers, раз на 27,5 с) — годинник симуляції, не ігрова доба; лише після відновлення
+      // стану зі збереження (careerMode.update).
+      if (this.markets.state.cars.length) this.markets.tick(dt, this.truck.visual.position);
+      this.markets.update(this.truck.visual.position);
     }
     this.obstacles?.update(dt);
     const sign = this.signs?.update(this.truck.visual.position, this.truck.forward());

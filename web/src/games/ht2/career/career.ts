@@ -4,7 +4,7 @@ import type { RivalRun } from './competition';
 import type { HiredDriver } from './company';
 import type { SavedPresent, TrailerChoice } from '../vehicles/presents';
 import type { SavedCache } from '../vehicles/caches';
-import type { OrderedCar } from './market';
+import type { OrderedCar, ParkingState } from './market';
 import type { SavedTrucker } from '../traffic/fleet';
 
 /**
@@ -92,8 +92,10 @@ export interface Ht2Career {
   obstacle?: string | null;
   /** Залишок до наступної спроби змінити завал, с (world/obstacles.ts); −1 — нова кар'єра (перший — пізніше). */
   obstacleTimer?: number;
-  /** Продане й найняте на ринках (`ринок:день:місце`, лише поточний день і далі — Markets.soldKeys). */
+  /** Застаріле (до 2026-10-26): продане й найняте на ринках за днями; замінено стоянками `parking`. */
   sold?: string[];
+  /** Стоянки: продавці й шукачі роботи на місцях, годинник оновлення (career/market.ts ParkingState). */
+  parking?: ParkingState;
   /** Замовлені рацією машини, що чекають на ринках (career/carOrder.ts). */
   orderedCars?: OrderedCar[];
   /** Перемог у гонках на Кільці поспіль (career/races.ts: ліцензії за перемогу). */
