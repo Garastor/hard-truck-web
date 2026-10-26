@@ -347,7 +347,7 @@ export function ht2SingleScreen(art: Ht2MenuArt, o: SingleScreen): () => void {
   return sc.close;
 }
 
-interface TexButtonOptions {
+export interface TexButtonOptions {
   selected?: () => boolean;
   disabled?: boolean | (() => boolean);
   action: () => void;
@@ -363,14 +363,25 @@ interface TexButtonOptions {
  * під пальцем, `_f` — недоступна.
  */
 export function texButton(art: Ht2MenuArt, stage: HTMLElement, base: string, x: number, y: number, label: string, opts: TexButtonOptions): () => void {
+  const { button, paint } = texButtonEl(art, base, label, opts);
+  button.classList.add('menu-abs');
+  button.style.left = `${x}px`;
+  button.style.top = `${y}px`;
+  stage.append(button);
+  return paint;
+}
+
+/**
+ * Та сама кнопка LOAD.RES без місця на сцені — для власної розмітки порту (стрілки `aleft`/`aright` у мережевій грі,
+ * ui/netScreens.ts). Повертає елемент і функцію перемальовування.
+ */
+export function texButtonEl(art: Ht2MenuArt, base: string, label: string, opts: TexButtonOptions): { button: HTMLButtonElement; paint: () => void } {
   const ext = opts.ext ?? '.txr';
   const off = () => (typeof opts.disabled === 'function' ? opts.disabled() : !!opts.disabled);
   const b = document.createElement('button');
-  b.className = 'menu-abs ht2-tex-button';
+  b.className = 'ht2-tex-button';
   // Стрілки (*.msk) — малі: ширша зона дотику (ht2.css).
   if (ext === '.msk') b.classList.add('ht2-tex-arrow');
-  b.style.left = `${x}px`;
-  b.style.top = `${y}px`;
   b.setAttribute('aria-label', label);
   const img = document.createElement('img');
   img.alt = '';
@@ -405,8 +416,7 @@ export function texButton(art: Ht2MenuArt, stage: HTMLElement, base: string, x: 
     opts.after?.();
   });
   paint();
-  stage.append(b);
-  return paint;
+  return { button: b, paint };
 }
 
 /**

@@ -11,6 +11,7 @@ import type { Ht2Drive } from './drive';
 import { recolor } from './traffic/traffic';
 import { FIRST_RIVAL, FLAG_REVERSE, RemoteTrack, emptyState, packFleet, readFleet, type TruckState } from './net/state';
 import type { NetCar } from './net/peer';
+import { MAX_RIVALS } from './net/cars';
 import type { Block } from './engine/formats/b3d';
 import { BALL_WIN, BallGame, ballSlot, readGates } from './ball';
 import { netTime, type NetRow } from './ui/netResults';
@@ -89,6 +90,33 @@ export interface NetRace {
 
 /** Місць на решітці Кільця (`start1_1…8`). */
 export const GRID_SLOTS = 8;
+/** Місць мережевої решітки: 8 гравців і до 15 суперників (місця 9…23 — extraSlot, власні порту). */
+export const NET_GRID = GRID_SLOTS + MAX_RIVALS;
+
+/**
+ * Місце k = 9…23 мережевої решітки (у king.exe лише 8 вузлів `start1_k`). base(i) — місце 1…8 (на Кільці — уже з
+ * рядом), dir — курс старту, side — вісь «праворуч».
+ * - Кільце (одна колона з кроком 15 м, ряди ±LANE за номером): спершу «шахою» — на іншому ряду на 7,5 м позаду
+ *   кожного з місць 1…8, далі позаду start1_8 через 7,5 м, ряди по черзі (рівний асфальт за решіткою — лише ≈ 60 м).
+ * - Тріал (два ряди вузлів через 20 м): спершу середній ряд між ними — через 20 м назад від середини пари
+ *   start1_1/start1_2, далі — копія решітки на 80 м позаду (рівне поле — ще ≈ 100 м за решіткою, далі пагорб).
+ */
+export function extraSlot(kind: CourseKind, k: number, base: (i: number) => THREE.Vector3 | undefined, dir: THREE.Vector3, side: THREE.Vector3): THREE.Vector3 | undefined {
+  const j = k - GRID_SLOTS - 1;
+  if (j < 0 || k > NET_GRID) return undefined;
+  if (kind === 'trial') {
+    if (j < 7) {
+      const a = base(1);
+      const b = base(2);
+      return a && b ? a.clone().add(b).multiplyScalar(0.5).addScaledVector(dir, -(5 + 20 * j)) : undefined;
+    }
+    return base(j - 6)?.clone().addScaledVector(dir, -80);
+  }
+  const lane = (i: number) => (i % 2 ? LANE : -LANE);
+  if (j < GRID_SLOTS) return base(j + 1)?.clone().addScaledVector(side, -2 * lane(j + 1)).addScaledVector(dir, -7.5);
+  const m = j - GRID_SLOTS;
+  return base(GRID_SLOTS)?.clone().addScaledVector(dir, -(15 + 7.5 * m)).addScaledVector(side, m % 2 ? -2 * lane(GRID_SLOTS) : 0);
+}
 
 /**
  * Гонка на Кільці (регіон dr; re/notes/ht2/race.md): стартова решітка `start1_1…8`, контрольні точки
@@ -370,7 +398,7 @@ export class RaceMode {
       this.targets = [start.clone(), mean(/^check1_/), mean(/^fline1_/)];
       const head = this.targets[1].clone().sub(start).setY(0).normalize();
       this.trialRoute = (k: number) => {
-        const from = nodes.get(`start1_${k}`) ?? start;
+        const from = this.slot(k) ?? start;
         const a = path(roads, from, nodes.get(`check1_${k}`) ?? this.targets[1], head);
         const b = path(roads, a[a.length - 1], nodes.get(`fline1_${k}`) ?? this.targets[2]);
         return new RouteNet(despike([...a, ...b.slice(1)]));
@@ -378,7 +406,9 @@ export class RaceMode {
       this.route = this.trialRoute(1);
       // Напрям — уздовж рядів решітки, до першої зони (start1_* — x 2205…2270, check_point_0 — x 2272…2288).
       this.dir = toThree(1, 0, 0);
-      this.slot = (k) => nodes.get(`start1_${k}`)?.clone();
+      const node = (k: number) => nodes.get(`start1_${k}`)?.clone();
+      const right = new THREE.Vector3().crossVectors(this.dir, new THREE.Vector3(0, 1, 0)).normalize();
+      this.slot = (k) => (k <= GRID_SLOTS ? node(k) : extraSlot('trial', k, node, this.dir, right));
       this.place0(net, career);
       return;
     }
@@ -397,7 +427,9 @@ export class RaceMode {
     const dir = rp[Math.min(5, rp.length - 1)].clone().sub(rp[0]).setY(0).normalize();
     const side = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
     // Решітка — одна колона вздовж траси; машини — у два ряди за номером (±1,75 м, як смуги 0x4d43a0).
-    const slot = (k: number) => nodes.get(`start1_${k}`)?.clone().addScaledVector(side, k % 2 ? LANE : -LANE);
+    const node = (k: number) => nodes.get(`start1_${k}`)?.clone().addScaledVector(side, k % 2 ? LANE : -LANE);
+    // Мережа з понад 8 машинами — місця 9…23 «шахою» між і позаду вузлів (extraSlot).
+    const slot = (k: number) => (k <= GRID_SLOTS ? node(k) : extraSlot('ring', k, node, dir, side));
     this.dir = dir;
     this.slot = slot;
     this.place0(net, career, start);
@@ -417,8 +449,8 @@ export class RaceMode {
       if (mine) player.reset({ position: drive.groundAtPublic(mine), forward: this.slotDir?.(net.myId + 1) ?? dir });
       this.racers.push({ truck: player, pilot: null, laps: 0, last: 0, halfway: false, finished: null, name: 'Ви', id: net.myId });
       for (const p of net.players) if (p.id !== net.myId) this.addRemote(p.id, p, p.name, slot(p.id + 1), false, this.slotDir?.(p.id + 1));
-      // Суперники — на вільних місцях решітки за порядком.
-      const free = Array.from({ length: GRID_SLOTS }, (_, i) => i).filter((i) => !net.players.some((p) => p.id === i));
+      // Суперники — на вільних місцях решітки за порядком: спершу start1_1…8, далі місця 9…23 (extraSlot).
+      const free = Array.from({ length: NET_GRID }, (_, i) => i).filter((i) => !net.players.some((p) => p.id === i));
       net.rivals.forEach((c, k) => {
         const s = free[k];
         if (s === undefined) return;

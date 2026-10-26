@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  currentDriver, deleteDriver, listDrivers, listSaves, loadCareer, newCareer, putDriver, restoreCareer, saveCareer, savedCareerRaw, savedHeading, selectDriver,
+  currentDriver, deleteDriver, listDrivers, listNetSaves, listSaves, loadCareer, netCareerFor, newCareer, putDriver, restoreCareer, saveCareer, savedCareerRaw, savedHeading, selectDriver,
 } from '@ht2/career/career';
 import * as THREE from 'three';
 import { toThree } from '@ht2/world/world';
@@ -110,5 +110,30 @@ describe('збереження й водії HT2', () => {
     // Зіпсоване поле — теж як без курсу.
     expect(savedHeading({ heading: [0, 0] })).toBeNull();
     expect(savedHeading({ heading: [Number.NaN, 1] })).toBeNull();
+  });
+});
+
+describe('мережева кар’єра: кілька збережень на водія', () => {
+  it('у списку — лише мережеві цього водія; вибір за id, без вибору — найновіше, null — нова', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+    saveCareer({ ...newCareer('Іра', 'ZilR') });
+    const old = { ...newCareer('Іра', 'Mack'), id: 'net-Іра', net: true, money: 900 };
+    saveCareer(old);
+    vi.setSystemTime(2000);
+    const second = { ...newCareer('Іра', 'VolvoR'), net: true, money: 48200 };
+    saveCareer(second);
+    saveCareer({ ...newCareer('Олег', 'DafR'), net: true });
+    expect(listNetSaves('Іра').map((c) => c.money)).toEqual([48200, 900]);
+    expect(netCareerFor('Іра', 'RenaultR').id).toBe(second.id);
+    expect(netCareerFor('Іра', 'RenaultR', 'net-Іра').truck).toBe('Mack');
+    const fresh = netCareerFor('Іра', 'RenaultR', null);
+    expect(fresh).toMatchObject({ net: true, truck: 'RenaultR', driver: 'Іра' });
+    expect(fresh.id).toBeTruthy();
+    expect([second.id, 'net-Іра']).not.toContain(fresh.id);
+    // Одиночне збереження — не мережева кар'єра (і навпаки, loadCareer() без id мережевих не бере).
+    expect(netCareerFor('Олег', 'ZilR', listSaves().find((c) => !c.net)!.id).net).toBe(true);
+    expect(loadCareer()?.net).toBeFalsy();
+    vi.useRealTimers();
   });
 });

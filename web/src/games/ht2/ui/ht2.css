@@ -1226,3 +1226,448 @@ body.ht2-orig-ui .touch-more {
   white-space: pre-line;
   text-align: left;
 }
+
+/*
+ * Власний інтерфейс мережевої гри (ui/netScreens.ts): екран на все вікно, панель-скло ui/art/net-panel.png (рамка —
+ * 9 частин, середина тягнеться), кнопки-«пігулки» як зелені кнопки меню king.exe (вибрана — салатова), стрілки й
+ * бігунок — графіка LOAD.RES. Розміри — під ландшафт телефона (812×375) і більші екрани.
+ */
+html:has(.ht2-nui),
+html:has(.ht2-nui) body {
+  background: #000;
+}
+
+.ht2-nui {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(6px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  box-sizing: border-box;
+  background: radial-gradient(ellipse at 50% 40%, #0b2142 0%, #030912 70%, #000 100%);
+  color: #e8f0d8;
+  font: 600 14px/1.3 Arial, sans-serif;
+  text-shadow: 1px 1px 0 #000;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.ht2-nui-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(100%, 960px);
+  height: min(100%, 560px);
+  padding: 4px 8px 2px;
+  box-sizing: border-box;
+  border-style: solid;
+  border-width: 22px;
+  border-image: var(--nui-panel) 44 fill / 22px stretch;
+  margin: 0;
+}
+
+.ht2-nui-top {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex: none;
+}
+
+.ht2-nui-title {
+  color: #fce488;
+  font: 700 20px/1.2 Arial, sans-serif;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.ht2-nui-sub {
+  color: #9f9;
+  font-size: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ht2-nui-body {
+  display: flex;
+  gap: 18px;
+  flex: 1;
+  min-height: 0;
+  padding-top: 10px;
+}
+
+.ht2-nui-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: none;
+}
+
+.ht2-nui-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ht2-nui-carcol {
+  flex: 1.4;
+  align-items: center;
+  justify-content: center;
+}
+
+.ht2-nui-actions {
+  flex: 1;
+  justify-content: center;
+}
+
+.ht2-nui-wide {
+  flex: 1;
+}
+
+.ht2-nui-players {
+  flex: 1.4;
+}
+
+.ht2-nui-side {
+  flex: 1;
+  padding-left: 14px;
+  border-left: 1px solid rgba(124, 255, 58, 0.35);
+}
+
+.ht2-nui-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: none;
+}
+
+.ht2-nui-btn {
+  min-height: 34px;
+  padding: 6px 16px;
+  border: 2px solid #5fd03a;
+  border-radius: 999px;
+  background: rgba(0, 32, 0, 0.6);
+  box-shadow: 0 0 6px rgba(124, 255, 58, 0.45), inset 0 0 6px rgba(124, 255, 58, 0.25);
+  color: #9f9;
+  font: 700 14px/18px Arial, sans-serif;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ht2-nui-btn:active {
+  transform: scale(0.97);
+}
+
+.ht2-nui-btn.primary,
+.ht2-nui-btn.on {
+  border-color: #d8ff7a;
+  background: #a6e83a;
+  color: #10300a;
+  text-shadow: none;
+}
+
+.ht2-nui-btn.small {
+  min-height: 28px;
+  padding: 3px 12px;
+  font-size: 12px;
+  align-self: flex-start;
+}
+
+.ht2-nui-btn.off {
+  opacity: 0.45;
+}
+
+.ht2-nui-btn[hidden] {
+  display: none;
+}
+
+.ht2-nui-actions .ht2-nui-btn {
+  min-height: 42px;
+}
+
+.ht2-nui-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ht2-nui-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ht2-nui-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+
+.ht2-nui-label {
+  flex: none;
+  width: 9.5em;
+  color: #9f9;
+}
+
+.ht2-nui-carcol .ht2-nui-label {
+  width: auto;
+}
+
+.ht2-nui-count {
+  min-width: 2ch;
+  color: #fce488;
+  font-size: 20px;
+  text-align: center;
+}
+
+.ht2-nui-hint {
+  color: #b8c8a8;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ht2-nui-note {
+  color: #fce488;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ht2-nui-note.warn {
+  color: #ffb070;
+}
+
+.ht2-nui-value {
+  color: #fff3c2;
+}
+
+/* Стрілки aleft/aright: картинка LOAD.RES 34 px, зона дотику ширша (ht2-tex-arrow). */
+.ht2-tex-button.ht2-nui-arrow {
+  position: relative;
+  flex: none;
+}
+
+.ht2-nui-arrow img {
+  height: 30px;
+  width: auto;
+}
+
+.ht2-nui-bar {
+  position: relative;
+  flex: 1;
+  max-width: 260px;
+  height: 26px;
+  margin: 0 8px;
+  background: linear-gradient(#0000 11px, rgba(124, 255, 58, 0.45) 11px, rgba(124, 255, 58, 0.45) 15px, #0000 15px);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.ht2-nui-knob {
+  position: absolute;
+  top: 1px;
+  height: 24px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.ht2-nui-carview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+}
+
+.ht2-nui-photo {
+  display: block;
+  max-width: 70%;
+  max-height: 100%;
+  height: min(180px, 34vh);
+  object-fit: contain;
+  image-rendering: auto;
+}
+
+.ht2-nui-photo[hidden] {
+  display: none;
+}
+
+.ht2-nui-carname {
+  color: #fce488;
+  font-size: 17px;
+}
+
+.ht2-nui-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ht2-nui-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 2px 8px;
+  border: 1px solid rgba(124, 255, 58, 0.25);
+  border-radius: 8px;
+  background: rgba(0, 10, 30, 0.45);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.ht2-nui-player.me .ht2-nui-who {
+  color: #fce488;
+}
+
+.ht2-nui-player.pick {
+  cursor: pointer;
+}
+
+.ht2-nui-player.on {
+  border-color: #d8ff7a;
+  box-shadow: 0 0 6px rgba(166, 232, 58, 0.6);
+}
+
+.ht2-nui-player.stalled {
+  opacity: 0.6;
+}
+
+.ht2-nui-pl {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.ht2-nui-who {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ht2-nui-pick .ht2-nui-who,
+.ht2-nui-player.pick .ht2-nui-who {
+  flex: 1;
+}
+
+.ht2-nui-color {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border: 1px solid rgba(0, 0, 0, 0.8);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5);
+}
+
+.ht2-nui-thumb {
+  flex: none;
+  height: 28px;
+  width: 44px;
+  object-fit: contain;
+}
+
+.ht2-nui-thumb[hidden] {
+  visibility: hidden;
+}
+
+.ht2-nui-ms {
+  flex: none;
+  min-width: 3.5em;
+  color: #b8c8a8;
+  font-size: 12px;
+  text-align: right;
+}
+
+/* Значки з аркуша ui/art/net-icons.png (4 у ряд). */
+.ht2-nui-icon {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  background: var(--nui-icons) 0 0 / 400% 100% no-repeat;
+}
+
+.ht2-nui-summary,
+.ht2-nui-save {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ht2-nui-side > .ht2-nui-btn {
+  align-self: flex-start;
+}
+
+.ht2-nui-side .ht2-nui-photo {
+  height: min(150px, 30vh);
+  max-width: 100%;
+  align-self: center;
+}
+
+/* Коди з'єднання в новій рамці. */
+.ht2-nui .ht2-net-qr {
+  width: min(190px, 46vh);
+  height: min(190px, 46vh);
+  align-self: center;
+}
+
+.ht2-nui .ht2-net-right {
+  flex: 1;
+}
+
+.ht2-nui .ht2-net-video {
+  height: min(150px, 34vh);
+}
+
+/* Телефон у ландшафті: нижча панель — дрібніші відступи й шрифти. */
+@media (max-height: 430px) {
+  .ht2-nui {
+    font-size: 13px;
+  }
+  .ht2-nui-panel {
+    padding: 2px 6px 0;
+    border-width: 18px;
+    border-image-width: 18px;
+  }
+  .ht2-nui-title {
+    font-size: 17px;
+  }
+  .ht2-nui-body {
+    gap: 12px;
+    padding-top: 8px;
+  }
+  .ht2-nui-btn {
+    min-height: 30px;
+    padding: 4px 12px;
+    font-size: 12px;
+  }
+  .ht2-nui-actions .ht2-nui-btn {
+    min-height: 36px;
+  }
+  .ht2-nui-field {
+    min-height: 30px;
+  }
+  .ht2-nui-fields {
+    gap: 4px;
+  }
+  .ht2-nui-player {
+    min-height: 30px;
+  }
+  .ht2-nui-arrow img {
+    height: 26px;
+  }
+}
