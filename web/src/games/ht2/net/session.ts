@@ -7,6 +7,7 @@
  */
 import { DEFAULT_SETUP, type CloseReason, type NetCar, type NetMessage, type NetPeer, type NetPlayer, type NetSetup } from './peer';
 import { FleetMixer, STATE_RATE } from './state';
+import type { AllyStart } from '../career/allies';
 
 /**
  * Господар і до 7 гостей: у king.exe 8 місць на решітці (`start1_1…8`), таблиця F2 мережевої гри — 8 рядків
@@ -160,11 +161,11 @@ export class NetSession {
   }
 
   /** Господар: старт заїзду — усім вибір, гравці з машинами й суперники; усі вважаються на трасі. */
-  start(rivals: NetCar[]): NetMessage & { t: 'start' } {
+  start(rivals: NetCar[], ally?: AllyStart): NetMessage & { t: 'start' } {
     for (const p of this.players.values()) p.driving = true;
     this.ready.clear();
     this.ready.add(0);
-    const m = { t: 'start' as const, setup: { ...this.setup }, players: [...this.players.values()].map((p) => ({ ...p })), rivals };
+    const m = { t: 'start' as const, setup: { ...this.setup }, players: [...this.players.values()].map((p) => ({ ...p })), rivals, ...(ally ? { ally } : {}) };
     this.send(m);
     this.sendRoster();
     return m;
@@ -251,6 +252,10 @@ export class NetSession {
         case 'ready':
           this.ready.add(from);
           break;
+        // Союзники (career/allies.ts): зміни компанії й особисте гостя — лише серверу.
+        case 'allyOp':
+        case 'allyMember':
+          break;
         case 'finish':
         case 'stand':
         case 'taken':
@@ -293,6 +298,8 @@ export class NetSession {
         break;
       }
       case 'go':
+      case 'clock':
+      case 'allyState':
       case 'finish':
       case 'goal':
       case 'stand':

@@ -16,6 +16,7 @@ import { ukMessage } from '../ui/uk';
 import { StoreZones } from './storeZones';
 import { arrestCard, ILLEGAL_FINE, noFines, SPEEDING_PER_DEGREE, type Fines } from './law';
 import { fleetLoad, marketShare, netMarketShare, type FleetStanding } from './share';
+import { alliedShare } from './allies';
 import type { MissionLot } from '../vehicles/presents';
 import type { CacheLot } from '../vehicles/caches';
 import type { TechRecord } from '../formats/tech';
@@ -650,22 +651,31 @@ export class CareerMode {
     return (o && this.stores.find((s) => s.id === o.to)?.region) ?? null;
   }
 
-  /** Вантажопідйомність флоту гравця, кг (share.ts). */
+  /** Вантажопідйомність флоту гравця, кг (share.ts); гість-союзник — лише своя машина (наймані — у сервера). */
   fleetLoad(): number {
     const recs = this.drive.trucksData.records;
-    return fleetLoad(this.career, (n) => recs.find((r) => r.carNode === n)?.cargoLoad ?? 0);
+    const load = (n: string) => recs.find((r) => r.carNode === n)?.cargoLoad ?? 0;
+    return this.allies === 'guest' ? load(this.career.truck) : fleetLoad(this.career, load);
   }
+
+  /**
+   * Мережева кар'єра «Союзники» (career/allies.ts): 'host' — спільна компанія в нашому збереженні, 'guest' — у сервера
+   * (наймані їздять у нього, своє збереження не пишемо — особисте йде серверу onAllyPersist); null — інакше.
+   */
+  allies: 'host' | 'guest' | null = null;
+  onAllyPersist: (() => void) | null = null;
 
   /** Частка X гравця — «доля перевезень» (share.ts, king.exe 0x41fcf0); у мережевій кар'єрі — серед усіх гравців. */
   marketShare(): number {
     const recs = this.drive.trucksData.records;
+    if (this.netOthers && this.allies) return alliedShare([this.standing(), ...this.netOthers.values()], this.drive.rivalLoad);
     if (this.netOthers) return netMarketShare(this.standing(), [...this.netOthers.values()], this.drive.rivalLoad);
     return marketShare(this.career, (n) => recs.find((r) => r.carNode === n)?.cargoLoad ?? 0, this.drive.rivalLoad);
   }
 
   /** Свій флот для мережевої кар'єри: вантажопідйомність, найнято, перевезено тонн. */
   standing(): FleetStanding & { tons: number } {
-    return { load: this.fleetLoad(), hired: this.career.company?.length ?? 0, tons: this.info().tons };
+    return { load: this.fleetLoad(), hired: this.allies === 'guest' ? 0 : (this.career.company?.length ?? 0), tons: this.info().tons };
   }
 
   /**
@@ -691,6 +701,8 @@ export class CareerMode {
     if (!this.netOthers) return [];
     const me = this.standing();
     const all = [...this.netOthers.values()];
+    // Союзники — одна компанія: частка в усіх та сама.
+    if (this.allies) return all.map((o) => ({ name: o.name, share: this.marketShare(), hired: o.hired, tons: o.tons }));
     return all.map((o) => ({ name: o.name, share: netMarketShare(o, [me, ...all.filter((x) => x !== o)], this.drive.rivalLoad), hired: o.hired, tons: o.tons }));
   }
 
@@ -1172,6 +1184,8 @@ export class CareerMode {
     const f = this.drive.truck.forward();
     this.career.pos = [p.x, -p.z, p.y];
     this.career.heading = [f.x, -f.z];
+    // Гість-союзник: збереження — у сервера (особисте — йому), світ гостя не зберігається.
+    if (this.allies === 'guest') return void this.onAllyPersist?.();
     if (this.drive.presents) this.career.presents = this.drive.presents.snapshot();
     if (this.drive.caches) this.career.caches = this.drive.caches.snapshot();
     if (this.drive.obstacles) {
@@ -1389,7 +1403,9 @@ export class CareerMode {
   hud(short = false): string {
     const c = this.career;
     const fuel = c.fuel ?? this.tank;
-    const parts = short ? [formatMoney(c.money), formatClock(c.time)] : [formatMoney(c.money), `стан ${Math.round((1 - c.damage) * 100)}%`, `пальне ${Math.round(fuel)} л${fuel < this.tank * 0.15 ? '!' : ''}`, formatClock(c.time)];
+    // Мережева кар'єра: година доби — як у сервера (drive.dayOffset).
+    const clock = formatClock(c.time + this.drive.dayOffset);
+    const parts = short ? [formatMoney(c.money), clock] : [formatMoney(c.money), `стан ${Math.round((1 - c.damage) * 100)}%`, `пальне ${Math.round(fuel)} л${fuel < this.tank * 0.15 ? '!' : ''}`, clock];
     if (c.order) {
       const o = c.order;
       const to = this.stores.find((s) => s.id === o.to);

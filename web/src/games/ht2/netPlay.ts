@@ -3,6 +3,7 @@ import type { Ht2Drive } from './drive';
 import type { NetStart } from './ui/netScreens';
 import { netTime, showNetResult } from './ui/netResults';
 import { FIRST_RIVAL, PLAYER_COLORS } from './net/state';
+import { AllyLedger, applyOp, dayOffset, memberOf, stateOf } from './career/allies';
 
 /** Скільки господар чекає, поки всі завантажать трасу, мс (далі — старт без запізнілих). */
 const NET_READY_TIMEOUT = 30000;
@@ -102,7 +103,7 @@ export function joinNetDrive(d: Ht2Drive, net: NetStart, driver: string, ev: Net
     onMessage: (m) => {
       switch (m.t) {
         case 'start':
-          ev.onRestart({ session, setup: m.setup, players: m.players, rivals: m.rivals });
+          ev.onRestart({ session, setup: m.setup, players: m.players, rivals: m.rivals, ally: m.ally });
           return;
         case 'go':
           go();
@@ -161,6 +162,13 @@ function playerRoster(d: Ht2Drive, net: NetStart, me: number, nameOf: (id: numbe
 
 /** Як часто гравець мережевої кар'єри шле свій флот (king.exe перераховує частку X раз на 8 с, 0x41fcf0), мс. */
 const STAND_EVERY = 8000;
+/** Як часто сервер мережевої кар'єри розсилає годинник і погоду, мс. */
+const CLOCK_EVERY = 3000;
+/** Союзники: як часто гість збирає свої зміни компанії і як часто сервер розсилає її стан, мс. */
+const ALLY_OP_EVERY = 400;
+const ALLY_STATE_EVERY = 1500;
+/** Союзники: як часто гість шле серверу своє особисте (машина, замовлення, позиція) для збереження, мс. */
+const ALLY_MEMBER_EVERY = 10000;
 
 /**
  * Мережева кар'єра (М6, «змагання за ринок» — власний режим порту): кожен у своїй кар'єрі в одному світі. Свій стан
@@ -184,6 +192,33 @@ export function joinNetCareer(d: Ht2Drive, net: NetStart, driver: string, ev: Ne
   const stand = () => session.send({ t: 'stand', id: me, ...cm.standing() });
   stand();
   const standTimer = window.setInterval(stand, STAND_EVERY);
+  // Доба й погода — сервера (суперництво: лише година доби, свої дата й строки; союзники — спільний час компанії).
+  const allies = net.setup.career === 'allies';
+  const clock = () => session.send({ t: 'clock', time: cm.career.time, ...d.weatherState });
+  const clockTimer = session.host ? window.setInterval(clock, CLOCK_EVERY) : 0;
+  if (session.host) clock();
+  // Союзники (career/allies.ts): сервер веде компанію, гість шле зміни й особисте.
+  const timers: number[] = [];
+  const acks: Record<number, number> = {};
+  const ledger = allies && !session.host && net.ally ? new AllyLedger(net.ally.state) : null;
+  const sendState = () => session.send({ t: 'allyState', state: stateOf(cm.career, acks) });
+  if (allies) {
+    cm.allies = session.host ? 'host' : 'guest';
+    if (session.host) {
+      cm.career.allies ??= {};
+      timers.push(window.setInterval(sendState, ALLY_STATE_EVERY));
+      sendState();
+    } else {
+      cm.onAllyPersist = () => session.send({ t: 'allyMember', id: me, name: driver, member: memberOf(cm.career) });
+      timers.push(
+        window.setInterval(() => {
+          const op = ledger?.collect(cm.career);
+          if (op) session.send({ t: 'allyOp', id: me, op });
+        }, ALLY_OP_EVERY),
+        window.setInterval(() => cm.persist(), ALLY_MEMBER_EVERY),
+      );
+    }
+  }
   cm.onOrderTaken = (store, dock) => session.send({ t: 'taken', id: me, store, dock });
   d.onNetVictory = () => session.send({ t: 'won', id: me });
   const gone = new Set<number>();
@@ -217,11 +252,30 @@ export function joinNetCareer(d: Ht2Drive, net: NetStart, driver: string, ev: Ne
           cm.blockDock(m.store, m.dock, nameOf(m.id));
           return;
         case 'won':
+          // Союзники — одна компанія: перемогу бачить кожен сам (частка та сама, won — у стані компанії).
+          if (allies) return;
           d.say(`${nameOf(m.id)} ЗАХОПИВ РИНОК`, 6);
           d.netDefeat();
           return;
+        case 'clock':
+          if (allies) cm.career.time = m.time;
+          else d.dayOffset = dayOffset(m.time, cm.career.time);
+          d.setWeatherState(m.th1, m.th2);
+          return;
+        case 'allyState':
+          ledger?.receive(cm.career, m.state, me);
+          return;
+        case 'allyOp':
+          if (allies && session.host && applyOp(cm.career, acks, m.id, m.op)) sendState();
+          return;
+        case 'allyMember':
+          if (allies && session.host) {
+            (cm.career.allies ??= {})[m.name] = m.member;
+            cm.persist();
+          }
+          return;
         case 'start':
-          ev.onRestart({ session, setup: m.setup, players: m.players, rivals: m.rivals });
+          ev.onRestart({ session, setup: m.setup, players: m.players, rivals: m.rivals, ally: m.ally });
           return;
         case 'lobby':
           leave(m.id, 'повернувся до сесії');
@@ -232,11 +286,20 @@ export function joinNetCareer(d: Ht2Drive, net: NetStart, driver: string, ev: Ne
   };
   return () => {
     clearInterval(standTimer);
+    clearInterval(clockTimer);
+    timers.forEach((t) => clearInterval(t));
+    // Гість-союзник іде — останні зміни й особисте серверу (поки зʼєднання живе).
+    if (ledger && !session.closed) {
+      const op = ledger.collect(cm.career);
+      if (op) session.send({ t: 'allyOp', id: me, op });
+      cm.persist();
+    }
     session.events = {};
     roster.remove();
     d.onNetState = null;
     d.onNetVictory = null;
     cm.onOrderTaken = null;
+    cm.onAllyPersist = null;
   };
 }
 
