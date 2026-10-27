@@ -1,9 +1,12 @@
 import type { RmpArchive } from '../formats/rmp';
+import { engineMix, type EngineMix } from './engineMix';
+
+export { LIGHT_ENGINE_MASS } from './engineMix';
 
 /**
  * Звук вантажівки на Web Audio з оригінальних WAV (секції SOUNDFILES/SOUNDS архіву RMP).
- * Як в оригіналі (HTruck.exe 0x4872b8): idleSound — холостий хід, fullSound — під навантаженням,
- * gearSound — перемикання, startSound — запуск двигуна. Висота тону ∝ обертам.
+ * Як у king.exe (0x538370): idleSound — холостий хід, fullSound — під навантаженням (легкі машини — jidle/jfull),
+ * gearSound — перемикання, startSound — запуск двигуна. Тон і гучність — від обертів, поділених на n₀ машини (engineMix).
  * iOS/Chrome дозволяють звук лише після жесту користувача. Аудіоконтекст — один на всю гру, а не новий на кожну
  * трасу: новий контекст, створений після довгого завантаження траси без свіжого жесту, iOS запускав призупиненим, і
  * звук зникав на весь заїзд. Розблоковують його події, що на iOS вважаються жестом (pointerup/touchend/click/keydown;
@@ -13,9 +16,6 @@ export interface LoopSound {
   set(volume: number, rate?: number, balance?: number): void;
   stop(): void;
 }
-
-/** Оберти холостого ходу, об/хв (Engine: idle 5 об/с). */
-const IDLE_RPM = 300;
 
 let shared: AudioContext | null = null;
 
@@ -69,6 +69,11 @@ export class EngineAudio {
   private readonly buffers = new Map<string, AudioBuffer>();
   private idle: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
   private full: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
+  /** Останній розрахунок звуку двигуна (налагодження: `window.ht2.drive.audio.lastMix`). */
+  lastMix: (EngineMix & { light: boolean; running: boolean }) | null = null;
+  /** Петлі легких машин (≤ 3000 кг: Газель, легковики) — king.exe 0x538fa3. */
+  private jidle: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
+  private jfull: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
   /** Звуки, що повторюються, — зупинити разом із трасою (контекст спільний і не закривається). */
   private readonly loops = new Set<AudioBufferSourceNode>();
 
@@ -111,6 +116,8 @@ export class EngineAudio {
     );
     a.idle = a.loop('idle');
     a.full = a.loop('full');
+    a.jidle = a.loop('jidle');
+    a.jfull = a.loop('jfull');
     a.play('start', 0.8);
     return a;
   }
@@ -208,23 +215,23 @@ export class EngineAudio {
     };
   }
 
-  /** Оновлення двигуна: rpm — оберти, load — навантаження 0..1 (газ); running = false — двигун заглушено. */
-  update(rpm: number, load: number, running = true): void {
+  /**
+   * Оновлення двигуна (king.exe 0x538ec1…0x5390f8, див. engineMix): rpm — оберти, gas — педаль газу 0…1,
+   * maxPowerRpm — оберти найбільшої потужності цієї машини (`tach_with_max_power`), light — машина до 3000 кг
+   * (петлі jidle/jfull); running = false — двигун заглушено.
+   */
+  update(rpm: number, gas: number, running = true, maxPowerRpm = 1600, light = false): void {
     const t = this.ctx.currentTime;
-    const k = 0.08;
-    // Без газу на високих обертах (накат на передачі) — запис full за обертами, тихіше, ніж під газом, а idle
-    // притихає й прискорюється не більше ніж у 1,3 раза: раніше лише idle × rpm / 800 (до 2,2×) звучав як
-    // максимальні оберти. Співвідношення гучностей — гіпотеза порту.
-    const over = Math.min(1, Math.max(0, (rpm - IDLE_RPM) / 1200));
-    const idleRate = 0.8 + 0.5 * over;
-    const fullRate = Math.min(2.0, Math.max(0.6, rpm / 1500));
-    if (this.idle) {
-      this.idle.src.playbackRate.setTargetAtTime(idleRate, t, k);
-      this.idle.gain.gain.setTargetAtTime(running ? (0.55 * (1 - load) + 0.1) * (1 - 0.6 * over) : 0, t, k);
-    }
-    if (this.full) {
-      this.full.src.playbackRate.setTargetAtTime(fullRate, t, k);
-      this.full.gain.gain.setTargetAtTime(running ? 0.7 * load + 0.3 * (1 - load) * over : 0, t, k);
+    const k = 0.05;
+    const m = engineMix(rpm / Math.max(1, maxPowerRpm), gas);
+    this.lastMix = { ...m, light, running };
+    const on = light && this.jidle && this.jfull ? [this.jidle, this.jfull] : [this.idle, this.full];
+    for (const loop of [this.idle, this.full, this.jidle, this.jfull]) {
+      if (!loop) continue;
+      const i = on.indexOf(loop);
+      const vol = i === 0 ? m.idleVolume : i === 1 ? m.fullVolume : 0;
+      loop.gain.gain.setTargetAtTime(running ? vol : 0, t, k);
+      if (i >= 0) loop.src.playbackRate.setTargetAtTime(i === 0 ? m.idleRate : m.fullRate, t, k);
     }
   }
 

@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { HT2_ENGINE, HT2_INPUT, HT2_KING, HT2_KING_BRAKE, HT2_KING_ENGINE, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER, HT2_BRAKE } from './vehicles/controls';
 import * as THREE from 'three';
 import type { FileSource } from '@shared/source';
-import { EngineAudio } from './engine/audio/engineAudio';
+import { EngineAudio, LIGHT_ENGINE_MASS } from './engine/audio/engineAudio';
 import { instanceCollision, levelCollision, openPortals, roomGround, roomPosts } from './engine/physics/collision';
 import { RoomBounds } from './engine/physics/roomBounds';
 import { TruckVehicle } from './engine/vehicle/truckVehicle';
@@ -4142,7 +4142,13 @@ export class Ht2Drive {
     this.mafia?.after(alpha);
     this.truck.syncVisual(alpha);
     this.trailer?.syncVisual(alpha);
-    this.audio?.update(this.truck.rpm, state.throttle, this.truck.engineOn);
+    this.audio?.update(
+      this.truck.rpm,
+      state.throttle,
+      this.truck.engineOn,
+      this.truck.engine.n0 * 60,
+      this.truck.totalMass <= LIGHT_ENGINE_MASS,
+    );
     this.vehicleSounds(dt);
     this.trackSafe(dt);
     this.updateDayTime(dt);
