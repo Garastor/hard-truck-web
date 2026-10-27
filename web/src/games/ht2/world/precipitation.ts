@@ -55,7 +55,8 @@ class Emitter {
   private timer = 0;
   private readonly geo = new THREE.BufferGeometry();
   private readonly vtx = new Float32Array(MAX * 9);
-  private readonly col = new Float32Array(MAX * 12);
+  /** Трикутників, вивантажених минулого кадру (0 і 0 — вивантажувати нічого). */
+  private drawn = 0;
 
   constructor(
     private readonly kind: Kind,
@@ -66,9 +67,11 @@ class Emitter {
     for (let i = 0; i < MAX; i++) uv.set([0.5, 0, 0, 1, 1, 1], i * 6);
     this.geo.setAttribute('position', new THREE.BufferAttribute(this.vtx, 3).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    this.geo.setAttribute('color', new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
     this.geo.setDrawRange(0, 0);
-    const mat = new THREE.MeshBasicMaterial({ map, vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: true });
+    // Колір і прозорість у всіх частинок кадру однакові — у матеріалі, а не в кожній вершині (щокадру на відеокарту
+    // йдуть лише координати). Один прохід: прозорий двобічний матеріал three.js інакше малює двічі (задні, потім
+    // передні грані), а в частинок одного кольору порядок шарів на вигляд не впливає.
+    const mat = new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: true, forceSinglePass: true });
     this.mesh = new THREE.Mesh(this.geo, mat);
     this.mesh.frustumCulled = false;
     this.mesh.name = rain ? 'rain' : 'snow';
@@ -132,12 +135,14 @@ class Emitter {
       // Не накопичувати борг випуску, коли ліміт досягнуто.
       this.timer = Math.min(this.timer, interval);
     } else this.timer = 0;
-    (this.mesh.material as THREE.MeshBasicMaterial).opacity = widen;
-    this.build(cam, fwd, wind, color, alpha, widen);
+    const mat = this.mesh.material as THREE.MeshBasicMaterial;
+    mat.color.copy(color);
+    mat.opacity = widen * alpha;
+    this.build(cam, fwd, wind, widen);
   }
 
   /** Трикутники частинок (координати three.js: x, z, −y гри); widen — множник ширини (малий екран). */
-  private build(cam: THREE.Vector3, fwd: THREE.Vector2, wind: number, color: THREE.Color, alpha: number, widen: number): void {
+  private build(cam: THREE.Vector3, fwd: THREE.Vector2, wind: number, widen: number): void {
     const s = this.kind.size;
     // σ = вгору × уперед — горизонтальний бічний вектор.
     const sx = -fwd.y;
@@ -174,18 +179,17 @@ class Emitter {
       this.vtx[v + 6] = x + sx * half;
       this.vtx[v + 7] = z - s;
       this.vtx[v + 8] = -(y + shift + sy * half);
-      const c = t * 12;
-      for (let q = 0; q < 3; q++) {
-        this.col[c + q * 4] = color.r;
-        this.col[c + q * 4 + 1] = color.g;
-        this.col[c + q * 4 + 2] = color.b;
-        this.col[c + q * 4 + 3] = alpha;
-      }
       t++;
     }
     this.geo.setDrawRange(0, t * 3);
-    (this.geo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
-    (this.geo.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+    // На відеокарту — лише вжиті вершини (весь буфер — 72 КБ щокадру, навіть без дощу).
+    if (t || this.drawn) {
+      const attr = this.geo.attributes.position as THREE.BufferAttribute;
+      attr.clearUpdateRanges();
+      attr.addUpdateRange(0, Math.max(t, 1) * 9);
+      attr.needsUpdate = true;
+    }
+    this.drawn = t;
   }
 
   get alive(): number {
