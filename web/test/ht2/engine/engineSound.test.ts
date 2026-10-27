@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { engineMix } from '@ht2/engine/audio/engineMix';
+import { STOP_SOUND_SECONDS, engineMix, engineStopFade } from '@ht2/engine/audio/engineMix';
 
 /** Звук двигуна гравця — як king.exe 0x538ec1…0x5390f8: усе від частки обертів r = n / n₀ цієї машини. */
 describe('HT2: звук двигуна (engineMix)', () => {
@@ -38,5 +38,15 @@ describe('HT2: звук двигуна (engineMix)', () => {
       expect(m.fullRate).toBeGreaterThan(prev.fullRate);
       prev = m;
     }
+  });
+});
+
+describe('HT2: глушіння двигуна (engineStopFade)', () => {
+  it('петлі стихають за 1,49 с (половина stop_eng), stop_eng наростає до 0,4', () => {
+    expect(engineStopFade(0)).toEqual({ engine: 1, stopSound: 0 });
+    expect(engineStopFade(0.25).engine).toBeCloseTo(0.5, 9);
+    expect(engineStopFade(0.25).stopSound).toBeCloseTo(0.2, 9);
+    expect(engineStopFade(0.5)).toEqual({ engine: 0, stopSound: 0.4 });
+    expect(engineStopFade(0.75 / STOP_SOUND_SECONDS).engine).toBeCloseTo(1 - 0.75 / 1.49, 9);
   });
 });

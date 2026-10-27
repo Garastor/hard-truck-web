@@ -29,3 +29,16 @@ export function engineMix(r: number, gas: number): EngineMix {
 
 /** Межа «легкої» машини, кг: до неї включно — петлі jidle/jfull (king.exe 0x538fa3, 0x64f3f8). */
 export const LIGHT_ENGINE_MASS = 3000;
+
+/** Тривалість stop_eng.wav, с — king.exe ділить на неї час глушіння (0x67440c = 2,98). */
+export const STOP_SOUND_SECONDS = 2.98;
+
+/**
+ * Глушіння двигуна ([veh+0x5214] = 3, king.exe 0x538de0): t — частка запису stop_eng, що минула (час / 2,98 с).
+ * Петлі двигуна грають далі за engineMix, помножені на engine = 2·(0,5 − t), і замовкають з t = 0,5 (1,49 с);
+ * stop_eng — гучність 0,8·t до t = 0,5, далі 0,4.
+ */
+export function engineStopFade(t: number): { engine: number; stopSound: number } {
+  t = Math.max(0, t);
+  return t < 0.5 ? { engine: 2 * (0.5 - t), stopSound: 0.8 * t } : { engine: 0, stopSound: 0.4 };
+}

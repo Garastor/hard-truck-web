@@ -1,5 +1,5 @@
 import type { RmpArchive } from '../formats/rmp';
-import { engineMix, type EngineMix } from './engineMix';
+import { STOP_SOUND_SECONDS, engineMix, engineStopFade, type EngineMix } from './engineMix';
 
 export { LIGHT_ENGINE_MASS } from './engineMix';
 
@@ -225,14 +225,50 @@ export class EngineAudio {
     const k = 0.05;
     const m = engineMix(rpm / Math.max(1, maxPowerRpm), gas);
     this.lastMix = { ...m, light, running };
+    // Глушіння: петлі стихають за першу половину запису stop_eng, сам він грає раз (engineStopFade).
+    if (!running && this.wasRunning) this.startStopSound(t);
+    if (running && this.stopSound) this.endStopSound();
+    this.wasRunning = running;
+    const fade = running ? null : engineStopFade(this.stopSound ? (t - this.stopSound.at) / STOP_SOUND_SECONDS : 1);
+    if (this.stopSound && fade) this.stopSound.gain.gain.setTargetAtTime(fade.stopSound, t, k);
+    const v = fade ? fade.engine : 1;
     const on = light && this.jidle && this.jfull ? [this.jidle, this.jfull] : [this.idle, this.full];
     for (const loop of [this.idle, this.full, this.jidle, this.jfull]) {
       if (!loop) continue;
       const i = on.indexOf(loop);
       const vol = i === 0 ? m.idleVolume : i === 1 ? m.fullVolume : 0;
-      loop.gain.gain.setTargetAtTime(running ? vol : 0, t, k);
+      loop.gain.gain.setTargetAtTime(vol * v, t, k);
       if (i >= 0) loop.src.playbackRate.setTargetAtTime(i === 0 ? m.idleRate : m.fullRate, t, k);
     }
+  }
+
+  private wasRunning = true;
+  /** Звук глушіння, що грає (stop_eng): початок за часом контексту. */
+  private stopSound: { src: AudioBufferSourceNode; gain: GainNode; at: number } | null = null;
+
+  private startStopSound(at: number): void {
+    this.endStopSound();
+    const buf = this.buffers.get('stop_eng');
+    if (!buf || this.ctx.state !== 'running') return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const gain = this.ctx.createGain();
+    gain.gain.value = 0;
+    src.connect(gain).connect(this.engineBus);
+    src.start();
+    src.onended = () => {
+      if (this.stopSound?.src === src) this.stopSound = null;
+    };
+    this.stopSound = { src, gain, at };
+  }
+
+  private endStopSound(): void {
+    try {
+      this.stopSound?.src.stop();
+    } catch {
+      /* уже зупинено */
+    }
+    this.stopSound = null;
   }
 
   setMuted(m: boolean): void {
