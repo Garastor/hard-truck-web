@@ -84,14 +84,46 @@ function atlasTexture(rmp: RmpArchive, file: string | undefined, palette: Uint8A
   return t;
 }
 
+/** Основа дерева за формою (біти 8–11 `i1`); частки — від висоти дерева (радіуса сфери). */
+interface TreeForm {
+  /** Ширина площини. */
+  width: number;
+  /** Увесь атлас (u до 0,95) чи половина за парністю виду. */
+  full: boolean;
+  /** Низ і верх площини основи. */
+  z0: number;
+  z1: number;
+  /** Межа градієнта тіні: частка висоти дерева, а з `splitOnPlane` — частка довжини площини. */
+  split: number;
+  splitOnPlane: boolean;
+  /** Стовбур: 'half' — смужка кори половинного атласу (BARK_U0, TRUNK_W, TRUNK_TOP); інакше ширина, верх і u смужки. */
+  trunk: 'half' | { w: number; top: number; u0: number; u1: number } | null;
+}
+
 /**
- * Форма: ширина площини (частка висоти), увесь атлас чи половина, і межа градієнта тіні split (param_13 у
- * 0x005c6ac0): форми 0, 1 — 0,2, 2…4 — 0,3; 5, 6 — гіпотеза 0,2.
+ * Смужка кори атласу на всю ширину для стовбура 0x005c6830 (u = 0,5 + 0,465 / 0,48 / 0,499): права межа атласу.
+ * Ширина стовбура — r/60 ([ESP+0x80] у 0x005c8ae0 = r/3 · 0,05) × множник форми; відрізки — по r/3.
  */
-function shapeOf(shape: number): { width: number; full: boolean; split: number } {
-  if (shape === 3 || shape === 4) return { width: 1, full: true, split: 0.3 };
-  if (shape === 2) return { width: 1 / 1.5, full: false, split: 0.3 };
-  return { width: 0.5, full: false, split: 0.2 };
+const BARK_FULL = { u0: 0.965, u1: 0.999 };
+
+/**
+ * Форма (0x005c8ae0, другий switch). Форми 0–4 — 0x005c6ac0: ширина = висота / 2 (0), / 1,5 (2), / 1 (3, 4), межа
+ * тіні param_13 — 0,2 (0, 1) і 0,3 (2…4); крона — як було в порту (за знімками оригіналу). Форми 5, 6 — інша функція
+ * 0x005c7800: увесь атлас (u від 1/ширини до 0,95; дзеркально за парністю — у порту без дзеркала), площина від
+ * p1 + ½(p2 − p1) = ½ (форма 5) чи p0 + ¼(p3 − p0) = ¼ (форма 6) до p3 + ½(p3 − p2) = 7/6 висоти (p0…p3 — вісь по
+ * третинах), ширина = довжина площини (параметр 1,0), межа тіні — 0,5 / 0,4 довжини площини; стовбур-призма 0x005c6830 —
+ * 2 відрізки, ширина ×1,56 (форма 5) і 1 відрізок ×3 (форма 6). Без цього сосни ba, bd…bg (атласи tree1213, tree1415 —
+ * одне дерево на весь атлас) були розрізані навпіл і стояли від землі, а гілки (вісь 0,625…1,25) висіли над ними.
+ */
+function shapeOf(shape: number): TreeForm {
+  const plain = { z0: 0, z1: 1, splitOnPlane: false };
+  if (shape === 3 || shape === 4) return { ...plain, width: 1, full: true, split: 0.3, trunk: null };
+  if (shape === 5) return { width: 7 / 6 - 1 / 2, full: true, z0: 1 / 2, z1: 7 / 6, split: 0.5, splitOnPlane: true, trunk: { w: 1.56 / 60, top: 2 / 3, ...BARK_FULL } };
+  if (shape === 6) return { width: 7 / 6 - 1 / 4, full: true, z0: 1 / 4, z1: 7 / 6, split: 0.4, splitOnPlane: true, trunk: { w: 3 / 60, top: 1 / 3, ...BARK_FULL } };
+  // Крона форми 2 (хвоя tree23 біля повороту за «Южним») — з 0,3 висоти, під нею видно стовбур (знімок оригіналу);
+  // форма 0 (ялини біля бази) — від землі; 1 — гіпотеза, як 0.
+  if (shape === 2) return { ...plain, z0: 0.3, width: 1 / 1.5, full: false, split: 0.3, trunk: 'half' };
+  return { ...plain, width: 0.5, full: false, split: 0.2, trunk: 'half' };
 }
 
 /**
@@ -120,11 +152,13 @@ const EDGE_SHOW = 0.3;
 
 /**
  * Площина (z угору) від z0 до z1, x — від −w/2 до w/2; u — [u0, u0 + uw], v — від низу зображення до верху.
- * Колір вершин — градієнт тіні treeShade (з рядком вершин на межі split).
+ * Колір вершин — градієнт тіні treeShade за висотою z (з рядком вершин на межі split); onPlane — split і градієнт за
+ * часткою довжини площини (форми 5, 6); shade — сталий множник замість градієнта (стовбур 0x005c6830 — колір верху).
  */
-function planeGeometry(width: number, u0: number, uw: number, z0: number, z1: number, split: number): THREE.BufferGeometry {
+function planeGeometry(width: number, u0: number, uw: number, z0: number, z1: number, split: number, onPlane = false, shade?: number): THREE.BufferGeometry {
   const w = width / 2;
-  const rows = [z0, ...(split > z0 && split < z1 ? [split] : []), z1];
+  const at = onPlane ? z0 + split * (z1 - z0) : split;
+  const rows = [z0, ...(shade === undefined && at > z0 && at < z1 ? [at] : []), z1];
   const pos: number[] = [];
   const uv: number[] = [];
   const col: number[] = [];
@@ -133,7 +167,7 @@ function planeGeometry(width: number, u0: number, uw: number, z0: number, z1: nu
   const add = (x: number, z: number) => {
     pos.push(x, 0, z);
     uv.push(x < 0 ? u0 : u0 + uw, 1 - (z - z0) / (z1 - z0));
-    const f = treeShade(z, split);
+    const f = shade ?? treeShade(onPlane ? (z - z0) / (z1 - z0) : z, split);
     c.setRGB(f, f, f, THREE.SRGBColorSpace);
     col.push(c.r, c.g, c.b);
   };
@@ -249,28 +283,23 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
     return atlases.get(pair)!;
   };
   // Групи інстансів: атлас × половина (0, 1; 2 — увесь) × форма ширини.
-  const groups = new Map<string, { tex: THREE.Texture; u0: number; uw: number; width: number; crown: number; split: number; trunk: boolean; room: string; list: TreeSpot[] }>();
+  const groups = new Map<string, { tex: THREE.Texture; u0: number; uw: number; form: TreeForm; room: string; list: TreeSpot[] }>();
   for (const s of spots) {
     const tex = atlas(s.kind >> 1);
     if (!tex) continue;
-    const { width, full, split } = shapeOf(s.shape);
-    // Крона: форма 2 (хвоя tree23 біля повороту за «Южним») — з 0,3 висоти, під нею видно стовбур (знімок
-    // оригіналу); форма 0 (ялини біля бази) — від землі. Решта форм — від землі (гіпотеза). Стовбур зі смужки кори —
-    // лише в половинних атласах (до половини висоти, за кроною).
-    const crown = s.shape === 2 ? 0.3 : 0;
-    const trunk = !full;
+    const form = shapeOf(s.shape);
     // Половина атласу — за парністю виду (атлас tree<2k><2k+1>: парний вид — ліва, непарний — права; у регіоні ap
     // tree01 — темна | блакитна ялина, tree23 — темна | світла хвоя).
-    const half = full ? 2 : s.kind & 1;
+    const half = form.full ? 2 : s.kind & 1;
     // Окремо по кімнатах: кімнату, якої не видно крізь портали, ховають разом з її деревами (world/roomVisibility.ts),
-    // і менша сфера інстансів відсікається полем зору й туманом.
-    const key = `${s.room}:${s.kind >> 1}:${half}:${width}:${crown}:${split}`;
+    // і менша сфера інстансів відсікається полем зору й туманом. Форми 0 і 1 однакові.
+    const key = `${s.room}:${s.kind >> 1}:${half}:${s.shape === 1 ? 0 : s.shape}`;
     let g = groups.get(key);
     // Краї крони — на пів текселя всередину: лінійна фільтрація на u = 0,5 брала навпіл колонку 127 — суцільну
     // смужку кори лівої половини (без кольору прозорості), альфа ≈ 0,5 на порозі alphaTest давала пунктирні
     // вертикальні лінії по боках дерев (знімки користувача).
     const inset = 0.5 / ((tex.image as { width: number }).width || 256);
-    if (!g) groups.set(key, (g = { tex, u0: (half === 2 ? 0 : half * 0.5) + inset, uw: (half === 2 ? 0.95 : 0.45) - 2 * inset, width, crown, split, trunk, room: s.room, list: [] }));
+    if (!g) groups.set(key, (g = { tex, u0: (half === 2 ? 0 : half * 0.5) + inset, uw: (half === 2 ? 0.95 : 0.45) - 2 * inset, form, room: s.room, list: [] }));
     g.list.push(s);
   }
   const m = new THREE.Matrix4();
@@ -297,9 +326,11 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
     let mat = mats.get(g.tex);
     if (!mat) mats.set(g.tex, (mat = billboardMaterial(g.tex)));
     mat.name = `tree ${g.tex.name}`;
-    // Крона — від частки висоти до верху; стовбур — смужка кори від землі до середини (видно крізь крону).
-    const parts = [planeGeometry(g.width, g.u0, g.uw, g.crown, 1, g.split)];
-    if (g.trunk) parts.push(planeGeometry(TRUNK_W, g.u0 + BARK_U0, BARK_UW, 0, TRUNK_TOP, g.split));
+    // Крона — площина форми; стовбур — смужка кори від землі (видно крізь крону й під нею).
+    const f = g.form;
+    const parts = [planeGeometry(f.width, g.u0, g.uw, f.z0, f.z1, f.split, f.splitOnPlane)];
+    if (f.trunk === 'half') parts.push(planeGeometry(TRUNK_W, g.u0 + BARK_U0, BARK_UW, 0, TRUNK_TOP, f.split));
+    else if (f.trunk) parts.push(planeGeometry(f.trunk.w, f.trunk.u0, f.trunk.u1 - f.trunk.u0, 0, f.trunk.top, 0, false, 1));
     // Погойдування — спільне для крони й стовбура дерева.
     const swayAttr = new THREE.InstancedBufferAttribute(new Float32Array(g.list.length * 2), 2);
     swayAttr.setUsage(THREE.DynamicDrawUsage);
