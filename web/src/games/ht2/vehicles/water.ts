@@ -14,10 +14,18 @@ import type { LoadedRegion } from '../world/world';
  * у гілках перемикача `refer_Flood…Key` — гілка 0 (звичайний рівень) і 1 (на 3 м вище, повінь). Діє лише гілка
  * поточного стану перемикача (раніше бралися обидві — максимум, тобто «повінь» завжди й вода ≈ 2 м над дорогою).
  *
- * Гіпотези порту: кімната — за габаритами її геометрії (як заборонена зона); висота машини — центр тіла.
+ * Зона — кімната, у якій машина (`<регіон>/<кімната>`, engine/physics/roomBounds.ts: кімнату змінює перетин порталу),
+ * з площинами шляху; сфери блоків-тригерів у даних нульові. Раніше бралася рамка геометрії будь-якої кімнати з водою —
+ * а кімнати перекриваються: рамка моря av_005…av_070 (рівень 9 м) накривала дорогу af_003/af_004/av_010/av_014 на
+ * висоті ≈ 5 м за стартом кар'єри, і машина на дорозі «тонула» (кінець гри). Рамка лишилась лише запасом, поки
+ * кімната машини невідома (перший кадр, перенесення).
+ * Гіпотези порту: king.exe перевіряє тригери кімнати гравця (обробник 0x4ce300 — колбек обходу 0x4cf620); висота
+ * машини — центр тіла.
  */
 interface Zone {
   region: LoadedRegion;
+  /** Кімната тригера: `<регіон>/<кімната>` (як RoomBounds.roomOf). */
+  room: string;
   box: THREE.Box3;
   /** Площини шляху (гра): [a, b, c, d] і бік (true — a·x + b·y + c·z + d ≥ 0). */
   planes: { v: [number, number, number, number]; front: boolean }[];
@@ -58,24 +66,31 @@ export class Water {
   private readonly seen = new WeakSet<LoadedRegion>();
   private readonly zones: Zone[] = [];
 
-  /** Кадр: чи машина (центр тіла, Three.js) під водою; snorkel — повітрозабірник. */
-  update(dt: number, loaded: Iterable<LoadedRegion>, pos: THREE.Vector3, snorkel: boolean): boolean {
+  /**
+   * Кадр: чи машина (центр тіла, Three.js) під водою; snorkel — повітрозабірник; room — кімната машини
+   * (`<регіон>/<кімната>`, RoomBounds.roomOf), room() викликається лише раз на CHECK_EVERY.
+   */
+  update(dt: number, loaded: Iterable<LoadedRegion>, pos: THREE.Vector3, snorkel: boolean, room: () => string | null = () => null): boolean {
     if ((this.timer -= dt) > 0) return false;
     this.timer = CHECK_EVERY;
     this.sync(loaded);
-    const level = this.levelAt(pos);
+    const level = this.levelAt(pos, room());
     return level !== null && pos.y < level - (snorkel ? SNORKEL : 0);
   }
 
-  /** Рівень води в точці (Three.js) чи null — не у воді. */
-  levelAt(p: THREE.Vector3): number | null {
+  /** Рівень води в точці (Three.js) кімнати room чи null — не у воді; room null — за рамками всіх кімнат (запас). */
+  levelAt(p: THREE.Vector3, room: string | null = null): number | null {
     const x = p.x;
     const y = -p.z;
     const z = p.y;
     let best: number | null = null;
     for (const w of this.zones) {
-      const b = w.box;
-      if (p.x < b.min.x || p.x > b.max.x || p.z < b.min.z || p.z > b.max.z) continue;
+      if (room !== null) {
+        if (w.room !== room) continue;
+      } else {
+        const b = w.box;
+        if (p.x < b.min.x || p.x > b.max.x || p.z < b.min.z || p.z > b.max.z) continue;
+      }
       if (!w.planes.every(({ v, front }) => v[0] * x + v[1] * y + v[2] * z + v[3] >= 0 === front)) continue;
       if (w.sw) {
         const [key, branch] = w.sw.split('#');
@@ -97,7 +112,7 @@ export class Water {
       const boxes = new Map(r.built.rooms.map((g) => [g.name.toLowerCase(), g]));
       for (const t of trig) {
         const g = boxes.get(t.room);
-        if (g) this.zones.push({ region: r, box: new THREE.Box3().setFromObject(g), planes: t.planes, level: t.level, sw: t.sw });
+        if (g) this.zones.push({ region: r, room: `${r.id}/${t.room}`, box: new THREE.Box3().setFromObject(g), planes: t.planes, level: t.level, sw: t.sw });
       }
     }
   }

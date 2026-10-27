@@ -2892,6 +2892,8 @@ export class Ht2Drive {
   private readonly weatherRooms = new WeatherRooms();
   private weatherFlags = { rain: true, sun: true, thund: true };
   private readonly water = new Water((key) => this.worldSwitches.get(key) ?? 0);
+  /** Кімната машини гравця (`<регіон>/<кімната>`) — для води (vehicles/water.ts). */
+  private readonly truckRoom = (): string | null => this.roomBounds.roomOf(this.truck.body);
   /** Стаціонарні камери-радари (картка 16). */
   private readonly radars = new Radars();
   private over = false;
@@ -3048,7 +3050,7 @@ export class Ht2Drive {
     const c = cm.career;
     // Утонув (0x4ce300/0x56ffd0: центр машини нижче рівня води; повітрозабірник — на 1 м глибше) чи машину знищено
     // (сума пошкоджень > 0,9, 0x597b00; у порту — стан машини) — кінець гри.
-    const sunk = this.water.update(dt, this.world.loaded.values(), this.truck.visual.position, (c.upgrades ?? []).includes('PR_AIR_FILTER_SNORKEL:1'));
+    const sunk = this.water.update(dt, this.world.loaded.values(), this.truck.visual.position, (c.upgrades ?? []).includes('PR_AIR_FILTER_SNORKEL:1'), this.truckRoom);
     if (sunk || c.damage > 0.9) return this.gameOver();
     // Вогонь машин ІІ і поширення між сусідами (зокрема на гравця й від гравця).
     if (this.fires().update(dt, this.aiCars(), { v: this.truck, burning: this.burning >= 0 })) this.ignite(0, true);
@@ -3091,7 +3093,7 @@ export class Ht2Drive {
     this.hitWear = 0;
     if (wear > 0) this.freeDamage = Math.min(1, this.freeDamage + wear * (this.arcade ? 0.5 : 1));
     if (this.fires().update(dt, this.aiCars(), { v: this.truck, burning: this.burning >= 0 })) this.ignite(0, true);
-    const sunk = this.water.update(dt, this.world.loaded.values(), this.truck.visual.position, false);
+    const sunk = this.water.update(dt, this.world.loaded.values(), this.truck.visual.position, false, this.truckRoom);
     if (this.burning >= 0) {
       this.burning += dt;
       this.freeDamage = Math.min(1, this.freeDamage + dt / 60);
