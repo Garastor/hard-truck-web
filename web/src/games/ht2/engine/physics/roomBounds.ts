@@ -13,6 +13,14 @@ const KEEP = 4;
 const GATE_PAD = 2;
 /** Зсув тіла за крок, з якого це вже не рух, а перенесення (портали не перевіряються), м. */
 const TELEPORT = 20;
+/**
+ * Підлога сусідньої кімнати діє на тіло, лише коли його центр ближче за NEAR_GATE до спільного порталу (у плані), м.
+ * King.exe бере кімнату за порталом, лише коли рух кроку перетинає портал; у порту — колеса й корпус уже над сусідньою
+ * підлогою за кілька метрів до переходу центру. Без обмеження площина блоку 12 сусідньої кімнати (обрізана лише рамкою
+ * кімнати) ставала невидимою сходинкою далеко від порталу: room_cb01 (z = 10) на дорозі room_cb00 (9,1–9,5 м), 32 м
+ * від порталу.
+ */
+const NEAR_GATE = 8;
 
 /** Портал кімнати на плані (система гри): відрізок a→b, висоти z0…z1; ціль — ліворуч від a→b. */
 export interface RoomGate {
@@ -241,7 +249,22 @@ export class RoomBounds {
     // Кімнату ще не знайдено (тіло над місцем без підлоги від самого початку) — колізії діють, як раніше.
     if (at === null || at === o.key) return true;
     if (!o.floor) return false;
-    return this.near.get(at.slice(at.indexOf('/') + 1))?.has(o.name) ?? false;
+    if (!(this.near.get(at.slice(at.indexOf('/') + 1))?.has(o.name) ?? false)) return false;
+    const b = this.bodies.get(body)!;
+    return this.nearGate(at, o.name, b.x, b.y) || this.nearGate(o.key, at.slice(at.indexOf('/') + 1), b.x, b.y);
+  }
+
+  /** Чи точка (x, y) плану ближче за NEAR_GATE до порталу кімнати key в кімнату to. */
+  private nearGate(key: string, to: string, x: number, y: number): boolean {
+    for (const g of this.gates.get(key) ?? []) {
+      if (g.to !== to) continue;
+      const dx = g.b[0] - g.a[0];
+      const dy = g.b[1] - g.a[1];
+      const l2 = dx * dx + dy * dy;
+      const t = l2 > 1e-9 ? Math.max(0, Math.min(1, ((x - g.a[0]) * dx + (y - g.a[1]) * dy) / l2)) : 0;
+      if (Math.hypot(x - g.a[0] - dx * t, y - g.a[1] - dy * t) < NEAR_GATE) return true;
+    }
+    return false;
   }
 
   private readonly hooks: RAPIER.PhysicsHooks = {
