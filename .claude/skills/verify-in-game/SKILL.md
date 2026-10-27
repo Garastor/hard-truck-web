@@ -48,6 +48,8 @@ Dev-сервер: `preview_start` з назвою `web` (`.claude/launch.json`),
   `getBoundingClientRect()`, а вигляд — на ширшому вʼюпорті.
 
 ## Гілка в git worktree
+Свій сервер і вкладка — скіл `launch-own-port` (порт 5180+, `launch.json` worktree, розмір вʼюпорта до
+завантаження). Коротко:
 Тести й dev-сервер worktree читають ігри з `HT_GAME_ROOT` (теки `Game` основної копії): `npm ci` у `web/` worktree,
 далі `HT_GAME_ROOT="D:/Claude/Games/Hard Truck/Game" npx vitest run`. Для превʼю — тимчасова конфігурація в
 `.claude/launch.json` основної копії (`cmd /c "set HT_GAME_ROOT=…&& C:\PROGRA~1\nodejs\npm.cmd run dev --prefix
