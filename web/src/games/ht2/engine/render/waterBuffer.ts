@@ -90,14 +90,28 @@ export class WaterBuffer {
     this.empty = false;
   }
 
-  /** Стерти піксель (стирання двірником); межі змін додає виклик mark. */
-  erase(x: number, y: number): void {
+  /** Стерти рядок y від x0 до x1 включно (по колу; межі змін додає виклик mark). */
+  fillRow(y: number, x0: number, x1: number): void {
     const { w, h } = this;
     if (this.wrap) {
-      x = ((x % w) + w) % w;
       y = ((y % h) + h) % h;
-    } else if (x < 0 || x >= w || y < 0 || y >= h) return;
-    this.levels[y * w + x] = 0;
+      if (x1 - x0 + 1 >= w) {
+        this.levels.fill(0, y * w, y * w + w);
+        return;
+      }
+      const s = ((x0 % w) + w) % w;
+      const e = s + (x1 - x0);
+      if (e < w) this.levels.fill(0, y * w + s, y * w + e + 1);
+      else {
+        this.levels.fill(0, y * w + s, y * w + w);
+        this.levels.fill(0, y * w, y * w + (e - w) + 1);
+      }
+      return;
+    }
+    if (y < 0 || y >= h) return;
+    x0 = Math.max(0, x0);
+    x1 = Math.min(w - 1, x1);
+    if (x0 <= x1) this.levels.fill(0, y * w + x0, y * w + x1 + 1);
   }
 
   /**
@@ -180,19 +194,29 @@ export class WaterBuffer {
     state.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     state.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     state.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    state.pixelStorei(gl.UNPACK_ROW_LENGTH, this.w);
-    for (const r of this.rects) {
-      state.pixelStorei(gl.UNPACK_SKIP_PIXELS, r.x0);
-      state.pixelStorei(gl.UNPACK_SKIP_ROWS, r.y0);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0, gl.RED, gl.UNSIGNED_BYTE, this.levels);
-    }
+    // Кожен прямокутник — щільною копією (packRect). Раніше — з усього буфера через UNPACK_ROW_LENGTH/SKIP_*: браузер
+    // передає відеокарті дані від початку буфера до кінця прямокутника (Safari — ще й копією між процесами), і так
+    // виходило 0,7–1,4 МБ щокадру замість кількох сотень байтів (заміри 2026-10-27, Docs/ht2/effects.md).
+    for (const r of this.rects) gl.texSubImage2D(gl.TEXTURE_2D, 0, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0, gl.RED, gl.UNSIGNED_BYTE, this.packRect(r));
     gl.generateMipmap(gl.TEXTURE_2D);
-    state.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
-    state.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
-    state.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
     state.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
     state.unbindTexture();
     this.rects.length = 0;
+  }
+
+  /** Робочий буфер для packRect (росте до найбільшого прямокутника). */
+  private scratch = new Uint8Array(256);
+
+  /** Пікселі прямокутника буфера підряд (рядок за рядком) — для texSubImage2D без зсувів. */
+  private packRect(r: Rect): Uint8Array {
+    const w = r.x1 - r.x0;
+    const n = w * (r.y1 - r.y0);
+    if (this.scratch.length < n) this.scratch = new Uint8Array(Math.max(n, this.scratch.length * 2));
+    for (let y = r.y0, o = 0; y < r.y1; y++, o += w) {
+      const row = y * this.w + r.x0;
+      this.scratch.set(this.levels.subarray(row, row + w), o);
+    }
+    return this.scratch.subarray(0, n);
   }
 
   /** Усе змінилось (повне оновлення). */
@@ -239,35 +263,50 @@ export const WATER_FRAGMENT = `
   void main() {
     float a = texture2D(levels, vUv).r;
     if (a <= 0.0 || wet < 0.5) discard;
-    float du = texture2D(levels, vUv + vec2(span.x, 0.0)).r - texture2D(levels, vUv - vec2(span.x, 0.0)).r;
-    float dv = texture2D(levels, vUv + vec2(0.0, span.y)).r - texture2D(levels, vUv - vec2(0.0, span.y)).r;
     vec2 ux = dFdx(vUv), uy = dFdy(vUv);
     float det = ux.x * uy.y - uy.x * ux.y;
     // Злиття: середній рівень околу (міпмап, mergeBias — на стільки рівнів грубіше) — густота води. Де крапель
     // багато, поверхня — згладжене поле (той самий міпмап): суцільна вода з пологими хвилями замість окремих цяток.
     float m = texture2D(levels, vUv, mergeBias).r;
     float merge = smoothstep(mergeLo, mergeHi, m);
+    // Телефон: вибірки, чия вага в підсумку рівно 0, пропускаємо (на суцільній воді, merge = 1, — нахил і лінза
+    // окремих крапель, на товстій воді — вид без води): ≈ 11 вибірок замість 20, картинка та сама. Рівні води в
+    // розгалуженнях — textureGrad з похідними, порахованими до них (міпмап без похідних у розгалуженні — невизначений).
+    float du = 0.0, dv = 0.0;
+    if (merge < 1.0) {
+      du = textureGrad(levels, vUv + vec2(span.x, 0.0), ux, uy).r - textureGrad(levels, vUv - vec2(span.x, 0.0), ux, uy).r;
+      dv = textureGrad(levels, vUv + vec2(0.0, span.y), ux, uy).r - textureGrad(levels, vUv - vec2(0.0, span.y), ux, uy).r;
+    }
     if (merge > 0.0) {
       vec2 sp = span * exp2(mergeBias);
-      float su = texture2D(levels, vUv + vec2(sp.x, 0.0), mergeBias).r - texture2D(levels, vUv - vec2(sp.x, 0.0), mergeBias).r;
-      float sv = texture2D(levels, vUv + vec2(0.0, sp.y), mergeBias).r - texture2D(levels, vUv - vec2(0.0, sp.y), mergeBias).r;
+      vec2 bx = ux * exp2(mergeBias), by = uy * exp2(mergeBias);
+      float su = textureGrad(levels, vUv + vec2(sp.x, 0.0), bx, by).r - textureGrad(levels, vUv - vec2(sp.x, 0.0), bx, by).r;
+      float sv = textureGrad(levels, vUv + vec2(0.0, sp.y), bx, by).r - textureGrad(levels, vUv - vec2(0.0, sp.y), bx, by).r;
       du = mix(du, su * mergeWave, merge);
       dv = mix(dv, sv * mergeWave, merge);
     }
     vec2 g = vec2(0.0);
-    vec3 clear = texture2D(scene, (gl_FragCoord.xy - origin) / res).rgb;
-    vec3 under = clear;
+    vec3 under;
+    // Частка лінзи: lens · smoothstep(0; 0,05; a) — на товстій воді 1, і вид без води (clear) не потрібен.
+    float wl = abs(det) > 1e-12 ? lens * smoothstep(0.0, 0.05, a) : 0.0;
+    vec3 clear = wl < 1.0 ? texture2D(scene, (gl_FragCoord.xy - origin) / res).rgb : vec3(0.0);
     if (abs(det) > 1e-12) {
       vec2 s = toScreen(vec2(du, dv), ux, uy, det);
       float l = length(s);
       if (l > 0.0) g = s / l * length(vec2(du, dv));
-      // Лінза (як в оригіналі — «збільшення, пікселі, згладжування», на прохання користувача).
-      vec3 lensed = lensAt(lensCell, zoom, ux, uy, det);
-      // На суцільній воді — більші клітинки й сильніше збільшення: картинка збільшена й розмита (згладжування між
-      // далекими центрами клітинок), на прохання користувача.
+      // Лінза (як в оригіналі — «збільшення, пікселі, згладжування», на прохання користувача). На суцільній воді —
+      // більші клітинки й сильніше збільшення: картинка збільшена й розмита (згладжування між далекими центрами
+      // клітинок), на прохання користувача.
+      vec3 lensed = vec3(0.0);
+      if (merge < 1.0) lensed = lensAt(lensCell, zoom, ux, uy, det);
       if (merge > 0.0) lensed = mix(lensed, lensAt(mergeCell, mergeZoom, ux, uy, det), merge);
       // Лінза — на будь-якій воді, і на тонкій (сліди стікання — рівень 17 з 255): скло під водою спотворене повністю.
-      under = mix(clear, lensed, lens * smoothstep(0.0, 0.05, a));
+      under = wl < 1.0 ? mix(clear, lensed, wl) : lensed;
+    } else under = clear;
+    float wb = water * min(1.0, length(g) * 4.0);
+    if (wb <= 0.0) {
+      gl_FragColor = vec4(under, 1.0);
+      return;
     }
     vec2 off = g * k;
     float lo = length(off);
@@ -275,7 +314,7 @@ export const WATER_FRAGMENT = `
     vec3 bg = texture2D(scene, (gl_FragCoord.xy + off - origin) / res).rgb;
     // g.y < 0 — поверхня піднімається донизу екрана (нижній край краплі): світліше; верхній край — темніше.
     float light = clamp(1.0 + shade * (-g.y - 0.3 * g.x), 0.6, 1.5);
-    gl_FragColor = vec4(mix(under, bg * light, water * min(1.0, length(g) * 4.0)), 1.0);
+    gl_FragColor = vec4(mix(under, bg * light, wb), 1.0);
   }`;
 
 export const WATER_VERTEX = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';

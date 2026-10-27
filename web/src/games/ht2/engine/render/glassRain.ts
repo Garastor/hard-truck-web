@@ -61,6 +61,12 @@ const SIZE = 512;
 const SLOPE_SPAN = 2;
 /** Порядок малювання лопатей двірників — після скла (0), до керма (10, drive.ts). */
 const WIPER_ORDER = 5;
+/** Відрізків лопаті зі своєю рамкою змін (вивантаження на відеокарту, wipe). */
+const WIPE_SEGMENTS = 8;
+/** Рамки відрізків: спершу мінімуми (x, y) усіх відрізків, потім максимуми. */
+const WIPE_BOX = new Float64Array(WIPE_SEGMENTS * 4);
+/** Найбільше відхилення дуги кінця лопаті від хорди віяла стирання, px буфера. */
+const WIPE_SAG = 0.35;
 /** Найбільший крок часу, с (після паузи двірник проскочив би межу помаху). */
 const MAX_DT = 0.1;
 
@@ -311,33 +317,81 @@ export class GlassRain {
     }
   }
 
-  /** Стерти сектор між двома положеннями двірника: лінії від осі до кінця лопаті (у UV скла, по колу). */
+  /**
+   * Стерти сектор між двома положеннями двірника (у UV скла, по колу): віяло трикутників «вісь — кінець лопаті» з
+   * кроком кута, на якому дуга відходить від хорди не більше ніж на WIPE_SAG px, заливкою рядків (WaterBuffer.fillRow).
+   * Раніше — точками вздовж ліній через кожні 0,7 px кінця лопаті: ≈ 80 тис. точок на двірник за кадр (лопать у
+   * буфері сотні px, скло ZilR — утричі довше за текстуру), ≈ 0,8 мс процесора ПК на кадр із двірниками.
+   */
   private wipe(w: Wiper, a0: number, a1: number): void {
     if (this.water.empty) return;
     const pivot = this.uv(w.pivot).multiplyScalar(SIZE);
     const tipAt = (a: number) => this.uv(new THREE.Vector3(Math.cos(a) * w.length, 0, -Math.sin(a) * w.length).applyMatrix4(w.toCab)).multiplyScalar(SIZE);
-    const len = Math.max(1, tipAt(a0).distanceTo(pivot));
-    // Крок кута — кінець лопаті зсувається не більше ніж на 0,7 px.
-    const n = Math.max(1, Math.ceil((Math.abs(a1 - a0) * len) / 0.7));
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -Infinity;
-    let y1 = -Infinity;
-    for (let i = 0; i <= n; i++) {
-      const tip = tipAt(a0 + ((a1 - a0) * i) / n);
-      const steps = Math.ceil(tip.distanceTo(pivot));
-      for (let k = 0; k <= steps; k++) {
-        const x = Math.round(pivot.x + ((tip.x - pivot.x) * k) / steps);
-        const y = Math.round(pivot.y + ((tip.y - pivot.y) * k) / steps);
-        this.water.erase(x, y);
-        this.water.erase(x + 1, y);
+    let prev = tipAt(a0);
+    const len = Math.max(1, prev.distanceTo(pivot));
+    const step = 2 * Math.acos(Math.max(-1, 1 - WIPE_SAG / len));
+    const n = Math.max(1, Math.ceil(Math.abs(a1 - a0) / step));
+    // Змінене — рамками відрізків лопаті (WIPE_SEGMENTS): одна рамка всього сектора на похилій лопаті — майже
+    // квадрат «вісь — кінець», і на відеокарту щокадру йшло в десятки разів більше пікселів, ніж стерто.
+    const box = WIPE_BOX.fill(Infinity, 0, WIPE_SEGMENTS * 2).fill(-Infinity, WIPE_SEGMENTS * 2);
+    const add = (tip: THREE.Vector2) => {
+      for (let k = 0; k <= WIPE_SEGMENTS; k++) {
+        const x = pivot.x + ((tip.x - pivot.x) * k) / WIPE_SEGMENTS;
+        const y = pivot.y + ((tip.y - pivot.y) * k) / WIPE_SEGMENTS;
+        for (const s of k === 0 ? [0] : k === WIPE_SEGMENTS ? [k - 1] : [k - 1, k]) {
+          box[s * 2] = Math.min(box[s * 2], x);
+          box[s * 2 + 1] = Math.min(box[s * 2 + 1], y);
+          box[WIPE_SEGMENTS * 2 + s * 2] = Math.max(box[WIPE_SEGMENTS * 2 + s * 2], x);
+          box[WIPE_SEGMENTS * 2 + s * 2 + 1] = Math.max(box[WIPE_SEGMENTS * 2 + s * 2 + 1], y);
+        }
       }
-      x0 = Math.min(x0, tip.x);
-      y0 = Math.min(y0, tip.y);
-      x1 = Math.max(x1, tip.x);
-      y1 = Math.max(y1, tip.y);
+    };
+    add(prev);
+    for (let i = 1; i <= n; i++) {
+      const tip = tipAt(a0 + ((a1 - a0) * i) / n);
+      this.fillTriangle(pivot, prev, tip);
+      add(tip);
+      prev = tip;
     }
-    this.water.mark(Math.min(x0, pivot.x) - 2, Math.min(y0, pivot.y) - 2, Math.max(x1, pivot.x) + 3, Math.max(y1, pivot.y) + 3);
+    for (let s = 0; s < WIPE_SEGMENTS * 2; s += 2)
+      if (box[s] <= box[WIPE_SEGMENTS * 2 + s]) this.water.mark(Math.floor(box[s]) - 2, Math.floor(box[s + 1]) - 2, Math.ceil(box[WIPE_SEGMENTS * 2 + s]) + 3, Math.ceil(box[WIPE_SEGMENTS * 2 + s + 1]) + 2);
+  }
+
+  /**
+   * Стерти трикутник (пікселі буфера, по колу): у кожному рядку y — усе, що трикутник зачіпає в смузі y ± 0,5 (перетин
+   * опуклого трикутника зі смугою — відрізки його ребер), з запасом пікселя праворуч, як у колишніх лініях (x і x + 1).
+   */
+  private fillTriangle(a: THREE.Vector2, b: THREE.Vector2, c: THREE.Vector2): void {
+    const y0 = Math.round(Math.min(a.y, b.y, c.y));
+    const y1 = Math.round(Math.max(a.y, b.y, c.y));
+    for (let y = y0; y <= y1; y++) {
+      const lo = y - 0.5;
+      const hi = y + 0.5;
+      let xl = Infinity;
+      let xr = -Infinity;
+      for (let e = 0; e < 3; e++) {
+        const p = e === 0 ? a : e === 1 ? b : c;
+        const q = e === 0 ? b : e === 1 ? c : a;
+        // Відрізок ребра в смузі [lo, hi].
+        let t0 = 0;
+        let t1 = 1;
+        const dy = q.y - p.y;
+        if (Math.abs(dy) < 1e-9) {
+          if (p.y < lo || p.y > hi) continue;
+        } else {
+          const ta = (lo - p.y) / dy;
+          const tb = (hi - p.y) / dy;
+          t0 = Math.max(0, Math.min(ta, tb));
+          t1 = Math.min(1, Math.max(ta, tb));
+          if (t0 > t1) continue;
+        }
+        const xa = p.x + (q.x - p.x) * t0;
+        const xb = p.x + (q.x - p.x) * t1;
+        xl = Math.min(xl, xa, xb);
+        xr = Math.max(xr, xa, xb);
+      }
+      if (xl <= xr) this.water.fillRow(y, Math.round(xl), Math.round(xr) + 1);
+    }
   }
 
   /** Точка кабіни → координати площини скла (s, t) у ребрах першого трикутника. */
