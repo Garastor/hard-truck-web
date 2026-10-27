@@ -91,6 +91,8 @@ const LAYER_CELL = 4;
 /** Сітку будуємо лише для площин з більшою кількістю трикутників (малі — простий перебір дешевший). */
 const LAYER_GRID_FROM = 64;
 const LAYER_OFFSET_UNITS = -4;
+/** Матеріали, чия альфа текстури в оригіналі не діє (непрозорі): сліди коліс у бродах af — див. material(). */
+const OPAQUE_ALPHA = /^trace\d$/;
 /** Текстури ввімкнених ламп світлофора — малюються без освітлення (SceneAssembler.selfLit). */
 const SELF_LIT_TEX = /(^|\/)tl(red|yel|gre)on\.txr$/i;
 /**
@@ -141,7 +143,11 @@ export class MaterialLibrary {
       const tex = this.texture(def.tex, def.flags.has('notile'), key);
       if (tex) {
         params.map = tex;
-        if (tex.userData.softAlpha) {
+        if (OPAQUE_ALPHA.test(name)) {
+          // Сліди коліс на в'їздах у броди (af: `trace0 tex 1`, trace.txr — чорний протектор з альфою ≈ 0,2): за знімком
+          // оригіналу — суцільні чорні смуги, альфа текстури не діє. Механізму в king.exe не знайдено: так само
+          // побудована тінь store_sh (блок 35, формат 1, простий tex, ARGB 4444) в оригіналі м'яка (re/notes/ht2/rendering.md).
+        } else if (tex.userData.softAlpha) {
           // Direct3D змішує текстури з альфою (king.exe): тінь store_sh 16×16 — м'який перехід, а не поріг 0,5
           // (з порогом вздовж рампи бази лягала темна смуга). Кольоровий ключ (ttx) і майже двоколірні альфи (ліс,
           // наліпки) — з порогом, як було.
