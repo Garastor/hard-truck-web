@@ -54,7 +54,9 @@ Hard Truck Web — порт ігор Дальнобойщики (HT1, HT2) у б
   {"name": "web-<PORT>", "runtimeExecutable": "cmd", "runtimeArgs": ["/c", "set HT_GAME_ROOT=D:/Claude/Games/Hard Truck/Game&& \"C:/Program Files/nodejs/npm.cmd\" run dev --prefix web -- --port <PORT> --strictPort"], "port": <PORT>}
   і `preview_start({ name: "web-<PORT>" })`. Цю правку launch.json не комітити (наприкінці
   `git checkout -- .claude/launch.json`). Чужі сервери (5173, 5174, інші 518x) не зупиняти й не використовувати.
-- Перевірка в грі — скіли `launch-game`, `verify-in-game` з адресою http://localhost:<PORT>/…, окрема вкладка,
+- Запуск гри на своєму порту — скіл `launch-own-port` (розмір вʼюпорта ДО завантаження: у схованій панелі HT2
+  падає на старті й лишається в меню; очікування циклами ≤ 35 с). Перевірка — `verify-in-game` з адресою
+  http://localhost:<PORT>/…, окрема вкладка,
   `&mute`. Свій порт — окреме походження: localStorage/IndexedDB порожні й не ділять збереження з користувачем
   (потрібна кар'єра — нова гра чи тестове збереження через `window.ht2`); вкладок користувача не чіпати.
 - Документи (Docs/, re/notes/, CLAUDE.md) у гілці не правити: паралельні гілки конфліктували б у журналах. Їх пише
