@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { walk, type B3d, type Block } from '../engine/formats/b3d';
-import type { RmpArchive } from '../engine/formats/rmp';
+import { parseMaterial, type RmpArchive } from '../engine/formats/rmp';
 import { parseTxr } from '../engine/formats/txr';
 
 /**
@@ -49,8 +49,20 @@ export function collectTrees(b3d: B3d): TreeSpot[] {
   return out;
 }
 
-function atlasTexture(rmp: RmpArchive, pattern: RegExp, palette: Uint8Array | null): THREE.Texture | null {
-  const file = rmp.order.TEXTUREFILES.find((n) => pattern.test(n));
+/**
+ * Текстура дерева — за **іменем матеріалу** регіону, як у king.exe (0x005c8520 `tree%d%d` — атлас основи, 0x005c84a0
+ * `tree%d` — шар гілок; не знайдено — дерева без цієї текстури). Імена файлів у регіонах різні: у bb, bc матеріал
+ * `tree01` — `tree0001.txr`, а файл `tree01.txr` — гілки виду 1 (64×64); у ba, bd…bg атласи — `tree0405`, `tree1213`…;
+ * у ca, cc, ce… гілки — `tree0ca.txr`. Пошук за іменем файлу брав у bb/bc текстуру гілок за крону (пляма листя в
+ * повітрі над тонкою рискою), а в інших регіонах не знаходив атласу чи гілок.
+ */
+function materialTexture(rmp: RmpArchive, name: string, palette: Uint8Array | null): THREE.Texture | null {
+  const line = rmp.materials.find((l) => l.trim().split(/\s+/, 1)[0].toLowerCase() === name);
+  const tex = line ? parseMaterial(line).tex : 0;
+  return tex > 0 ? atlasTexture(rmp, rmp.order.TEXTUREFILES[tex - 1], palette) : null;
+}
+
+function atlasTexture(rmp: RmpArchive, file: string | undefined, palette: Uint8Array | null): THREE.Texture | null {
   const bytes = file ? rmp.textures.get(file) : undefined;
   if (!bytes) return null;
   const img = parseTxr(bytes);
@@ -233,7 +245,7 @@ export function buildTrees(b3d: B3d, rmp: RmpArchive, palette: Uint8Array | null
   if (!spots.length) return group;
   const atlases = new Map<number, THREE.Texture | null>();
   const atlas = (pair: number) => {
-    if (!atlases.has(pair)) atlases.set(pair, atlasTexture(rmp, new RegExp(`tree${2 * pair}${2 * pair + 1}[^/]*\\.txr$`, 'i'), palette));
+    if (!atlases.has(pair)) atlases.set(pair, materialTexture(rmp, `tree${2 * pair}${2 * pair + 1}`, palette));
     return atlases.get(pair)!;
   };
   // Групи інстансів: атлас × половина (0, 1; 2 — увесь) × форма ширини.
@@ -563,7 +575,7 @@ function buildBranches(spots: BranchSpot[], rmp: RmpArchive, palette: Uint8Array
   const s = new THREE.Vector3();
   for (const [key, list] of lists) {
     const { kind, shape, room } = list[0].spot;
-    if (!textures.has(kind)) textures.set(kind, atlasTexture(rmp, new RegExp(`(^|/)tree${kind}\\.txr$`, 'i'), palette));
+    if (!textures.has(kind)) textures.set(kind, materialTexture(rmp, `tree${kind}`, palette));
     const tex = textures.get(kind);
     if (!tex) continue;
     let geo = geometries.get(shape);
