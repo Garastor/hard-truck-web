@@ -48,9 +48,6 @@ export function vehicleName(name: string): string {
   return VEHICLE_NAMES[name] ?? name.charAt(0) + name.slice(1).toLowerCase().replace(/_/g, ' ');
 }
 
-export const GEAR_SVG =
-  '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" fill-rule="evenodd"><path d="M10.3 2h3.4l.5 2.6a8 8 0 0 1 1.9.8l2.2-1.5 2.4 2.4-1.5 2.2c.3.6.6 1.2.8 1.9l2.6.5v3.4l-2.6.5a8 8 0 0 1-.8 1.9l1.5 2.2-2.4 2.4-2.2-1.5a8 8 0 0 1-1.9.8l-.5 2.6h-3.4l-.5-2.6a8 8 0 0 1-1.9-.8l-2.2 1.5-2.4-2.4 1.5-2.2a8 8 0 0 1-.8-1.9L2 13.7v-3.4l2.6-.5c.2-.7.5-1.3.8-1.9L3.9 5.7l2.4-2.4 2.2 1.5c.6-.3 1.2-.6 1.9-.8zM12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2z"/></svg>';
-
 /** Відкрити вікно; повертає функцію закриття. onClose — після будь-якого закриття. */
 export function openFreeSettings(overlay: HTMLElement, fields: FreeField[], onClose: () => void): () => void {
   const back = el('div', 'career-modal ht2-free');

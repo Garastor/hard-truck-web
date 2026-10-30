@@ -1712,3 +1712,13 @@ html:has(.ht2-nui) body {
     display: none !important;
   }
 }
+
+/* Значки верхніх кнопок (engine/ui/icons.ts): PNG — маска, колір — колір тексту кнопки. */
+.ht2-icon {
+  display: block;
+  flex: none;
+  background-color: currentColor;
+  -webkit-mask: var(--ht2-icon) center / contain no-repeat;
+  mask: var(--ht2-icon) center / contain no-repeat;
+  pointer-events: none;
+}

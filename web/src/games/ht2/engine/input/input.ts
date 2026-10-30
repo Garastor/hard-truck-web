@@ -1,3 +1,4 @@
+import { icon } from '../ui/icons';
 /**
  * Єдиний стан керування з різних джерел: клавіатура, сенсорні кнопки, геймпад.
  * Осі: steer −1..1 (вліво/вправо), throttle 0..1, brake 0..1.
@@ -34,38 +35,22 @@ export interface InputProfile {
 
 /** camLeft/camRight — обертання зовнішньої камери навколо машини (king.exe 0x59a030, поки клавіша натиснута). */
 export type Action = 'left' | 'right' | 'gas' | 'brake' | 'handbrake' | 'sharp' | 'camLeft' | 'camRight';
-/** Значок сигналу (ріжок, за зразком користувача) — однотонний контур, як решта кнопок. */
-const HORN_SVG =
-  '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M2.5 8.6v4.6M2.5 10.9H5"/><path d="M5 9h7.5c3.2 0 6-1.6 8-4.3.6-.8 1.5-.4 1.5.5v13.4c0 .9-.9 1.3-1.5.5-2-2.4-3.5-3.6-5.6-4.2"/><path d="M5 12.9h1.4"/><path d="M6.4 12.9c0 2.4 1.2 3.8 3.4 3.8h3.4"/><rect x="8.6" y="12.6" width="6.4" height="2.9" rx="1.45"/></svg>';
-
-/** Значки групи «ще» (однотонні, як сигнал). */
-const svg = (body: string, width = 2) =>
-  `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="${width}" stroke-linejoin="round" stroke-linecap="round">${body}</svg>`;
-/** Значки — за зразками користувача, контуром кольору тексту. */
+/** Значки верхніх кнопок — PNG-маски кольору тексту (engine/ui/icons.ts); стрілки керма й педалей — свої, нижче. */
 const ICONS = {
-  more: svg('<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>'),
-  // Фара з променями ліворуч.
-  lights: svg('<path d="M13.5 5.5c4.5 0 7.5 2.9 7.5 6.5s-3 6.5-7.5 6.5z"/><path d="M3 8l7.5-1M3 11l7.5-1M3 14l7.5-1M3 17l7.5-1"/>'),
-  // Салонне дзеркало заднього огляду на кріпленні, з відблиском.
-  mirror: svg('<path d="M9.3 3.5h5.4l-1.3 2h-.6l-.4 3.6h-.8l-.4-3.6h-.6z" fill="currentColor"/><path d="M6.1 9.4h11.8c.8 0 1.4.5 1.6 1.2l1.5 5.5c.3.8-.3 1.6-1.2 1.6H4.2c-.9 0-1.5-.8-1.2-1.6l1.5-5.5c.2-.7.8-1.2 1.6-1.2z"/><path d="M10 15.6l2.6-2.8M12.2 16l2.6-2.8" stroke-width="1"/>'),
-  map: svg('<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>'),
-  // Лобове скло з двірником (вісь унизу посередині).
-  wipers: svg('<path d="M10.2 18.5H6.5L3 7.5c5.8-2.6 12.2-2.6 18 0l-3.5 11h-3.7"/><path d="M12.4 17.2L10 7.8"/><circle cx="12.4" cy="18.4" r="1.4" fill="currentColor"/>'),
-  // Блок двигуна.
-  engine: svg('<path d="M6.5 9.5V8h3V6h5v2h2.5l1.5 2h1.5V8.5h1.5v7h-1.5V14H18.5l-1.5 3.5H9.5L7.5 15H6.5v-1.5H3.5v2H2v-6h1.5v2h3z"/>'),
-  // Приладова панель — вид кабіни 2D / 3D.
-  cab: svg('<path d="M6 18.5A7.5 7.5 0 1 1 18 18.5z"/><path d="M12 14.6l3.4-4.6"/><circle cx="12" cy="14.8" r="1.1"/><path d="M12 8.7v1.3M7.6 13.4h1.2M15.2 13.4h1.2M8.4 10l.8.8"/><path d="M3.6 11.6a2.6 2.6 0 0 0 0 5.2M20.4 11.6a2.6 2.6 0 0 1 0 5.2"/>'),
-  // Дві клавіші по боках і дві заокруглені стрілки між ними — поміняти місцями кермо й педалі.
-  swap: svg('<rect x="1.5" y="8.5" width="7" height="7" rx="1.4"/><rect x="15.5" y="8.5" width="7" height="7" rx="1.4"/><path d="M3.9 12l2.4-1.6v3.2zM20.1 12l-2.4-1.6v3.2z" fill="currentColor" stroke-width="1"/><path d="M8 6.6c2.3-2.6 5.7-2.6 8 0M16 17.4c-2.3 2.6-5.7 2.6-8 0"/><path d="M16.6 4.7l-.4 2.4-2.3-.5M7.4 19.3l.4-2.4 2.3.5"/>', 1.6),
-  // Відеокамера — перемикання виду.
-  cam: svg('<rect x="2" y="6" width="13.5" height="12" rx="2.5"/><path d="M15.5 10.5l6-3.5v10l-6-3.5z"/>'),
-  // Камера по колу: дуга навколо машини (прямокутник) зі стрілкою ліворуч / праворуч.
-  orbitLeft: svg('<rect x="9" y="9.5" width="6" height="9" rx="1.2"/><path d="M19.5 12.5A8 8 0 0 0 5.2 8.2"/><path d="M4.2 4.4l1 3.8 3.8-1"/>', 1.8),
-  orbitRight: svg('<rect x="9" y="9.5" width="6" height="9" rx="1.2"/><path d="M4.5 12.5A8 8 0 0 1 18.8 8.2"/><path d="M19.8 4.4l-1 3.8-3.8-1"/>', 1.8),
-  // Напівпричіп збоку зі шворнем спереду — причепити / відчепити (VVK_ATTACH_SEMITRAILER).
-  attach: svg('<path d="M7 6.5h14.5v9H7z"/><path d="M7 15.5H4.5v-3H2"/><circle cx="16" cy="17.8" r="1.7"/><circle cx="19.8" cy="17.8" r="1.7"/><path d="M8.5 15.5v2.5" stroke-width="1.6"/>'),
-  // Кругова стрілка за годинниковою — відновитися.
-  reset: svg('<path d="M17.2 16.8A6.8 6.8 0 1 1 18.3 9"/><path d="M15.6 9.6h5.2l-2.6 3.6z" fill="currentColor"/>'),
+  more: icon('more'),
+  lights: icon('lights'),
+  mirror: icon('mirror'),
+  map: icon('map'),
+  wipers: icon('wipers'),
+  engine: icon('engine'),
+  horn: icon('horn'),
+  swap: icon('swap'),
+  cam: icon('camera'),
+  // Обертання камери: аркуш — праворуч, ліворуч — дзеркально.
+  orbitLeft: icon('orbit', 22, true),
+  orbitRight: icon('orbit'),
+  attach: icon('attach'),
+  reset: icon('reset'),
   left: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M17 4L6 12l11 8z"/></svg>',
   right: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M7 4l11 8-11 8z"/></svg>',
   // Газ і гальмо (на прохання користувача — стрілки вперед і назад замість написів), як стрілки керма.
@@ -456,7 +441,7 @@ export class Input {
       ['mirror', 'mirror', ICONS.mirror],
       ['wipers', 'wipers', ICONS.wipers],
       ['engine', 'engine', ICONS.engine],
-      ['horn', 'horn', HORN_SVG],
+      ['horn', 'horn', ICONS.horn],
     ];
     for (const [cls, cmd, icon] of items) btn(cls, '', undefined, cmd, icon, more).dataset.cmd = cmd;
     // Кнопки обертання камери по колу (тримати) — 4-м рядом групи «ще»; ракурс скидає «Камера».
@@ -641,4 +626,3 @@ export function applyPedalsLeft(on: boolean): void {
 }
 
 /** Значок «поміняти місцями кермо й педалі» — для лівої групи кнопок (drive.ts). */
-export const SWAP_SVG = ICONS.swap;
