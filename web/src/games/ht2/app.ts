@@ -10,10 +10,10 @@ import { PixelFont } from './engine/ui/pixelFont';
 import type { GameContext } from '@shared/gameContext';
 import { HT2_FILES, HT2_MODS, HT2_MUSIC, HT2_REQUIRED, HT2_UI, HT2_VIDEO, ht2DevSource } from './files';
 import { Ht2MenuArt, ht2ExitScreen, ht2MainScreen, ht2MenuScreen, ht2SingleScreen, type MenuItem, type RoundKey } from './ui/menu';
-import { Input } from './engine/input/input';
+import { Input, applyPedalsLeft } from './engine/input/input';
 import { setFx } from './ui/effects';
 import { ht2ControlsScreen, ht2DriversScreen, ht2GraphicsScreen, ht2RecordsScreen } from './ui/menuScreens';
-import { loadSettings, saveSettings, type Ht2Settings } from './ui/settings';
+import { loadSettings, pedalsLeft, saveSettings, type Ht2Settings } from './ui/settings';
 import { parseIni } from './engine/formats/ini';
 import { decodeCp1251 } from './engine/formats/binary';
 import { WorldViewer } from './ui/viewer';
@@ -162,7 +162,7 @@ async function manageFiles(ctx: Ht2Context): Promise<void> {
   const count = (list: readonly string[]) => list.filter((f) => have.has(HT2_FILES.prefix + f)).length;
   const status = [
     `Основні файли: ${count(HT2_REQUIRED)} з ${HT2_REQUIRED.length}`,
-    `Графіка інтерфейсу (COMMON/esc16.RES): ${count(HT2_UI) ? 'є' : 'немає'}`,
+    `Графіка інтерфейсу (COMMON/esc16.RES, ind16.RES): ${count(HT2_UI)} з ${HT2_UI.length}`,
     `Описи регіонів: ${count(HT2_MODS)} з ${HT2_MODS.length}`,
     `Музика: ${count(HT2_MUSIC)} з ${HT2_MUSIC.length}`,
     `Ролики подій (*.bne): ${count(HT2_VIDEO)} з ${HT2_VIDEO.length}`,
@@ -212,6 +212,8 @@ export async function runHt2(ctx: Ht2Context): Promise<void> {
   const ini = await source.read('TRUCK.INI').then((b) => parseIni(decodeCp1251(b))).catch(() => null);
   let settings: Ht2Settings = loadSettings(ini);
   Input.bind(settings.keys);
+  // Розкладка сенсорних кнопок HT2 (типово кермо праворуч) — замість спільного ht.swapControls оболонки.
+  applyPedalsLeft(pedalsLeft(settings));
   setFx(settings.effects, settings.detail);
   ctx.setStatus(null);
 

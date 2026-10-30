@@ -133,7 +133,7 @@ function fitBetweenControls(back: HTMLElement, box: HTMLElement): void {
       .map((e) => e.getBoundingClientRect())
       .filter((r) => r.width > 0 && r.height > 0);
   const tablo = rects('.ht2-tablo-hit');
-  const buttons = rects('.touch-btn, .ht2-hud-burger, .ht2-hud-gear');
+  const buttons = rects('.touch-btn, .ht2-hud-burger, .ht2-hud-gear, .ht2-hud-swap');
   const upper = buttons.filter((r) => r.top < vh / 2);
   const lower = buttons.filter((r) => r.top >= vh / 2);
   const top = Math.max(4, ...tablo.map((r) => r.bottom)) + 2;

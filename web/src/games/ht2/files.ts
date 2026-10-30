@@ -56,10 +56,11 @@ export const HT2_MOD_REGIONS = [
 export const HT2_MODS = HT2_MOD_REGIONS.map((r) => `ENV/mod_${r}.sch`);
 
 /**
- * Графіка інтерфейсу в дорозі (табло, пейджер, картки подій, бічні панелі, рація — re/notes/ht2/ui.md).
+ * Графіка інтерфейсу в дорозі (табло, пейджер, картки подій, бічні панелі, рація — re/notes/ht2/ui.md) і екран
+ * завантаження світу (ind16.RES `m16\loadpix`, ui/loadScreen.ts).
  * Необовʼязкова: без неї — власний інтерфейс порту (імпорт, зроблений раніше, лишається робочим).
  */
-export const HT2_UI = ['COMMON/esc16.RES'];
+export const HT2_UI = ['COMMON/esc16.RES', 'COMMON/ind16.RES'];
 
 /**
  * Карти висот рельєфу aa для кар'єри (king.exe 0x5726e3; MTR/ — арена «Тріал», terrain1 інший). Необовʼязкові: без
