@@ -600,8 +600,6 @@ export class Input {
   }
 }
 
-/** Налаштування керування обох ігор: кермо праворуч, педалі ліворуч (body.swap-controls; зберігається в браузері). */
-const SWAP_KEY = 'ht.swapControls';
 const ACTIONS = ['left', 'right', 'gas', 'brake', 'handbrake', 'sharp', 'camLeft', 'camRight'] as const;
 
 /** Типові клавіші дій і команд (перша — показується в меню «Керування»). */
@@ -634,18 +632,13 @@ export const DEFAULT_KEYS: Partial<Record<Action | Command, string[]>> = {
 };
 Input.bind();
 
-export function loadSwap(): boolean {
-  try {
-    return localStorage.getItem(SWAP_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-export function setSwap(on: boolean): void {
+/**
+ * Розкладка сенсорних кнопок: кермо праворуч, газ і гальмо ліворуч (body.swap-controls; стилі — style.css і ht2.css).
+ * Зберігає ui/settings.ts (pedalsLeft) — не спільний ключ оболонки `ht.swapControls`, що лишається за першою грою.
+ */
+export function applyPedalsLeft(on: boolean): void {
   document.body.classList.toggle('swap-controls', on);
-  try {
-    localStorage.setItem(SWAP_KEY, on ? '1' : '0');
-  } catch {
-    /* приватний режим — лише на цей сеанс */
-  }
 }
+
+/** Значок «поміняти місцями кермо й педалі» — для лівої групи кнопок (drive.ts). */
+export const SWAP_SVG = ICONS.swap;

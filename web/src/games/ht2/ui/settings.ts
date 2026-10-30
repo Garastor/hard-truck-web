@@ -65,6 +65,12 @@ export interface Ht2Settings {
    * оболонка — GameModule.antialias). Не задано — як вирішить оболонка: ПК — так, телефон — ні (`ht.quality`).
    */
   antialias?: boolean;
+  /**
+   * Розкладка сенсорних кнопок (порт, на прохання користувача): кермо праворуч, газ і гальмо ліворуч
+   * (body.swap-controls). Не задано — так і є (pedalsLeft()); перемикач — кнопка в лівій верхній групі (drive.ts).
+   * Своє в HT2: спільний ключ оболонки `ht.swapControls` лишається за першою грою.
+   */
+  pedalsLeft?: boolean;
   /** Перепризначені клавіші з меню «Керування»: дія → KeyboardEvent.code (engine/input Input.bind). */
   keys?: Partial<Record<Action | Command, string>>;
   /** Версія збережених налаштувань (REV). */
@@ -131,10 +137,27 @@ export function savedAntialias(): boolean | null {
 
 export function saveSettings(s: Ht2Settings): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(s));
+    // Розкладку змінює лише savePedalsLeft: копії налаштувань (меню, мережеві заїзди) могли її не бачити.
+    const stored = (JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Ht2Settings>).pedalsLeft;
+    localStorage.setItem(KEY, JSON.stringify(typeof stored === 'boolean' ? { ...s, pedalsLeft: stored } : s));
   } catch {
     /* приватний режим */
   }
+}
+
+/** Зберегти розкладку сенсорних кнопок (лише це поле; решта налаштувань — як збережено). */
+export function savePedalsLeft(on: boolean): void {
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Ht2Settings>;
+    localStorage.setItem(KEY, JSON.stringify({ ...saved, pedalsLeft: on }));
+  } catch {
+    /* приватний режим — лише на цей сеанс */
+  }
+}
+
+/** Розкладка сенсорних кнопок: чи газ і гальмо ліворуч (типово так). */
+export function pedalsLeft(s: Ht2Settings | null | undefined): boolean {
+  return s?.pedalsLeft ?? true;
 }
 
 /** Множник швидкості керма з повзунка 0…1: середина — 1 (як у телеметрії), краї — 0,5 і 1,5 (гіпотеза). */

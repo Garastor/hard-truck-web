@@ -1671,3 +1671,44 @@ html:has(.ht2-nui) body {
     height: 26px;
   }
 }
+
+/*
+ * Екран завантаження світу (ui/loadScreen.ts, king.exe 0x510690): середина картинки m16\loadpix по центру екрана
+ * (розмір сцени задає loadScale, без розтягування пропорцій), зайве обрізається; смуга прогресу loadrunner — у
+ * координатах картинки. Поверх усього, зокрема рядка стану оболонки.
+ */
+.ht2-load {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  overflow: hidden;
+  background: #000;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.ht2-load-stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.ht2-load-pix {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.ht2-load-runner {
+  position: absolute;
+  left: 0;
+}
+
+/* Кермо й педалі місцями (drive.ts) — лише з сенсорними кнопками руху: на ПК рух з клавіатури. */
+@media not (pointer: coarse) {
+  .ht2-hud button.ht2-hud-swap {
+    /* Інакше перебиває display: flex кнопок у стилі табло (body.ht2-orig-ui .ht2-hud button). */
+    display: none !important;
+  }
+}

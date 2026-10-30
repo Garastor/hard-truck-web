@@ -2,13 +2,14 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { HT2_ENGINE, HT2_INPUT, HT2_KING, HT2_KING_BRAKE, HT2_KING_ENGINE, HT2_ROLL_LIFT, HT2_STEER_LIMIT, HT2_STEER_POWER, HT2_BRAKE } from './vehicles/controls';
 import * as THREE from 'three';
 import type { FileSource } from '@shared/source';
+import { LoadScreen } from './ui/loadScreen';
 import { EngineAudio, LIGHT_ENGINE_MASS } from './engine/audio/engineAudio';
 import { instanceCollision, levelCollision, openPortals, roomGround, roomPosts } from './engine/physics/collision';
 import { RoomBounds } from './engine/physics/roomBounds';
 import { TruckVehicle } from './engine/vehicle/truckVehicle';
 import { ROUGH_ASPHALT, ROUGH_GROUND } from './engine/vehicle/kingModel';
 import { buildTruckModel, visibleBox, type TruckDef, type TruckModel } from './engine/vehicle/trucks';
-import { Input, type Action, type Command } from './engine/input/input';
+import { Input, SWAP_SVG, applyPedalsLeft, type Action, type Command } from './engine/input/input';
 import { GROUP_WORLD, addCollisionPolys, forgetSurfaces, g2t, groups, initRapier, surfaceAt } from './engine/physics/world';
 import { assoc, num, readSch, str, type SExpr } from './formats/sexpr';
 import { drivable, loadTrucks, selectable, truckDef, type Ht2Trucks } from './vehicles/trucks';
@@ -74,7 +75,7 @@ import { parseB3d } from './engine/formats/b3d';
 import { parseRmp } from './engine/formats/rmp';
 import { REPAIR_PER_PERCENT, currentDriver, restoreCareer, savedCareerRaw, savedHeading, type Ht2Career } from './career/career';
 import { HT2_MOD_REGIONS, readTextures } from './files';
-import { SFX_REF, saveSettings, steerGain, timeScale, type Ht2Settings } from './ui/settings';
+import { SFX_REF, saveSettings, savePedalsLeft, steerGain, timeScale, type Ht2Settings } from './ui/settings';
 import { EscArt } from './ui/escArt';
 import { ukMessage, ukName, ukSign } from './ui/uk';
 import { Obstacles, closedAxes, parseObstacles, type Obstacle } from './world/obstacles';
@@ -763,17 +764,33 @@ export class Ht2Drive {
   ) {}
 
   static async start(opts: Ht2DriveOptions): Promise<Ht2Drive> {
-    opts.setStatus('Завантаження світу й вантажівок…');
-    // Графіка інтерфейсу (esc16.RES, 57 МБ) — паралельно зі світом; init чекає її перед показом інтерфейсу.
-    void EscArt.load(opts.source);
-    await initRapier();
-    const world = await Ht2World.create(opts.source, opts.arena ?? undefined);
-    const trucks = await loadTrucks(opts.source, world.common.lib.palette);
-    const d = new Ht2Drive(opts, world, trucks);
-    await d.init();
-    opts.setStatus(null);
-    return d;
+    // Екран завантаження king.exe (ind16.RES loadpix) — на весь час збирання сцени, до першого кадру гри.
+    const loading = await LoadScreen.show(opts.source);
+    try {
+      opts.setStatus('Завантаження світу й вантажівок…');
+      loading?.progress(0, 0.3);
+      // Графіка інтерфейсу (esc16.RES, 57 МБ) — паралельно зі світом; init чекає її перед показом інтерфейсу.
+      void EscArt.load(opts.source);
+      await initRapier();
+      const world = await Ht2World.create(opts.source, opts.arena ?? undefined);
+      loading?.progress(0.3, 0.4);
+      const trucks = await loadTrucks(opts.source, world.common.lib.palette);
+      const d = new Ht2Drive(opts, world, trucks);
+      d.loading = loading;
+      await d.init();
+      d.loading = null;
+      opts.setStatus(null);
+      loading?.progress(1);
+      // Прибрати після першого намальованого кадру (схована вкладка rAF не крутить — тоді за часом).
+      if (loading) await new Promise<void>((r) => (requestAnimationFrame(() => requestAnimationFrame(() => r())), setTimeout(r, 400)));
+      return d;
+    } finally {
+      loading?.hide();
+    }
   }
+
+  /** Екран завантаження на час init (етапи — progress). */
+  private loading: LoadScreen | null = null;
 
   private async init(): Promise<void> {
     const o = this.opts;
@@ -823,6 +840,7 @@ export class Ht2Drive {
     this.fuelRpm = rec.tachMaxPower;
 
     o.setStatus('Завантаження регіонів довкола старту…');
+    this.loading?.progress(0.45, 0.8);
     await this.world.ready(start[0], start[1]);
     this.rapier.step(); // колайдери потрапляють у запити (castRay) лише після кроку
 
@@ -1203,6 +1221,19 @@ export class Ht2Drive {
       burger.classList.remove('on');
     });
     this.hud.append(burger);
+    // Кермо й педалі місцями (типово кермо праворуч, газ і гальмо ліворуч; на прохання користувача) — запамʼятовується.
+    const swap = document.createElement('button');
+    swap.className = 'ht2-hud-swap';
+    swap.setAttribute('aria-label', 'Поміняти місцями кермо й педалі');
+    swap.innerHTML = SWAP_SVG;
+    swap.addEventListener('click', () => {
+      const on = !document.body.classList.contains('swap-controls');
+      applyPedalsLeft(on);
+      savePedalsLeft(on);
+      if (o.settings) o.settings.pedalsLeft = on;
+      this.input.releaseTouch();
+    });
+    this.hud.append(swap);
     // Вільна їзда: шестерня — машина, телепорт, погода, розшук (ui/freeSettings.ts, на прохання користувача).
     if (!o.career && !o.race) {
       const gear = document.createElement('button');
@@ -1265,6 +1296,7 @@ export class Ht2Drive {
     window.addEventListener('resize', this.onResize);
     this.resize();
     o.setStatus('Підготовка шейдерів…');
+    this.loading?.progress(0.85, 0.98);
     // Кабіна — до першого кадру, якщо їзда починається з неї (інакше вантажиться при першому вигляді з кабіни).
     if (this.camMode === 'cockpit') await this.loadCab();
     // Площини відсічення даху машини — до компіляції: вони теж у ключі шейдера (перший кадр компілював би машину знову).
