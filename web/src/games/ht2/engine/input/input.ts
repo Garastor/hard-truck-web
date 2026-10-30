@@ -46,9 +46,9 @@ const ICONS = {
   horn: icon('horn'),
   swap: icon('swap'),
   cam: icon('camera'),
-  // Обертання камери: аркуш — праворуч, ліворуч — дзеркально.
-  orbitLeft: icon('orbit', 22, true),
-  orbitRight: icon('orbit'),
+  // Обертання камери: стрілка за годинниковою — ліворуч (камера йде навколо машини), праворуч — дзеркально.
+  orbitLeft: icon('orbit'),
+  orbitRight: icon('orbit', 22, true),
   attach: icon('attach'),
   reset: icon('reset'),
   left: '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M17 4L6 12l11 8z"/></svg>',
